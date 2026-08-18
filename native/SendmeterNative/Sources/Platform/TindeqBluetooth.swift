@@ -49,18 +49,19 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     private var connectRequested = false
     private var interruptedSummary: ForceSummary?
     /// #671: publishes are coalesced to display rate instead of firing per
-    /// BLE notification. Notifications only accumulate; a ~60 Hz flush timer
-    /// (running while a stream is live) assigns the published values — the
-    /// window included — at most once per display frame. The accumulator is
-    /// the source of truth; the flush reads cheap computed values off it, so
-    /// the hot path stays allocation-free.
+    /// BLE notification. Notifications only accumulate and mark
+    /// `pendingPublish`; a ~60 Hz flush timer (running while a stream is live)
+    /// assigns the published values — the window included — at most once per
+    /// display frame. The timer IS the throttle (one cadence source; a fire
+    /// always publishes); the accumulator is the source of truth.
     private var flushTimer: Timer?
-    private var lastFlushTime: TimeInterval = 0
+    /// True when a notification has appended samples since the last flush.
+    /// Consumed by the next timer fire — the final flush on stop uses it too.
     private var pendingPublish = false
     /// The last sample while hands-free-armed (pre-recording): the accumulator
     /// holds nothing yet, so the live reading comes from here (#671).
     private var lastSampleKilograms: Double = 0
-    private var coalescer = ForcePublishCoalescer()
+    private let flushScheduler = ForcePublishScheduler()
     #if DEBUG
     private var flushCountInSecond = 0
     private var flushSecondStart: TimeInterval = 0
@@ -69,6 +70,13 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     public override init() {
         super.init()
         _ = central
+    }
+
+    deinit {
+        // RunLoop.main owns the timer; if this transport is ever released
+        // mid-stream the timer must not keep firing at 60 Hz forever (#671
+        // review F6). Invalidating in deinit closes that.
+        flushTimer?.invalidate()
     }
 
     public func connect() {
@@ -84,9 +92,11 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
 
     public func disconnect() {
         connectRequested = false
+        // Final flush before the branch flags clear, so the last frame of a
+        // live stream publishes (#671 review F3).
+        stopFlushDriver()
         isRecording = false
         handsFreeArmed = false
-        stopFlushDriver()
         if let peripheral {
             central.cancelPeripheralConnection(peripheral)
         } else {
@@ -119,10 +129,13 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     public func stopMeasuring() -> ForceSummary? {
         let summary = accumulator.summary()
         completedSummary = summary
+        // Final flush of the last samples while still marked recording, so the
+        // metric card's peak/elapsed match the summary it just saved (#671
+        // review F3).
+        stopFlushDriver()
         guard let peripheral, let controlCharacteristic else {
             isRecording = false
             status = .idle
-            stopFlushDriver()
             return summary
         }
         peripheral.writeValue(
@@ -132,7 +145,6 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         )
         isRecording = false
         status = .connected
-        stopFlushDriver()
         return summary
     }
 
@@ -180,9 +192,11 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     /// nothing was armed.
     public func disarmHandsFree() {
         guard handsFreeArmed || isRecording else { return }
+        // Final flush while still armed, so the last live reading renders
+        // (#671 review F3).
+        stopFlushDriver()
         handsFreeArmed = false
         isRecording = false
-        stopFlushDriver()
         try? write(.stop)
     }
 
@@ -239,10 +253,14 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     /// assigned at most once per display frame, independent of the BLE
     /// notification rate (#671). Notifications never assign published values
     /// directly — they only mark `pendingPublish`.
+    ///
+    /// The timer IS the throttle: its fire cadence is display rate, and a fire
+    /// publishes whenever `pendingPublish` is set. There is deliberately no
+    /// time-gate inside — two throttles with the same period beat against each
+    /// other and drop a fraction of the fires (the #671 review's F1 finding).
     private func startFlushDriver() {
         guard flushTimer == nil else { return }
-        lastFlushTime = ProcessInfo.processInfo.systemUptime
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: flushScheduler.displayIntervalSeconds, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.flushIfDue()
         }
@@ -256,24 +274,32 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         #endif
     }
 
+    /// Invalidate the flush timer and publish any final pending frame so the
+    /// last samples of a pull always render — the metric card stays on screen
+    /// after Stop and would otherwise show a peak/elapsed one or two frames
+    /// behind the summary it just saved (#671 review F3). No-op when nothing
+    /// is pending.
     private func stopFlushDriver() {
         flushTimer?.invalidate()
         flushTimer = nil
-        pendingPublish = false
+        if pendingPublish {
+            pendingPublish = false
+            publishSnapshot()
+        }
         #if DEBUG
         publishesPerSecond = 0
         #endif
     }
 
     private func flushIfDue() {
-        let now = ProcessInfo.processInfo.systemUptime
+        // One cadence source: every timer fire with pending samples publishes.
+        // `pendingPublish` is the only gate (F1).
         guard pendingPublish else { return }
-        guard coalescer.shouldFlush(now: now, lastFlush: lastFlushTime) else { return }
-        lastFlushTime = now
         pendingPublish = false
-        updatePublishedValues()
+        publishSnapshot()
         #if DEBUG
         flushCountInSecond += 1
+        let now = ProcessInfo.processInfo.systemUptime
         if now - flushSecondStart >= 1.0 {
             publishesPerSecond = Double(flushCountInSecond) / (now - flushSecondStart)
             flushCountInSecond = 0
@@ -282,19 +308,45 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         #endif
     }
 
-    private func updatePublishedValues() {
-        if isRecording {
-            currentKilograms = accumulator.currentKilograms
-            peakKilograms = accumulator.peakKilograms
-            averageKilograms = accumulator.averageKilograms
-            elapsedMilliseconds = accumulator.elapsedMilliseconds
-        } else if handsFreeArmed {
-            // Armed but not yet recording: samples feed the hands-free loop,
-            // never the accumulator. The live reading comes from the last
-            // sample that marked `pendingPublish`.
-            currentKilograms = lastSampleKilograms
+    /// Assign the published force values from one flush's snapshot. Recording
+    /// publishes all five fields (one invalidation pulse); an armed-but-not-
+    /// recording stream publishes only the live reading (#671 review F8);
+    /// an idle stream publishes nothing.
+    private func publishSnapshot() {
+        let snapshot = ForcePublishSnapshotBuilder.snapshot(
+            isRecording: isRecording,
+            handsFreeArmed: handsFreeArmed,
+            lastSampleKilograms: lastSampleKilograms,
+            accumulator: accumulator
+        )
+        if snapshot.fields.contains(.currentKilograms) {
+            currentKilograms = snapshot.currentKilograms
         }
-        visibleSamples = Array(accumulator.visibleWindow())
+        if snapshot.fields.contains(.peakKilograms) {
+            peakKilograms = snapshot.peakKilograms
+        }
+        if snapshot.fields.contains(.averageKilograms) {
+            averageKilograms = snapshot.averageKilograms
+        }
+        if snapshot.fields.contains(.elapsedMilliseconds) {
+            elapsedMilliseconds = snapshot.elapsedMilliseconds
+        }
+        if snapshot.fields.contains(.window) {
+            visibleSamples = Array(accumulator.samples[snapshot.visibleRange])
+        }
+    }
+
+    /// Scene-phase pause (#671 review F6): while the app is backgrounded the
+    /// process suspends anyway, and re-creating the timer on foreground is
+    /// cheap — so the driver is torn down on leaving `.active` (dropping any
+    /// unsent `pendingPublish`; it was stalling the display-rate cadence for
+    /// nothing) and rebuilt by the normal `startFlushDriver()` path on return.
+    public func setFlushDriverPaused(_ paused: Bool) {
+        if paused {
+            stopFlushDriver()
+        } else if handsFreeArmed || isRecording {
+            startFlushDriver()
+        }
     }
 }
 
@@ -374,6 +426,10 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
             if isRecording {
                 interruptedSummary = accumulator.summary()
             }
+            // Final flush while the branch flags still identify the stream, so
+            // the last frame renders before the connection resets (#671 review
+            // F3).
+            stopFlushDriver()
             isRecording = false
             handsFreeArmed = false
             let message = error?.localizedDescription ?? "Progressor disconnected"
@@ -437,13 +493,13 @@ extension TindeqBluetooth: CBPeripheralDelegate {
         error: Error?
     ) {
         // #671: the delegate is already on `.main` — `CBCentralManager` is
-        // created with `queue: .main` (line 46), which is a documented
+        // created with `queue: .main` (line 43), which is a documented
         // guarantee that every delegate callback runs on the main thread. The
         // old per-notification `Task { @MainActor in … }` hop is therefore
         // redundant (a Task allocation + actor hop per notification). We take
-        // the main-actor call synchronously instead; in a DEBUG build
-        // `assumeIsolated` traps if the thread ever isn't main, so a future
-        // queue change fails loudly rather than silently hopping.
+        // the main-actor call synchronously instead; `assumeIsolated` traps
+        // (in release AND debug builds) if the thread ever isn't main, so a
+        // future queue change fails loudly rather than silently hopping.
         MainActor.assumeIsolated {
             guard error == nil, let data = characteristic.value else { return }
             switch TindeqFrameParser.parse(data) {

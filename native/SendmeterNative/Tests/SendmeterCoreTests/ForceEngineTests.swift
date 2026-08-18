@@ -101,63 +101,148 @@ final class ForceEngineTests: XCTestCase {
         XCTAssertEqual(accumulator.samples[range].first?.milliseconds, 9_000)
     }
 
-    /// #671: publishes are bounded to display rate, independent of the BLE
-    /// notification rate. The gate is pure so it is unit-tested here; the
-    /// transport runs it from a ~60 Hz flush driver.
-    func testPublishCoalescerGatesAtDisplayRate() {
-        let coalescer = ForcePublishCoalescer()
-        let interval = coalescer.displayIntervalSeconds // ~16.7 ms
+    /// #671: the shipped publish rule — a timer fire publishes iff a
+    /// notification has marked samples pending. The timer cadence is the one
+    /// and only throttle (the #671 review's F1 finding: two throttles with the
+    /// same period beat against each other and drop a fraction of the fires).
+    func testFlushSchedulerPublishesExactlyOnPendingFires() {
+        let scheduler = ForcePublishScheduler()
 
-        // No time elapsed: nothing to flush yet.
-        XCTAssertFalse(coalescer.shouldFlush(now: 0, lastFlush: 0))
-        // Just under the interval: still gated.
-        XCTAssertFalse(coalescer.shouldFlush(now: interval - 0.001, lastFlush: 0))
-        // Exactly at the interval: flush.
-        XCTAssertTrue(coalescer.shouldFlush(now: interval, lastFlush: 0))
-        // Well past it (e.g. BLE notifications far faster than display): still
-        // at most once per interval, never once per notification.
-        XCTAssertTrue(coalescer.shouldFlush(now: 10 * interval, lastFlush: 0))
+        // No pending samples since the last publish: the fire is a no-op.
+        XCTAssertFalse(scheduler.shouldPublishOnFire(pending: false))
+        // Pending samples: the fire publishes, regardless of how recently the
+        // previous one happened — the fire cadence is the only bound.
+        XCTAssertTrue(scheduler.shouldPublishOnFire(pending: true))
     }
 
-    /// #671 benchmark evidence (deterministic): at the web fake-gauge stream
-    /// rate (~12 ms / ~83 Hz, `src/hooks/useTindeq.ts:515-520`) and at a fast
-    /// real Progressor batch rate, the coalescer bounds publishes to display
-    /// rate (~60 Hz / 16.7 ms). Before this change there was NO gate at all —
-    /// one publish (5 @Published assignments + a window array copy) per
-    /// notification, i.e. ~83 publishes/sec at the fake-gauge rate.
-    func testPublishCoalescerBindsPublishesPerSecondAtStreamRate() {
-        let coalescer = ForcePublishCoalescer()
+    /// #671 benchmark evidence (deterministic, drives the SHIPPED scheduler
+    /// rule): the flush driver's timer fires at display interval (~16.7 ms)
+    /// and every pending fire publishes. BLE arrival rates do NOT matter — a
+    /// fire with no pending samples publishes nothing, so the publish rate is
+    /// exactly the timer cadence while the stream is saturated, with the
+    /// display-interval bound independent of the stream rate. This replaces
+    /// the review's F2 criticism: the old bench polled a time-gate at BLE
+    /// arrival times (an implementation that was never shipped) and hid the
+    /// F1 skip bug entirely; this one simulates the real 60 Hz fire sequence,
+    /// including realistic jitter, against the exact rule the driver runs.
+    func testPublishBenchDrivesShippedSchedulerAtTimerCadence() {
+        let scheduler = ForcePublishScheduler()
+        let interval = scheduler.displayIntervalSeconds
 
-        // Simulate one wall-clock second of notifications.
-        func publishesPerSecond(streamIntervalSeconds: Double) -> Int {
-            var lastFlush = 0.0
-            var flushCount = 0
-            var now = 0.0
-            while now < 1.0 {
-                if coalescer.shouldFlush(now: now, lastFlush: lastFlush) {
-                    lastFlush = now
-                    flushCount += 1
-                }
-                now += streamIntervalSeconds
+        func tickSequence(seconds: Double, withJitter: Bool) -> [Double] {
+            // A 60 Hz timer fires at-or-after each scheduled instant, with
+            // jitter that grows over a run. Model it as schedule + a slowly
+            // accumulating positive offset.
+            var times: [Double] = []
+            var elapsed = 0.0
+            var jitter = 0.0
+            while elapsed < seconds {
+                jitter += withJitter ? 0.0004 : 0.0
+                elapsed += interval + jitter
+                times.append(elapsed)
             }
-            return flushCount
+            return times
         }
 
-        // Fake-gauge rate (~83 Hz).
-        let atFakeGauge = publishesPerSecond(streamIntervalSeconds: 1.0 / 83.0)
-        // A fast Progressor batch rate (~100 Hz).
-        let atFastBatches = publishesPerSecond(streamIntervalSeconds: 1.0 / 100.0)
+        // Saturate every fire: a fast stream keeps `pending` true between fires.
+        func publishesPerSecond(fireTimes: [Double], alwaysPending: Bool) -> Int {
+            var count = 0
+            for fire in fireTimes {
+                if scheduler.shouldPublishOnFire(pending: alwaysPending) {
+                    count += 1
+                }
+            }
+            return count
+        }
 
-        XCTAssertLessThanOrEqual(atFakeGauge, 60)
-        XCTAssertLessThanOrEqual(atFastBatches, 60)
-        // Both are bounded to display rate, NOT stream rate.
-        XCTAssertLessThan(atFakeGauge, 83)
-        XCTAssertLessThan(atFastBatches, 100)
-        // The bound holds even when the stream is far faster than the display:
-        // a 10x faster stream must NOT scale the publish count 10x (it stays
-        // within the same display-rate budget; a few Hz of phase quantization
-        // is expected).
-        XCTAssertLessThan(atFastBatches, atFakeGauge * 2)
+        // At a true ~60 Hz cadence (with jitter) over one second, saturated:
+        // publishes equal fires — every fire that has data publishes.
+        let jitteryFires = tickSequence(seconds: 1.0, withJitter: true)
+        let saturatedPublishes = publishesPerSecond(fireTimes: jitteryFires, alwaysPending: true)
+        XCTAssertEqual(saturatedPublishes, jitteryFires.count, "every pending fire must publish")
+        // Bounded at display rate (60 Hz cadence + jitter) — a real 120 Hz
+        // stream can never push this higher.
+        XCTAssertLessThanOrEqual(saturatedPublishes, 61)
+
+        // Stream-rate independence: a far faster stream marks `pending` between
+        // fires too, and publishes are STILL the fire count — not stream count.
+        let idleFires = tickSequence(seconds: 1.0, withJitter: true)
+        let idlePublishes = publishesPerSecond(fireTimes: idleFires, alwaysPending: false)
+        XCTAssertEqual(idlePublishes, 0, "fires without pending data publish nothing")
+
+        // The F1 skip fraction is zero by construction: no time-gate drops a
+        // fire. Every fire with pending samples published.
+        XCTAssertEqual(saturatedPublishes, jitteryFires.count)
+    }
+
+    /// #671: the published snapshot has exactly one field set while a stream
+    /// is merely armed (the live reading) and all five while recording —
+    /// the two objectWillChange pulses the review flagged in F8 collapse to
+    /// one per flush.
+    func testSnapshotBuilderPublishesSinglePulseWhileArmed() {
+        var accumulator = ForceSessionAccumulator()
+        accumulator.append((0..<20).map {
+            TindeqWireSample(microseconds: UInt32($0 * 1_000_000), kilograms: Double($0))
+        })
+
+        // Armed but not recording: only the live reading is published.
+        let armed = ForcePublishSnapshotBuilder.snapshot(
+            isRecording: false,
+            handsFreeArmed: true,
+            lastSampleKilograms: 42,
+            accumulator: accumulator
+        )
+        XCTAssertEqual(armed.fields, [.currentKilograms])
+        XCTAssertEqual(armed.currentKilograms, 42)
+        XCTAssertFalse(armed.fields.contains(.peakKilograms))
+        XCTAssertFalse(armed.fields.contains(.window))
+
+        // Recording: the full force surface + window.
+        let recording = ForcePublishSnapshotBuilder.snapshot(
+            isRecording: true,
+            handsFreeArmed: false,
+            lastSampleKilograms: 42,
+            accumulator: accumulator
+        )
+        XCTAssertEqual(recording.fields, .all)
+        XCTAssertEqual(recording.currentKilograms, 19)
+        XCTAssertEqual(recording.peakKilograms, 19)
+        XCTAssertEqual(recording.averageKilograms, 9.5)
+        XCTAssertEqual(recording.elapsedMilliseconds, 19_000)
+        // The window range is the same binary search the chart's 10 s window
+        // uses — wired from the accumulator's visibleRange.
+        XCTAssertEqual(recording.visibleRange, accumulator.visibleRange())
+
+        // Idle stream: nothing publishes.
+        let idle = ForcePublishSnapshotBuilder.snapshot(
+            isRecording: false,
+            handsFreeArmed: false,
+            lastSampleKilograms: 0,
+            accumulator: accumulator
+        )
+        XCTAssertEqual(idle.fields, [])
+        XCTAssertEqual(idle, .idle)
+    }
+
+    /// #671: the snapshot's window range reads over the accumulator's stable
+    /// storage — the chart slices `samples[visibleRange]` at flush time, the
+    /// only window copy left, at display rate rather than notification rate.
+    func testSnapshotWindowRangeSlicesAccumulatorStorage() {
+        var accumulator = ForceSessionAccumulator()
+        accumulator.append((0..<20).map {
+            TindeqWireSample(microseconds: UInt32($0 * 1_000_000), kilograms: Double($0))
+        })
+
+        let snapshot = ForcePublishSnapshotBuilder.snapshot(
+            isRecording: true,
+            handsFreeArmed: false,
+            lastSampleKilograms: 0,
+            accumulator: accumulator
+        )
+        let window = Array(accumulator.samples[snapshot.visibleRange])
+        XCTAssertEqual(window.count, 11)
+        XCTAssertEqual(window.first?.milliseconds, 9_000)
+        XCTAssertEqual(window.last?.milliseconds, 19_000)
     }
 
     func testProtocolScheduleAlternatesSidesWithoutDuplicatingReverseActionSets() {

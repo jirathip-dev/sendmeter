@@ -1054,9 +1054,16 @@ public final class AppModel: ObservableObject {
     public func scenePhaseChanged(_ phase: ScenePhase) {
         if phase == .active {
             updateKeepAwake()
+            // #671: resume the display-rate flush driver for a live stream
+            // (recording/armed) torn down on backgrounding.
+            tindeq.setFlushDriverPaused(false)
         } else {
             keepAwakeRelease?()
             keepAwakeRelease = nil
+            // #671 review F6: backgrounding suspends the process anyway, so
+            // tear the flush timer down rather than let it fire into a
+            // non-rendering app; foreground re-creates it.
+            tindeq.setFlushDriverPaused(true)
         }
     }
 

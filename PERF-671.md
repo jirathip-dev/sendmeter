@@ -26,73 +26,98 @@ The native BLE→UI path was *less* coalesced than the web version it replaces:
 1. **Display-rate flush driver** (`TindeqBluetooth.swift`): BLE notifications
    now only accumulate into `ForceSessionAccumulator` and set a `pendingPublish`
    flag. A ~60 Hz `Timer` (added to `.common` runloop mode so it keeps firing
-   during scroll tracking) flushes the 5 published values at most once per
-   display interval, gated by a pure, unit-tested `ForcePublishCoalescer`
-   (`ForceEngine.swift`). Timer lifecycle: started when a stream is live
-   (recording or hands-free-armed), stopped on stop/disarm/disconnect/reset.
-2. **Zero-copy window** (`ForceEngine.swift`): `visibleWindow()` now returns an
-   `ArraySlice` over the accumulator's stable `samples` storage (O(log n)
-   binary search + O(1) slice). The accumulator's buffer is only reallocated
-   by appends, not per-notification copies. The chart does one `Array(...)`
-   copy at flush time (≤60 Hz), which is a deliberate display-rate copy over
-   stable storage — never a per-notification hot-path allocation.
+   during scroll tracking) flushes the published values at most once per
+   display frame. **The timer IS the throttle — one cadence source.** A fire
+   publishes iff `pendingPublish` is set; there is deliberately no second
+   time-gate. (An early revision gated each fire on
+   `now - lastFlushTime >= 1/60 s`; two throttles with the same period beat
+   against each other and dropped 22–43% of the fires — a 30–50 Hz irregular
+   trace, the issue's fail condition. Removed in review; the scheduler test
+   pins the no-skip invariant.)
+2. **Window published as a range over stable storage** (`ForceEngine.swift`):
+   `ForcePublishSnapshotBuilder` computes `ForceSessionAccumulator.visibleRange`
+   at flush time; the driver then does exactly **one `Array(accumulator.samples[
+   visibleRange])` copy at flush time** — display rate, never notification rate.
+   The accumulator buffer itself is only reallocated by appends. The old
+   `visibleWindow()` zero-copy `ArraySlice` still exists as the seam's
+   proof-of-storage-sharing, but the shipped publish path reads the range. This
+   is a copy, not "zero-copy": the chart needs a value array, and a raw
+   published slice would retain the accumulator buffer (paying a full-array
+   CoW on every later append). `#671` makes the copy *less frequent*, which is
+   the win.
 3. **`Task { @MainActor }` hop dropped** in `didUpdateValueFor`: the delegate
    already runs on `.main`; the body now runs under `MainActor.assumeIsolated`
    (the class is `@MainActor`), eliminating a per-notification Task
-   allocation + actor hop.
+   allocation + actor hop. (Other CB delegates still hop; verified safe — see
+   the review's F7 trace.)
 4. **Hands-free arming unaffected**: `onWeightSample` still feeds every parsed
    sample to the arming loop pre-start; pre-start samples still never enter
    the accumulator. The armed-but-not-recording live reading is published from
-   `lastSampleKilograms` at flush time.
-5. **Debug evidence counter**: DEBUG builds publish `publishesPerSecond` (the
+   `lastSampleKilograms` at flush time — **and is the only field published
+   while armed** (a single `objectWillChange` pulse per flush, not two).
+5. **Final flush on stop** (`stopFlushDriver`): every exit path
+   (stop/disarm/disconnect/reset) publishes any pending frame before
+   invalidating the timer, so the post-stop metric card's peak/elapsed match
+   the summary that was just saved.
+6. **Debug evidence counter**: DEBUG builds publish `publishesPerSecond` (the
    flush driver's measured publish rate, zero outside DEBUG), so the
    coalescing win is observable at runtime in the simulator with the fake
    transport.
 
 ## Evidence — publishes/sec at stream rates
 
-Deterministic bench of the coalescer gate (the same math the flush driver
-runs), simulated over one wall-clock second of notifications:
+The publish rate of the **shipped driver** is exactly the timer cadence: the
+60 Hz fire sequence with realistic jitter, and each pending fire publishes
+(no skip). The test
+`testPublishBenchDrivesShippedSchedulerAtTimerCadence` drives the actual
+scheduler rule with a simulated 60 Hz fire sequence (schedule + accumulating
+jitter) and counts publishes:
 
-| Stream | Rate | Before (no gate) | After (coalesced) |
+| Stream | Rate | Before (no coalescing) | After (shipped driver) |
 |---|---|---|---|
-| Fake-gauge (`?fake-tindeq`, `useTindeq.ts:515-520`) | ~83 Hz (12 ms) | **~83 publishes/s** | **41 publishes/s** |
-| Fast Progressor batches | ~100 Hz (10 ms) | ~100 publishes/s | **49 publishes/s** |
-| Real Progressor stream | ~80 Hz (12.5 ms) | ~80 publishes/s | **40 publishes/s** |
+| Fake-gauge (`?fake-tindeq`, `useTindeq.ts:515-520`) | ~83 Hz (12 ms) | **~83 publishes/s** (one per notification) | **~60 publishes/s** (every 16.7 ms fire; F1-skip fraction 0) |
+| Fast Progressor batches | ~100 Hz (10 ms) | ~100 publishes/s | **~60 publishes/s** (same cadence) |
+| Real Progressor stream | ~80 Hz (12.5 ms) | ~80 publishes/s | **~60 publishes/s** (same cadence) |
 
-Before: one publish (5 `@Published` assignments + an O(window) array copy) per
-notification. After: publishes are bounded at display rate (≤ ~60 Hz budget;
-the sub-60 counts above are the gate's phase quantization in a 1 s
-simulation) and *independent* of the BLE rate — a 100 Hz stream publishes at
-the same display-rate budget as an 83 Hz stream, not 100 Hz worth of SwiftUI
-invalidation.
+The "~83 Hz" rows are the *arrival rates* the timer's fires get saturated by —
+publishes are independent of them. The bounded number is the driver's display
+cadence, and every fire publishes (the review's F1 skip fraction, 22–43%, is
+zero by construction — the scheduler test asserts it). Before: one publish
+(5 `@Published` assignments + an O(window) array copy) per notification. After:
+one `objectWillChange` pulse per 16.7 ms timer fire with pending samples, and
+one window copy per fire — never per notification.
 
-The per-notification O(window) copy is gone from the hot path entirely: the
-allocation test `ForceEngineTests.testVisibleWindowIsZeroCopySliceOverStableStorage`
-proves by pointer identity that `visibleWindow()` shares the accumulator's
-buffer (no copy), and `testPublishCoalescerBindsPublishesPerSecondAtStreamRate`
-pins the bounded-publishes invariant. The one remaining window copy is at
-flush time — display rate, not notification rate.
+The DEBUG `publishesPerSecond` counter (a real in-app measurement) reads the
+same number on a live fake-gauge run in the simulator: it counts flushed
+publishes per second in `flushIfDue`. The deterministic bench above reproduces
+it exactly (the counter divides the same count by the same elapsed time).
+
+The per-notification O(window) copy is gone from the hot path entirely. What
+remains is the single `Array(...)` at flush time — display rate, not
+notification rate.
 
 ## Acceptance criteria
 
 - ✅ View-body evaluations bounded at ≤ display rate, independent of BLE rate:
-  `ForcePublishCoalescer` gates flushes to `1/60 s`; tests prove the bound
-  holds at 83 Hz and 100 Hz streams.
-- ✅ No per-notification O(window) copy on the hot path: `visibleWindow()` is a
-  zero-copy `ArraySlice` (pointer-identity allocation test on
-  `ForceSessionAccumulator`).
-- ✅ `swift test` stays green (280 tests, 0 failures); hands-free arming
-  unaffected (pre-start samples still consumed only by `onWeightSample`; new
-  tests cover the window/range/coalescer seams).
-- ✅ Evidence above (debug counter + deterministic bench at fake-gauge stream
-  rate).
+  the timer's fire cadence is the one and only throttle; every pending fire
+  publishes; the bench drives the shipped scheduler rule at a jittered 60 Hz
+  sequence and asserts the bound and the zero-skip invariant.
+- ✅ No per-notification O(window) copy on the hot path: notifications only
+  append + set `pendingPublish`; the window copy happens once per flush from
+  the accumulator's stable storage.
+- ✅ `swift test` stays green (282 tests, 0 failures); hands-free arming
+  unaffected (pre-start samples still consumed only by `onWeightSample`); new
+  tests cover the scheduler cadence/no-skip, the snapshot branch fields (F8),
+  and the window-range slice.
+- ✅ Evidence above (deterministic bench driving the shipped scheduler at the
+  fake-gauge stream rate + the DEBUG in-app counter that reads the same
+  number).
 
 ## Gates run
 
 ```
 cd native/SendmeterNative
-swift test                       # 280 tests, 0 failures
+swift test                       # 282 tests, 0 failures
 xcodegen generate                # OK
 xcodebuild -project SendmeterNative.xcodeproj \
   -scheme SendmeterNative \
