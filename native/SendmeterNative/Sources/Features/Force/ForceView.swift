@@ -214,10 +214,22 @@ struct ForceView: View {
                     ForceProtocolLibraryCard(
                         presets: model.presets,
                         run: { preset in
+                            // #656: a tap opening the fullscreen arms the
+                            // presentation tick (the guided protocol view
+                            // spends it on appear).
+                            Haptics.shared.tap()
                             launch(preset)
                         },
-                        edit: { editingPreset = $0 },
-                        create: { creatingPreset = true },
+                        edit: {
+                            // #656: see `run:` above.
+                            Haptics.shared.tap()
+                            editingPreset = $0
+                        },
+                        create: {
+                            // #656: see `run:` above.
+                            Haptics.shared.tap()
+                            creatingPreset = true
+                        },
                         delete: { preset in Task { await model.deletePreset(preset) } }
                     )
 
@@ -245,9 +257,11 @@ struct ForceView: View {
             }
             .sheet(item: $editingPreset) { preset in
                 ForcePresetEditor(preset: preset, isNew: false)
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .sheet(isPresented: $creatingPreset) {
                 ForcePresetEditor(preset: Self.defaultPreset(), isNew: true)
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .fullScreenCover(item: $runningProtocol) { launch in
                 GuidedForceProtocolView(
@@ -263,15 +277,25 @@ struct ForceView: View {
         }
     }
 
+    /// #656: a refused start fires the warning pattern, never the accepted
+    /// light tick (#222). The Start/Arm buttons are genuinely `disabled` only
+    /// for an unsaved recording (those fire nothing); every other refusal —
+    /// gauge not connected, previous pull still owed — is a deliberate
+    /// "kept clickable so the tap can say why" and must NOT feel accepted.
+    private func refuseStart(_ message: String) {
+        model.errorMessage = message
+        Haptics.shared.play(RefusedActionHaptics.cue(tappableAndRefused: true))
+    }
+
     private func startMeasurement() {
         guard !model.tindeq.hasUnsavedRecording else {
-            model.errorMessage = "Save or discard the previous pull before starting another."
+            refuseStart("Save or discard the previous pull before starting another.")
             return
         }
         do {
             try model.tindeq.startMeasuring()
         } catch {
-            model.errorMessage = error.localizedDescription
+            refuseStart(error.localizedDescription)
         }
     }
 
@@ -279,11 +303,11 @@ struct ForceView: View {
     /// loop instead of recording immediately.
     private func armHandsFree() {
         guard !model.tindeq.hasUnsavedRecording else {
-            model.errorMessage = "Save or discard the previous pull before starting another."
+            refuseStart("Save or discard the previous pull before starting another.")
             return
         }
         guard model.tindeq.status == .connected else {
-            model.errorMessage = "Connect the Progressor before arming hands-free."
+            refuseStart("Connect the Progressor before arming hands-free.")
             return
         }
         publishFreePullContext()
@@ -304,7 +328,7 @@ struct ForceView: View {
             return
         }
         guard let summary = model.tindeq.stopMeasuring() else {
-            model.errorMessage = "No force samples were received."
+            refuseStart("No force samples were received.")
             return
         }
         save(summary, recovered: false)
@@ -385,11 +409,11 @@ struct ForceView: View {
 
     private func launch(_ preset: TindeqPreset) {
         guard !model.tindeq.hasUnsavedRecording else {
-            model.errorMessage = "Save or discard the previous pull before starting a guided protocol."
+            refuseStart("Save or discard the previous pull before starting a guided protocol.")
             return
         }
         guard model.tindeq.status == .connected else {
-            model.errorMessage = "Connect the Progressor before starting a guided protocol."
+            refuseStart("Connect the Progressor before starting a guided protocol.")
             return
         }
         // #653: only a persisted user preset keeps the metadata picker in
@@ -581,6 +605,9 @@ private struct ForceDeviceCard: View {
         }
         .alert("Discard unsaved pull?", isPresented: $showingDiscardConfirmation) {
             Button("Discard", role: .destructive) {
+                // #656: a confirmed destructive action fires the medium tick
+                // once per gesture.
+                Haptics.shared.play(.medium)
                 if discardIsRecovered { discardRecovered() }
                 else { discardCompleted() }
             }
@@ -1337,6 +1364,15 @@ private struct GuidedForceProtocolView: View {
     @State private var savedCount = 0
     @State private var interrupted = false
     @State private var claimedStageIDs = Set<UUID>()
+    /// #656: idempotence for the segment-transition cue — the FIRST observed
+    /// stage (prepare, or work on a no-prepare run) never re-cues (web
+    /// "Normal protocols do not re-cue their first visible segment"), and
+    /// every later stage cues exactly once per transition.
+    @State private var hasObservedFirstStage = false
+    /// #656: the last hands-free status a cue was fired for (armed → 80 ms,
+    /// measuring → 150 ms) — the web fires once per status CHANGE, not per
+    /// feed sample, so the guard is a change check against this.
+    @State private var lastHandsFreeHaptic: HandsFreeHapticState?
 
     let preset: TindeqPreset
     let targetPlan: ForceTargetPlan
@@ -1452,6 +1488,9 @@ private struct GuidedForceProtocolView: View {
             }
             .onAppear {
                 run.start()
+                // #656: the Run tap armed this presentation — give the
+                // fullscreen the sheet tick, gated on that gesture.
+                Haptics.shared.sheetPresented()
                 // #628: hands-free arming + the lock-screen mirror own the
                 // run while this view is up; the device card's automatic
                 // stop/save loop must not intercept a stage's release.
@@ -1471,6 +1510,8 @@ private struct GuidedForceProtocolView: View {
                 model.handsFree.stopPolicy = .automatic
                 model.handsFree.disarm()
                 model.guidedActivity.end(immediate: true)
+                hasObservedFirstStage = false
+                lastHandsFreeHaptic = nil
             }
         }
     }
@@ -1525,8 +1566,38 @@ private struct GuidedForceProtocolView: View {
             return
         }
 
+        // #656: hands-free armed → single 80 ms, measuring → single 150 ms,
+        // once per status CHANGE (the web's lastHandsFreeStatusRef effect).
+        // Gated on this fullscreen being hands-free; free pulls on the Force
+        // tab keep the transport's own haptics (none here).
+        if handsFreeEnabled {
+            let next: HandsFreeHapticState?
+            if model.handsFree.isMeasuring {
+                next = .measuring
+            } else if model.handsFree.isArmed {
+                next = .armed
+            } else {
+                next = nil
+            }
+            if next != lastHandsFreeHaptic {
+                lastHandsFreeHaptic = next
+                if let next {
+                    Haptics.shared.play(HandsFreeHaptics.cue(for: next))
+                }
+            }
+        }
+
         if observedStageID != run.currentStage.id {
             observedStageID = run.currentStage.id
+            // #656: the web cues segment transitions in rhythm
+            // (`ForceFullscreen.tsx`); native plays the same pattern once per
+            // transition. The first observed stage is skipped, matching the
+            // web's no-re-cue rule for the opening segment.
+            if hasObservedFirstStage {
+                Haptics.shared.play(GuidedTransitionHaptics.cue(entering: run.currentStage.kind))
+            } else {
+                hasObservedFirstStage = true
+            }
             // #628: hands-free arming gates the START of a work stage on the
             // load actually being applied; the stage timer still owns every
             // stop/save, so save-per-hold stays intact.

@@ -49,6 +49,12 @@ struct ReadinessTrendCard: View {
         }
     }
 
+    /// #656: one selection tick per day crossed while scrubbing — never one
+    /// per drag frame, and zero when the finger stays within one band. The
+    /// guard reads the previously ticked day (a ref), so the value-change
+    /// decision can't come from a state snapshot that lags the gesture.
+    @State private var tickedDay: ReadinessDay?
+
     /// Zone-threshold color for a day's bar — same mapping as the web's
     /// `ZONE_COLORS` (push → optimal/blue, maintain → caution/yellow,
     /// recover → alert/orange). A missing zone falls back to the reference.
@@ -136,6 +142,17 @@ struct ReadinessTrendCard: View {
             baseChart
                 .frame(height: 170)
                 .chartXSelection(value: $selectedDate)
+                .onChange(of: selectedDate) { _ in
+                    // #656: scrub tick — once per value change (the day under
+                    // the finger), never per drag frame. A second pass over
+                    // the same day is silent; the ref (not a captured value)
+                    // is what makes the guard correct mid-gesture.
+                    if let selected, SelectionHaptics.valueChanged(tickedDay, selected) {
+                        tickedDay = selected
+                        Haptics.shared.play(.light)
+                    }
+                }
+                .onDisappear { tickedDay = nil }
                 .chartOverlay { proxy in
                     GeometryReader { geo in
                         if selectedDate != nil, let selected {

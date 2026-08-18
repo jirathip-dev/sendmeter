@@ -159,6 +159,10 @@ public final class AppModel: ObservableObject {
     /// `FOREGROUND_SYNC_COALESCE_MS` (5s).
     private let healthRefreshPolicy = HealthRefreshPolicy(coalescingWindow: 5)
     private var lastHealthRefreshStartedAt: TimeInterval?
+    /// #656: the previously observed transport status, so the connect
+    /// success / drop error haptics fire once per transition (never when
+    /// `stopMeasuring()` re-sets `.connected` after a rep).
+    private var lastTransportStatus: TindeqBluetooth.Status?
 
     /// Live workout mirror cursor (two producers: WC beat + realtime row,
     /// one merge discipline — see LiveWorkoutMirror).
@@ -282,11 +286,29 @@ public final class AppModel: ObservableObject {
         // a guided protocol is running, whose interrupted path preserves the
         // final rep and then ends the session itself (so the last rep can
         // never be orphaned into a fresh group by a racing end). The
-        // keep-awake hold follows the transport + arming state.
+        // keep-awake hold follows the transport + arming state. #656: the
+        // transport's transitions carry the success/error haptics — connect
+        // succeeds, a drop (or deliberate disconnect) errors. The success
+        // fires ONLY on a `.connecting`/`.scanning` → `.connected` transition,
+        // never when `stopMeasuring()` re-sets `.connected` after a rep.
         tindeq.$status
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
                 guard let self else { return }
+                let previous = self.lastTransportStatus
+                self.lastTransportStatus = status
+                switch (previous, status) {
+                case (.connecting?, .connected), (.scanning?, .connected), (.idle?, .connected), (nil, .connected):
+                    Haptics.shared.play(.success)
+                case (_, .interrupted), (_, .unavailable):
+                    Haptics.shared.play(.error)
+                case let (_, .idle):
+                    if let previous, previous != .idle, previous != .unavailable {
+                        Haptics.shared.play(.error)
+                    }
+                default:
+                    break
+                }
                 if case .interrupted = status {
                     self.handsFree.handleDisconnected()
                     if !self.guidedProtocolActive {

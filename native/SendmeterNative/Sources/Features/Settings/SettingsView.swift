@@ -28,15 +28,27 @@ struct SettingsView: View {
                 model.watch.refreshPairingState()
                 await model.refreshAll(showSpinner: false)
             }
-            .sheet(isPresented: $showingBlocks) { PhasesView() }
-            .sheet(isPresented: $showingExercises) { TagManagerView() }
-            .sheet(isPresented: $showingDeleteAccount) { DeleteAccountSheet() }
+            .sheet(isPresented: $showingBlocks) {
+                PhasesView()
+                    .onAppear { Haptics.shared.sheetPresented() }
+            }
+            .sheet(isPresented: $showingExercises) {
+                TagManagerView()
+                    .onAppear { Haptics.shared.sheetPresented() }
+            }
+            .sheet(isPresented: $showingDeleteAccount) {
+                DeleteAccountSheet()
+                    .onAppear { Haptics.shared.sheetPresented() }
+            }
             .confirmationDialog(
                 signOutRemainderTitle,
                 isPresented: signOutRemainderBinding,
                 titleVisibility: .visible
             ) {
                 Button("Sign Out", role: .destructive) {
+                    // #656: a confirmed destructive action carries the medium
+                    // tick — once per gesture (the dialog's confirm tap).
+                    Haptics.shared.play(.medium)
                     model.resolveSignOutRemainder(.signOut)
                 }
                 Button("Stay Signed In", role: .cancel) {
@@ -97,7 +109,11 @@ struct SettingsView: View {
 
     private var trainingSection: some View {
         Section("Training") {
-            Button { showingBlocks = true } label: {
+            Button {
+                // #656: a tap opening a sheet arms the presentation tick.
+                Haptics.shared.tap()
+                showingBlocks = true
+            } label: {
                 HStack {
                     Label("Training Blocks", systemImage: "square.stack.3d.up.fill")
                     Spacer()
@@ -112,7 +128,11 @@ struct SettingsView: View {
             // #631: the exercise tag registry (SL-92) — rename a tag across
             // every recording, or hide it from the Force picker + History
             // list, without deleting anything.
-            Button { showingExercises = true } label: {
+            Button {
+                // #656: a tap opening a sheet arms the presentation tick.
+                Haptics.shared.tap()
+                showingExercises = true
+            } label: {
                 HStack {
                     Label("Exercises", systemImage: "tag")
                     Spacer()
@@ -277,12 +297,17 @@ struct SettingsView: View {
     private var destructiveSection: some View {
         Section {
             Button(role: .destructive) {
+                // #656: a refused (disabled) control fires nothing — this is
+                // genuinely disabled while signing out, so no warning. The
+                // confirm at the remainder dialog carries the medium tick.
                 Task { await model.signOut() }
             } label: {
                 Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
             }
             .disabled(model.isSigningOut)
             Button(role: .destructive) {
+                // #656: a tap opening a sheet arms the presentation tick.
+                Haptics.shared.tap()
                 showingDeleteAccount = true
             } label: {
                 Label("Delete Account", systemImage: "person.crop.circle.badge.minus")
@@ -335,6 +360,9 @@ private struct DeleteAccountSheet: View {
                 }
                 Section {
                     Button(role: .destructive) {
+                        // #656: the confirmed destructive action fires the
+                        // medium tick once per gesture.
+                        Haptics.shared.play(.medium)
                         deleting = true
                         Task {
                             await model.deleteAccount()

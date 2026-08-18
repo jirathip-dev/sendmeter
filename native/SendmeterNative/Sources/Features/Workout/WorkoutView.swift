@@ -19,8 +19,17 @@ struct WorkoutView: View {
                     if engine == nil {
                         StartWorkoutCard(start: startWorkout)
                         RoutineLibraryCard(
-                            run: { runningRoutine = RoutineRunPresentation(preset: $0, restored: nil) },
-                            edit: { showRoutineEditor = true }
+                            run: { preset in
+                                // #656: a tap opening a sheet arms the
+                                // presentation tick.
+                                Haptics.shared.tap()
+                                runningRoutine = RoutineRunPresentation(preset: preset, restored: nil)
+                            },
+                            edit: {
+                                // #656: see `run:` above.
+                                Haptics.shared.tap()
+                                showRoutineEditor = true
+                            }
                         )
                     } else {
                         ActiveWorkoutCard(
@@ -36,9 +45,11 @@ struct WorkoutView: View {
             .navigationTitle("Workout")
             .sheet(isPresented: $showRoutineEditor) {
                 RoutineEditorSheet()
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .sheet(item: $runningRoutine) { presentation in
                 RoutineRunnerSheet(presentation: presentation)
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .task {
                 guard !hasResolvedPersistedRun else { return }
@@ -574,6 +585,9 @@ private struct RoutineEditorSheet: View {
                         }
                         .swipeActions {
                             Button(role: .destructive) {
+                                // #656: a confirmed destructive action fires
+                                // the medium tick once per gesture.
+                                Haptics.shared.play(.medium)
                                 steps.removeAll { $0.id == step.id }
                             } label: { Label("Delete", systemImage: "trash") }
                         }

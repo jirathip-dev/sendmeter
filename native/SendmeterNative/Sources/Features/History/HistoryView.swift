@@ -151,7 +151,12 @@ struct HistoryView: View {
             .searchable(text: $query, prompt: searchPrompt)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button { showingTrash = true } label: {
+                    Button {
+                        // #656: a tap opening a sheet arms the presentation
+                        // tick.
+                        Haptics.shared.tap()
+                        showingTrash = true
+                    } label: {
                         Label("Trash", systemImage: "trash")
                     }
                 }
@@ -159,12 +164,15 @@ struct HistoryView: View {
             .refreshable { await model.refreshAll(showSpinner: false) }
             .sheet(item: $editingSession) { session in
                 SessionEditorSheet(session: session)
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .sheet(isPresented: $showingTrash) {
                 TrashView()
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .sheet(isPresented: $assignOpen) {
                 SelectionAssignSheet(recordings: selectedRecordings)
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 selectionBar
@@ -399,7 +407,11 @@ struct HistoryView: View {
                 Button(role: .destructive) { delete(session) } label: {
                     Label("Trash", systemImage: "trash")
                 }
-                Button { editingSession = session } label: {
+                Button {
+                    // #656: a tap opening a sheet arms the presentation tick.
+                    Haptics.shared.tap()
+                    editingSession = session
+                } label: {
                     Label("Edit", systemImage: "pencil")
                 }
                 .tint(SendmeterStyle.primary)
@@ -409,11 +421,19 @@ struct HistoryView: View {
                 row
             }
             .buttonStyle(.plain)
+            .simultaneousGesture(TapGesture().onEnded {
+                // #656: a tap opening a sheet arms the presentation tick.
+                Haptics.shared.tap()
+            })
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) { delete(session) } label: {
                     Label("Trash", systemImage: "trash")
                 }
-                Button { editingSession = session } label: {
+                Button {
+                    // #656: a tap opening a sheet arms the presentation tick.
+                    Haptics.shared.tap()
+                    editingSession = session
+                } label: {
                     Label("Edit", systemImage: "pencil")
                 }
                 .tint(SendmeterStyle.primary)
@@ -422,10 +442,15 @@ struct HistoryView: View {
     }
 
     private func delete(_ session: SendmeterCore.Session) {
+        // #656: a confirmed destructive action fires the medium tick once per
+        // gesture (the swipe-action trash tap or the confirmation dialog's).
+        Haptics.shared.play(.medium)
         Task { await model.deleteSession(session) }
     }
 
     private func delete(_ recording: TindeqRecording) {
+        // #656: see `delete(_ session:)`.
+        Haptics.shared.play(.medium)
         Task { await model.deleteRecording(recording) }
     }
 
@@ -576,7 +601,12 @@ struct HistoryView: View {
                     .buttonStyle(PrimaryActionButtonStyle())
                     .disabled(creating)
                     if !tindeqSessions.isEmpty {
-                        Button { assignOpen = true } label: { Text("Assign…") }
+                        Button {
+                            // #656: a tap opening a sheet arms the
+                            // presentation tick.
+                            Haptics.shared.tap()
+                            assignOpen = true
+                        } label: { Text("Assign…") }
                             .buttonStyle(.bordered)
                             .disabled(creating)
                     }
@@ -924,6 +954,8 @@ struct ForceRecordingDetailView: View {
                 }
 
                 Button {
+                    // #656: a tap opening a sheet arms the presentation tick.
+                    Haptics.shared.tap()
                     showingLinkSheet = true
                 } label: {
                     Label(
@@ -943,6 +975,7 @@ struct ForceRecordingDetailView: View {
         .task { await loadSamples() }
         .sheet(isPresented: $showingLinkSheet) {
             LinkRecordingSheet(recordings: [recording])
+                .onAppear { Haptics.shared.sheetPresented() }
         }
     }
 
@@ -1154,6 +1187,9 @@ private struct TrashView: View {
                     let recording = recordingToPurge
                     sessionToPurge = nil
                     recordingToPurge = nil
+                    // #656: a confirmed destructive action fires the medium
+                    // tick once per gesture.
+                    Haptics.shared.play(.medium)
                     Task {
                         if let session { await model.purgeSession(session) }
                         if let recording { await model.purgeRecording(recording) }
