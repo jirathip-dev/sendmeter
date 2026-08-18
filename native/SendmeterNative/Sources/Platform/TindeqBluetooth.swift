@@ -27,6 +27,11 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     /// keeps the stream live BEFORE the recording begins). The pre-start
     /// samples drive the hands-free trigger and must never be saved.
     @Published public private(set) var handsFreeArmed = false
+    /// Publishes/sec of the force surface, bounded to display rate by the
+    /// flush driver (#671). Debug-only; zero outside DEBUG builds.
+    #if DEBUG
+    @Published public private(set) var publishesPerSecond: Double = 0
+    #endif
 
     /// Every parsed weight sample, recording or not — the hands-free arming
     /// loop's feed. Set once by AppModel; never mutated by callers.
@@ -43,6 +48,23 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     private var isRecording = false
     private var connectRequested = false
     private var interruptedSummary: ForceSummary?
+    /// #671: publishes are coalesced to display rate instead of firing per
+    /// BLE notification. Notifications only accumulate; a ~60 Hz flush timer
+    /// (running while a stream is live) assigns the published values — the
+    /// window included — at most once per display frame. The accumulator is
+    /// the source of truth; the flush reads cheap computed values off it, so
+    /// the hot path stays allocation-free.
+    private var flushTimer: Timer?
+    private var lastFlushTime: TimeInterval = 0
+    private var pendingPublish = false
+    /// The last sample while hands-free-armed (pre-recording): the accumulator
+    /// holds nothing yet, so the live reading comes from here (#671).
+    private var lastSampleKilograms: Double = 0
+    private var coalescer = ForcePublishCoalescer()
+    #if DEBUG
+    private var flushCountInSecond = 0
+    private var flushSecondStart: TimeInterval = 0
+    #endif
 
     public override init() {
         super.init()
@@ -64,6 +86,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         connectRequested = false
         isRecording = false
         handsFreeArmed = false
+        stopFlushDriver()
         if let peripheral {
             central.cancelPeripheralConnection(peripheral)
         } else {
@@ -85,6 +108,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         visibleSamples = []
         isRecording = true
         status = .measuring
+        startFlushDriver()
         peripheral.writeValue(
             Data([TindeqProtocolConstants.Command.startWeight.rawValue]),
             for: controlCharacteristic,
@@ -98,6 +122,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         guard let peripheral, let controlCharacteristic else {
             isRecording = false
             status = .idle
+            stopFlushDriver()
             return summary
         }
         peripheral.writeValue(
@@ -107,6 +132,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         )
         isRecording = false
         status = .connected
+        stopFlushDriver()
         return summary
     }
 
@@ -129,6 +155,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         elapsedMilliseconds = 0
         visibleSamples = []
         handsFreeArmed = true
+        startFlushDriver()
         peripheral.writeValue(
             Data([TindeqProtocolConstants.Command.startWeight.rawValue]),
             for: controlCharacteristic,
@@ -155,6 +182,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         guard handsFreeArmed || isRecording else { return }
         handsFreeArmed = false
         isRecording = false
+        stopFlushDriver()
         try? write(.stop)
     }
 
@@ -198,6 +226,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
 
     private func resetConnection(status: Status) {
         central.stopScan()
+        stopFlushDriver()
         peripheral?.delegate = nil
         peripheral = nil
         notifyCharacteristic = nil
@@ -205,12 +234,67 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         self.status = status
     }
 
+    /// The display-rate flush driver. Started while a stream is live
+    /// (recording or hands-free-armed) so the 5 published force values are
+    /// assigned at most once per display frame, independent of the BLE
+    /// notification rate (#671). Notifications never assign published values
+    /// directly — they only mark `pendingPublish`.
+    private func startFlushDriver() {
+        guard flushTimer == nil else { return }
+        lastFlushTime = ProcessInfo.processInfo.systemUptime
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.flushIfDue()
+        }
+        // Add to `.common` so the live gauge keeps flushing during scroll
+        // tracking (the default `.default` mode suspends timers mid-scroll).
+        RunLoop.main.add(timer, forMode: .common)
+        flushTimer = timer
+        #if DEBUG
+        flushCountInSecond = 0
+        flushSecondStart = ProcessInfo.processInfo.systemUptime
+        #endif
+    }
+
+    private func stopFlushDriver() {
+        flushTimer?.invalidate()
+        flushTimer = nil
+        pendingPublish = false
+        #if DEBUG
+        publishesPerSecond = 0
+        #endif
+    }
+
+    private func flushIfDue() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard pendingPublish else { return }
+        guard coalescer.shouldFlush(now: now, lastFlush: lastFlushTime) else { return }
+        lastFlushTime = now
+        pendingPublish = false
+        updatePublishedValues()
+        #if DEBUG
+        flushCountInSecond += 1
+        if now - flushSecondStart >= 1.0 {
+            publishesPerSecond = Double(flushCountInSecond) / (now - flushSecondStart)
+            flushCountInSecond = 0
+            flushSecondStart = now
+        }
+        #endif
+    }
+
     private func updatePublishedValues() {
-        currentKilograms = accumulator.currentKilograms
-        peakKilograms = accumulator.peakKilograms
-        averageKilograms = accumulator.averageKilograms
-        elapsedMilliseconds = accumulator.elapsedMilliseconds
-        visibleSamples = accumulator.visibleWindow()
+        if isRecording {
+            currentKilograms = accumulator.currentKilograms
+            peakKilograms = accumulator.peakKilograms
+            averageKilograms = accumulator.averageKilograms
+            elapsedMilliseconds = accumulator.elapsedMilliseconds
+        } else if handsFreeArmed {
+            // Armed but not yet recording: samples feed the hands-free loop,
+            // never the accumulator. The live reading comes from the last
+            // sample that marked `pendingPublish`.
+            currentKilograms = lastSampleKilograms
+        }
+        visibleSamples = Array(accumulator.visibleWindow())
     }
 }
 
@@ -352,7 +436,15 @@ extension TindeqBluetooth: CBPeripheralDelegate {
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        Task { @MainActor in
+        // #671: the delegate is already on `.main` — `CBCentralManager` is
+        // created with `queue: .main` (line 46), which is a documented
+        // guarantee that every delegate callback runs on the main thread. The
+        // old per-notification `Task { @MainActor in … }` hop is therefore
+        // redundant (a Task allocation + actor hop per notification). We take
+        // the main-actor call synchronously instead; in a DEBUG build
+        // `assumeIsolated` traps if the thread ever isn't main, so a future
+        // queue change fails loudly rather than silently hopping.
+        MainActor.assumeIsolated {
             guard error == nil, let data = characteristic.value else { return }
             switch TindeqFrameParser.parse(data) {
             case let .weight(samples):
@@ -366,13 +458,17 @@ extension TindeqBluetooth: CBPeripheralDelegate {
                 }
                 guard isRecording else {
                     if handsFreeArmed, let last = samples.last {
-                        currentKilograms = last.kilograms
+                        lastSampleKilograms = last.kilograms
+                        pendingPublish = true
                     }
                     return
                 }
                 _ = accumulator.append(samples)
-                updatePublishedValues()
-                if elapsedMilliseconds >= Double(ForceSessionAccumulator.maximumRecordingMilliseconds) {
+                // Coalesce: never assign published values per notification.
+                // The flush driver publishes at display rate (#671).
+                pendingPublish = true
+                if accumulator.elapsedMilliseconds
+                    >= Double(ForceSessionAccumulator.maximumRecordingMilliseconds) {
                     _ = stopMeasuring()
                 }
             case .lowBattery:

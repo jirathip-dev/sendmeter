@@ -158,8 +158,13 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
     }
     public var elapsedMilliseconds: Double { samples.last?.milliseconds ?? 0 }
 
-    public func visibleWindow(milliseconds: Double = 10_000) -> [TindeqSample] {
-        guard let last = samples.last else { return [] }
+    /// The half-open index range of the most recent `milliseconds` of samples,
+    /// bounded by the accumulated buffer's end (#671). The chart reads this
+    /// range over the accumulator's stable `samples` storage instead of
+    /// copying a window array per BLE notification.
+    public func visibleRange(milliseconds: Double = 10_000) -> Range<Int> {
+        guard !samples.isEmpty else { return 0..<0 }
+        let last = samples[samples.endIndex - 1]
         let threshold = max(0, last.milliseconds - milliseconds)
         var low = 0
         var high = samples.count
@@ -171,7 +176,16 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
                 high = midpoint
             }
         }
-        return Array(samples[low...])
+        return low..<samples.count
+    }
+
+    /// The live window as a slice over the accumulator's stable `samples`
+    /// storage — an O(log n) binary search plus an O(1) `ArraySlice` with no
+    /// element copy (#671). This previously returned a fresh `Array` (~800
+    /// elements at a 10 s window) on every BLE notification, churning
+    /// allocations at stream rate.
+    public func visibleWindow(milliseconds: Double = 10_000) -> ArraySlice<TindeqSample> {
+        samples[visibleRange(milliseconds: milliseconds)]
     }
 
     public func summary() -> ForceSummary? {
@@ -189,6 +203,34 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
             averageKilograms: (averageKilograms * 100).rounded() / 100,
             samples: rounded
         )
+    }
+}
+
+// MARK: - Force publish coalescing (#671)
+
+/// Display-rate throttle gate for the force surface. BLE notifications can
+/// arrive faster than the display can redraw; without a coalescer the hot
+/// path assigns all of the published values (including the chart window)
+/// once per notification — up to five `objectWillChange` pulses and a fresh
+/// window array at stream rate. This mirrors the web app's rAF throttle
+/// (`src/hooks/useTindeq.ts:257-268`), which native previously lacked.
+///
+/// The accumulator stays the source of truth; the flush driver only decides
+/// when the published snapshot is refreshed. The gate is testable in `swift
+/// test` because it is pure — the driver itself lives on the transport
+/// (`TindeqBluetooth`).
+public struct ForcePublishCoalescer {
+    /// The maximum publish rate of the live force surface, in seconds per
+    /// publish (~60 Hz). Independent of the BLE notification rate.
+    public var displayIntervalSeconds: Double = 1.0 / 60.0
+
+    public init() {}
+
+    /// True when enough display-time has elapsed since `lastFlush` that the
+    /// published snapshot should be refreshed. `now`/`lastFlush` are seconds
+    /// on a monotonic clock.
+    public func shouldFlush(now: Double, lastFlush: Double) -> Bool {
+        now - lastFlush >= displayIntervalSeconds
     }
 }
 
