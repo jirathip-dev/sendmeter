@@ -5,30 +5,21 @@ import SwiftUI
 /// behind it shows), the 53×7 daily heatmap, and the 28-day activity mix.
 /// Port of the web `TrainingLoadSheet.tsx` (#650). Pure math lives in
 /// `Sources/Core/TrainingLoad.swift`; this file is thin layout only.
+///
+/// Snapshotting (F2/F10): `mix`, `daily` and the week-delta are computed once
+/// per data/date change into `@State`, never per body pass — the original
+/// recomputed `activityMix` up to 4× per pass. One `referenceDate` drives both
+/// the 28-day mix and the heatmap so the two windows advance together across
+/// midnight (`.NSCalendarDayChanged`).
 struct TrainingLoadSheet: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
 
-    private var mix: ActivityMix {
-        TrainingLoad.activityMix(
-            sessions: model.sessions,
-            endDate: LocalDateSupport.string(from: Date())
-        )
-    }
-
-    private var daily: [String: DailyLoad] {
-        TrainingLoad.dailyLoads(sessions: model.sessions)
-    }
-
-    private var currentDelta: WeekDelta? {
-        let weeks = model.weeklyLoads
-        guard weeks.count >= 2 else { return nil }
-        return TrainingLoad.weekDelta(
-            current: weeks[weeks.count - 1].total,
-            previous: weeks[weeks.count - 2].total
-        )
-    }
+    @State private var mix: ActivityMix = ActivityMix(total: 0, activities: [])
+    @State private var daily: [String: DailyLoad] = [:]
+    @State private var currentDelta: WeekDelta?
+    @State private var referenceDate = Date()
 
     var body: some View {
         NavigationStack {
@@ -50,6 +41,26 @@ struct TrainingLoadSheet: View {
                 }
             }
         }
+        .onAppear { rebuild() }
+        .onChange(of: model.sessions) { _ in rebuild() }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            referenceDate = Date()
+            rebuild()
+        }
+    }
+
+    private func rebuild() {
+        mix = TrainingLoad.activityMix(
+            sessions: model.sessions,
+            endDate: LocalDateSupport.string(from: referenceDate)
+        )
+        daily = TrainingLoad.dailyLoads(sessions: model.sessions)
+        let weeks = model.weeklyLoads
+        guard weeks.count >= 2 else { currentDelta = nil; return }
+        currentDelta = TrainingLoad.weekDelta(
+            current: weeks[weeks.count - 1].total,
+            previous: weeks[weeks.count - 2].total
+        )
     }
 
     // MARK: - Weekly load
@@ -60,8 +71,8 @@ struct TrainingLoadSheet: View {
                 HStack {
                     SectionLabel("Weekly load", systemImage: "chart.bar.fill")
                     Spacer()
-                    if let delta = currentDelta, let label = deltaLabel(delta) {
-                        Text(label)
+                    if let delta = currentDelta {
+                        Text(deltaLabel(delta))
                             .font(.caption2)
                             .monospacedDigit()
                             .foregroundStyle(deltaColor(delta))
@@ -72,14 +83,16 @@ struct TrainingLoadSheet: View {
         }
     }
 
-    private func deltaLabel(_ delta: WeekDelta) -> String? {
+    private func deltaLabel(_ delta: WeekDelta) -> String {
         let pct = Int(abs(delta.pct).rounded())
         return "\(delta.arrow) \(pct)% vs prior wk"
     }
 
     /// #649 rule: chart views never read `SendmeterStyle.*` (static, no
-    /// appearance switch) — the delta chip uses ChartToken semantics matching
-    /// the web's `var(--success)` / `var(--danger)` / `var(--ink-muted)`.
+    /// appearance switch). The up/down stops are ChartToken semantics; they
+    /// are NOT a hex-for-hex match of the web's `--success`/`--danger`
+    /// (those are `#1674BE`/`#B95122`) — the chart palette is the right call
+    /// under #649 even though the exact hues differ (N5).
     private func deltaColor(_ delta: WeekDelta) -> Color {
         if delta.isFlat { return .secondary }
         return delta.isUp
@@ -93,7 +106,7 @@ struct TrainingLoadSheet: View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 12) {
                 SectionLabel("Daily load", systemImage: "square.grid.3x3.fill")
-                ContributionHeatmapView(daily: daily)
+                ContributionHeatmapView(daily: daily, today: referenceDate)
             }
         }
     }
@@ -104,7 +117,7 @@ struct TrainingLoadSheet: View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 12) {
                 SectionLabel("Activity mix", systemImage: "chart.pie.fill")
-                Text("Last 28 days · \(Int(mix.total)) AU")
+                Text("Last 28 days · \(TrainingLoad.formatAU(mix.total)) AU")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if mix.activities.isEmpty {
@@ -124,7 +137,7 @@ struct TrainingLoadSheet: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                             Spacer()
-                            Text("\(Int(activity.load)) AU · \(TrainingLoad.formatSharePercent(activity.percentage))")
+                            Text("\(TrainingLoad.formatAU(activity.load)) AU · \(TrainingLoad.formatSharePercent(activity.percentage))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
@@ -147,7 +160,7 @@ private struct WeeklyBarsView: View {
         HStack(alignment: .bottom, spacing: 8) {
             ForEach(Array(weeks.enumerated()), id: \.offset) { index, week in
                 VStack(spacing: 4) {
-                    Text("\(Int(week.total))")
+                    Text(TrainingLoad.formatAU(week.total))
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -170,44 +183,11 @@ private struct WeeklyBarsView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(week.label): \(Int(week.total)) AU")
+                .accessibilityLabel("\(week.label): \(TrainingLoad.formatAU(week.total)) AU")
             }
         }
         .frame(height: 108)
     }
 
     @Environment(\.colorScheme) private var scheme
-}
-
-/// The horizontal 28-day activity-mix bar (web `ActivityMixBar`), plus the
-/// swatch list rows rendered by the parent.
-private struct ActivityMixBar: View {
-    let activities: [ActivityLoad]
-
-    @Environment(\.colorScheme) private var scheme
-
-    private var description: String {
-        activities
-            .map { "\($0.label) \(TrainingLoad.formatSharePercent($0.percentage))" }
-            .joined(separator: ", ")
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            let total = proxy.size.width
-            HStack(spacing: 0) {
-                ForEach(activities, id: \.type) { activity in
-                    RoundedRectangle(cornerRadius: 0, style: .continuous)
-                        .fill(ChartActivityHue.color(forActivityID: activity.type, scheme: scheme))
-                        .frame(width: max(total * CGFloat(activity.percentage) / 100, activity.percentage > 0 ? 1.5 : 0))
-                }
-            }
-            .frame(width: total, alignment: .leading)
-        }
-        .frame(height: 10)
-        .background(Color(uiColor: .secondarySystemFill), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Activity mix: \(description)")
-    }
 }

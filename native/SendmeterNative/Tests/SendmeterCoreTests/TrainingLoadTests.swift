@@ -96,6 +96,41 @@ final class TrainingLoadTests: XCTestCase {
         XCTAssertEqual(known.activities.first?.label, "Board Climbing")
     }
 
+    /// F11: the "previously resolved group label" link in the resolution chain
+    /// (second position, the only order-dependent one) — two sessions of the
+    /// same unknown type, the first carrying a legacy label, the second a
+    /// blank one. The blank one must reuse the group's already-resolved label.
+    func testActivityMixReusesPreviouslyResolvedGroupLabel() {
+        let mix = TrainingLoad.activityMix(
+            sessions: [
+                session("2026-08-02", "moon_board", 80, typeLabel: "Moon Board Legacy"),
+                session("2026-08-02", "moon_board", 20, typeLabel: "")
+            ],
+            endDate: "2026-08-02",
+            timeZone: bangkok
+        )
+        XCTAssertEqual(mix.activities.count, 1)
+        XCTAssertEqual(mix.activities.first?.type, "moon_board")
+        XCTAssertEqual(mix.activities.first?.label, "Moon Board Legacy")
+    }
+
+    /// N2: equal-load tie-break uses `localizedCompare` (JS `localeCompare`),
+    /// not the numeric-aware `localizedStandardCompare`. JS default collation
+    /// is not numeric-aware, so "Board 10" sorts BEFORE "Board 2" — verified
+    /// against the real strings below ("moon_board_10" < "moon_board_2" by
+    /// code point at the '1' vs '2' position).
+    func testActivityMixTieBreakMatchesLocaleCompareNotNumeric() {
+        let mix = TrainingLoad.activityMix(
+            sessions: [
+                session("2026-08-02", "moon_board_10", 100),
+                session("2026-08-02", "moon_board_2", 100)
+            ],
+            endDate: "2026-08-02",
+            timeZone: bangkok
+        )
+        XCTAssertEqual(mix.activities.map(\.type), ["moon_board_10", "moon_board_2"])
+    }
+
     func testActivityMixSortsLoadDescThenLabelAsc() {
         let mix = TrainingLoad.activityMix(
             sessions: [
@@ -134,6 +169,18 @@ final class TrainingLoadTests: XCTestCase {
             session("2026-08-02", "gym", 100)
         ])
         // JS Array.prototype.sort is stable, so a tie keeps insertion order.
+        XCTAssertEqual(daily["2026-08-02"]?.type, "board")
+    }
+
+    /// N1: a day whose sessions all carry `load == 0` must still resolve a
+    /// dominant type (the first-encountered), not an empty string — the
+    /// `-.infinity` sentinel handles it where `leastNormalMagnitude` would not.
+    func testDailyLoadsZeroLoadDayStillPicksFirstType() {
+        let daily = TrainingLoad.dailyLoads(sessions: [
+            session("2026-08-02", "board", 0),
+            session("2026-08-02", "gym", 0)
+        ])
+        XCTAssertEqual(daily["2026-08-02"]?.total, 0)
         XCTAssertEqual(daily["2026-08-02"]?.type, "board")
     }
 
@@ -259,6 +306,18 @@ final class TrainingLoadTests: XCTestCase {
         XCTAssertEqual(TrainingLoad.activityLabel("moon_board"), "Moon Board")
         XCTAssertEqual(TrainingLoad.activityLabel("mystery-type"), "Mystery Type")
         XCTAssertEqual(TrainingLoad.activityLabel(""), "Unknown activity")
+    }
+
+    /// F5: AU figures keep their decimals (the web shows "292.5" for a 292.5
+    /// session, never the truncated "292") and are thousands-grouped, matching
+    /// `Number.toLocaleString()`. Pinned to en_US.
+    func testFormatAURoundsAndGroups() {
+        let enUS = Locale(identifier: "en_US")
+        XCTAssertEqual(TrainingLoad.formatAU(292.5, locale: enUS), "292.5")
+        XCTAssertEqual(TrainingLoad.formatAU(292.49, locale: enUS), "292.49")
+        XCTAssertEqual(TrainingLoad.formatAU(4200, locale: enUS), "4,200")
+        XCTAssertEqual(TrainingLoad.formatAU(0, locale: enUS), "0")
+        XCTAssertEqual(TrainingLoad.formatAU(1234.75, locale: enUS), "1,234.75")
     }
 
     func testActivityMixPercentagesSumToOneHundred() {

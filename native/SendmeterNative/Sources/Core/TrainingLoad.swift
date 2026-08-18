@@ -56,9 +56,21 @@ public enum TrainingLoad {
             .filter { $0.load > 0 }
             .sorted { lhs, rhs in
                 if lhs.load != rhs.load { return lhs.load > rhs.load }
-                return lhs.label.localizedStandardCompare(rhs.label) == .orderedAscending
+                // `localizedCompare` mirrors JS `localeCompare`; the
+                // numeric-aware `localizedStandardCompare` (Finder order)
+                // would sort "Board 10" before "Board 2" (N2).
+                return lhs.label.localizedCompare(rhs.label) == .orderedAscending
             }
         return ActivityMix(total: total, activities: activities)
+    }
+
+    /// Displays an AU figure the way the web's `Number.toLocaleString()` does:
+    /// grouped thousands separators and fractional AU preserved when present
+    /// (a 292.5 AU session must read "292.5", not the truncated "292" — F5).
+    /// The locale is a parameter so tests pin `en_US` deterministically;
+    /// production callers use the user's current locale, like the web.
+    public static func formatAU(_ value: Double, locale: Locale = .current) -> String {
+        value.formatted(.number.precision(.fractionLength(0...3)).grouping(.automatic).locale(locale))
     }
 
     /// Human label for an activity id, mirroring the web `activityLabel()`:
@@ -112,8 +124,12 @@ public enum TrainingLoad {
         var result: [String: DailyLoad] = [:]
         result.reserveCapacity(accumulated.count)
         for (date, entry) in accumulated {
+            // `-.infinity` so a day whose sessions all carry `load == 0` still
+            // resolves to the first-encountered type, matching the web's
+            // stable sort (the wrong `leastNormalMagnitude` sentinel would
+            // yield an empty dominant type — N1).
             var dominant = ""
-            var dominantLoad = Double.leastNormalMagnitude
+            var dominantLoad = -Double.infinity
             for candidate in entry.byType where candidate.load > dominantLoad {
                 dominantLoad = candidate.load
                 dominant = candidate.type
@@ -181,6 +197,14 @@ public enum TrainingLoad {
             }
             columns.append(column)
         }
+        // The `weeks*7` walk must land exactly on `end`; asserting the last
+        // cell matches keeps a future edit to `heatmapRange` from silently
+        // desynchronising the two (F8 — `end` would otherwise be dead).
+        let lastCellDate = columns.last?.last?.date ?? ""
+        assert(
+            lastCellDate == LocalDateSupport.string(from: end, timeZone: timeZone),
+            "heatmap walk must end on heatmapRange's Saturday"
+        )
         return HeatmapGrid(columns: columns, max: max(1, maximum))
     }
 
