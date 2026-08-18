@@ -559,7 +559,7 @@ public final class AppModel: ObservableObject {
         guard let queue else { return 0 }
         var uploaded = 0
         for item in await queue.items(for: accountUserID) {
-            if await upload(item) { uploaded += 1 }
+            if (await upload(item)).uploaded { uploaded += 1 }
         }
         return uploaded
     }
@@ -1693,7 +1693,7 @@ public final class AppModel: ObservableObject {
         guard let userID = currentUserID, let queue else { return }
         let due = await queue.items(for: userID, dueAt: Date())
         for item in due {
-            await upload(item)
+            _ = await upload(item)
         }
         await refreshQueueCount()
     }
@@ -1702,7 +1702,7 @@ public final class AppModel: ObservableObject {
         guard let userID = currentUserID, let queue else { return }
         let pending = await queue.items(for: userID)
         for item in pending {
-            await upload(item, manual: true)
+            _ = await upload(item, manual: true)
         }
         await refreshQueueCount()
     }
@@ -1721,7 +1721,7 @@ public final class AppModel: ObservableObject {
             try await queue.enqueue(item)
             await refreshQueueCount()
             Task { [weak self] in
-                await self?.upload(item)
+                _ = await self?.upload(item)
             }
             return true
         } catch {
@@ -1730,13 +1730,29 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// #675 N1: the classification + diagnostic an upload failure recorded,
+    /// so `retryQuarantinedWrites` can decide whether a fresh failure replaces
+    /// the prior rejection stamp or the prior stamp is restored verbatim.
+    private struct UploadFailure {
+        let classification: RejectionClass
+        let code: String?
+        let detail: String
+    }
+
+    private struct UploadResult {
+        let uploaded: Bool
+        let failure: UploadFailure?
+    }
+
     @discardableResult
     private func upload(
         _ item: DurableQueueItem<PendingWrite>,
         manual: Bool = false
-    ) async -> Bool {
-        guard let queue, currentUserID == item.accountUserID else { return false }
-        var uploaded = false
+    ) async -> UploadResult {
+        guard let queue, currentUserID == item.accountUserID else {
+            return UploadResult(uploaded: false, failure: nil)
+        }
+        let result: UploadResult
         do {
             switch item.payload {
             case let .session(payload):
@@ -1763,7 +1779,7 @@ public final class AppModel: ObservableObject {
                 reason: "uploaded"
             )
             toastMessage = "Saved"
-            uploaded = true
+            result = UploadResult(uploaded: true, failure: nil)
         } catch {
             do {
                 // #675: classify the rejection. A permanent one (constraint /
@@ -1778,20 +1794,31 @@ public final class AppModel: ObservableObject {
                 // action, not an automatic drain attempt — it must never
                 // spend the quarantine budget, so its failures do not count
                 // toward the permanent-attempt bound.
+                let classification = (error as? ServerRejectionClassifying)?.rejectionClass ?? .retryable
+                let code = (error as? PostgRESTError)?.code
                 try await queue.markFailure(
                     id: item.id,
                     accountUserID: item.accountUserID,
                     error: error.localizedDescription,
-                    classification: (error as? ServerRejectionClassifying)?.rejectionClass ?? .retryable,
-                    code: (error as? PostgRESTError)?.code,
+                    classification: classification,
+                    code: code,
                     countsTowardQuarantine: !manual
+                )
+                result = UploadResult(
+                    uploaded: false,
+                    failure: UploadFailure(
+                        classification: classification,
+                        code: code,
+                        detail: error.localizedDescription
+                    )
                 )
             } catch {
                 surface(error)
+                result = UploadResult(uploaded: false, failure: nil)
             }
         }
         await refreshQueueCount()
-        return uploaded
+        return result
     }
 
     /// #675: the explicit-user-action re-attempt for quarantined entries —
@@ -1802,35 +1829,43 @@ public final class AppModel: ObservableObject {
     /// the queue.
     ///
     /// #675 F7: the entry is NOT re-armed onto the hot drain path by a failed
-    /// manual retry. The upload runs with `manual: true` (so its rejection
-    /// never spends the quarantine budget — #675 F5), and on ANY failure the
-    /// quarantine stamp is immediately re-applied, so the entry goes straight
-    /// back to its quarantined, never-auto-retried state instead of getting
-    /// free automatic retries behind the user's back.
+    /// manual retry. The upload runs manual (so its rejection never spends the
+    /// quarantine budget — #675 F5), and on ANY failure the quarantine stamp
+    /// is immediately re-applied, so the entry goes straight back to its
+    /// quarantined, never-auto-retried state instead of getting free
+    /// automatic retries behind the user's back.
+    ///
+    /// #675 N1: a failed manual retry preserves the rejection DIAGNOSTIC. The
+    /// prior stamp is passed to `requarantine` as `previous`; a transient /
+    /// auth / parked failure on the retry restores it verbatim (code, detail
+    /// and `at` all survive), while only a FRESH `.permanent` rejection
+    /// replaces the stamp with its own code/detail.
     public func retryQuarantinedWrites(id: UUID? = nil) async {
         guard let userID = currentUserID, let queue else { return }
         let quarantined = await queue.quarantinedItems(for: userID)
         for item in quarantined where id == nil || item.id == id {
             do {
-                guard try await queue.retryQuarantined(
+                guard let previous = try await queue.retryQuarantined(
                     id: item.id,
                     accountUserID: item.accountUserID
                 ) else { continue }
-                let uploaded = await upload(item, manual: true)
-                if !uploaded {
-                    // #675 F7: the manual attempt failed — re-stamp the
+                let result = await upload(item, manual: true)
+                if !result.uploaded {
+                    // #675 F7 + N1: the manual attempt failed — re-stamp the
                     // quarantine NOW so the entry is never auto-retried by a
                     // later drain (Settings tells the user it is "kept on this
-                    // device and never retried on their own"). The re-stamp
-                    // carries the FRESH failure (`upload` already recorded it
-                    // via markFailure), and reuses the fresh-item attempt
-                    // budget (0), so the next MANUAL retry starts a clean
-                    // window.
-                    let fresh = await queue.item(id: item.id, accountUserID: item.accountUserID)
+                    // device and never retried on their own"). The stamp is
+                    // the PRIOR rejection unless the retry itself was a fresh
+                    // permanent rejection; either way the budget stays reset
+                    // (0), so the next MANUAL retry starts a clean window.
+                    let failure = result.failure
                     try await queue.requarantine(
                         id: item.id,
                         accountUserID: item.accountUserID,
-                        detail: fresh?.lastError ?? item.lastError ?? "Manual retry failed",
+                        previous: previous,
+                        classification: failure?.classification ?? .retryable,
+                        code: failure?.code,
+                        detail: failure?.detail ?? item.lastError ?? "Manual retry failed",
                         now: Date()
                     )
                 }

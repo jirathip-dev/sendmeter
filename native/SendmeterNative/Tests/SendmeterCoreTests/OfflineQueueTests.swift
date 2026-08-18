@@ -364,7 +364,7 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertTrue(activeAfterCap.isEmpty)
 
         let retried = try await queue.retryQuarantined(id: item.id, accountUserID: user, now: now)
-        XCTAssertTrue(retried)
+        XCTAssertNotNil(retried)
         let quarantinedAfterRetry = await queue.quarantinedCount(for: user)
         XCTAssertEqual(quarantinedAfterRetry, 0)
         let active = await queue.items(for: user, dueAt: now.addingTimeInterval(1))
@@ -387,7 +387,7 @@ final class OfflineQueueTests: XCTestCase {
 
         // Retrying an entry that is not quarantined is a no-op, not an error.
         let again = try await queue.retryQuarantined(id: item.id, accountUserID: user, now: now)
-        XCTAssertFalse(again)
+        XCTAssertNil(again)
     }
 
     /// AC-2: a quarantined entry can be discarded per-item (account-scoped,
@@ -617,8 +617,9 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertEqual(quarantinedBeforeRetry, 1)
 
         // Manual retry clears the stamp and resets the budget.
-        let retried = try await queue.retryQuarantined(id: item.id, accountUserID: user, now: now)
-        XCTAssertTrue(retried)
+        let cleared = try await queue.retryQuarantined(id: item.id, accountUserID: user, now: now)
+        XCTAssertNotNil(cleared)
+        XCTAssertEqual(cleared?.code, "23514")
         let activeAfterRetry = await queue.items(for: user)
         XCTAssertTrue(activeAfterRetry.contains { $0.id == item.id })
         XCTAssertNil(activeAfterRetry.first { $0.id == item.id }?.quarantined)
@@ -628,6 +629,8 @@ final class OfflineQueueTests: XCTestCase {
         let restamped = try await queue.requarantine(
             id: item.id,
             accountUserID: user,
+            previous: cleared,
+            classification: .retryable,
             detail: "Manual retry failed",
             now: now
         )
@@ -637,16 +640,115 @@ final class OfflineQueueTests: XCTestCase {
         let activeAfterRestamp = await queue.items(for: user)
         XCTAssertTrue(activeAfterRestamp.isEmpty)
         let quarantine = await queue.quarantinedItems(for: user)
-        XCTAssertEqual(quarantine.first?.quarantined?.detail, "Manual retry failed")
+        // #675 N1: a transient failure on the retry restores the prior stamp
+        // verbatim — the passed-in detail is NOT stamped.
+        XCTAssertEqual(quarantine.first?.quarantined, cleared)
 
         // Re-stamping an already-quarantined entry is a no-op (it may have
         // been uploaded by a racing drain).
         let second = try await queue.requarantine(
             id: item.id,
             accountUserID: user,
+            previous: cleared,
+            classification: .retryable,
             detail: "too late",
             now: now
         )
         XCTAssertFalse(second)
+    }
+
+    /// #675 N1: a failed MANUAL retry preserves the rejection diagnostic. A
+    /// transient (network) failure on the retry says NOTHING new about the
+    /// payload — the entry was quarantined for a server rejection that still
+    /// stands — so `requarantine` restores the prior stamp VERBATIM (code,
+    /// detail AND `at`). Only a FRESH `.permanent` rejection replaces it.
+    func testFailedManualRetryPreservesRejectionDiagnostic() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let item = DurableQueueItem(accountUserID: user, payload: TestPayload(value: "bad"))
+        try await queue.enqueue(item)
+        var now = Date(timeIntervalSince1970: 1_000)
+        for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+            try await queue.markFailure(
+                id: item.id,
+                accountUserID: user,
+                error: "new row violates check constraint sessions_date_sane",
+                classification: .permanent,
+                code: "23514",
+                now: now
+            )
+            now = now.addingTimeInterval(30)
+        }
+        let originalStamp = (await queue.quarantinedItems(for: user)).first?.quarantined
+        XCTAssertEqual(originalStamp?.code, "23514")
+
+        // Manual retry clears the stamp...
+        let cleared = try await queue.retryQuarantined(id: item.id, accountUserID: user, now: now)
+        XCTAssertNotNil(cleared)
+        // ...and the retry fails with a TRANSIENT (offline) error.
+        let restamped = try await queue.requarantine(
+            id: item.id,
+            accountUserID: user,
+            previous: cleared,
+            classification: .retryable,
+            code: nil,
+            detail: "The Internet connection appears to be offline.",
+            now: now
+        )
+        XCTAssertTrue(restamped)
+
+        // The stamp survives VERBATIM: kind, code, detail, and the original
+        // `at` (the retry's `now` is much later than the original quarantine).
+        let stamp = (await queue.quarantinedItems(for: user)).first?.quarantined
+        XCTAssertEqual(stamp, originalStamp)
+        XCTAssertEqual(stamp?.kind, .permanent)
+        XCTAssertEqual(stamp?.code, "23514")
+        XCTAssertEqual(stamp?.detail, "new row violates check constraint sessions_date_sane")
+        XCTAssertEqual(stamp?.at, originalStamp?.at)
+    }
+
+    /// #675 N1: a fresh `.permanent` rejection ON the manual retry DOES
+    /// replace the stamp — the new diagnostic is the accurate one.
+    func testFreshPermanentOnManualRetryReplacesStamp() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let item = DurableQueueItem(accountUserID: user, payload: TestPayload(value: "bad"))
+        try await queue.enqueue(item)
+        var now = Date(timeIntervalSince1970: 1_000)
+        for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+            try await queue.markFailure(
+                id: item.id,
+                accountUserID: user,
+                error: "old constraint",
+                classification: .permanent,
+                code: "23514",
+                now: now
+            )
+            now = now.addingTimeInterval(30)
+        }
+        let cleared = try await queue.retryQuarantined(id: item.id, accountUserID: user, now: now)
+        XCTAssertNotNil(cleared)
+
+        // The retry is rejected with a DIFFERENT constraint code.
+        let restamped = try await queue.requarantine(
+            id: item.id,
+            accountUserID: user,
+            previous: cleared,
+            classification: .permanent,
+            code: "23502",
+            detail: "new row violates not-null constraint",
+            now: now.addingTimeInterval(60)
+        )
+        XCTAssertTrue(restamped)
+        let stamp = (await queue.quarantinedItems(for: user)).first?.quarantined
+        XCTAssertEqual(stamp?.code, "23502")
+        XCTAssertEqual(stamp?.detail, "new row violates not-null constraint")
+        XCTAssertEqual(stamp?.kind, .permanent)
     }
 }

@@ -442,19 +442,28 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         try persist()
     }
 
-    /// #675 F7: re-apply the quarantine stamp immediately after a failed
-    /// MANUAL retry. `retryQuarantined` cleared the stamp and reset the
-    /// attempt budget; if that single explicit upload then failed, the entry
-    /// must go straight back to its quarantined, never-auto-retried state —
-    /// NOT sit active on the hot drain path re-arming free automatic attempts
-    /// behind the user's back (Settings tells the user it is "never retried on
-    /// their own"). No attempt counting: the budget stays reset so the next
-    /// MANUAL retry starts a clean window. Returns `false` when the id is not
+    /// #675 F7 + N1: re-apply the quarantine stamp after a failed MANUAL
+    /// retry. `retryQuarantined` cleared the stamp and reset the attempt
+    /// budget; if that single explicit upload then failed, the entry must go
+    /// straight back to its quarantined, never-auto-retried state — NOT sit
+    /// active on the hot drain path re-arming free automatic attempts behind
+    /// the user's back (Settings tells the user it is "never retried on their
+    /// own"). No attempt counting: the budget stays reset so the next MANUAL
+    /// retry starts a clean window. Returns `false` when the id is not
     /// currently active (already quarantined again, or already uploaded).
+    ///
+    /// #675 N1: the diagnostic survives. A transient/auth/parked failure on
+    /// the manual retry says NOTHING new about the payload — the entry was
+    /// quarantined for a server rejection that still stands — so `previous`
+    /// (the stamp `retryQuarantined` cleared) is restored VERBATIM, keeping
+    /// its code, detail and original `at`. Only a FRESH `.permanent`
+    /// rejection on the retry replaces the stamp with the new code/detail.
     @discardableResult
     public func requarantine(
         id: UUID,
         accountUserID: UUID,
+        previous: QueueRejection?,
+        classification: RejectionClass,
         code: String? = nil,
         detail: String,
         now: Date = Date()
@@ -466,12 +475,32 @@ public actor DurableQueue<Payload: Codable & Sendable> {
             throw DurableQueueError.accountMismatch
         }
         guard store.items[index].quarantined == nil else { return false }
-        store.items[index].quarantined = QueueRejection(
-            kind: .permanent,
-            at: now,
-            code: code,
-            detail: detail
-        )
+        let stamp: QueueRejection
+        if classification == .permanent {
+            // A FRESH permanent rejection on the retry — the new diagnostic
+            // is the accurate one.
+            stamp = QueueRejection(
+                kind: .permanent,
+                at: now,
+                code: code,
+                detail: detail
+            )
+        } else if let previous {
+            // Transient/auth/parked failure — restore the prior stamp
+            // verbatim (kind, code, detail AND `at`), so the Settings
+            // diagnostic survives and "rejected N days ago" stays true.
+            stamp = previous
+        } else {
+            // No prior stamp to restore (defensive — requarantine is only for
+            // a retried-quarantined entry) — fall back to a permanent stamp.
+            stamp = QueueRejection(
+                kind: .permanent,
+                at: now,
+                code: code,
+                detail: detail
+            )
+        }
+        store.items[index].quarantined = stamp
         store.items[index].updatedAt = now
         try persist()
         return true
@@ -482,28 +511,29 @@ public actor DurableQueue<Payload: Codable & Sendable> {
     /// stamp and resets BOTH attempt counters, so the next drain treats it as
     /// a fresh entry with a fresh bounded-attempt budget (if it was rejected
     /// again under the current build, that starts a new window rather than
-    /// re-tripping on an old attempt count). Returns `false` when the id is
-    /// not quarantined.
+    /// re-tripping on an old attempt count). Returns the `QueueRejection` it
+    /// cleared — the caller keeps it to restore verbatim through a failed
+    /// manual retry (#675 N1) — or `nil` when the id is not quarantined.
     @discardableResult
     public func retryQuarantined(
         id: UUID,
         accountUserID: UUID,
         now: Date = Date()
-    ) throws -> Bool {
+    ) throws -> QueueRejection? {
         guard let index = store.items.firstIndex(where: { $0.id == id }) else {
             throw DurableQueueError.itemNotFound
         }
         guard store.items[index].accountUserID == accountUserID else {
             throw DurableQueueError.accountMismatch
         }
-        guard store.items[index].quarantined != nil else { return false }
+        guard let cleared = store.items[index].quarantined else { return nil }
         store.items[index].quarantined = nil
         store.items[index].attempts = 0
         store.items[index].permanentAttempts = nil
         store.items[index].updatedAt = now
         store.items[index].nextAttemptAt = now
         try persist()
-        return true
+        return cleared
     }
 
     /// #675: discard ONE quarantined entry — the per-item sibling of
