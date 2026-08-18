@@ -166,12 +166,13 @@ struct WorkoutView: View {
     }
 
     private func finishWorkout() {
-        // #656 (review F14): finishing the workout is a confirm/destructive
-        // action — medium tick, once per gesture.
-        Haptics.shared.play(.medium)
         guard var engine else { return }
         do {
             let draft = try engine.finish()
+            // #656 (re-review): the accepted medium tick fires only once the
+            // finish is real — an empty-workout refusal below must play the
+            // warning pattern, never the accepted tick.
+            Haptics.shared.play(.medium)
             self.engine = nil
             isSaving = true
             Task {
@@ -180,6 +181,9 @@ struct WorkoutView: View {
             }
         } catch WorkoutEngineError.emptyWorkout {
             model.errorMessage = "Record at least one attempt before finishing the workout."
+            // #222: the Finish button is deliberately kept clickable so the
+            // tap can say why — a refused finish must not feel accepted.
+            Haptics.shared.play(RefusedActionHaptics.cue(tappableAndRefused: true))
         } catch {
             model.errorMessage = error.localizedDescription
         }
