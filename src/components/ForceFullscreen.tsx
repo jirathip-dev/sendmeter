@@ -1326,9 +1326,12 @@ export default function ForceFullscreen({
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", textAlign: "center" }}>
               {startBlockedReason
                 ? startBlockedReason
-                : allTags.length
-                  ? "Pick an exercise above to start."
-                  : "Type your first exercise tag in the tab (minimize ⌄)."}
+                : // #684 NEW-1: a raw-tag-less free hold is legal (untagged),
+                  // and a remembered last-used tag re-enables Start. The
+                  // parent reports every specific block via startBlockedReason;
+                  // this fallback is only reached if a condition changed
+                  // between the parent's render and the button's.
+                  "Start is not ready yet — try again in a moment."}
             </div>
           )}
         </div>

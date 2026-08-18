@@ -56,6 +56,12 @@ import {
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
 import type { GaugeInputs } from "../lib/gaugeInputLock";
 import {
+  loadLastUsedGaugeLabel,
+  rememberGaugeLabelSelection,
+  resolveRecordingGaugeLabel,
+  resolveRecordingTag,
+} from "../lib/gaugeTagResolution";
+import {
   endTindeqLiveActivity,
   startTindeqLiveActivity,
   updateTindeqLivePeak,
@@ -382,8 +388,80 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // eyeball its tag (and undo if it was wrong). Replaces the old discard/save
   // prompt — a rep now saves the moment you stop, using the tag set beforehand.
   const [justSaved, setJustSaved] = useState<TindeqRecordingMeta | null>(null);
+  // #684: the raw Exercise&Side fields stay empty on mount; the last-used pair
+  // is a persist-boundary FALLBACK for an untagged free hold, never a display
+  // seed — see gaugeTagResolution.ts. Every explicit selection below is
+  // remembered through `rememberGaugeLabel`, and the ref mirrors it
+  // synchronously so the boundary guard reads the latest choice.
   const [pendingTag, setPendingTag] = useState("");
   const [pendingSide, setPendingSide] = useState<TindeqSide>("");
+  // #684: the last-used pair, mirrored in a ref so the persist-boundary guard
+  // in runStop reads a value that can never be stale from an old render (the
+  // repo's closure-race rule). The initial value is read ONCE, through a lazy
+  // `useState` initializer (#684 F3) — `useRef(loadLastUsedGaugeLabel())` would
+  // re-run the two synchronous storage reads on every render, and ForceView
+  // re-renders per animation frame while measuring. The ref is initialized
+  // from that first-render state and written only by `rememberGaugeLabel`,
+  // which is the single write path for both — so the two never drift, and
+  // there is no render-time ref write (react-hooks/refs).
+  const [lastUsedGaugeLabel, setLastUsedGaugeLabel] = useState(loadLastUsedGaugeLabel);
+  const lastUsedGaugeLabelRef = useRef(lastUsedGaugeLabel);
+  // #684: the persist-boundary resolution — a saved rep's tag/side is decided
+  // through this and ONLY this: the raw (explicit) fields win, then the
+  // remembered last-used pair, then untagged `''`. Reads the ref at call time
+  // (never a captured value — repo closure-race rule) so the always-armed
+  // free-hold path is covered even when the raw fields are empty. Every
+  // recording builder below funnels through this so no persist site can drift
+  // from the rule (#684 F4).
+  const resolveBoundaryLabel = (explicit: { tag: string; side: TindeqSide }) =>
+    resolveRecordingGaugeLabel(explicit, lastUsedGaugeLabelRef.current);
+  // #684 NEW-2: the TAG-only boundary — explicit ?? remembered ?? ''. Used at
+  // the PROTOCOL persist sites, where the tag fallback is the F4 design but
+  // the side fallback must NOT apply: a remembered side is an assertion about
+  // which hand did the work, and stamping it onto a protocol rep whose zone
+  // and target were computed all-sides would mislabel physical data and feed
+  // it into per-side curve fits (see chartSideFor). Protocol reps keep the
+  // raw side (`seg.side ?? pendingSide` etc.).
+  const resolveBoundaryTag = (explicitTag: string) =>
+    resolveRecordingTag(explicitTag, lastUsedGaugeLabelRef.current.tag);
+  // #684 NEW-1: the RESOLVED pair for the CURRENT raw fields, derived in
+  // render for the Start gates and the hint. Read from `lastUsedGaugeLabel`
+  // STATE (not the ref — the react-hooks/refs rule bans ref reads in render,
+  // and the state is updated on the same write path as the ref, so they never
+  // drift). The gate must not require a raw tag: untagged is the feature, and
+  // the remembered last-used tag legitimately re-enables Start without being
+  // an explicit selection. The resolved side is what a free hold would stamp;
+  // protocol runs resolve their own side (see the persist sites).
+  const effectiveBoundaryLabel = resolveRecordingGaugeLabel(
+    { tag: pendingTag, side: pendingSide },
+    lastUsedGaugeLabel,
+  );
+  // #684: every explicit Exercise&Side selection is remembered for the next
+  // untagged free hold ("remember rather than repeatedly ask", #546). The ref
+  // is updated synchronously so the persist boundary sees the latest choice
+  // even if it runs before a re-render. Only a real selection is remembered:
+  // deselecting (re-tapping the active chip, or the "—" side) must NOT
+  // clobber the last-used pair — that pair is the "user chose it" default an
+  // empty field falls back to, so it survives until the next explicit pick.
+  // The two fields merge independently (see rememberGaugeLabelSelection), so
+  // picking a side while the Exercise field is empty keeps the remembered tag
+  // (#684 F2) — and vice versa.
+  function rememberGaugeLabel(tag: string, side: TindeqSide) {
+    const merged = rememberGaugeLabelSelection(
+      { tag, side },
+      lastUsedGaugeLabelRef.current,
+    );
+    setLastUsedGaugeLabel(merged);
+    lastUsedGaugeLabelRef.current = merged;
+  }
+  function handlePendingTag(t: string) {
+    setPendingTag(t);
+    if (t.trim()) rememberGaugeLabel(t, pendingSide);
+  }
+  function handlePendingSide(s: TindeqSide) {
+    setPendingSide(s);
+    if (s) rememberGaugeLabel(pendingTag, s);
+  }
   const [saving, setSaving] = useState(false);
   // Guided-protocol clock controls. The protocol position is normally a pure
   // function of the physical measuring clock (tindeq.elapsedMs); these let the
@@ -674,14 +752,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         // id still lands (see recordingListsEqual).
         if (recordingListsEqual(list, recordingsRef.current)) return;
         setRecordings(list);
-        // Default the tag input to the most-recorded exercise so the input
-        // matches what the charts below already show (they fall back to it).
-        const counts = new Map<string, number>();
-        for (const r of list) {
-          if (r.tag) counts.set(r.tag, (counts.get(r.tag) ?? 0) + 1);
-        }
-        const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-        if (top) setPendingTag((prev) => (prev.trim() ? prev : top));
+        // #684 F1: the raw Exercise field is DELIBERATELY not seeded from the
+        // most-recorded exercise on mount. The display layer already falls
+        // back to `allTags[0]` for its charts; seeding `pendingTag` with the
+        // same value would make that arbitrary first-in-list exercise an
+        // EXPLICIT selection at the persist boundary, so an untagged free
+        // hold would be stamped under an exercise the user never picked —
+        // the exact "worse than not locking at all" footgun gaugeInputLock.ts
+        // documents. An empty field on mount means the rep resolves to the
+        // remembered last-used pair, or untagged `''` — never the display
+        // fallback.
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -773,7 +853,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // reading the raw values here would let a tag change mid-run file
       // later reps under a different tag than the zone/target they were
       // actually performed against.
-      tag: gaugeInputs.pendingTag,
+      // #684 F4/NEW-2: the TAG flows through the shared persist-boundary
+      // resolution (explicit ?? remembered ?? '') so an untagged hold keeps
+      // the remembered tag. The SIDE stays the raw protocol side (`seg.side
+      // ?? pendingSide`) — a remembered side must not stamp a protocol rep
+      // whose zone and target were computed all-sides (the side describes
+      // which hand did the work, and a stale one contaminates per-side curve
+      // fits).
+      tag: resolveBoundaryTag(gaugeInputs.pendingTag),
       side: seg.side ?? gaugeInputs.pendingSide,
       groupId: ensureSession(),
       protocolRunId: protocolRunIdRef.current,
@@ -849,7 +936,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       peakKg: Math.max(...kgs),
       avgKg: Math.round((kgs.reduce((sum, kg) => sum + kg, 0) / kgs.length) * 100) / 100,
       note,
-      tag: snapshot.tag,
+      // #684 F4/NEW-2: the TAG flows through the shared persist-boundary
+      // resolution (explicit ?? remembered ?? '') so the always-armed
+      // hands-free path (the motivating case for #684) keeps the remembered
+      // tag on an untagged hold. The SIDE stays the raw protocol side
+      // (`hold.side || snapshot.side`) — a remembered side must not stamp a
+      // protocol rep whose zone/target were computed all-sides. The adaptive
+      // snapshot holds the raw LOCKED fields at run start; the tag fallback
+      // applies here, at the shared builder, covering both the live save and
+      // the sign-out salvage of the same hold.
+      tag: resolveBoundaryTag(snapshot.tag),
       side: hold.side || snapshot.side,
       groupId: snapshot.groupId,
       protocolRunId: snapshot.runId,
@@ -959,7 +1055,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       cadenceReturnS: protocol.cadenceReturnS ?? 3,
       base: {
         note,
-        tag: snapshot.tag,
+        // #684 F4/NEW-2: the TAG flows through the shared persist-boundary
+        // resolution (explicit ?? remembered ?? '') so a reverse-action set
+        // never stamps untagged when a tag is remembered. The SIDE stays the
+        // raw protocol side (`snapshot.side`) — a remembered side must not
+        // stamp a movement rep whose target was computed all-sides.
+        tag: resolveBoundaryTag(snapshot.tag),
         side: snapshot.side,
         groupId:
           reverseRunGroupIdRef.current ?? snapshot.groupId ?? ensureSession(),
@@ -1107,13 +1208,28 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // is only reachable while TagSideEditor is disabled (runActive), so raw
     // and locked agree today, but reading raw here was reachable "only by
     // convention" — exactly the class of bug CLAUDE.md's #196 note warns about.
+    // #684: this is the persist boundary — a saved rep's tag/side is decided
+    // through `resolveBoundaryLabel` and nothing else: the raw fields win,
+    // then the remembered last-used pair, then untagged `''`; the display
+    // fallback `liveEffectiveTag`/`allTags[0]` must never stamp a recording
+    // (see gaugeInputLock.ts's own comment). Read BEFORE `tindeq.stop()` like
+    // everything above, and resolve the last-used fallback here from the ref
+    // (never a captured value — repo closure-race rule) so the always-armed
+    // free-hold path is covered even when the raw fields are empty.
+    // #684 F7 (decision, kept from #119): an interruption-recovery save whose
+    // label is genuinely unknown — recoveredTagSide returned "" because the
+    // drop-time snapshot was also empty — runs through the same boundary as a
+    // normal stop, so it falls back to the remembered last-used pair (and
+    // then to untagged). That is deliberately CONSISTENT with every other
+    // persist site (#684 F4), including the sign-out salvage of the same
+    // interruption; the note ("Recovered after connection loss" / "Recovered
+    // after sign-out") is what marks a blob as a recovery, not an untagged
+    // label.
+    const pending = { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide };
     const { tag, side } =
       note === ""
-        ? { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide }
-        : recoveredTagSide(
-            { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide },
-            tindeq.interruptionContext,
-          );
+        ? resolveBoundaryLabel(pending)
+        : resolveBoundaryLabel(recoveredTagSide(pending, tindeq.interruptionContext));
     const summary = await tindeq.stop(endMs);
     void endTindeqLiveActivity();
     if (!summary) return;
@@ -1884,7 +2000,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         const targetKg = presetTargetKg(protocol, snapshot.refs, set);
         return {
           note: "Recovered after sign-out",
-          tag: snapshot.tag,
+          // #684 F4/NEW-2: same as the live reverse-action save — TAG through
+          // the boundary (so the salvage of a set keeps the remembered tag),
+          // SIDE stays raw (`snapshot.side`); a remembered side must not
+          // stamp a movement rep whose target was computed all-sides.
+          tag: resolveBoundaryTag(snapshot.tag),
           side: snapshot.side,
           groupId: reverseRunGroupIdRef.current ?? snapshot.groupId,
           protocolRunId: runId,
@@ -2105,6 +2225,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // throwaway dev accounts, not just hypothetical).
       userId,
       stopInFlight: stopInFlightRef.current,
+      // #684 F4: the sign-out salvage resolves through the SAME
+      // persist-boundary rule as the live saves (explicit ?? last-used ??
+      // ''), read from the ref at salvage time — so the salvaged free hold
+      // keeps the remembered pair, exactly like the same hold's normal Stop.
+      // `resolveBoundaryLabel` is recreated every render but the salvage
+      // reads the ref, and it's a stable-on-purpose function value for this
+      // effect's identity.
+      resolveLabel: resolveBoundaryLabel,
       buildSalvageRecordings: (samples) =>
         buildAdaptiveStaticSalvage(samples) ?? buildReverseSalvageRecordings(samples),
     }));
@@ -2445,8 +2573,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           tag={pendingTag}
           side={pendingSide}
           allTags={allTags}
-          onTag={setPendingTag}
-          onSide={setPendingSide}
+          onTag={handlePendingTag}
+          onSide={handlePendingSide}
           locked={runActive}
         />
         {runActive && (
@@ -2457,7 +2585,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         {!pendingTag.trim() &&
           (status === "connected" || status === "armed" || status === "measuring") && (
             <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 8 }}>
-              Add an exercise to start recording.
+              {/* #684 NEW-1: no tag required — reps persist untagged, or with
+                  the remembered last-used tag. Only nudge when nothing is
+                  remembered at all. */}
+              {effectiveBoundaryLabel.tag
+                ? `Saving as ${effectiveBoundaryLabel.tag} — pick an exercise to change it.`
+                : "No exercise — the rep will save untagged. Pick one to tag it."}
             </div>
           )}
         {justSaved && status === "connected" && (
@@ -2638,8 +2771,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         {status === "idle" && (
           <button
             className="btn-primary force-start-primary"
-            disabled={!pendingTag.trim()}
-            title={!pendingTag.trim() ? "Add an exercise first" : undefined}
+            // #684 NEW-1: this just CONNECTS the device — the fullscreen's
+            // START (gated separately) begins the run. No tag gate here: a
+            // free hold can persist untagged, and a remembered last-used tag
+            // covers the protocol path at the fullscreen gate.
             onClick={() => void tindeq.connect()}
           >
             {activeProtocol ? "Start with sensor" : "Start free hold"}
@@ -2649,15 +2784,24 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         {sensorlessLaunchAvailable(status) && activeProtocol?.protocolMode === "reverse_action" && (
           <button
             className="btn-secondary force-start-secondary"
-            disabled={!pendingTag.trim() || runActive}
-            title={!pendingTag.trim() ? "Add an exercise first" : undefined}
+            // #684 NEW-1: the cadence run is a PROTOCOL, so it needs a
+            // STAMPABLE tag context — the RESOLVED tag (raw ?? remembered ??
+            // ''), so a remembered tag re-enables Start without being an
+            // explicit selection. runActive still gates it. The side stays
+            // the raw field (NEW-2).
+            disabled={runActive || !effectiveBoundaryLabel.tag}
             onClick={() => {
-              if (!timeline || !activeProtocol || !pendingTag.trim()) return;
+              if (!timeline || !activeProtocol) return;
+              // #684 NEW-1/NEW-2: the TAG resolves (raw ?? remembered ?? '')
+              // so a remembered tag re-enables Start; the SIDE stays the raw
+              // field — a cadence run is a reverse-action PROTOCOL, and the
+              // remembered side must not stamp protocol reps whose target was
+              // computed all-sides (see the protocol persist sites).
               const next: CadenceOnlyRunState = {
                 version: 1,
                 preset: activeProtocol,
                 userId,
-                tag: pendingTag.trim(),
+                tag: resolveBoundaryTag(pendingTag),
                 side: pendingSide,
                 groupId: crypto.randomUUID(),
                 runId: crypto.randomUUID(),
@@ -2798,22 +2942,32 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           globalSide={gaugeInputs.pendingSide}
           tag={gaugeInputs.pendingTag}
           allTags={allTags}
-          onTag={setPendingTag}
-          onSide={setPendingSide}
+          onTag={handlePendingTag}
+          onSide={handlePendingSide}
           onOpenSetupGuide={() => {
             setSetupGuideSensor(true);
             setSetupGuideOpen(true);
           }}
           onClearProtocol={clearProtocol}
           canStart={
-            !!gaugeInputs.pendingTag &&
+            // #684 NEW-1: a free hold (no protocol) never needs a tag — the
+            // untagged free hold is the feature. A PROTOCOL run does need a
+            // tag context (its target/zone are tag-keyed), but the gate is
+            // the RESOLVED tag — raw ?? remembered ?? '' — so a remembered
+            // last-used tag re-enables Start without being an explicit
+            // selection (the returning-user regression NEW-1 is about). With
+            // neither, the protocol stays gated and TagSideEditor's "Pick an
+            // exercise" placeholder carries the nudge.
+            (activeProtocol ? !!effectiveBoundaryLabel.tag : true) &&
             (!presetTargetConfigured || presetKgSet1 !== null) &&
             !zoneCurvePending &&
             !alternatingReferencesPending &&
             (!alternatingTargetNeedsBoth || alternatingPrescription !== null)
           }
           startBlockedReason={
-            activeProtocol?.protocolMode === "reverse_action" && presetTargetConfigured && presetKgSet1 === null
+            activeProtocol && !effectiveBoundaryLabel.tag
+              ? "Pick an exercise above — this protocol needs a tag to resolve its target."
+            : activeProtocol?.protocolMode === "reverse_action" && presetTargetConfigured && presetKgSet1 === null
               ? "This movement target cannot be resolved yet — add the required force reference or choose a fixed kg target."
             : zoneCurvePending
               ? "Updating this exercise's curve — try Start again in a moment, or tap Clear — free hold to start without a target."
@@ -2912,7 +3066,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               peakKg: null,
               avgKg: null,
               note: "Sensorless timed external-load attempt",
-              tag: gaugeInputs.pendingTag,
+              // #684 F4/NEW-2: TAG through the shared persist-boundary
+              // resolution; SIDE stays the raw protocol side (`seg.side ??
+              // pendingSide`) — a remembered side must not stamp a protocol
+              // rep whose target was computed all-sides.
+              tag: resolveBoundaryTag(gaugeInputs.pendingTag),
               side: seg.side ?? gaugeInputs.pendingSide,
               groupId,
               protocolRunId: runId,
