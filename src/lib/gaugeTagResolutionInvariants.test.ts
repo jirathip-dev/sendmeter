@@ -87,16 +87,20 @@ describe("#684 persist-boundary invariants", () => {
     // plain word `allTags` on a display-prop line.
     const offenders = sources.flatMap(({ path, code }) => {
       const lines = code.split("\n");
-      return lines.flatMap((line, i) => {
+      const lineOffenders = lines.flatMap((line, i) => {
         // A recording (or its builder) reading the RESOLVED display tag.
         const resolvedStamp = /(?:tag|side):\s*gaugeInputs\.tag\b/.test(line);
-        // A boundary call whose input references the display fallback rather
-        // than the raw fields.
-        const boundaryDisplay = /resolveBoundaryLabel\s*\([^)]*(?:liveEffectiveTag|allTags)/.test(line);
-        return resolvedStamp || boundaryDisplay
-          ? [`${path}:${i + 1}: ${line.trim()}`]
-          : [];
+        return resolvedStamp ? [`${path}:${i + 1}: ${line.trim()}`] : [];
       });
+      // The boundary call sites are multi-line (house style), so a per-line
+      // `[^)]*` can never see the realistic regression — someone adding
+      // `tag: liveEffectiveTag` INSIDE the object. Scan the whole file for a
+      // boundary call whose argument block mentions the display fallback
+      // (NEW-5: `[^)]` crosses newlines, unlike a per-line split).
+      const boundaryDisplay = /resolveBoundary(?:Tag|Label)\s*\([^)]*?(?:liveEffectiveTag|allTags)[^)]*?\)/.test(
+        code,
+      );
+      return boundaryDisplay ? [...lineOffenders, `${path}: boundary call references the display fallback`] : lineOffenders;
     });
     expect(offenders).toEqual([]);
   });
@@ -115,14 +119,34 @@ describe("#684 persist-boundary invariants", () => {
     expect(occurrences[1]!.line).toMatch(/setPendingTag\s*\(\s*t\s*\)/);
   });
 
-  it("every recording builder resolves through the shared boundary — the boundary is used at all seven persist sites, and the resolved tag never appears as a recording field (#684 F4)", () => {
-    // The seven persist sites (r684 F4's enumeration): guided per-rep hold,
-    // adaptive/hands-free run, reverse-action set, the free-hold stop
-    // (including its recovery branch), reverse-action salvage, and the
+  it("every recording builder resolves through the shared boundary — tag at all persist sites, side only where the user chooses it for a free hold (#684 F4 / NEW-2)", () => {
+    // The persist sites (r684 F4's enumeration + NEW-2's split): guided
+    // per-rep hold, adaptive/hands-free run, reverse-action set, the free-hold
+    // stop (including its recovery branch), reverse-action salvage, and the
     // sensorless manual attempt — plus the salvage context resolver that
     // carries the boundary into useTindeq.ts's generic sign-out row.
-    const boundaryCalls = [...forceView.matchAll(/resolveBoundaryLabel\s*\(/g)];
-    expect(boundaryCalls.length).toBeGreaterThanOrEqual(7);
+    //
+    // NEW-2: the TAG falls back to the remembered pair at every site (that is
+    // F4's design), but the remembered SIDE applies ONLY at the free-hold
+    // sites — the free-hold stop, its recovery, and the generic sign-out
+    // salvage row — where the user actually chooses a side for the hold. The
+    // protocol sites keep the raw protocol side (`seg.side ?? pendingSide`,
+    // `hold.side || snapshot.side`, `snapshot.side`) because a remembered side
+    // must not stamp a rep whose zone/target were computed all-sides (a stale
+    // side is indistinguishable from a real measurement and feeds per-side
+    // curve fits — the exact hazard ForceView's own comment at :1302-1309
+    // names). So: `resolveBoundaryLabel` (full pair) is used by the free-hold
+    // sites + the salvage resolver; `resolveBoundaryTag` (tag only) by the
+    // protocol sites.
+    const fullBoundaryCalls = [...forceView.matchAll(/resolveBoundaryLabel\s*\(/g)];
+    const tagBoundaryCalls = [...forceView.matchAll(/resolveBoundaryTag\s*\(/g)];
+    // Free-hold stop (both branches: normal + recovery) — the only places a
+    // full tag+side pair resolves, plus the sign-out salvage resolver
+    // (`resolveLabel: resolveBoundaryLabel`, asserted below).
+    expect(fullBoundaryCalls.length).toBeGreaterThanOrEqual(2);
+    // The protocol persist sites (guided per-rep, adaptive, reverse live,
+    // reverse salvage, manual) + the cadence-run Start — at least 6.
+    expect(tagBoundaryCalls.length).toBeGreaterThanOrEqual(6);
     expect(forceView).toMatch(/resolveLabel:\s*resolveBoundaryLabel/);
     // The salvage row actually calls the resolver, with an explicit no-owner
     // fallback whose raw "" fields are what the resolver would produce anyway.
@@ -130,7 +154,7 @@ describe("#684 persist-boundary invariants", () => {
     // And no recording ever carries the resolved display tag (see the first
     // pin) — this complements it by pinning the boundary reads the RAW fields.
     expect(forceView).toMatch(
-      /resolveBoundaryLabel\(\s*\{\s*tag:\s*gaugeInputs\.pendingTag/,
+      /resolveBoundaryTag\(\s*gaugeInputs\.pendingTag/,
     );
   });
 

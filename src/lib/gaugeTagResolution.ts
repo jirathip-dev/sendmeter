@@ -113,9 +113,10 @@ export function loadLastUsedGaugeLabel(
 /// field never writes the other field's current (possibly empty) value over
 /// the remembered one. A caller that picked only a side (with the Exercise
 /// field still empty) passes the current tag through, and vice versa — see
-/// `rememberGaugeLabelSelection`. This low-level writer is what pins that:
-/// it trims the tag and validates the side, so a caller merging is always
-/// writing a real selection.
+/// `rememberGaugeLabelSelection`. The side's validity is enforced on READ
+/// (`loadLastUsedGaugeLabel`), not here — the parameter is typed `TindeqSide`,
+/// and a corrupted stored value degrades to `""` at the boundary instead of
+/// poisoning a recording.
 export function saveLastUsedGaugeLabel(
   tag: string,
   side: TindeqSide,
