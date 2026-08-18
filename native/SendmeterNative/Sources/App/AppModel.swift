@@ -1054,9 +1054,19 @@ public final class AppModel: ObservableObject {
     public func scenePhaseChanged(_ phase: ScenePhase) {
         if phase == .active {
             updateKeepAwake()
+            // #671: resume the display-rate flush driver for a live stream
+            // (recording/armed) torn down on backgrounding.
+            tindeq.setFlushDriverPaused(false)
         } else {
             keepAwakeRelease?()
             keepAwakeRelease = nil
+            // #671 review N1: only `.background` suspends the process. `.inactive`
+            // fires behind a notification banner or Control Center pull while the
+            // gauge is still on screen and rendering — tearing the flush driver
+            // down then would freeze the live trace mid-pull.
+            if phase == .background {
+                tindeq.setFlushDriverPaused(true)
+            }
         }
     }
 

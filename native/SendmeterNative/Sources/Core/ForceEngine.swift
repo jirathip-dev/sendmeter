@@ -158,8 +158,13 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
     }
     public var elapsedMilliseconds: Double { samples.last?.milliseconds ?? 0 }
 
-    public func visibleWindow(milliseconds: Double = 10_000) -> [TindeqSample] {
-        guard let last = samples.last else { return [] }
+    /// The half-open index range of the most recent `milliseconds` of samples,
+    /// bounded by the accumulated buffer's end (#671). The chart reads this
+    /// range over the accumulator's stable `samples` storage instead of
+    /// copying a window array per BLE notification.
+    public func visibleRange(milliseconds: Double = 10_000) -> Range<Int> {
+        guard !samples.isEmpty else { return 0..<0 }
+        let last = samples[samples.endIndex - 1]
         let threshold = max(0, last.milliseconds - milliseconds)
         var low = 0
         var high = samples.count
@@ -171,7 +176,16 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
                 high = midpoint
             }
         }
-        return Array(samples[low...])
+        return low..<samples.count
+    }
+
+    /// The live window as a slice over the accumulator's stable `samples`
+    /// storage — an O(log n) binary search plus an O(1) `ArraySlice` with no
+    /// element copy (#671). This previously returned a fresh `Array` (~800
+    /// elements at a 10 s window) on every BLE notification, churning
+    /// allocations at stream rate.
+    public func visibleWindow(milliseconds: Double = 10_000) -> ArraySlice<TindeqSample> {
+        samples[visibleRange(milliseconds: milliseconds)]
     }
 
     public func summary() -> ForceSummary? {
@@ -189,6 +203,144 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
             averageKilograms: (averageKilograms * 100).rounded() / 100,
             samples: rounded
         )
+    }
+}
+
+// MARK: - Force publish coalescing (#671)
+
+/// The flush driver's cadence — the single throttle on force-surface
+/// publishes. BLE notifications can arrive faster than the display can
+/// redraw; without this the hot path assigned all of the published values
+/// (including the chart window) once per notification, and a fresh window
+/// array at stream rate. This mirrors the web app's rAF throttle
+/// (`src/hooks/useTindeq.ts:257-268`), which native previously lacked.
+///
+/// #671 fix direction: the transport schedules a Timer at
+/// `displayIntervalSeconds` (display rate) and a fire publishes exactly when
+/// a notification has marked samples pending. There is NO second time-gate:
+/// two throttles with the same period beat against each other and drop a
+/// large fraction of the timer's fires (the shipped bug this removes). One
+/// cadence source, and a fire always publishes — true display rate.
+///
+/// The type is pure so the cadence is provable in `swift test`; the
+/// transport (`TindeqBluetooth`) schedules its real Timer with this interval
+/// and calls `shouldPublishOnFire(pending:)` per fire.
+public struct ForcePublishScheduler {
+    /// The flush timer's fire cadence, in seconds (~60 Hz). The timer IS the
+    /// throttle: publishes can never exceed one per interval, and every fire
+    /// with pending samples publishes.
+    public var displayIntervalSeconds: Double
+
+    public init(displayIntervalSeconds: Double = 1.0 / 60.0) {
+        precondition(displayIntervalSeconds > 0)
+        self.displayIntervalSeconds = displayIntervalSeconds
+    }
+
+    /// The shipped publish rule for one timer fire: publish iff a notification
+    /// has marked samples pending since the last publish. Pure so the bench can
+    /// drive it with a simulated fire sequence (including jitter) and prove the
+    /// display-rate bound.
+    public func shouldPublishOnFire(pending: Bool) -> Bool {
+        pending
+    }
+}
+
+/// What one flush publishes, decided off the accumulator (the source of truth)
+/// by the transport's flush driver. Pure and testable in `swift test` even
+/// though the timer that drives it lives on the transport.
+public struct ForcePublishSnapshot: Equatable, Sendable {
+    /// Which published properties this flush refreshes. Recording refreshes
+    /// all five; an armed-but-not-recording stream refreshes only the live
+    /// reading — a single `objectWillChange` pulse per flush (F8); an idle
+    /// stream refreshes nothing.
+    public struct Fields: OptionSet, Equatable, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+
+        public static let currentKilograms = Fields(rawValue: 1 << 0)
+        public static let peakKilograms = Fields(rawValue: 1 << 1)
+        public static let averageKilograms = Fields(rawValue: 1 << 2)
+        public static let elapsedMilliseconds = Fields(rawValue: 1 << 3)
+        public static let window = Fields(rawValue: 1 << 4)
+        /// Everything a recording flush publishes.
+        public static let all: Fields = [
+            .currentKilograms, .peakKilograms, .averageKilograms,
+            .elapsedMilliseconds, .window
+        ]
+    }
+
+    public let fields: Fields
+    public let currentKilograms: Double
+    public let peakKilograms: Double
+    public let averageKilograms: Double
+    public let elapsedMilliseconds: Double
+    /// The half-open index range of the accumulator's samples the chart window
+    /// should show. The driver slices `accumulator.samples[visibleRange]` at
+    /// flush time — the only remaining window copy, at display rate rather
+    /// than notification rate.
+    public let visibleRange: Range<Int>
+
+    public init(
+        fields: Fields,
+        currentKilograms: Double,
+        peakKilograms: Double,
+        averageKilograms: Double,
+        elapsedMilliseconds: Double,
+        visibleRange: Range<Int>
+    ) {
+        self.fields = fields
+        self.currentKilograms = currentKilograms
+        self.peakKilograms = peakKilograms
+        self.averageKilograms = averageKilograms
+        self.elapsedMilliseconds = elapsedMilliseconds
+        self.visibleRange = visibleRange
+    }
+
+    public static let idle = ForcePublishSnapshot(
+        fields: [],
+        currentKilograms: 0,
+        peakKilograms: 0,
+        averageKilograms: 0,
+        elapsedMilliseconds: 0,
+        visibleRange: 0..<0
+    )
+}
+
+/// Builds the published snapshot from the stream's branch state. Recording
+/// publishes the full force surface + window; an armed-but-not-recording
+/// stream publishes only the live reading; an idle stream publishes nothing.
+public enum ForcePublishSnapshotBuilder {
+    public static func snapshot(
+        isRecording: Bool,
+        handsFreeArmed: Bool,
+        lastSampleKilograms: Double,
+        accumulator: ForceSessionAccumulator,
+        windowMilliseconds: Double = 10_000
+    ) -> ForcePublishSnapshot {
+        if isRecording {
+            return ForcePublishSnapshot(
+                fields: .all,
+                currentKilograms: accumulator.currentKilograms,
+                peakKilograms: accumulator.peakKilograms,
+                averageKilograms: accumulator.averageKilograms,
+                elapsedMilliseconds: accumulator.elapsedMilliseconds,
+                visibleRange: accumulator.visibleRange(milliseconds: windowMilliseconds)
+            )
+        }
+        if handsFreeArmed {
+            // Pre-start samples feed the hands-free loop, never the
+            // accumulator; the live reading comes from the last sample that
+            // marked `pendingPublish`.
+            return ForcePublishSnapshot(
+                fields: .currentKilograms,
+                currentKilograms: lastSampleKilograms,
+                peakKilograms: 0,
+                averageKilograms: 0,
+                elapsedMilliseconds: 0,
+                visibleRange: 0..<0
+            )
+        }
+        return .idle
     }
 }
 
