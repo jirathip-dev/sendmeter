@@ -669,8 +669,33 @@ final class TindeqManager: NSObject {
     /// get release semantics by accident.
     func stopAndSave(reason: HandsFreeStopReason) {
         guard let claim = repClaims.claimStop() else { return }
-        if handsFreeRequested { handsFreeState = .stopping }
-        guard let summary = stopTransport(endMs: reason.trimEndMs) else {
+        // #681: an auto-release (.released) has already proved stopGraceMs of
+        // slack, so it can stop the transport stream outright and re-arm
+        // straight to armed. A tap ("Save now") or the 30-minute cap re-arms
+        // through `waitingForSlack`, which must OBSERVE a sample at/below
+        // stopKg before the next pull can be recognized. If the user's
+        // release-to-slack edge falls inside the async save's dark window
+        // (transport stopped, samples dropped), that sample never arrives: the
+        // re-arm sees only a resumed loaded stream and the second pull never
+        // arms — the #607 report. Keep the weight stream LIVE through tap/cap
+        // saves so the machine observes the release while saving, and let the
+        // re-arm preserve whatever it observed.
+        let isReleaseStop: Bool
+        switch reason {
+        case .released: isReleaseStop = true
+        case .userTapped, .cappedAt30Min: isReleaseStop = false
+        }
+        let keepStreamRunning = handsFreeRequested
+            && !isReleaseStop
+            && transportConnected
+        if handsFreeRequested {
+            handsFreeState = keepStreamRunning ? .waitingForSlack : .stopping
+        }
+        let summary = stopTransport(
+            endMs: reason.trimEndMs,
+            keepStreamRunning: keepStreamRunning
+        )
+        guard let summary else {
             // #529 slice-2 review round 2 R2-F1: nothing was captured to
             // persist, so no `persistPreparedRecording` completion will ever
             // run for this rep — this IS the rep-ending point. Resolve
@@ -850,10 +875,10 @@ final class TindeqManager: NSObject {
         logSessionNow()
     }
 
-    private func stopTransport(endMs: Double? = nil) -> StoppedRecording? {
+    private func stopTransport(endMs: Double? = nil, keepStreamRunning: Bool = false) -> StoppedRecording? {
         measuring = false
         stopUITimer()
-        write(.stop)
+        if !keepStreamRunning { write(.stop) }
         status = transportConnected ? .connected : .idle
         guard let summary = makeSummary(endMs: endMs) else { return nil }
         currentKg = 0
@@ -1135,21 +1160,53 @@ final class TindeqManager: NSObject {
     }
 
     private func rearmHandsFreeAfterSave(afterStop reason: HandsFreeStopReason) {
+        // #681: if a new rep already started during this save (the live stream
+        // let the machine observe release + re-pull inside the save window), it
+        // owns the machine now — the re-arm must not idle or reset it.
+        if case .recording = handsFreeState {
+            return
+        }
         guard handsFreeRequested, transportConnected, status == .connected, !finishAfterSaves else {
             handsFreeState = idleHandsFreeForce()
             return
         }
-        // Only `.released` has already proved 1.5 s <= stopKg, so it re-arms
-        // straight to armed — requiring another slack sample after the
-        // stop/save/restart dark window can silently miss a fast next rep.
-        // Tap/cap stops have no such proof and must still gate the same
-        // continuous load before re-arming. Decided in Core (#503).
-        handsFreeState = rearmedHandsFreeForce(afterStop: reason)
-        armedStreamStartedAtUs = nil
-        resetRecordingBuffer()
-        write(.startWeight)
-        scheduleArmTimeout()
-        pushForceBeat()
+        switch reason {
+        case .released:
+            // The stream was stopped at save time (release already proved
+            // stopGraceMs of slack), so re-arm straight to armed and restart
+            // the stream (#503).
+            handsFreeState = rearmedHandsFreeForce(afterStop: reason)
+            armedStreamStartedAtUs = nil
+            resetRecordingBuffer()
+            write(.startWeight)
+            scheduleArmTimeout()
+            pushForceBeat()
+        case .userTapped, .cappedAt30Min:
+            // #681: the stream stayed LIVE through this save (stopAndSave), so
+            // the machine already observed the post-save world — waitingForSlack
+            // if the user is still hanging (phantom guard), armed(aboveSinceMs:
+            // nil) once slack arrived, or armed(aboveSinceMs: some) if the next
+            // pull is already in its stable window. Preserve that evidence
+            // instead of stamping the blind Core decision (waitingForSlack)
+            // over it: that would strand the already-armed machine and swallow
+            // the fast next pull — the #607 report. Only the stopped-stream
+            // case (transport was unavailable at stop time) needs the blind
+            // re-arm and a restart.
+            if case .stopping = handsFreeState {
+                handsFreeState = rearmedHandsFreeForce(afterStop: reason)
+                armedStreamStartedAtUs = nil
+                resetRecordingBuffer()
+                write(.startWeight)
+                scheduleArmTimeout()
+                pushForceBeat()
+            } else {
+                // Machine already reflects the live stream. Refresh the idle
+                // disarm budget and the mirror beat; leave samples/buffer alone.
+                armedStreamStartedAtUs = nil
+                scheduleArmTimeout()
+                pushForceBeat()
+            }
+        }
     }
 
     private func clearHandsFreeAfterTransportLoss() {
@@ -1328,6 +1385,11 @@ final class TindeqManager: NSObject {
         case .weight(let incoming):
             // THE BLOCKER path sits alongside — and before — the original
             // manual guard. Armed samples reach Core but never the buffer.
+            // #681: `waitingForSlack` while saving (measuring == false) is the
+            // live post-tap/post-cap save window — the stream stays running so
+            // a release edge that falls inside the async save is OBSERVED
+            // (see stopAndSave), advancing the machine to armed in time for
+            // the next pull. `isWaitingForHandsFreePull` covers it.
             if !measuring, handsFreeRequested, isWaitingForHandsFreePull {
                 handleArmedSamples(incoming)
                 return

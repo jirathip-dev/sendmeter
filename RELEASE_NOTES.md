@@ -100,6 +100,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: resisted-movement presets now keep every continuous set within the Progressor's 30-minute recording window, including older presets opened on the Watch.
 - Watch: a zero-rest resisted-movement boundary no longer loses the next set while the previous recording is still being queued; both sets stay in one Force session.
 - Watch: switching accounts during a guided Force run now discards the in-progress trace without saving it under the next account; same-account offline runs continue normally.
+- Watch: hands-free Force now records a second pull right after a tap save ("Save now") even when you release and pull again while the first rep is still saving — the gauge stays live during the save so the release is seen, and a still-hanging load still never becomes a phantom second rep.
 - Force: a BLE disconnect during the first rep of a session now auto-logs the recovered session to History instead of silently dropping it until a later disconnect.
 - Force: retrying unsaved recordings no longer discards a rep that failed to save while the retry was in progress, and a single-sample recording can no longer get permanently stuck failing to sync.
 - History: the Type and Force-tag filter chip rows no longer show a scrollbar over the chips; they still scroll by touch/trackpad when they overflow.

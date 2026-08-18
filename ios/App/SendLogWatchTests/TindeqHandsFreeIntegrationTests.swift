@@ -302,7 +302,95 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
         let rowsWhileStillLoaded = await recordings.count()
         XCTAssertEqual(rowsWhileStillLoaded, 2)
-        XCTAssertEqual(commands, [.startWeight, .stop, .startWeight, .stop, .startWeight])
+        // #681: the tap save keeps the weight stream live (the machine must
+        // observe the release inside the save window), so a tap save emits no
+        // .stop and the re-arm emits no .startWeight — the stream never gaped.
+        XCTAssertEqual(commands, [.startWeight, .stop, .startWeight])
+    }
+
+    /// #681 — the deterministic repro of the #607 report. A tap save while
+    /// hanging re-arms through `waitingForSlack`, which must OBSERVE the
+    /// release before the next pull can arm. If the save's async window is
+    /// where the user releases (the real-BLE case: the transport was stopped,
+    /// so the release edge was DROPPED), the re-arm would see only a resumed
+    /// loaded stream and strand the machine — the second pull never records.
+    /// The fix keeps the weight stream live through the tap save so the
+    /// machine observes the release inside the save window, and the re-arm
+    /// preserves the armed machine instead of stamping waitingForSlack over it.
+    func testTapSaveWhileHangingReleaseDuringSaveWindowRearmsForNextPull() async throws {
+        let recordings = RecordingQueueSpy()
+        var commands: [Tindeq.Cmd] = []
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: SessionQueueSpy(),
+            armTimeoutSeconds: 600,
+            commandWriter: { commands.append($0) }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.armHandsFree()
+        feed(manager, [(3, 0), (3, 600_000), (25, 700_000)])
+        XCTAssertEqual(manager.status, .measuring)
+
+        // The user taps "Save now" while still hanging. With the stream kept
+        // live, the release that follows is observed during the save window.
+        manager.stopAndSave(reason: .userTapped)
+        feed(manager, [(0.5, 800_000)])
+        XCTAssertEqual(
+            manager.handsFreeState, .armed(aboveSinceMs: nil),
+            "the release inside the live save window must arm the machine"
+        )
+        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
+        XCTAssertEqual(
+            manager.handsFreeState, .armed(aboveSinceMs: nil),
+            "the re-arm must preserve the armed machine observed during the save"
+        )
+
+        // The next pull starts and records with no user interaction.
+        feed(manager, [(3, 900_000), (3, 1_500_000)])
+        XCTAssertEqual(manager.status, .measuring)
+        feed(manager, [(25, 1_600_000), (0.5, 1_700_000), (0.5, 3_200_000)])
+        try await waitUntil { manager.sessionCount == 2 && !manager.saving }
+        // The .released save re-arms straight to armed; wait for that so the
+        // command list below is settled (the re-arm runs after `saving` flips).
+        try await waitUntil { manager.handsFreeState == .armed(aboveSinceMs: nil) }
+        let rows = await recordings.snapshot().map(\.row)
+        XCTAssertEqual(rows.count, 2, "the second pull must record after a tap save with slack inside the save window")
+        // .startWeight (arm) + .stop (rep 2's release) + .startWeight (rep 2's
+        // re-arm). Rep 1 was a TAP save: its stream stayed live (no .stop) and
+        // its re-arm preserved the armed machine (no .startWeight).
+        XCTAssertEqual(commands, [.startWeight, .stop, .startWeight])
+    }
+
+    /// #681 — the phantom-rep guard preserved: a tap save while still hanging
+    /// with NO release in the save window must keep waiting for slack; the
+    /// same continuous load must never become a second rep.
+    func testTapSaveWhileHangingNoReleaseStaysWaitingForSlack() async throws {
+        let recordings = RecordingQueueSpy()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: SessionQueueSpy(),
+            armTimeoutSeconds: 600,
+            commandWriter: { _ in }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.armHandsFree()
+        feed(manager, [(3, 0), (3, 600_000), (25, 700_000)])
+        XCTAssertEqual(manager.status, .measuring)
+
+        manager.stopAndSave(reason: .userTapped)
+        // The user keeps hanging through the whole save — no slack sample.
+        feed(manager, [(25, 800_000), (25, 1_500_000), (25, 2_000_000)])
+        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
+        XCTAssertEqual(
+            manager.handsFreeState, .waitingForSlack,
+            "no release observed = still waiting for slack (phantom guard)"
+        )
+        let rows = await recordings.snapshot()
+        XCTAssertEqual(rows.count, 1, "the same continuous load must not become a second rep")
     }
 
     func testThirtyMinuteCapSavesOneUntrimmedRepAndWaitsForSlack() async throws {
@@ -343,7 +431,9 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         // After real slack the machine still arms and starts the next rep.
         feed(manager, [(0.5, 1_802_000_000), (3, 1_802_200_000), (3, 1_802_900_000)])
         XCTAssertEqual(manager.status, .measuring)
-        XCTAssertEqual(commands, [.startWeight, .stop, .startWeight])
+        // #681: the cap save keeps the weight stream live so the machine can
+        // observe the release inside the save window — no .stop/.startWeight.
+        XCTAssertEqual(commands, [.startWeight])
     }
 
     func testWallClockTimeoutDisarmsAQuietPostSaveRearm() async throws {
@@ -369,7 +459,9 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         try await waitUntil { !manager.handsFreeRequested }
         XCTAssertEqual(manager.handsFreeState, .idle)
         XCTAssertEqual(manager.savedMsg, "Hands-free disarmed after 10 min idle")
-        XCTAssertEqual(commands, [.startWeight, .stop, .startWeight, .stop])
+        // #681: the tap save keeps the stream live (no .stop); only the
+        // timeout's own disarm writes .stop.
+        XCTAssertEqual(commands, [.startWeight, .stop])
     }
 
     func testMissingSalvageClaimReportsLossAndLogsPriorSession() async throws {
@@ -760,6 +852,40 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertEqual(manager.sessionCount, 1)
         let handsFreeRows = await recordings.snapshot()
         XCTAssertEqual(handsFreeRows.first?.row.side, "right")
+        manager.cancelHandsFree()
+        manager.disconnect()
+    }
+
+    func testSimulatorFakeTransportTwoBackToBackPullsRecordTwoReps() async throws {
+        let recordings = RecordingQueueSpy()
+        let transport = FakeTindeqTransport(script: shortFakeScript())
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: SessionQueueSpy(),
+            armTimeoutSeconds: 30,
+            fakeTransport: transport
+        )
+        manager.liveTag = "Open hand"
+        manager.liveSide = "right"
+
+        manager.connect()
+        try await waitUntil { manager.status == .connected }
+        manager.armHandsFree()
+
+        // Pull 1 auto-saves on release and re-arms.
+        try await waitUntil(timeout: .seconds(8)) {
+            await recordings.count() == 1 && !manager.saving
+        }
+        XCTAssertEqual(manager.handsFreeState, .armed(aboveSinceMs: nil))
+
+        // Pull 2 (the waveform restarts on the re-arm's .startWeight) must
+        // auto-start and save with no user interaction — the #607 scenario.
+        try await waitUntil(timeout: .seconds(8)) {
+            await recordings.count() == 2 && !manager.saving
+        }
+        let rows = await recordings.snapshot().map(\.row)
+        XCTAssertEqual(rows.count, 2, "a second back-to-back pull must record a second rep")
+        XCTAssertEqual(Set(rows.compactMap(\.groupId)).count, 1, "both reps join one session")
         manager.cancelHandsFree()
         manager.disconnect()
     }

@@ -75,6 +75,53 @@ final class HandsFreeForceTests: XCTestCase {
         XCTAssertEqual(secondStart.state, .recording(belowSinceMs: nil))
     }
 
+    /// #681 — the issue's named re-arm regression: a post-save re-arm
+    /// (waitingForSlack) that observes the release-to-slack edge arms, and the
+    /// next pull held startStableMs records. This is the ONLY way rep #2 can
+    /// start once the manual Start control is gone (#683).
+    func testRearmThroughWaitingForSlackObservesReleaseThenArmsAndRecords() {
+        var state = rearmedHandsFreeForce()
+        XCTAssertEqual(state, .waitingForSlack)
+
+        // A fresh pull before slack is ignored — it must not arm mid-load.
+        XCTAssertEqual(step(state, 0, 35).state, .waitingForSlack)
+        XCTAssertEqual(step(state, 10_000, 35).state, .waitingForSlack)
+
+        // The release-to-slack edge (at/below stopKg) arms.
+        state = step(state, 10_100, 0.5).state
+        XCTAssertEqual(state, .armed(aboveSinceMs: nil))
+
+        // The next pull held startStableMs records.
+        state = step(state, 10_200, 3).state
+        let secondStart = step(state, 10_800, 3)
+        XCTAssertEqual(secondStart.action, .start)
+        XCTAssertEqual(secondStart.state, .recording(belowSinceMs: nil))
+    }
+
+    /// #681 — the phantom-rep guard: a continuous load spanning a save (no
+    /// release edge at/below stopKg after the re-arm) must NEVER produce a
+    /// second rep. The machine stays in waitingForSlack no matter how long the
+    /// same load is held.
+    func testContinuousLoadSpanningSaveNeverProducesPhantomSecondRep() {
+        var state = rearmedHandsFreeForce()
+        XCTAssertEqual(state, .waitingForSlack)
+
+        // The same continuous load (never dipping to stopKg) spanning the save
+        // and well past startStableMs stays waitingForSlack — never arms.
+        for atMs in stride(from: 0.0, through: 60_000, by: 500) {
+            let stepped = step(state, atMs, 35)
+            state = stepped.state
+            XCTAssertEqual(stepped.action, nil)
+        }
+        XCTAssertEqual(state, .waitingForSlack)
+
+        // Only a genuine release arms, then the pull records.
+        state = step(state, 60_500, 0.5).state
+        XCTAssertEqual(state, .armed(aboveSinceMs: nil))
+        state = step(state, 60_600, 3).state
+        XCTAssertEqual(step(state, 61_200, 3).action, .start)
+    }
+
     func testInactiveTransportDisarmsExceptForClaimedConnectedArm() {
         let armed = armedHandsFreeForce()
         XCTAssertEqual(handsFreeForceAtInactiveStatus(armed, status: .connected), armed)
