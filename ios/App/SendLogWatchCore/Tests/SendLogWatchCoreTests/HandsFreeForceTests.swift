@@ -75,6 +75,118 @@ final class HandsFreeForceTests: XCTestCase {
         XCTAssertEqual(secondStart.state, .recording(belowSinceMs: nil))
     }
 
+    /// #681 — the issue's named re-arm regression: a post-save re-arm
+    /// (waitingForSlack) that observes the release-to-slack edge arms, and the
+    /// next pull held startStableMs records. This is the ONLY way rep #2 can
+    /// start once the manual Start control is gone (#683).
+    ///
+    /// Characterization note (#681 review F4): this drives only the pure
+    /// machine's waitingForSlack -> armed transition, which this branch did
+    /// not change, so it cannot fail on the unfixed manager. The tests that DO
+    /// fail on unfixed code are the manager-level integration cases in
+    /// `TindeqHandsFreeIntegrationTests` (the app test target, watchOS
+    /// simulator only); the new `testSaveWindowSamplePastArmTimeoutDoesNotCancel`
+    /// below pins the F1 idle-budget re-base (Swift-only — the web has no
+    /// idle-disarm concept).
+    func testRearmThroughWaitingForSlackObservesReleaseThenArmsAndRecords() {
+        var state = rearmedHandsFreeForce()
+        XCTAssertEqual(state, .waitingForSlack)
+
+        // A fresh pull before slack is ignored — it must not arm mid-load.
+        XCTAssertEqual(step(state, 0, 35).state, .waitingForSlack)
+        XCTAssertEqual(step(state, 10_000, 35).state, .waitingForSlack)
+
+        // The release-to-slack edge (at/below stopKg) arms.
+        state = step(state, 10_100, 0.5).state
+        XCTAssertEqual(state, .armed(aboveSinceMs: nil))
+
+        // The next pull held startStableMs records.
+        state = step(state, 10_200, 3).state
+        let secondStart = step(state, 10_800, 3)
+        XCTAssertEqual(secondStart.action, .start)
+        XCTAssertEqual(secondStart.state, .recording(belowSinceMs: nil))
+    }
+
+    /// #681 — the phantom-rep guard: a continuous load spanning a save (no
+    /// release edge at/below stopKg after the re-arm) must NEVER produce a
+    /// second rep. The machine stays in waitingForSlack no matter how long the
+    /// same load is held.
+    ///
+    /// Characterization note (#681 review F4): same as the re-arm test above —
+    /// this pins the pure machine only; the manager wiring that preserves this
+    /// through a real tap/cap save is covered by the integration cases.
+    func testContinuousLoadSpanningSaveNeverProducesPhantomSecondRep() {
+        var state = rearmedHandsFreeForce()
+        XCTAssertEqual(state, .waitingForSlack)
+
+        // The same continuous load (never dipping to stopKg) spanning the save
+        // and well past startStableMs stays waitingForSlack — never arms.
+        for atMs in stride(from: 0.0, through: 60_000, by: 500) {
+            let stepped = step(state, atMs, 35)
+            state = stepped.state
+            XCTAssertEqual(stepped.action, nil)
+        }
+        XCTAssertEqual(state, .waitingForSlack)
+
+        // Only a genuine release arms, then the pull records.
+        state = step(state, 60_500, 0.5).state
+        XCTAssertEqual(state, .armed(aboveSinceMs: nil))
+        state = step(state, 60_600, 3).state
+        XCTAssertEqual(step(state, 61_200, 3).action, .start)
+    }
+
+    /// #681 review F1 — regression: a sample inside the save window at a
+    /// device timestamp past the arm timeout must NOT cancel. The watch keeps
+    /// the weight stream live through tap/cap saves, so post-stop samples keep
+    /// flowing into `handleArmedSamples`; the manager re-bases the idle budget
+    /// at save-window entry (and at rep start), so a 30-minute rep's first
+    /// post-cap sample starts a FRESH budget instead of inheriting the stale
+    /// pre-rep base. Without the re-base this sample computes ~30 min > 10 min
+    /// and disarms mid-save. This pins the Swift-only idle budget (no TS
+    /// counterpart exists); the manager wiring is covered by the cap
+    /// integration case's save-window feed.
+    func testSaveWindowSamplePastArmTimeoutDoesNotCancel() {
+        // The bug the re-base guards against: a budget that kept the PRE-REP
+        // base through the whole rep (never re-based at save-window entry)
+        // sees the 30-minute cap sample as 30 min of "idle" and disarms.
+        let stale = ArmedStreamIdleBudget()
+        let armed = observeArmedStreamIdleBudget(stale, sampleUs: 1_000, timeoutSeconds: 600) // arm-time base
+        XCTAssertTrue(
+            observeArmedStreamIdleBudget(armed.budget, sampleUs: 1_800_600_000, timeoutSeconds: 600).idleExceeded,
+            "the stale pre-rep base would disarm — the failure this regression guards against"
+        )
+
+        // The fix: save-window entry re-bases the budget (a fresh epoch), so
+        // the first sample inside the window establishes the base and must NOT
+        // cancel.
+        let budget = ArmedStreamIdleBudget() // re-based at stopAndSave
+        let first = observeArmedStreamIdleBudget(budget, sampleUs: 1_800_600_000, timeoutSeconds: 600)
+        XCTAssertFalse(first.idleExceeded, "a save-window sample at a device timestamp past the arm timeout must NOT cancel")
+        XCTAssertEqual(first.budget.baseUs, 1_800_600_000)
+
+        // Ten genuine idle minutes after that still disarm — the budget's job.
+        XCTAssertTrue(
+            observeArmedStreamIdleBudget(first.budget, sampleUs: 2_400_600_000, timeoutSeconds: 600).idleExceeded
+        )
+
+        // A rep start also re-bases: recording time never counts as idle, so a
+        // sample 0.5 s into the rep (30+ min after arming) does not disarm.
+        XCTAssertFalse(
+            observeArmedStreamIdleBudget(ArmedStreamIdleBudget(), sampleUs: 1_800_900_000, timeoutSeconds: 600).idleExceeded
+        )
+    }
+
+    /// #681 review F3 — the keep-the-stream-running decision is Core's, not a
+    /// fourth local switch in the manager. Release proved `stopGraceMs` of
+    /// slack, so it may stop the transport outright; tap/cap have no proof and
+    /// keep the stream live so the release edge inside the async save window
+    /// is still observed.
+    func testStopReasonAnswersTheKeepStreamLiveQuestion() {
+        XCTAssertFalse(HandsFreeStopReason.released(endMs: 1_234).keepsStreamLive)
+        XCTAssertTrue(HandsFreeStopReason.userTapped.keepsStreamLive)
+        XCTAssertTrue(HandsFreeStopReason.cappedAt30Min.keepsStreamLive)
+    }
+
     func testInactiveTransportDisarmsExceptForClaimedConnectedArm() {
         let armed = armedHandsFreeForce()
         XCTAssertEqual(handsFreeForceAtInactiveStatus(armed, status: .connected), armed)

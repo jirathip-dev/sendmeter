@@ -82,7 +82,13 @@ final class TindeqManager: NSObject {
     private var finishAfterSaves = false
     private var savedMsgGeneration = 0
     private var armTimeoutTimer: Timer?
-    private var armedStreamStartedAtUs: UInt32?
+    /// Sample-clock idle budget for the armed stream (#681 review F1). The
+    /// wall-clock `armTimeoutTimer` and this budget are both re-based at
+    /// every armed-epoch boundary (arm, rep start, save-window entry, re-arm,
+    /// transport loss) so recording time and the async save window never
+    /// count as idle. Mirrored in Core (`ArmedStreamIdleBudget`) so the
+    /// 32-bit µs wrap and the 10-minute threshold live in one testable place.
+    private var armedStreamIdleBudget = ArmedStreamIdleBudget()
     private let armTimeoutSeconds: TimeInterval
     private let recordingQueue: any TindeqRecordingQueueing
     private let sessionQueue: any TindeqSessionQueueing
@@ -632,7 +638,7 @@ final class TindeqManager: NSObject {
         savedMsg = nil
         handsFreeRequested = true
         handsFreeState = armedHandsFreeForce() // synchronous control claim
-        armedStreamStartedAtUs = nil
+        armedStreamIdleBudget = ArmedStreamIdleBudget()
         repClaims.discard()
         resetRecordingBuffer()
         write(.startWeight)
@@ -650,7 +656,7 @@ final class TindeqManager: NSObject {
         }
         handsFreeRequested = false
         handsFreeState = idleHandsFreeForce()
-        armedStreamStartedAtUs = nil
+        armedStreamIdleBudget = ArmedStreamIdleBudget()
         armTimeoutTimer?.invalidate()
         armTimeoutTimer = nil
         if wasArmedStream {
@@ -669,8 +675,42 @@ final class TindeqManager: NSObject {
     /// get release semantics by accident.
     func stopAndSave(reason: HandsFreeStopReason) {
         guard let claim = repClaims.claimStop() else { return }
-        if handsFreeRequested { handsFreeState = .stopping }
-        guard let summary = stopTransport(endMs: reason.trimEndMs) else {
+        // #681: an auto-release (.released) has already proved stopGraceMs of
+        // slack, so it can stop the transport stream outright and re-arm
+        // straight to armed. A tap ("Stop & Save") or the 30-minute cap re-arms
+        // through `waitingForSlack`, which must OBSERVE a sample at/below
+        // stopKg before the next pull can be recognized. If the user's
+        // release-to-slack edge falls inside the async save's dark window
+        // (transport stopped, samples dropped), that sample never arrives: the
+        // re-arm sees only a resumed loaded stream and the second pull never
+        // arms — the #607 report. Keep the weight stream LIVE through tap/cap
+        // saves so the machine observes the release while saving, and let the
+        // re-arm preserve whatever it observed.
+        // #681 review F3: the keep-live decision is Core's
+        // (`reason.keepsStreamLive`) — not a fourth local switch — and the
+        // live-window state is Core's own re-arm decision
+        // (`rearmedHandsFreeForce(afterStop:)`); only the stopped-stream case
+        // stamps `.stopping`.
+        let keepStreamRunning = handsFreeRequested
+            && reason.keepsStreamLive
+            && transportConnected
+        if handsFreeRequested {
+            handsFreeState = keepStreamRunning
+                ? rearmedHandsFreeForce(afterStop: reason)
+                : .stopping
+            // #681 review F1: the save window is a new armed epoch. Re-base
+            // the sample-clock idle budget so the first post-stop sample
+            // starts a fresh 10-minute clock instead of inheriting the stale
+            // pre-rep base — with the whole rep's recording time counted as
+            // idle, a 30-minute cap rep would spuriously cancel inside its own
+            // save window (the "hands-free disarmed" dead gauge under #683).
+            if keepStreamRunning { armedStreamIdleBudget = ArmedStreamIdleBudget() }
+        }
+        let summary = stopTransport(
+            endMs: reason.trimEndMs,
+            keepStreamRunning: keepStreamRunning
+        )
+        guard let summary else {
             // #529 slice-2 review round 2 R2-F1: nothing was captured to
             // persist, so no `persistPreparedRecording` completion will ever
             // run for this rep — this IS the rep-ending point. Resolve
@@ -678,7 +718,7 @@ final class TindeqManager: NSObject {
             // completion handler: a closed session cancels hands-free too.
             resolvePendingAccountTransitionIfNeeded()
             if handsFreeRequested, transportConnected {
-                rearmHandsFreeAfterSave(afterStop: reason)
+                rearmHandsFreeAfterSave(afterStop: reason, keepStreamRunning: keepStreamRunning)
             }
             return
         }
@@ -686,6 +726,7 @@ final class TindeqManager: NSObject {
             summary,
             claim: claim,
             note: "",
+            keepStreamRunning: keepStreamRunning,
             rearmHandsFreeAfterStop: handsFreeRequested ? reason : nil
         )
     }
@@ -838,6 +879,7 @@ final class TindeqManager: NSObject {
             lostSavedMessage: "Movement set was not saved",
             lostErrorMessage: "Set not saved — couldn't write to the watch.",
             rememberSelection: true,
+            keepStreamRunning: false,
             rearmHandsFreeAfterStop: nil
         )
         return true
@@ -850,10 +892,10 @@ final class TindeqManager: NSObject {
         logSessionNow()
     }
 
-    private func stopTransport(endMs: Double? = nil) -> StoppedRecording? {
+    private func stopTransport(endMs: Double? = nil, keepStreamRunning: Bool = false) -> StoppedRecording? {
         measuring = false
         stopUITimer()
-        write(.stop)
+        if !keepStreamRunning { write(.stop) }
         status = transportConnected ? .connected : .idle
         guard let summary = makeSummary(endMs: endMs) else { return nil }
         currentKg = 0
@@ -1116,6 +1158,9 @@ final class TindeqManager: NSObject {
         armTimeoutTimer?.invalidate()
         armTimeoutTimer = nil
         resetRecordingBuffer()
+        // #681 review F1: a rep start is a new armed epoch — recording time
+        // must never count against the sample-clock idle budget.
+        armedStreamIdleBudget = ArmedStreamIdleBudget()
         // SL-585: an empty tag no longer cancels the armed pull — it records
         // as an untagged free hold, exactly what the manual `start()` path
         // has always allowed (`repClaims.begin` and the recordings schema
@@ -1134,28 +1179,74 @@ final class TindeqManager: NSObject {
         pushForceBeat()
     }
 
-    private func rearmHandsFreeAfterSave(afterStop reason: HandsFreeStopReason) {
+    private func rearmHandsFreeAfterSave(afterStop reason: HandsFreeStopReason, keepStreamRunning: Bool) {
+        // #681: if a new rep already started during this save (the live stream
+        // let the machine observe release + re-pull inside the save window), it
+        // owns the machine now — the re-arm must not idle or reset it.
+        if case .recording = handsFreeState {
+            return
+        }
         guard handsFreeRequested, transportConnected, status == .connected, !finishAfterSaves else {
             handsFreeState = idleHandsFreeForce()
             return
         }
-        // Only `.released` has already proved 1.5 s <= stopKg, so it re-arms
-        // straight to armed — requiring another slack sample after the
-        // stop/save/restart dark window can silently miss a fast next rep.
-        // Tap/cap stops have no such proof and must still gate the same
-        // continuous load before re-arming. Decided in Core (#503).
-        handsFreeState = rearmedHandsFreeForce(afterStop: reason)
-        armedStreamStartedAtUs = nil
-        resetRecordingBuffer()
-        write(.startWeight)
-        scheduleArmTimeout()
-        pushForceBeat()
+        switch reason {
+        case .released:
+            // The stream was stopped at save time (release already proved
+            // stopGraceMs of slack), so re-arm straight to armed and restart
+            // the stream (#503).
+            handsFreeState = rearmedHandsFreeForce(afterStop: reason)
+            armedStreamIdleBudget = ArmedStreamIdleBudget()
+            resetRecordingBuffer()
+            write(.startWeight)
+            scheduleArmTimeout()
+            pushForceBeat()
+        case .userTapped, .cappedAt30Min:
+            // #681: whether THIS stop kept the transport stream running is a
+            // value decided synchronously at stop time and carried through
+            // the async save (`keepStreamRunning`, #681 review F2) — never
+            // re-derived from `handsFreeState` at completion time, which a
+            // second rep can advance while this save is in flight.
+            if keepStreamRunning {
+                // The machine already observed the post-save world —
+                // waitingForSlack if the user is still hanging (phantom
+                // guard), armed(aboveSinceMs: nil) once slack arrived, or
+                // armed(aboveSinceMs: some) if the next pull is already in
+                // its stable window. Preserve that evidence instead of
+                // stamping the blind Core decision (waitingForSlack) over it:
+                // that would strand the already-armed machine and swallow the
+                // fast next pull — the #607 report. Only the stopped-stream
+                // case (transport was unavailable at stop time) needs the
+                // blind re-arm and a restart.
+                // A `.stopping` machine here belongs to a NEWER rep that
+                // stopped the stream inside this save window; its own re-arm
+                // owns the machine — do nothing (hand off, don't stomp).
+                if case .stopping = handsFreeState {
+                    return
+                }
+                // Machine already reflects the live stream. Refresh the idle
+                // disarm budget and the mirror beat; leave samples/buffer
+                // alone.
+                armedStreamIdleBudget = ArmedStreamIdleBudget()
+                scheduleArmTimeout()
+                pushForceBeat()
+            } else if case .stopping = handsFreeState {
+                // The stream was stopped at save time (transport was
+                // unavailable at stop): blind re-arm + restart.
+                handsFreeState = rearmedHandsFreeForce(afterStop: reason)
+                armedStreamIdleBudget = ArmedStreamIdleBudget()
+                resetRecordingBuffer()
+                write(.startWeight)
+                scheduleArmTimeout()
+                pushForceBeat()
+            }
+        }
     }
 
     private func clearHandsFreeAfterTransportLoss() {
         handsFreeRequested = false
         handsFreeState = idleHandsFreeForce()
-        armedStreamStartedAtUs = nil
+        armedStreamIdleBudget = ArmedStreamIdleBudget()
         armTimeoutTimer?.invalidate()
         armTimeoutTimer = nil
     }
@@ -1164,6 +1255,12 @@ final class TindeqManager: NSObject {
         _ summary: StoppedRecording,
         claim: HandsFreeForceRepClaim,
         note: String,
+        // #681 review F2: whether THIS stop kept the transport stream running
+        // — decided synchronously at stop time and carried through the async
+        // save, never re-derived from shared `handsFreeState` at completion
+        // time (a second rep can arm/record/release inside this save window
+        // and advance the machine).
+        keepStreamRunning: Bool,
         // nil = never re-arm (the disconnect salvage); non-nil re-arms after
         // the save with slack semantics decided by the stop reason (#503).
         rearmHandsFreeAfterStop: HandsFreeStopReason?,
@@ -1188,6 +1285,7 @@ final class TindeqManager: NSObject {
             lostSavedMessage: lostSavedMessage,
             lostErrorMessage: lostErrorMessage,
             rememberSelection: rememberSelection,
+            keepStreamRunning: keepStreamRunning,
             rearmHandsFreeAfterStop: rearmHandsFreeAfterStop
         )
     }
@@ -1224,6 +1322,7 @@ final class TindeqManager: NSObject {
             lostSavedMessage: "Guided recording was not saved",
             lostErrorMessage: "Recording not saved — couldn't write to the watch.",
             rememberSelection: rememberSelection,
+            keepStreamRunning: false,
             rearmHandsFreeAfterStop: nil
         )
     }
@@ -1238,6 +1337,10 @@ final class TindeqManager: NSObject {
         lostSavedMessage: String,
         lostErrorMessage: String?,
         rememberSelection: Bool,
+        // #681 review F2: carried from the synchronous stop decision (see
+        // `persistRecording`) so the completion re-arm never re-derives the
+        // stopped-stream fact from mutable `handsFreeState`.
+        keepStreamRunning: Bool,
         rearmHandsFreeAfterStop: HandsFreeStopReason?
     ) {
         // Both the queue owner and the completion generation are captured on
@@ -1297,10 +1400,13 @@ final class TindeqManager: NSObject {
 
             // #529 slice-2 review round 2 R2-F1: resolve any deferred
             // account transition BEFORE the hands-free auto-rearm check
-            // below — `measuring` is already false here (this rep's own
-            // Stop set it), and `sessionCount` already reflects this rep
-            // (bumped above), so it's safe to close/log the session now. If
-            // it DOES close, `logSessionNow()`'s `cancelHandsFree()` clears
+            // below — this rep's own Stop already set `measuring` false, but
+            // since #681 a tap/cap save keeps the stream live and a second rep
+            // can already be recording at this point; `resolvePendingAccountTransitionIfNeeded`
+            // guards on `!measuring` itself, so it just defers again in that
+            // case. `sessionCount` already reflects this rep (bumped above),
+            // so it's safe to close/log the session now. If it DOES close,
+            // `logSessionNow()`'s `cancelHandsFree()` clears
             // `handsFreeRequested`, so `rearmHandsFreeAfterSave` below (which
             // guards on it) correctly declines to re-arm instead of silently
             // continuing the closed session under whoever pulls next.
@@ -1309,7 +1415,7 @@ final class TindeqManager: NSObject {
             if finishAfterSaves, saveOperationsInFlight == 0 {
                 logSessionAfterPendingSaves()
             } else if let rearmHandsFreeAfterStop {
-                rearmHandsFreeAfterSave(afterStop: rearmHandsFreeAfterStop)
+                rearmHandsFreeAfterSave(afterStop: rearmHandsFreeAfterStop, keepStreamRunning: keepStreamRunning)
             }
         }
     }
@@ -1328,6 +1434,11 @@ final class TindeqManager: NSObject {
         case .weight(let incoming):
             // THE BLOCKER path sits alongside — and before — the original
             // manual guard. Armed samples reach Core but never the buffer.
+            // #681: `waitingForSlack` while saving (measuring == false) is the
+            // live post-tap/post-cap save window — the stream stays running so
+            // a release edge that falls inside the async save is OBSERVED
+            // (see stopAndSave), advancing the machine to armed in time for
+            // the next pull. `isWaitingForHandsFreePull` covers it.
             if !measuring, handsFreeRequested, isWaitingForHandsFreePull {
                 handleArmedSamples(incoming)
                 return
@@ -1343,9 +1454,20 @@ final class TindeqManager: NSObject {
 
     private func handleArmedSamples(_ incoming: [TindeqFrame.WeightSample]) {
         for (index, sample) in incoming.enumerated() {
-            if armedStreamStartedAtUs == nil { armedStreamStartedAtUs = sample.us }
-            let armedMs = Double(sample.us &- (armedStreamStartedAtUs ?? sample.us)) / 1000
-            if armTimeoutSeconds > 0, armedMs >= armTimeoutSeconds * 1000 {
+            // #681 review F1: the idle budget is re-based at every armed-epoch
+            // boundary (arm, rep start, save-window entry, re-arm, transport
+            // loss), so a sample inside the save window starts a fresh
+            // 10-minute clock instead of inheriting the stale pre-rep base and
+            // spuriously cancelling mid-save. Mirrored in Core so the 32-bit
+            // µs wrap and the threshold are testable on both KEEP-IN-SYNC
+            // sides.
+            let idleStep = observeArmedStreamIdleBudget(
+                armedStreamIdleBudget,
+                sampleUs: sample.us,
+                timeoutSeconds: armTimeoutSeconds
+            )
+            armedStreamIdleBudget = idleStep.budget
+            if idleStep.idleExceeded {
                 cancelHandsFree()
                 savedMsg = "Hands-free disarmed after 10 min idle"
                 scheduleSavedMsgDismiss()
@@ -1607,6 +1729,7 @@ extension TindeqManager: CBCentralManagerDelegate {
             summary,
             claim: claim,
             note: "Recovered after connection loss",
+            keepStreamRunning: false,
             rearmHandsFreeAfterStop: nil,
             lostSavedMessage: "Recovered rep was not saved",
             lostErrorMessage: "Rep not saved — couldn't write to the watch.",

@@ -63,6 +63,52 @@ describe("hands-free Force control (#400)", () => {
     });
   });
 
+  it("#681 re-arms through waitingForSlack: release edge arms, then a held pull records", () => {
+    let state = rearmedHandsFreeForce();
+    expect(state).toEqual({ phase: "waitingForSlack" });
+
+    // A fresh pull before slack is ignored — it must not arm mid-load.
+    expect(step(state, 0, 35)).toEqual({
+      state: { phase: "waitingForSlack" },
+      action: null,
+    });
+    expect(step(state, 10_000, 35)).toEqual({
+      state: { phase: "waitingForSlack" },
+      action: null,
+    });
+
+    // The release-to-slack edge (at/below stopKg) arms.
+    ({ state } = step(state, 10_100, 0.5));
+    expect(state).toEqual({ phase: "armed", aboveSinceMs: null });
+
+    // The next pull held startStableMs records.
+    ({ state } = step(state, 10_200, 3));
+    expect(step(state, 10_800, 3)).toEqual({
+      state: { phase: "recording", belowSinceMs: null },
+      action: "start",
+    });
+  });
+
+  it("#681 phantom guard: a continuous load spanning a save never produces a second rep", () => {
+    let state = rearmedHandsFreeForce();
+    expect(state).toEqual({ phase: "waitingForSlack" });
+
+    // The same continuous load (never dipping to stopKg) spanning the save and
+    // well past startStableMs stays waitingForSlack — never arms.
+    for (let atMs = 0; atMs <= 60_000; atMs += 500) {
+      const stepped = step(state, atMs, 35);
+      state = stepped.state;
+      expect(stepped.action).toBeNull();
+    }
+    expect(state).toEqual({ phase: "waitingForSlack" });
+
+    // Only a genuine release arms, then the pull records.
+    ({ state } = step(state, 60_500, 0.5));
+    expect(state).toEqual({ phase: "armed", aboveSinceMs: null });
+    ({ state } = step(state, 60_600, 3));
+    expect(step(state, 61_200, 3).action).toBe("start");
+  });
+
   it("uses a lower release threshold and ignores brief force dips", () => {
     let state: HandsFreeForceState = { phase: "recording", belowSinceMs: null };
     ({ state } = step(state, 0, 0.8));
