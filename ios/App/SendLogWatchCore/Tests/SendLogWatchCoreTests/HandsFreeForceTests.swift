@@ -86,7 +86,8 @@ final class HandsFreeForceTests: XCTestCase {
     /// fail on unfixed code are the manager-level integration cases in
     /// `TindeqHandsFreeIntegrationTests` (the app test target, watchOS
     /// simulator only); the new `testSaveWindowSamplePastArmTimeoutDoesNotCancel`
-    /// below pins the F1 idle-budget re-base on both KEEP-IN-SYNC sides.
+    /// below pins the F1 idle-budget re-base (Swift-only — the web has no
+    /// idle-disarm concept).
     func testRearmThroughWaitingForSlackObservesReleaseThenArmsAndRecords() {
         var state = rearmedHandsFreeForce()
         XCTAssertEqual(state, .waitingForSlack)
@@ -141,9 +142,9 @@ final class HandsFreeForceTests: XCTestCase {
     /// at save-window entry (and at rep start), so a 30-minute rep's first
     /// post-cap sample starts a FRESH budget instead of inheriting the stale
     /// pre-rep base. Without the re-base this sample computes ~30 min > 10 min
-    /// and disarms mid-save. This pins the mirrored budget on BOTH
-    /// KEEP-IN-SYNC sides; the manager wiring is covered by the cap integration
-    /// case's save-window feed.
+    /// and disarms mid-save. This pins the Swift-only idle budget (no TS
+    /// counterpart exists); the manager wiring is covered by the cap
+    /// integration case's save-window feed.
     func testSaveWindowSamplePastArmTimeoutDoesNotCancel() {
         // The bug the re-base guards against: a budget that kept the PRE-REP
         // base through the whole rep (never re-based at save-window entry)

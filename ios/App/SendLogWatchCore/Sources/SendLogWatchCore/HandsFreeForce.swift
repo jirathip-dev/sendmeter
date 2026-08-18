@@ -64,9 +64,10 @@ public enum HandsFreeForceInactiveStatus: Equatable, Sendable {
 /// against the save window and spuriously disarm — guaranteed on the
 /// 30-minute cap path. The budget is re-based at every armed-epoch boundary
 /// (arm, rep start, save-window entry, re-arm, transport loss), so recording
-/// time and the save window never count as idle. The web never drives an
-/// idle disarm (a nil/zero timeout is always within budget); the type exists
-/// for KEEP-IN-SYNC parity and the shared regression tests.
+/// time and the save window never count as idle. Swift-only, outside the
+/// KEEP-IN-SYNC ported region: the web has no idle-disarm concept
+/// (`src/lib/handsFreeForce.ts` carries no budget/timeout state), so this
+/// type has no TS counterpart — only the watch's TindeqManager drives it.
 public struct ArmedStreamIdleBudget: Equatable, Sendable {
     /// Device timestamp (µs) of the first sample of the current armed epoch.
     public private(set) var baseUs: UInt32?
