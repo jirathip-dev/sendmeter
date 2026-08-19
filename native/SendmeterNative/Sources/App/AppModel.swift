@@ -753,6 +753,7 @@ public final class AppModel: ObservableObject {
 
     public func refreshAll(showSpinner: Bool = true) async {
         guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(accountUserID: userID)
         if showSpinner { isRefreshing = true }
         defer { if showSpinner { isRefreshing = false } }
         do {
@@ -781,6 +782,7 @@ public final class AppModel: ObservableObject {
                 remoteSessionIDs: Set(fetchedSessions.map(\.id)),
                 remoteRecordingIDs: Set(fetchedRecordings.map(\.id))
             )
+            guard accountFetch.canApply(to: currentUserID) else { return }
             mergeSessions(remote: fetchedSessions)
             mergeRecordings(remote: fetchedRecordings)
             hasLoadedRecordings = true
@@ -2398,12 +2400,15 @@ public final class AppModel: ObservableObject {
 
     private func refreshReconcileSlices(_ slices: Set<ReconcileSlice>) async {
         guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(accountUserID: userID)
         do {
             if slices.contains(.sessions) {
                 mergeSessions(remote: try await repository.fetchSessions(accountUserID: userID))
             }
             if slices.contains(.recordings) {
-                mergeRecordings(remote: try await repository.fetchRecordings())
+                let fetchedRecordings = try await repository.fetchRecordings()
+                guard accountFetch.canApply(to: currentUserID) else { return }
+                mergeRecordings(remote: fetchedRecordings)
                 hasLoadedRecordings = true
             }
             if slices.contains(.workouts) {
