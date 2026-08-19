@@ -100,6 +100,7 @@ public final class WeatherService: ObservableObject {
     private let session: URLSession
     private let locationProvider: WeatherLocationProviding
     private let now: () -> Date
+    private let refreshPolicy = WeatherRefreshPolicy()
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
@@ -120,39 +121,46 @@ public final class WeatherService: ObservableObject {
         }
     }
 
-    /// Fetch fresh conditions. Returns false on failure (location denied,
-    /// network error, empty payload) — the caller decides whether to surface
-    /// it; the published `failed` flag covers the "nothing to show" case.
+    /// Fetch fresh conditions. Automatic calls skip a reading inside the
+    /// freshness window; the default/manual trigger always tries. Returns
+    /// false on failure (location denied, network error, empty payload) — the
+    /// published `failed` flag covers the "nothing to show" case.
     @discardableResult
-    public func refresh() async -> Bool {
+    public func refresh(trigger: WeatherRefreshTrigger = .manual) async -> Bool {
+        let requestedAt = now()
+        guard refreshPolicy.shouldRefresh(
+            trigger: trigger,
+            lastFetchedAt: conditions?.fetchedAt,
+            now: requestedAt
+        ) else {
+            return conditions != nil
+        }
         guard !isFetching else { return conditions != nil }
         isFetching = true
         defer { isFetching = false }
         do {
             let coords = try await locationProvider.currentLocation()
             let coordsKey = "\(String(format: "%.2f", coords.latitude)),\(String(format: "%.2f", coords.longitude))"
-            let hourOfDay = Calendar.current.component(.hour, from: now())
+            let hourOfDay = Calendar.current.component(.hour, from: requestedAt)
 
             let current = try await fetchCurrent(latitude: coords.latitude, longitude: coords.longitude)
-            let climate = try await fetchClimate(latitude: coords.latitude, longitude: coords.longitude, coordsKey: coordsKey)
-
-            let rank: (below: Int, total: Int, percentile: Int)?
-            if let climate {
-                rank = SendConditionsScore.dayRank(
-                    current: current.score,
-                    dayScores: SendConditionsScore.sameHourScores(climate.scores, hourOfDay: hourOfDay)
+            let climate: ClimateSummary?
+            do {
+                climate = try await fetchClimate(
+                    latitude: coords.latitude,
+                    longitude: coords.longitude,
+                    coordsKey: coordsKey,
+                    referenceDate: requestedAt
                 )
-            } else {
-                rank = nil
+            } catch {
+                // ERA5 is context only. A successful current reading remains
+                // useful when the archive is unavailable, exactly like web.
+                climate = nil
             }
-            let fresh = SendConditions(
+
+            let fresh = SendConditionsScore.makeConditions(
                 tempC: current.tempC,
                 humidity: current.humidity,
-                score: current.score,
-                label: SendConditionsScore.scoreLabel(score: current.score),
-                percentile: rank?.percentile,
-                daysBelow: rank?.below,
-                daysTotal: rank?.total,
                 hourOfDay: hourOfDay,
                 hist: climate,
                 fetchedAt: now()
@@ -188,32 +196,32 @@ public final class WeatherService: ObservableObject {
         let summary: ClimateSummary
     }
 
-    private func fetchCurrent(latitude: Double, longitude: Double) async throws -> (tempC: Double, humidity: Double, score: Int) {
+    private func fetchCurrent(latitude: Double, longitude: Double) async throws -> (tempC: Double, humidity: Double) {
         let url = OpenMeteo.forecastURL(latitude: latitude, longitude: longitude)
         let data = try await get(url)
         let response = try decoder.decode(OpenMeteo.ForecastResponse.self, from: data)
         guard let reading = OpenMeteo.currentReading(from: response) else {
             throw WeatherError.unavailable
         }
-        return (
-            reading.tempC,
-            reading.humidity,
-            SendConditionsScore.computeSendScore(tempC: reading.tempC, humidity: reading.humidity)
-        )
+        return (reading.tempC, reading.humidity)
     }
 
-    private func fetchClimate(latitude: Double, longitude: Double, coordsKey: String) async throws -> ClimateSummary? {
-        let week = SendConditionsScore.weekBucket(now())
+    private func fetchClimate(
+        latitude: Double,
+        longitude: Double,
+        coordsKey: String,
+        referenceDate: Date
+    ) async throws -> ClimateSummary? {
+        let week = SendConditionsScore.weekBucket(referenceDate)
         if let cached = cachedClimate(coordsKey: coordsKey, week: week) {
             return cached
         }
-        let end = now().addingTimeInterval(-Double(SendConditionsScore.era5LagDays * 86_400))
-        let start = end.addingTimeInterval(-Double(30 * 86_400))
+        let window = OpenMeteo.archiveDateWindow(referenceDate: referenceDate)
         let url = OpenMeteo.archiveURL(
             latitude: latitude,
             longitude: longitude,
-            startDate: LocalDateSupport.string(from: start),
-            endDate: LocalDateSupport.string(from: end)
+            startDate: window.startDate,
+            endDate: window.endDate
         )
         let data = try await get(url)
         let response = try decoder.decode(OpenMeteo.ArchiveResponse.self, from: data)

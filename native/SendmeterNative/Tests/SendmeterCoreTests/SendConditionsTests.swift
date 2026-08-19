@@ -39,6 +39,59 @@ final class SendConditionsTests: XCTestCase {
         XCTAssertEqual(SendConditionsScore.computeSendScore(tempC: 5, humidity: 0), 96)
     }
 
+    func testCurrentReadingSurvivesUnavailableArchiveContext() {
+        let fetchedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let conditions = SendConditionsScore.makeConditions(
+            tempC: 35,
+            humidity: 45,
+            hourOfDay: 14,
+            climate: nil,
+            fetchedAt: fetchedAt
+        )
+
+        XCTAssertEqual(conditions.score, 20)
+        XCTAssertEqual(conditions.label, .poor)
+        XCTAssertNil(conditions.percentile)
+        XCTAssertNil(conditions.daysBelow)
+        XCTAssertNil(conditions.daysTotal)
+        XCTAssertNil(conditions.hist)
+        XCTAssertEqual(conditions.fetchedAt, fetchedAt)
+    }
+
+    // MARK: Refresh freshness
+
+    func testAutomaticWeatherRefreshUsesThirtyMinuteFreshnessWindow() {
+        let policy = WeatherRefreshPolicy()
+        let fetchedAt = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertFalse(policy.shouldRefresh(
+            trigger: .appear,
+            lastFetchedAt: fetchedAt,
+            now: fetchedAt.addingTimeInterval(WeatherRefreshPolicy.defaultFreshnessWindow - 1)
+        ))
+        XCTAssertTrue(policy.shouldRefresh(
+            trigger: .foreground,
+            lastFetchedAt: fetchedAt,
+            now: fetchedAt.addingTimeInterval(WeatherRefreshPolicy.defaultFreshnessWindow)
+        ))
+        XCTAssertTrue(policy.shouldRefresh(
+            trigger: .appear,
+            lastFetchedAt: fetchedAt,
+            now: fetchedAt.addingTimeInterval(WeatherRefreshPolicy.defaultFreshnessWindow + 1)
+        ))
+    }
+
+    func testManualWeatherRefreshBypassesFreshnessWindow() {
+        let policy = WeatherRefreshPolicy()
+        let fetchedAt = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertTrue(policy.shouldRefresh(
+            trigger: .manual,
+            lastFetchedAt: fetchedAt,
+            now: fetchedAt.addingTimeInterval(1)
+        ))
+    }
+
     func testScoreLabelBandsMatchWeb() {
         XCTAssertEqual(SendConditionsScore.scoreLabel(score: 75), .prime)
         XCTAssertEqual(SendConditionsScore.scoreLabel(score: 100), .prime)
@@ -173,6 +226,23 @@ final class SendConditionsTests: XCTestCase {
         )
     }
 
+    func testArchiveDateWindowUsesUTCAtNonUTCLocalBoundary() {
+        // 00:30 in Bangkok on Aug 1 is still Jul 31 in UTC. A local-date
+        // formatter would therefore produce a different ERA5 end date.
+        let reference = isoDate("2026-07-31T17:30:00Z")
+        let window = OpenMeteo.archiveDateWindow(referenceDate: reference)
+        let bangkok = TimeZone(secondsFromGMT: 7 * 60 * 60)!
+        let localEnd = LocalDateSupport.string(
+            from: reference.addingTimeInterval(-Double(SendConditionsScore.era5LagDays * 86_400)),
+            timeZone: bangkok
+        )
+
+        XCTAssertEqual(window.endDate, "2026-07-29")
+        XCTAssertEqual(window.startDate, "2026-06-29")
+        XCTAssertEqual(localEnd, "2026-07-30")
+        XCTAssertNotEqual(window.endDate, localEnd)
+    }
+
     func testSendConditionsCodableRoundTrip() throws {
         let conditions = SendConditions(
             tempC: 25.3,
@@ -193,5 +263,9 @@ final class SendConditionsTests: XCTestCase {
         let data = try encoder.encode(conditions)
         let decoded = try decoder.decode(SendConditions.self, from: data)
         XCTAssertEqual(decoded, conditions)
+    }
+
+    private func isoDate(_ value: String) -> Date {
+        ISO8601DateFormatter().date(from: value)!
     }
 }
