@@ -559,12 +559,6 @@ private struct RecordingInsert: Encodable {
     }
 }
 
-private struct RecordingMetaUpdate: Encodable {
-    let tag: String
-    let side: String
-    let note: String
-}
-
 private struct RecordingGroupUpdate: Encodable {
     let groupID: UUID
     enum CodingKeys: String, CodingKey { case groupID = "group_id" }
@@ -1050,6 +1044,25 @@ public final class SendmeterRepository: @unchecked Sendable {
         return row.model()
     }
 
+    /// Narrow PATCH used by the History recording editor. Keeping RPE as its
+    /// own payload avoids sending a stale session type/duration/note while an
+    /// offline recording edit is replayed.
+    public func updateSessionRPE(id: UUID, rpe: Double) async throws -> Session {
+        let body = try await transport.encode(SessionRPEPatch(rpe: rpe))
+        let result: OneOrMany<SessionRow> = try await transport.request(
+            path: "rest/v1/sessions",
+            method: .patch,
+            queryItems: [
+                URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())"),
+                URLQueryItem(name: "select", value: sessionColumns)
+            ],
+            body: body,
+            prefer: "return=representation"
+        )
+        guard let row = result.first else { throw URLError(.cannotParseResponse) }
+        return row.model()
+    }
+
     public func softDeleteSession(id: UUID, at date: Date = Date()) async throws {
         try await patchVoid(
             table: "sessions",
@@ -1302,13 +1315,20 @@ public final class SendmeterRepository: @unchecked Sendable {
         side: TindeqSide,
         note: String
     ) async throws -> TindeqRecording {
-        let body = try await transport.encode(
-            RecordingMetaUpdate(
-                tag: String(tag.prefix(120)),
-                side: side.rawValue,
-                note: String(note.prefix(2_000))
-            )
+        try await updateRecordingMeta(
+            id: id,
+            payload: RecordingMetadataPatch(tag: tag, side: side, note: note)
         )
+    }
+
+    /// Narrow PATCH used by the History recording editor. The payload has no
+    /// `samples` field by construction: the original device trace is
+    /// immutable after capture.
+    public func updateRecordingMeta(
+        id: UUID,
+        payload: RecordingMetadataPatch
+    ) async throws -> TindeqRecording {
+        let body = try await transport.encode(payload)
         let result: OneOrMany<RecordingRow> = try await transport.request(
             path: "rest/v1/tindeq_recordings",
             method: .patch,

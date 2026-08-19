@@ -26,6 +26,7 @@ private enum PendingWrite: Codable, Sendable {
     case session(SessionQueuePayload)
     case sessionDelete(SessionDeleteQueuePayload)
     case recording(NewTindeqRecording)
+    case recordingEdit(RecordingEdit)
     case workout(WorkoutDraft)
 }
 
@@ -50,6 +51,7 @@ private extension DurableQueueItem where Payload == PendingWrite {
         case .session: kind = "Session"
         case .sessionDelete: kind = "Session deletion"
         case .recording: kind = "Force recording"
+        case .recordingEdit: kind = "Force recording edit"
         case .workout: kind = "Phone workout"
         }
         return QuarantinedWrite(
@@ -235,6 +237,11 @@ public final class AppModel: ObservableObject {
     private var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
     private var pendingRecordings: [UUID: TindeqRecording] = [:]
+    /// Metadata edits are overlays until the narrow PATCH has landed. Keeping
+    /// them separate from insert placeholders means a refresh/relaunch cannot
+    /// replace a just-edited tag/side with an older server row.
+    private var pendingRecordingEdits: [UUID: RecordingEdit] = [:]
+    private var pendingSessionRPEEdits: [UUID: RecordingEdit] = [:]
     /// Routine Undo claims are keyed by both account and session. The matching
     /// delete intent is persisted in the same queue as inserts; keeping the
     /// claim before the first await lets an in-flight upload reconcile without
@@ -1530,15 +1537,54 @@ public final class AppModel: ObservableObject {
         }.value
     }
 
-    public func updateRecording(_ recording: TindeqRecording) async {
-        await perform {
-            let saved = try await self.repository.updateRecordingMeta(
-                id: recording.id,
-                tag: recording.tag,
-                side: recording.side,
-                note: recording.note
+    /// Save the History recording editor's metadata and, when the recording is
+    /// linked to a session, its session RPE through the same durable queue used
+    /// for native inserts. `sessionRPE == nil` means leave the linked session's
+    /// current value alone (useful for callers that only edit tag/side/note).
+    public func updateRecording(
+        _ recording: TindeqRecording,
+        sessionRPE: Double? = nil
+    ) async {
+        guard let userID = currentUserID else { return }
+        let linkedSession = recording.groupID.flatMap { groupID in
+            sessions.first { $0.groupID == groupID && !$0.pending }
+        }
+        // A metadata-only save must not discard an RPE edit that is already
+        // queued for this linked session. Carry that optimistic value forward
+        // into the coalesced payload so the stable queue item remains the
+        // complete latest form state.
+        let effectiveSessionRPE = sessionRPE ?? linkedSession.flatMap {
+            pendingSessionRPEEdits[$0.id]?.sessionRPE
+        }
+        let edit = RecordingEdit(
+            recordingID: recording.id,
+            tag: recording.tag,
+            side: recording.side,
+            note: recording.note,
+            sessionID: linkedSession?.id,
+            sessionRPE: effectiveSessionRPE
+        )
+        let previousRecording = recordings.first { $0.id == recording.id } ?? recording
+        let previousSession = linkedSession
+
+        applyPendingRecordingEdit(edit)
+        let item = DurableQueueItem(
+            id: recordingEditQueueID(for: edit.recordingID),
+            accountUserID: userID,
+            payload: PendingWrite.recordingEdit(edit)
+        )
+        // Keep this edit on the caller's task through its first upload
+        // attempt. That serializes successive online saves from the detail
+        // view. The stable queue id coalesces successive offline saves, so a
+        // stale metadata PATCH cannot overwrite the newest one on replay.
+        if !(await enqueueAndUpload(item, startUpload: false)) {
+            rollbackPendingRecordingEdit(
+                edit,
+                previousRecording: previousRecording,
+                previousSession: previousSession
             )
-            self.replaceRecording(saved)
+        } else {
+            _ = await upload(item)
         }
     }
 
@@ -1868,7 +1914,10 @@ public final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func enqueueAndUpload(_ item: DurableQueueItem<PendingWrite>) async -> Bool {
+    private func enqueueAndUpload(
+        _ item: DurableQueueItem<PendingWrite>,
+        startUpload: Bool = true
+    ) async -> Bool {
         guard let queue else {
             surface(NSError(
                 domain: "SendmeterNative",
@@ -1880,8 +1929,10 @@ public final class AppModel: ObservableObject {
         do {
             try await queue.enqueue(item)
             await refreshQueueCount()
-            Task { [weak self] in
-                _ = await self?.upload(item)
+            if startUpload {
+                Task { [weak self] in
+                    _ = await self?.upload(item)
+                }
             }
             return true
         } catch {
@@ -2018,6 +2069,43 @@ public final class AppModel: ObservableObject {
                 let saved = try await self.repository.insertRecording(recording)
                 pendingRecordings.removeValue(forKey: recording.id)
                 replaceRecording(saved)
+            case let .recordingEdit(edit):
+                let savedRecording = try await self.repository.updateRecordingMeta(
+                    id: edit.recordingID,
+                    payload: edit.recordingPayload
+                )
+                guard currentUserID == item.accountUserID else {
+                    // Leave the durable edit for its owning account. No
+                    // response from the old account may enter the new user's
+                    // in-memory History list.
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+
+                var savedSession: SendmeterCore.Session?
+                if let sessionID = edit.sessionID, let sessionRPE = edit.sessionRPE {
+                    savedSession = try await self.repository.updateSessionRPE(
+                        id: sessionID,
+                        rpe: sessionRPE
+                    )
+                    guard currentUserID == item.accountUserID else {
+                        return UploadResult(uploaded: false, failure: nil)
+                    }
+                }
+
+                // A newer edit may have been queued while this request was
+                // suspended. Only clear/apply this edit's optimistic overlay
+                // when it is still current; the newer payload remains the
+                // source of truth for the next upload.
+                if pendingRecordingEdits[edit.recordingID] == edit {
+                    pendingRecordingEdits.removeValue(forKey: edit.recordingID)
+                    replaceRecording(savedRecording)
+                }
+                if let savedSession,
+                   let sessionID = edit.sessionID,
+                   pendingSessionRPEEdits[sessionID] == edit {
+                    pendingSessionRPEEdits.removeValue(forKey: sessionID)
+                    replaceSession(savedSession)
+                }
             case let .workout(draft):
                 let saved = try await self.repository.insertPhoneWorkout(draft)
                 pendingSessions.removeValue(forKey: draft.sessionID)
@@ -2026,16 +2114,41 @@ public final class AppModel: ObservableObject {
             if let sessionReceipt, routineUndo.isClaimed(sessionReceipt) {
                 suppressSavedToast = true
             }
-            do {
-                try await queue.remove(
+            // Recording edits share one queue id per recording. If a newer
+            // edit replaced this payload while its PATCH was suspended, keep
+            // that newer item; removing by id here would otherwise lose it.
+            let shouldRemoveUploadedItem: Bool
+            if case let .recordingEdit(edit) = item.payload {
+                if let queued = await queue.item(
                     id: item.id,
-                    accountUserID: item.accountUserID,
-                    reason: "uploaded"
-                )
-            } catch let error as DurableQueueError {
-                // Undo may have removed the same queue item while its upload
-                // was in flight. That is already the desired terminal state.
-                if !(suppressSavedToast && error == .itemNotFound) { throw error }
+                    accountUserID: item.accountUserID
+                ) {
+                    if case let .recordingEdit(queuedEdit) = queued.payload {
+                        shouldRemoveUploadedItem = queuedEdit == edit
+                    } else {
+                        shouldRemoveUploadedItem = false
+                    }
+                } else {
+                    // A concurrent producer already removed the item.
+                    // Nothing remains for this upload to clean up.
+                    shouldRemoveUploadedItem = false
+                }
+            } else {
+                shouldRemoveUploadedItem = true
+            }
+            if shouldRemoveUploadedItem {
+                do {
+                    try await queue.remove(
+                        id: item.id,
+                        accountUserID: item.accountUserID,
+                        reason: "uploaded"
+                    )
+                } catch let error as DurableQueueError {
+                    // Undo may have removed the same queue item while its
+                    // upload was in flight. That is already the desired
+                    // terminal state.
+                    if !(suppressSavedToast && error == .itemNotFound) { throw error }
+                }
             }
             if let finishedSessionInsertID {
                 await uploadPendingSessionDelete(
@@ -2198,6 +2311,20 @@ public final class AppModel: ObservableObject {
                     // delete was quarantined. Re-fetch so discarding the
                     // durable delete intent restores the truthful server
                     // state immediately.
+                    await refreshAll(showSpinner: false)
+                    return
+                }
+                if let item, case let .recordingEdit(edit) = item.payload {
+                    if pendingRecordingEdits[edit.recordingID] == edit {
+                        pendingRecordingEdits.removeValue(forKey: edit.recordingID)
+                    }
+                    if let sessionID = edit.sessionID,
+                       pendingSessionRPEEdits[sessionID] == edit {
+                        pendingSessionRPEEdits.removeValue(forKey: sessionID)
+                    }
+                    // The rejected edit may have been visible optimistically;
+                    // the server row is authoritative after the user discards
+                    // it. A refresh also handles a session RPE overlay.
                     await refreshAll(showSpinner: false)
                     return
                 }
@@ -2479,6 +2606,14 @@ public final class AppModel: ObservableObject {
             case let .recording(recording):
                 guard !remoteRecordingIDs.contains(recording.id) else { continue }
                 pendingRecordings[recording.id] = pendingRecording(from: recording, rejected: rejected)
+            case let .recordingEdit(edit):
+                // The edit is an overlay, not a second recording placeholder:
+                // the base row may already be on the server, or may still be
+                // rebuilt from a queued insert in the pass above.
+                pendingRecordingEdits[edit.recordingID] = edit
+                if let sessionID = edit.sessionID, edit.sessionRPE != nil {
+                    pendingSessionRPEEdits[sessionID] = edit
+                }
             }
         }
     }
@@ -2528,6 +2663,58 @@ public final class AppModel: ObservableObject {
         )
     }
 
+    /// Apply a recording edit synchronously, before the first queue await, so
+    /// History reflects the user's choice even when the network is offline.
+    /// The same reducer is replayed over a fresh server fetch after relaunch.
+    private func applyPendingRecordingEdit(_ edit: RecordingEdit) {
+        let previousEdit = pendingRecordingEdits[edit.recordingID]
+        pendingRecordingEdits[edit.recordingID] = edit
+        if let previousEdit,
+           previousEdit.sessionID != edit.sessionID,
+           let previousSessionID = previousEdit.sessionID,
+           pendingSessionRPEEdits[previousSessionID] == previousEdit {
+            pendingSessionRPEEdits.removeValue(forKey: previousSessionID)
+        }
+        if let sessionID = edit.sessionID, edit.sessionRPE != nil {
+            pendingSessionRPEEdits[sessionID] = edit
+        }
+
+        if let index = recordings.firstIndex(where: { $0.id == edit.recordingID }) {
+            recordings[index] = RecordingEditReducer.apply(edit, to: recordings[index])
+        }
+        if let sessionID = edit.sessionID,
+           let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+            sessions[index] = RecordingEditReducer.apply(edit, to: sessions[index])
+        }
+    }
+
+    /// Derive a queue id that is stable for one recording but cannot equal
+    /// that recording's insert id. DurableQueue replaces an older edit when a
+    /// user saves again offline instead of replaying every intermediate form.
+    private func recordingEditQueueID(for recordingID: UUID) -> UUID {
+        var bytes = recordingID.uuid
+        bytes.0 ^= 0x80
+        return UUID(uuid: bytes)
+    }
+
+    private func rollbackPendingRecordingEdit(
+        _ edit: RecordingEdit,
+        previousRecording: TindeqRecording,
+        previousSession: SendmeterCore.Session?
+    ) {
+        if pendingRecordingEdits[edit.recordingID] == edit {
+            pendingRecordingEdits.removeValue(forKey: edit.recordingID)
+            replaceRecording(previousRecording)
+        }
+        if let sessionID = edit.sessionID,
+           pendingSessionRPEEdits[sessionID] == edit {
+            pendingSessionRPEEdits.removeValue(forKey: sessionID)
+            if let previousSession {
+                replaceSession(previousSession)
+            }
+        }
+    }
+
     private func pendingRecording(from recording: NewTindeqRecording, rejected: Bool = false) -> TindeqRecording {
         TindeqRecording(
             id: recording.id,
@@ -2569,6 +2756,11 @@ public final class AppModel: ObservableObject {
         let remoteIDs = Set(remote.map(\.id))
         for id in remoteIDs { pendingRecordings.removeValue(forKey: id) }
         recordings = (remote + pendingRecordings.values.filter { !remoteIDs.contains($0.id) })
+            .map { recording in
+                pendingRecordingEdits[recording.id].map {
+                    RecordingEditReducer.apply($0, to: recording)
+                } ?? recording
+            }
             .sorted { $0.recordedAt > $1.recordedAt }
     }
 
@@ -2582,6 +2774,11 @@ public final class AppModel: ObservableObject {
         let remoteIDs = Set(visibleRemote.map(\.id))
         for id in remoteIDs { pendingSessions.removeValue(forKey: id) }
         sessions = (visibleRemote + pendingSessions.values.filter { !remoteIDs.contains($0.id) })
+            .map { session in
+                pendingSessionRPEEdits[session.id].map {
+                    RecordingEditReducer.apply($0, to: session)
+                } ?? session
+            }
             .sorted {
                 if $0.date != $1.date { return $0.date > $1.date }
                 return $0.id.uuidString > $1.id.uuidString
@@ -2595,7 +2792,10 @@ public final class AppModel: ObservableObject {
     private func replaceSession(_ session: SendmeterCore.Session) {
         pendingSessions.removeValue(forKey: session.id)
         sessions.removeAll { $0.id == session.id }
-        sessions.append(session)
+        let visible = pendingSessionRPEEdits[session.id].map {
+            RecordingEditReducer.apply($0, to: session)
+        } ?? session
+        sessions.append(visible)
         sessions.sort {
             if $0.date != $1.date { return $0.date > $1.date }
             return $0.id.uuidString > $1.id.uuidString
@@ -2605,7 +2805,10 @@ public final class AppModel: ObservableObject {
 
     private func replaceRecording(_ recording: TindeqRecording) {
         recordings.removeAll { $0.id == recording.id }
-        recordings.append(recording)
+        let visible = pendingRecordingEdits[recording.id].map {
+            RecordingEditReducer.apply($0, to: recording)
+        } ?? recording
+        recordings.append(visible)
         recordings.sort { $0.recordedAt > $1.recordedAt }
     }
 
@@ -2623,6 +2826,8 @@ public final class AppModel: ObservableObject {
         tagMetadata = []
         pendingSessions = [:]
         pendingRecordings = [:]
+        pendingRecordingEdits = [:]
+        pendingSessionRPEEdits = [:]
         routineUndo.reset()
         // Upload claims belong to their in-flight tasks, not to the loaded UI
         // snapshot. Keep them until upload's defer releases them: an A→B→A

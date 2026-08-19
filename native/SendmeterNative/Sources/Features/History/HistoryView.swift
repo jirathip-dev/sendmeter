@@ -877,6 +877,9 @@ struct ForceRecordingDetailView: View {
     @State private var samples: [TindeqSample] = []
     @State private var loadingSamples = false
     @State private var isSaving = false
+    /// Nil means the user is editing only recording metadata. Once the
+    /// linked session's slider is touched, this becomes the RPE PATCH value.
+    @State private var editedSessionRPE: Double?
     @State private var showingLinkSheet = false
 
     init(recording: TindeqRecording) {
@@ -935,10 +938,39 @@ struct ForceRecordingDetailView: View {
                         TextField("Notes", text: $recording.note, axis: .vertical)
                             .padding(10)
                             .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                        if let linkedSession {
+                            SectionLabel("Session effort", systemImage: "gauge")
+                            HStack {
+                                Text("RPE")
+                                Slider(
+                                    value: Binding(
+                                        get: { editedSessionRPE ?? linkedSession.rpe },
+                                        set: { editedSessionRPE = $0 }
+                                    ),
+                                    in: 1...10,
+                                    step: 0.5
+                                )
+                                Text((editedSessionRPE ?? linkedSession.rpe).formatted(.number.precision(.fractionLength(0...1))))
+                                    .monospacedDigit()
+                                    .frame(width: 34)
+                            }
+                            Text("RPE is stored on the linked session and changing it confirms the effort review.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Label(
+                            "Raw force samples are immutable; this editor changes metadata only.",
+                            systemImage: "lock"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         Button {
                             isSaving = true
                             Task {
-                                await model.updateRecording(recording)
+                                await model.updateRecording(
+                                    recording,
+                                    sessionRPE: linkedSession == nil ? nil : editedSessionRPE
+                                )
                                 isSaving = false
                             }
                         } label: {
@@ -1019,7 +1051,9 @@ struct ForceRecordingDetailView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(recording.tag.isEmpty ? "Force Recording" : recording.tag)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await loadSamples() }
+        .task {
+            await loadSamples()
+        }
         .sheet(isPresented: $showingLinkSheet) {
             LinkRecordingSheet(recordings: [recording])
                 .onAppear { Haptics.shared.sheetPresented() }
@@ -1030,6 +1064,11 @@ struct ForceRecordingDetailView: View {
         guard let low = recording.targetLowKilograms,
               let high = recording.targetHighKilograms else { return nil }
         return low...high
+    }
+
+    private var linkedSession: SendmeterCore.Session? {
+        guard let groupID = recording.groupID else { return nil }
+        return model.sessions.first { $0.groupID == groupID && !$0.pending }
     }
 
     private func reverseActionSummary(setNumber: Int) -> String {
