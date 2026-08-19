@@ -88,6 +88,27 @@ final class TindeqConsistencyTests: XCTestCase {
         XCTAssertEqual(snapshot.tags, [])
     }
 
+    func testRecordingBecomesCurrentWhenTheReferenceDayAdvances() {
+        let tomorrow = recording("2026-08-21", tag: "FDP")
+        let beforeMidnight = TindeqConsistency.compute(
+            recordings: [tomorrow],
+            hiddenTags: [],
+            now: referenceDate,
+            timeZone: timeZone
+        )
+        let afterMidnight = TindeqConsistency.compute(
+            recordings: [tomorrow],
+            hiddenTags: [],
+            now: LocalDateSupport.date(from: "2026-08-21", timeZone: timeZone)!
+                .addingTimeInterval(12 * 60 * 60),
+            timeZone: timeZone
+        )
+
+        XCTAssertFalse(beforeMidnight.hasRecordings)
+        XCTAssertEqual(afterMidnight.weeks.last?.days, 1)
+        XCTAssertEqual(afterMidnight.tags, ["FDP"])
+    }
+
     func testRecordingUsesItsLocalGregorianDay() {
         let bangkok = TimeZone(identifier: "Asia/Bangkok")!
         let now = LocalDateSupport.iso8601Date(from: "2026-08-20T12:00:00Z")!

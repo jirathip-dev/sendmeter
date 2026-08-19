@@ -187,7 +187,8 @@ struct ForceView: View {
 
                     ForceConsistencyCard(
                         recordings: model.recordings,
-                        hiddenTags: model.hiddenTagNames
+                        hiddenTags: model.hiddenTagNames,
+                        hasLoadedRecordings: model.hasLoadedRecordings
                     )
 
                     // #653: training balance + Focus Next for the active

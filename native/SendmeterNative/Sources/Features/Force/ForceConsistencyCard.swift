@@ -7,11 +7,16 @@ import SwiftUI
 struct ForceConsistencyCard: View {
     let recordings: [TindeqRecording]
     let hiddenTags: Set<String>
+    let hasLoadedRecordings: Bool
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTag: String?
-    /// Freeze the reference day for this card mount so rendering stays pure;
-    /// the model data remains the source of truth for subsequent refreshes.
+    /// Keep one reference date for a render pass, but advance it when the
+    /// local calendar day changes or the app becomes active again. A card can
+    /// remain mounted across both events, and a recording saved after
+    /// midnight must not be classified as future just because the view was
+    /// mounted yesterday.
     @State private var now = Date()
 
     private var snapshot: TindeqConsistency.Snapshot {
@@ -34,16 +39,22 @@ struct ForceConsistencyCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 SectionLabel("Force consistency", systemImage: "chart.bar.fill")
 
-                if !data.tags.isEmpty {
-                    tagChips(data.tags, activeTag: activeTag)
-                }
-
-                if !data.hasRecordings {
-                    Text("No force recordings in the last 8 weeks")
+                if !hasLoadedRecordings {
+                    Text("Your force history is still loading.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {
-                    consistencyBars(data.weeks, selectedTag: activeTag)
+                    if !data.tags.isEmpty {
+                        tagChips(data.tags, activeTag: activeTag)
+                    }
+
+                    if !data.hasRecordings {
+                        Text("No force recordings in the last 8 weeks")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        consistencyBars(data.weeks, selectedTag: activeTag)
+                    }
                 }
             }
         }
@@ -54,6 +65,16 @@ struct ForceConsistencyCard: View {
             if let selectedTag, !tags.contains(selectedTag) {
                 self.selectedTag = nil
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            now = Date()
+        }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active else { return }
+            now = Date()
+        }
+        .onAppear {
+            now = Date()
         }
     }
 

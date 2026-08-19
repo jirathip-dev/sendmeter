@@ -134,6 +134,12 @@ public final class AppModel: ObservableObject {
         currentPhase: .capacity,
         phaseStartDate: LocalDateSupport.string(from: Date())
     )
+    /// True once the recording list has been fetched and merged at least once
+    /// for the current account (even if it came back empty). Recordings have
+    /// no disk cache, so `recordings.isEmpty` cannot distinguish "no force
+    /// history" from "not fetched yet" or an initial fetch failure. Consumers
+    /// use this to keep the Force consistency card's empty state honest.
+    @Published public private(set) var hasLoadedRecordings = false
     @Published public private(set) var recordings: [TindeqRecording] = []
     @Published public private(set) var presets: [TindeqPreset] = []
     @Published public private(set) var routines: [RoutinePreset] = []
@@ -777,6 +783,7 @@ public final class AppModel: ObservableObject {
             )
             mergeSessions(remote: fetchedSessions)
             mergeRecordings(remote: fetchedRecordings)
+            hasLoadedRecordings = true
             await refreshQueueCount()
             warmTagCurvesIfMissing()
         } catch {
@@ -2397,6 +2404,7 @@ public final class AppModel: ObservableObject {
             }
             if slices.contains(.recordings) {
                 mergeRecordings(remote: try await repository.fetchRecordings())
+                hasLoadedRecordings = true
             }
             if slices.contains(.workouts) {
                 workouts = try await repository.fetchWorkouts()
@@ -2616,6 +2624,7 @@ public final class AppModel: ObservableObject {
         deletedRecordings = []
         healthMetrics = []
         phasePeriods = []
+        hasLoadedRecordings = false
         recordings = []
         presets = []
         routines = []
