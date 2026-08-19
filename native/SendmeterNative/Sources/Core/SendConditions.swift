@@ -74,9 +74,41 @@ public struct SendConditions: Codable, Equatable, Sendable {
     }
 }
 
+/// The trigger for a weather refresh. Automatic lifecycle refreshes are
+/// freshness-gated; an explicit user gesture always gets to try again.
+public enum WeatherRefreshTrigger: Equatable, Sendable {
+    case appear
+    case foreground
+    case manual
+}
+
+/// Web-parity freshness policy for Send Conditions. The clock and the last
+/// successful reading are supplied by the caller so the boundary is pure and
+/// testable without waiting.
+public struct WeatherRefreshPolicy: Equatable, Sendable {
+    public static let defaultFreshnessWindow: TimeInterval = 30 * 60
+
+    public let freshnessWindow: TimeInterval
+
+    public init(freshnessWindow: TimeInterval = WeatherRefreshPolicy.defaultFreshnessWindow) {
+        self.freshnessWindow = freshnessWindow
+    }
+
+    public func shouldRefresh(
+        trigger: WeatherRefreshTrigger,
+        lastFetchedAt: Date?,
+        now: Date
+    ) -> Bool {
+        guard trigger != .manual else { return true }
+        guard let lastFetchedAt else { return true }
+        return now.timeIntervalSince(lastFetchedAt) > freshnessWindow
+    }
+}
+
 /// The pure scoring surface — the platform layer fetches raw weather, this
 /// turns it into the card's numbers.
-public enum SendConditionsScore {    /// How many days before "now" entry `index` of a `sameHourScores(...)`
+public enum SendConditionsScore {
+    /// How many days before "now" entry `index` of a `sameHourScores(...)`
     /// result of length `length` represents — Open-Meteo's ERA5 archive
     /// lags realtime by 2 days, so the most recent entry is 2 days old, not
     /// 1 (the web's `ERA5_LAG_DAYS`).
@@ -103,6 +135,37 @@ public enum SendConditionsScore {    /// How many days before "now" entry `index
     /// Overall send score: 60% temperature, 40% humidity.
     public static func computeSendScore(tempC: Double, humidity: Double) -> Int {
         Int((0.6 * tempFrictionScore(tempC: tempC) + 0.4 * humidityFrictionScore(humidity: humidity)).rounded())
+    }
+
+    /// Build the current reading even when the optional archive context is
+    /// unavailable. An archive failure removes only the percentile context;
+    /// it must never erase a successful current-weather score.
+    public static func makeConditions(
+        tempC: Double,
+        humidity: Double,
+        hourOfDay: Int,
+        climate: ClimateSummary?,
+        fetchedAt: Date
+    ) -> SendConditions {
+        let score = computeSendScore(tempC: tempC, humidity: humidity)
+        let rank = climate.flatMap { climate in
+            dayRank(
+                current: score,
+                dayScores: sameHourScores(climate.scores, hourOfDay: hourOfDay)
+            )
+        }
+        return SendConditions(
+            tempC: tempC,
+            humidity: humidity,
+            score: score,
+            label: scoreLabel(score: score),
+            percentile: rank?.percentile,
+            daysBelow: rank?.below,
+            daysTotal: rank?.total,
+            hourOfDay: hourOfDay,
+            hist: climate,
+            fetchedAt: fetchedAt
+        )
     }
 
     public static func scoreLabel(score: Int) -> SendConditionsLabel {
@@ -160,6 +223,16 @@ public enum SendConditionsScore {    /// How many days before "now" entry `index
 /// params, so the network layer stays thin and this parsing is unit-testable
 /// with fixture JSON (no network in tests).
 public enum OpenMeteo {
+    public struct ArchiveDateWindow: Equatable, Sendable {
+        public let startDate: String
+        public let endDate: String
+
+        public init(startDate: String, endDate: String) {
+            self.startDate = startDate
+            self.endDate = endDate
+        }
+    }
+
     /// Current weather, keyless public API. Coordinates are formatted with
     /// 2 decimals (~1 km, the web's `toFixed(2)`) so we don't ship a precise
     /// location off-device.
@@ -178,6 +251,18 @@ public enum OpenMeteo {
         endDate: String
     ) -> URL {
         URL(string: "https://archive-api.open-meteo.com/v1/era5?latitude=\(String(format: "%.2f", latitude))&longitude=\(String(format: "%.2f", longitude))&start_date=\(startDate)&end_date=\(endDate)&hourly=temperature_2m,relative_humidity_2m&timezone=auto")!
+    }
+
+    /// Match the web's `date.toISOString().slice(0, 10)`: archive request
+    /// dates are UTC calendar dates even when the device is in another zone.
+    public static func archiveDateWindow(referenceDate: Date) -> ArchiveDateWindow {
+        let end = referenceDate.addingTimeInterval(-Double(SendConditionsScore.era5LagDays * 86_400))
+        let start = end.addingTimeInterval(-Double(30 * 86_400))
+        let utc = TimeZone(secondsFromGMT: 0)!
+        return ArchiveDateWindow(
+            startDate: LocalDateSupport.string(from: start, timeZone: utc),
+            endDate: LocalDateSupport.string(from: end, timeZone: utc)
+        )
     }
 
     public struct ForecastResponse: Decodable, Sendable {

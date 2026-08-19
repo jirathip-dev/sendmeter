@@ -489,13 +489,13 @@ private struct SendConditionsCard: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Button("Try Again") {
-                            Task { _ = await model.weather.refresh() }
+                            Task { _ = await model.weather.refresh(trigger: .manual) }
                         }
                         .font(.subheadline.weight(.semibold))
                     }
                 } else {
                     Button {
-                        Task { _ = await model.weather.refresh() }
+                        Task { _ = await model.weather.refresh(trigger: .manual) }
                     } label: {
                         Text("Check")
                             .font(.subheadline.weight(.semibold))
@@ -510,7 +510,7 @@ private struct SendConditionsCard: View {
             // Silent refresh when a reading already exists; a cold first run
             // waits for the Check tap so the location prompt is user-initiated.
             if model.weather.conditions != nil {
-                _ = await model.weather.refresh()
+                _ = await model.weather.refresh(trigger: .appear)
             }
         }
     }

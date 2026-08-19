@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import SendLogHealthCore
 import SendmeterCore
+import SendmeterWeather
 import SwiftUI
 
 public typealias AuthSession = Auth.Session
@@ -630,7 +631,7 @@ public final class AppModel: ObservableObject {
         // (the card's Check tap), so the location prompt is never fired
         // without a tap — web parity.
         if weather.conditions != nil {
-            _ = await weather.refresh()
+            _ = await weather.refresh(trigger: .foreground)
         }
         // Foreground reconciliation for the live mirror: a dropped realtime
         // socket degrades to this refetch (the row is the authoritative

@@ -43,6 +43,8 @@ targets:
           - ChartTheme.swift
       - path: Sources/Data
       - path: Sources/Platform
+        excludes:
+          - WeatherService.swift
       - path: Sources/Features
       # XcodeGen ignores the top-level `resources:` block for this spec shape
       # (verified 2.45.4: it generates no PBXResourcesBuildPhase at all), so
@@ -78,6 +80,8 @@ targets:
         product: Auth
       - package: SendmeterCore
         product: SendmeterCore
+      - package: SendmeterCore
+        product: SendmeterWeather
       - package: SendLogWatchCore
         product: SendLogWatchCore
       - package: SendLogHealthCore
