@@ -217,13 +217,11 @@ public enum RoutineGate {
         return .discarded
     }
 
-    /// The Log Routine & Close decision (#633). Unlike `classifyElapsed`
-    /// (which trusts a "confirmed" elapsed against a routine total), this is
-    /// a hard gate: a run under a minute is an accidental open and is
-    /// discarded (visibly by the caller), regardless of how the routine's
-    /// position got there; at or past a minute it logs a partial session with
-    /// the honest real elapsed — min 1 minute, capped at the routine's staged
-    /// total, never the full nominal total.
+    /// The explicit completion decision. Completion is an explicit fact from
+    /// the runner (the user reached the end and chose Log), so even a
+    /// sub-minute routine is a real completed session. `loggedMinutes` keeps
+    /// the web's 1-minute floor and caps the result at the routine's staged
+    /// total.
     public enum RoutineCompletionOutcome: Equatable, Sendable {
         case logged(durationMin: Int)
         case discarded
@@ -233,8 +231,38 @@ public enum RoutineGate {
         elapsedSeconds: Double,
         totalSeconds: Int
     ) -> RoutineCompletionOutcome {
-        guard shouldLog(elapsedSeconds) else { return .discarded }
         return .logged(durationMin: loggedMinutes(elapsedSeconds, totalSeconds: totalSeconds))
+    }
+
+    /// The interruption / early-Close decision. Unlike explicit completion,
+    /// an interrupted run keeps the existing ≥60-second gate and logs only
+    /// honest real elapsed time; skipped timeline credit never reaches this
+    /// function.
+    public static func interruptionOutcome(
+        elapsedSeconds: Double
+    ) -> RoutineCompletionOutcome {
+        guard shouldLog(elapsedSeconds) else { return .discarded }
+        return .logged(durationMin: partialMinutes(elapsedSeconds))
+    }
+
+    public enum RoutineUndoDecision: Equatable, Sendable {
+        case delete(sessionID: UUID, accountUserID: UUID)
+        case ignore
+    }
+
+    /// Claims Undo only for the exact log receipt and the account that created
+    /// it. A stale action, a missing receipt, or an account switch is a no-op.
+    public static func undoDecision(
+        receipt: SessionLogReceipt?,
+        currentUserID: UUID?
+    ) -> RoutineUndoDecision {
+        guard let receipt, receipt.accountUserID == currentUserID else {
+            return .ignore
+        }
+        return .delete(
+            sessionID: receipt.sessionID,
+            accountUserID: receipt.accountUserID
+        )
     }
 
     /// What a persisted run should do on launch: auto-resume, log as

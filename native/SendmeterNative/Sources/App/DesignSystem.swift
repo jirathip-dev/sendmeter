@@ -197,16 +197,49 @@ public struct ErrorBanner: View {
     }
 }
 
+public struct AppToastAction {
+    public let label: String
+    public let perform: () -> Void
+
+    public init(label: String, perform: @escaping () -> Void) {
+        self.label = label
+        self.perform = perform
+    }
+}
+
 public struct AppToast: View {
     let message: String
+    let action: AppToastAction?
+    let dismiss: () -> Void
+
+    public init(
+        message: String,
+        action: AppToastAction? = nil,
+        dismiss: @escaping () -> Void = {}
+    ) {
+        self.message = message
+        self.action = action
+        self.dismiss = dismiss
+    }
 
     public var body: some View {
-        Text(message)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(.thickMaterial, in: Capsule())
-            .shadow(radius: 12, y: 6)
+        HStack(spacing: 12) {
+            Text(message)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+            if let action {
+                Button(action.label) {
+                    dismiss()
+                    action.perform()
+                }
+                .font(.subheadline.weight(.bold))
+                .buttonStyle(.bordered)
+                .tint(SendmeterStyle.primary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.thickMaterial, in: Capsule())
+        .shadow(radius: 12, y: 6)
     }
 }

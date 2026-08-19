@@ -148,7 +148,15 @@ public final class AppModel: ObservableObject {
     /// known" (#269 honest-states rule — unknown must not render as empty).
     @Published public private(set) var quarantinedWrites: [QuarantinedWrite]?
     @Published public var errorMessage: String?
-    @Published public var toastMessage: String?
+    @Published public var toastAction: AppToastAction?
+    @Published public var toastMessage: String? {
+        didSet {
+            // A new message must never inherit an action belonging to the
+            // previous message. Routine logging installs its action after
+            // setting the message.
+            toastAction = nil
+        }
+    }
     @Published public var passwordRecovery = false
     @Published public var selectedTab: AppTab = .dashboard
     /// #627: the fitted per-tag curves the gauge-session RPE prediction reads.
@@ -203,6 +211,10 @@ public final class AppModel: ObservableObject {
     private var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
     private var pendingRecordings: [UUID: TindeqRecording] = [:]
+    /// Routine Undo claims are keyed by both account and session. Keeping the
+    /// claim before the first await lets an in-flight queue upload reconcile
+    /// with Undo without resurrecting the exact row the user removed.
+    private var undoneSessionReceipts: Set<SessionLogReceipt> = []
     private var nestedCancellables = Set<AnyCancellable>()
     private var didBootstrapUserID: UUID?
     private var recomputeGate = ReadinessRecomputeGate()
@@ -774,8 +786,9 @@ public final class AppModel: ObservableObject {
 
     // MARK: Sessions
 
-    public func logSession(_ draft: SessionDraft) async {
-        guard let userID = currentUserID else { return }
+    @discardableResult
+    public func logSession(_ draft: SessionDraft) async -> SessionLogReceipt? {
+        guard let userID = currentUserID else { return nil }
         let id = UUID()
         let pending = pendingSession(
             id: id,
@@ -791,7 +804,12 @@ public final class AppModel: ObservableObject {
             LostRecordingStore.note(reason: "session", in: .standard)
             pendingSessions.removeValue(forKey: id)
             mergeSessions(remote: sessions.filter { !$0.pending })
+            return nil
         }
+        // The enqueue may have suspended while auth changed. Do not hand a
+        // receipt for the old account to a newly signed-in UI.
+        guard currentUserID == userID else { return nil }
+        return SessionLogReceipt(sessionID: id, accountUserID: userID)
     }
 
     /// Enqueue a session into the durable queue (and kick off its upload),
@@ -845,6 +863,54 @@ public final class AppModel: ObservableObject {
             self.sessions.removeAll { $0.id == session.id }
             self.toastMessage = "Session moved to Trash."
         }
+    }
+
+    /// Undo a routine log using the exact receipt returned by `logSession`.
+    /// The claim is account-scoped and made before any await so a concurrent
+    /// queue upload cannot turn the Undo into a no-op or a different row.
+    public func undoSession(_ receipt: SessionLogReceipt) async {
+        let decision = RoutineGate.undoDecision(
+            receipt: receipt,
+            currentUserID: currentUserID
+        )
+        guard case let .delete(sessionID, accountUserID) = decision else { return }
+
+        let target = SessionLogReceipt(sessionID: sessionID, accountUserID: accountUserID)
+        undoneSessionReceipts.insert(target)
+        pendingSessions.removeValue(forKey: sessionID)
+        // The server model returned by replaceSession has no local account
+        // stamp, so an already-uploaded row may have nil accountUserID. The
+        // current-account guard plus the exact UUID keeps this scoped.
+        sessions.removeAll { $0.id == sessionID }
+        mergeSessions(remote: sessions.filter { !$0.pending })
+
+        if let queue {
+            do {
+                try await queue.remove(
+                    id: sessionID,
+                    accountUserID: accountUserID,
+                    reason: "routine-undo"
+                )
+            } catch let error as DurableQueueError {
+                if error != .itemNotFound { surface(error) }
+            } catch {
+                surface(error)
+            }
+        }
+
+        // An account switch while removing the local queue entry must not
+        // turn this receipt into a request for the new account.
+        guard currentUserID == accountUserID else { return }
+        var deleted = false
+        do {
+            try await repository.softDeleteSession(id: sessionID)
+            deleted = true
+        } catch {
+            surface(error)
+        }
+        guard currentUserID == accountUserID else { return }
+        await refreshQueueCount()
+        if deleted { toastMessage = "Routine undone" }
     }
 
     public func restoreSession(_ session: SendmeterCore.Session) async {
@@ -1798,16 +1864,45 @@ public final class AppModel: ObservableObject {
         }
         let result: UploadResult
         do {
+            var sessionReceipt: SessionLogReceipt?
+            var suppressSavedToast = false
             switch item.payload {
             case let .session(payload):
-                let saved = try await self.repository.insertSession(
-                    payload.draft,
-                    id: payload.id,
-                    rpeConfirmed: payload.rpeConfirmed,
-                    groupID: payload.groupID
+                let receipt = SessionLogReceipt(
+                    sessionID: payload.id,
+                    accountUserID: item.accountUserID
                 )
-                pendingSessions.removeValue(forKey: payload.id)
-                replaceSession(saved)
+                sessionReceipt = receipt
+                suppressSavedToast = payload.draft.type == "routine"
+                if undoneSessionReceipts.contains(receipt) {
+                    pendingSessions.removeValue(forKey: payload.id)
+                } else {
+                    let saved = try await self.repository.insertSession(
+                        payload.draft,
+                        id: payload.id,
+                        rpeConfirmed: payload.rpeConfirmed,
+                        groupID: payload.groupID
+                    )
+                    guard currentUserID == item.accountUserID else {
+                        // The request belonged to the original account. Do
+                        // not merge its result into a newly signed-in one;
+                        // leave the durable item for that account to reconcile.
+                        return UploadResult(uploaded: false, failure: nil)
+                    }
+                    if undoneSessionReceipts.contains(receipt) {
+                        // Undo may have claimed the receipt while the insert
+                        // was in flight. Revert this exact row before the
+                        // upload can surface it as saved.
+                        suppressSavedToast = true
+                        pendingSessions.removeValue(forKey: payload.id)
+                        if currentUserID == item.accountUserID {
+                            try? await self.repository.softDeleteSession(id: payload.id)
+                        }
+                    } else {
+                        pendingSessions.removeValue(forKey: payload.id)
+                        replaceSession(saved)
+                    }
+                }
             case let .recording(recording):
                 let saved = try await self.repository.insertRecording(recording)
                 pendingRecordings.removeValue(forKey: recording.id)
@@ -1817,12 +1912,21 @@ public final class AppModel: ObservableObject {
                 pendingSessions.removeValue(forKey: draft.sessionID)
                 replaceSession(saved)
             }
-            try await queue.remove(
-                id: item.id,
-                accountUserID: item.accountUserID,
-                reason: "uploaded"
-            )
-            toastMessage = "Saved"
+            if let sessionReceipt, undoneSessionReceipts.contains(sessionReceipt) {
+                suppressSavedToast = true
+            }
+            do {
+                try await queue.remove(
+                    id: item.id,
+                    accountUserID: item.accountUserID,
+                    reason: "uploaded"
+                )
+            } catch let error as DurableQueueError {
+                // Undo may have removed the same queue item while its upload
+                // was in flight. That is already the desired terminal state.
+                if !(suppressSavedToast && error == .itemNotFound) { throw error }
+            }
+            if !suppressSavedToast { toastMessage = "Saved" }
             result = UploadResult(uploaded: true, failure: nil)
         } catch {
             do {

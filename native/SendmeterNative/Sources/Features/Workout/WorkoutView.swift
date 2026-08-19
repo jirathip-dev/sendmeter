@@ -127,33 +127,34 @@ struct WorkoutView: View {
             logRoutineSession(
                 durationMin: durationMin,
                 typeLabel: preset.name,
-                note: "\(preset.name) (auto-logged)"
+                note: "\(preset.name) (auto-logged)",
+                offerUndo: true
             )
         case .partial(let durationMin):
             logRoutineSession(
                 durationMin: durationMin,
                 typeLabel: preset.name,
-                note: "\(preset.name) (partial, interrupted)"
+                note: "\(preset.name) (partial, interrupted)",
+                offerUndo: true
             )
         case .discarded:
             model.toastMessage = "Routine interrupted — too little of it was confirmed to log"
         }
     }
 
-    private func logRoutineSession(durationMin: Int, typeLabel: String, note: String) {
-        let draft = SessionDraft(
-            date: LocalDateSupport.string(from: Date()),
-            type: "routine",
+    private func logRoutineSession(
+        durationMin: Int,
+        typeLabel: String,
+        note: String,
+        offerUndo: Bool = false
+    ) {
+        enqueueRoutineSession(
+            model: model,
+            durationMin: durationMin,
             typeLabel: typeLabel,
-            durationMinutes: durationMin,
-            rpe: 4,
             note: note,
-            phase: model.settings.currentPhase
+            offerUndo: offerUndo
         )
-        Task {
-            await model.logSession(draft)
-            model.toastMessage = "Routine logged · \(durationMin) min"
-        }
     }
 
     private func startWorkout() {
@@ -186,6 +187,36 @@ struct WorkoutView: View {
             Haptics.shared.play(RefusedActionHaptics.cue(tappableAndRefused: true))
         } catch {
             model.errorMessage = error.localizedDescription
+        }
+    }
+}
+
+@MainActor
+private func enqueueRoutineSession(
+    model: AppModel,
+    durationMin: Int,
+    typeLabel: String,
+    note: String,
+    offerUndo: Bool
+) {
+    let draft = SessionDraft(
+        date: LocalDateSupport.string(from: Date()),
+        type: "routine",
+        typeLabel: typeLabel,
+        durationMinutes: durationMin,
+        rpe: 4,
+        note: note,
+        phase: model.settings.currentPhase
+    )
+    let appModel = model
+    Task { @MainActor in
+        guard let receipt = await appModel.logSession(draft) else { return }
+        appModel.toastMessage = "Routine logged · \(durationMin) min"
+        guard offerUndo else { return }
+        appModel.toastAction = AppToastAction(label: "Undo") {
+            Task { @MainActor in
+                await appModel.undoSession(receipt)
+            }
         }
     }
 }
@@ -409,6 +440,7 @@ private struct RoutineRunnerSheet: View {
     /// at log time for the honest elapsed the ≥60s gate and partial-minute
     /// clamping operate on.
     @State private var wallClock: PersistedRoutineRun
+    @State private var hasClaimedExit = false
 
     init(presentation: WorkoutView.RoutineRunPresentation) {
         self.routine = presentation.preset
@@ -477,7 +509,7 @@ private struct RoutineRunnerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Close") { closeRoutine() }
                 }
             }
             .onAppear {
@@ -526,12 +558,44 @@ private struct RoutineRunnerSheet: View {
         store.save(wallClock)
     }
 
-    /// The Log Routine & Close decision (#633): a run under the ≥60s bar is
-    /// an accidental open and is discarded visibly (nothing banked); at or
-    /// past it, the session is logged with the honest partial minutes — real
-    /// elapsed, clamped to the routine's staged total, never the full nominal
-    /// total. RPE 4 / note / phase are unchanged from the pre-gate path.
+    /// Close/X is an interruption unless the completion screen is already
+    /// showing. It uses real elapsed only, so skipped timeline credit cannot
+    /// fabricate a partial session.
+    private func closeRoutine() {
+        guard !hasClaimedExit else { return }
+        hasClaimedExit = true
+        let now = Date()
+        store.clear()
+        guard !run.isComplete else {
+            dismiss()
+            return
+        }
+        switch RoutineGate.interruptionOutcome(
+            elapsedSeconds: RoutineGate.realElapsedS(
+                wallClock,
+                nowMs: now.millisecondsSince1970
+            )
+        ) {
+        case .discarded:
+            model.toastMessage = "Routine closed — nothing saved"
+        case .logged(let durationMin):
+            enqueueRoutineSession(
+                model: model,
+                durationMin: durationMin,
+                typeLabel: routine.name,
+                note: "\(routine.name) (partial)",
+                offerUndo: true
+            )
+        }
+        dismiss()
+    }
+
+    /// The explicit completion decision (#633): completion is distinct from
+    /// interruption, so a genuinely completed sub-minute routine still gets
+    /// the web's one-minute floor.
     private func logRoutineAndClose() {
+        guard !hasClaimedExit else { return }
+        hasClaimedExit = true
         let totalS = RoutineEngine.stages(for: routine).reduce(0) { $0 + $1.durationSeconds }
         let outcome = RoutineGate.completionOutcome(
             elapsedSeconds: RoutineGate.realElapsedS(
@@ -546,20 +610,14 @@ private struct RoutineRunnerSheet: View {
             model.toastMessage = "Routine too short to log — nothing saved"
             dismiss()
         case .logged(let durationMin):
-            let draft = SessionDraft(
-                date: LocalDateSupport.string(from: Date()),
-                type: "routine",
+            enqueueRoutineSession(
+                model: model,
+                durationMin: durationMin,
                 typeLabel: routine.name,
-                durationMinutes: durationMin,
-                rpe: 4,
                 note: "Guided routine",
-                phase: model.settings.currentPhase
+                offerUndo: false
             )
-            Task {
-                await model.logSession(draft)
-                model.toastMessage = "Routine logged · \(durationMin) min"
-                dismiss()
-            }
+            dismiss()
         }
     }
 }

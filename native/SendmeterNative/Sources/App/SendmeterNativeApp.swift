@@ -67,7 +67,9 @@ struct RootView: View {
         }
         .overlay(alignment: .bottom) {
             if let toast = model.toastMessage {
-                AppToast(message: toast)
+                AppToast(message: toast, action: model.toastAction) {
+                    model.toastMessage = nil
+                }
                     .padding(.bottom, 84)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .task(id: toast) {
