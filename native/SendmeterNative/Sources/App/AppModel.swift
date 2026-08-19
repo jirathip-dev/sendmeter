@@ -24,6 +24,7 @@ public enum AppTab: Hashable {
 
 private enum PendingWrite: Codable, Sendable {
     case session(SessionQueuePayload)
+    case sessionDelete(SessionDeleteQueuePayload)
     case recording(NewTindeqRecording)
     case workout(WorkoutDraft)
 }
@@ -47,6 +48,7 @@ private extension DurableQueueItem where Payload == PendingWrite {
         let kind: String
         switch payload {
         case .session: kind = "Session"
+        case .sessionDelete: kind = "Session deletion"
         case .recording: kind = "Force recording"
         case .workout: kind = "Phone workout"
         }
@@ -76,6 +78,10 @@ private struct SessionQueuePayload: Codable, Sendable {
     let rpeConfirmed: Bool?
     /// Links the session back to its gauge-session recordings.
     let groupID: UUID?
+}
+
+private struct SessionDeleteQueuePayload: Codable, Sendable {
+    let sessionID: UUID
 }
 
 /// The free-pull recording context the hands-free loop snapshots when a rep
@@ -148,7 +154,33 @@ public final class AppModel: ObservableObject {
     /// known" (#269 honest-states rule — unknown must not render as empty).
     @Published public private(set) var quarantinedWrites: [QuarantinedWrite]?
     @Published public var errorMessage: String?
-    @Published public var toastMessage: String?
+    @Published public private(set) var toast: AppToastState?
+    /// Compatibility accessors keep existing call sites readable while the
+    /// published source of truth is one identity-bearing toast instance.
+    /// Setting the action creates a fresh instance too, so a passive toast
+    /// cannot keep its two-second task when it becomes actionable.
+    public var toastMessage: String? {
+        get { toast?.message }
+        set {
+            if let newValue {
+                toast = AppToastState(message: newValue)
+            } else {
+                toast = nil
+            }
+        }
+    }
+    public var toastAction: AppToastAction? {
+        get { toast?.action }
+        set {
+            guard let current = toast else { return }
+            toast = AppToastState(message: current.message, action: newValue)
+        }
+    }
+
+    public func dismissToast(id: UUID? = nil) {
+        guard id == nil || toast?.id == id else { return }
+        toast = nil
+    }
     @Published public var passwordRecovery = false
     @Published public var selectedTab: AppTab = .dashboard
     /// #627: the fitted per-tag curves the gauge-session RPE prediction reads.
@@ -203,6 +235,17 @@ public final class AppModel: ObservableObject {
     private var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
     private var pendingRecordings: [UUID: TindeqRecording] = [:]
+    /// Routine Undo claims are keyed by both account and session. The matching
+    /// delete intent is persisted in the same queue as inserts; keeping the
+    /// claim before the first await lets an in-flight upload reconcile without
+    /// resurrecting the exact row the user removed.
+    private var routineUndo = RoutineUndoState()
+    /// Uploads are single-flight per account/item. Queue reads are snapshots;
+    /// this synchronous claim prevents an insert completion, a drain, and an
+    /// Undo follow-up from all sending the same item concurrently. The claim
+    /// token makes a late release from an older account task unable to remove
+    /// a newer claim after an account switch.
+    private var inFlightUploadClaims = QueueUploadClaimCoordinator()
     private var nestedCancellables = Set<AnyCancellable>()
     private var didBootstrapUserID: UUID?
     private var recomputeGate = ReadinessRecomputeGate()
@@ -560,7 +603,7 @@ public final class AppModel: ObservableObject {
         guard let queue else { return 0 }
         var uploaded = 0
         for item in await queue.items(for: accountUserID) {
-            if (await upload(item)).uploaded { uploaded += 1 }
+            if (await upload(item, mode: .signOut)).uploaded { uploaded += 1 }
         }
         return uploaded
     }
@@ -774,8 +817,9 @@ public final class AppModel: ObservableObject {
 
     // MARK: Sessions
 
-    public func logSession(_ draft: SessionDraft) async {
-        guard let userID = currentUserID else { return }
+    @discardableResult
+    public func logSession(_ draft: SessionDraft) async -> SessionLogReceipt? {
+        guard let userID = currentUserID else { return nil }
         let id = UUID()
         let pending = pendingSession(
             id: id,
@@ -791,7 +835,12 @@ public final class AppModel: ObservableObject {
             LostRecordingStore.note(reason: "session", in: .standard)
             pendingSessions.removeValue(forKey: id)
             mergeSessions(remote: sessions.filter { !$0.pending })
+            return nil
         }
+        // The enqueue may have suspended while auth changed. Do not hand a
+        // receipt for the old account to a newly signed-in UI.
+        guard currentUserID == userID else { return nil }
+        return SessionLogReceipt(sessionID: id, accountUserID: userID)
     }
 
     /// Enqueue a session into the durable queue (and kick off its upload),
@@ -844,6 +893,73 @@ public final class AppModel: ObservableObject {
             try await self.repository.softDeleteSession(id: session.id)
             self.sessions.removeAll { $0.id == session.id }
             self.toastMessage = "Session moved to Trash."
+        }
+    }
+
+    /// Undo a routine log using the exact receipt returned by `logSession`.
+    /// The account-scoped claim and hide marker are made before any await. The
+    /// delete intent is then written to the durable pending-write queue before
+    /// its soft-delete is attempted, so an uploaded row whose delete fails is
+    /// still hidden and retried after refresh/relaunch.
+    public func undoSession(_ receipt: SessionLogReceipt) async {
+        guard let queue else {
+            surface(NSError(
+                domain: "SendmeterNative",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "On-device delete queue is unavailable."]
+            ))
+            return
+        }
+        guard routineUndo.claim(receipt, currentUserID: currentUserID) else { return }
+        let sessionID = receipt.sessionID
+        let accountUserID = receipt.accountUserID
+        let sessionBeforeUndo = sessions.first { $0.id == sessionID }
+        let pendingSessionBeforeUndo = pendingSessions[sessionID]
+
+        pendingSessions.removeValue(forKey: sessionID)
+        sessions.removeAll { $0.id == sessionID }
+        mergeSessions(remote: sessions.filter { !$0.pending })
+
+        // The intent gets its own queue identity. Reusing the session insert's
+        // id would let an in-flight insert remove the delete intent when both
+        // operations overlap.
+        let deleteItem = DurableQueueItem(
+            id: UUID(),
+            accountUserID: accountUserID,
+            payload: PendingWrite.sessionDelete(
+                SessionDeleteQueuePayload(sessionID: sessionID)
+            )
+        )
+        do {
+            try await queue.enqueue(deleteItem)
+            await refreshQueueCount()
+            let result = await upload(deleteItem)
+            guard currentUserID == accountUserID else { return }
+            if result.uploaded { toastMessage = "Routine undone" }
+        } catch {
+            // The optimistic hide is not durable until the delete intent has
+            // been persisted. Roll it back only for the account that made the
+            // receipt; a sign-out/user switch must never refresh old-account
+            // data into the new account's model.
+            let currentAccount = currentUserID
+            _ = routineUndo.rollbackClaim(receipt, currentUserID: currentAccount)
+            guard currentAccount == accountUserID else { return }
+            if let sessionBeforeUndo {
+                sessions.removeAll { $0.id == sessionID }
+                sessions.append(sessionBeforeUndo)
+            }
+            if let pendingSessionBeforeUndo {
+                pendingSessions[sessionID] = pendingSessionBeforeUndo
+            }
+            mergeSessions(remote: sessions.filter { !$0.pending })
+            // The delete never became durable, so a refresh is the final
+            // authority when the insert may have completed while Undo was
+            // attempting to persist its intent. The local restoration above
+            // keeps the already-inserted row truthful even if this refresh
+            // itself is offline.
+            await refreshAll(showSpinner: false)
+            guard currentUserID == accountUserID else { return }
+            surface(error)
         }
     }
 
@@ -1746,7 +1862,7 @@ public final class AppModel: ObservableObject {
         guard let userID = currentUserID, let queue else { return }
         let pending = await queue.items(for: userID)
         for item in pending {
-            _ = await upload(item, manual: true)
+            _ = await upload(item, mode: .manual)
         }
         await refreshQueueCount()
     }
@@ -1791,23 +1907,113 @@ public final class AppModel: ObservableObject {
     @discardableResult
     private func upload(
         _ item: DurableQueueItem<PendingWrite>,
-        manual: Bool = false
+        mode: QueueUploadMode = .automatic
     ) async -> UploadResult {
         guard let queue, currentUserID == item.accountUserID else {
             return UploadResult(uploaded: false, failure: nil)
         }
+        let uploadKey = QueueUploadKey(
+            itemID: item.id,
+            accountUserID: item.accountUserID
+        )
+        guard let uploadClaim = inFlightUploadClaims.claim(uploadKey) else {
+            // A second producer may have captured the same queue item before
+            // the first producer finished. It must not replay that snapshot.
+            return UploadResult(uploaded: false, failure: nil)
+        }
+        defer { inFlightUploadClaims.release(uploadClaim) }
+
+        // Queue reads are snapshots. Re-read through the active queue filter
+        // after claiming the item so an automatic producer cannot upload an
+        // item that another producer quarantined while this snapshot was
+        // suspended. Manual retries are allowed to bypass ordinary backoff,
+        // but never the non-quarantined filter.
+        guard let currentItem = await queue.activeItem(
+            id: item.id,
+            accountUserID: item.accountUserID,
+            dueAt: mode.revalidationDueAt(now: Date())
+        ), currentUserID == item.accountUserID else {
+            return UploadResult(uploaded: false, failure: nil)
+        }
+        let item = currentItem
         let result: UploadResult
         do {
+            var sessionReceipt: SessionLogReceipt?
+            var finishedSessionInsertID: UUID?
+            var completedDeleteReceipt: SessionLogReceipt?
+            var suppressSavedToast = false
             switch item.payload {
             case let .session(payload):
-                let saved = try await self.repository.insertSession(
-                    payload.draft,
-                    id: payload.id,
-                    rpeConfirmed: payload.rpeConfirmed,
-                    groupID: payload.groupID
+                finishedSessionInsertID = payload.id
+                let receipt = SessionLogReceipt(
+                    sessionID: payload.id,
+                    accountUserID: item.accountUserID
                 )
-                pendingSessions.removeValue(forKey: payload.id)
-                replaceSession(saved)
+                sessionReceipt = receipt
+                suppressSavedToast = payload.draft.type == "routine"
+                if routineUndo.isClaimed(receipt) {
+                    pendingSessions.removeValue(forKey: payload.id)
+                } else {
+                    let saved = try await self.repository.insertSession(
+                        payload.draft,
+                        id: payload.id,
+                        rpeConfirmed: payload.rpeConfirmed,
+                        groupID: payload.groupID
+                    )
+                    guard currentUserID == item.accountUserID else {
+                        // The request belonged to the original account. Do
+                        // not merge its result into a newly signed-in one;
+                        // leave the durable item for that account to reconcile.
+                        return UploadResult(uploaded: false, failure: nil)
+                    }
+                    if routineUndo.isClaimed(receipt) {
+                        // Undo may have claimed the receipt while the insert
+                        // was in flight. The separate durable delete intent
+                        // owns the soft-delete retry; do not let this insert
+                        // result surface as a saved row.
+                        suppressSavedToast = true
+                        pendingSessions.removeValue(forKey: payload.id)
+                    } else {
+                        pendingSessions.removeValue(forKey: payload.id)
+                        replaceSession(saved)
+                    }
+                }
+            case let .sessionDelete(deletePayload):
+                suppressSavedToast = true
+                // A delete intent can be created while the matching insert is
+                // awaiting the server. The queue entry is the durable
+                // dependency: leave the delete due until that insert has
+                // either completed (and left the queue) or been skipped
+                // because Undo claimed it. Soft-deleting first is a no-op on
+                // many backends and would let the later insert resurrect the
+                // exact row Undo removed.
+                let hasPendingInsert = await queue.items(
+                    for: item.accountUserID,
+                    includeQuarantined: true
+                ).contains { queued in
+                    guard queued.id != item.id else { return false }
+                    switch queued.payload {
+                    case let .session(insertPayload):
+                        return insertPayload.id == deletePayload.sessionID
+                    default:
+                        return false
+                    }
+                }
+                guard !hasPendingInsert else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                let receipt = SessionLogReceipt(
+                    sessionID: deletePayload.sessionID,
+                    accountUserID: item.accountUserID
+                )
+                try await self.repository.softDeleteSession(id: deletePayload.sessionID)
+                guard currentUserID == item.accountUserID else {
+                    // The request belonged to the original account. Leave
+                    // the durable intent for that account to reconcile rather
+                    // than allowing a new account's UI to acknowledge it.
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                completedDeleteReceipt = receipt
             case let .recording(recording):
                 let saved = try await self.repository.insertRecording(recording)
                 pendingRecordings.removeValue(forKey: recording.id)
@@ -1817,12 +2023,38 @@ public final class AppModel: ObservableObject {
                 pendingSessions.removeValue(forKey: draft.sessionID)
                 replaceSession(saved)
             }
-            try await queue.remove(
-                id: item.id,
-                accountUserID: item.accountUserID,
-                reason: "uploaded"
-            )
-            toastMessage = "Saved"
+            if let sessionReceipt, routineUndo.isClaimed(sessionReceipt) {
+                suppressSavedToast = true
+            }
+            do {
+                try await queue.remove(
+                    id: item.id,
+                    accountUserID: item.accountUserID,
+                    reason: "uploaded"
+                )
+            } catch let error as DurableQueueError {
+                // Undo may have removed the same queue item while its upload
+                // was in flight. That is already the desired terminal state.
+                if !(suppressSavedToast && error == .itemNotFound) { throw error }
+            }
+            if let finishedSessionInsertID {
+                await uploadPendingSessionDelete(
+                    sessionID: finishedSessionInsertID,
+                    accountUserID: item.accountUserID
+                )
+            }
+            if let completedDeleteReceipt {
+                guard currentUserID == item.accountUserID else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                _ = routineUndo.markDeleteCompleted(
+                    completedDeleteReceipt,
+                    currentUserID: item.accountUserID
+                )
+                sessions.removeAll { $0.id == completedDeleteReceipt.sessionID }
+                mergeSessions(remote: sessions.filter { !$0.pending })
+            }
+            if !suppressSavedToast { toastMessage = "Saved" }
             result = UploadResult(uploaded: true, failure: nil)
         } catch {
             do {
@@ -1846,7 +2078,7 @@ public final class AppModel: ObservableObject {
                     error: error.localizedDescription,
                     classification: classification,
                     code: code,
-                    countsTowardQuarantine: !manual
+                    countsTowardQuarantine: mode.countsTowardQuarantine
                 )
                 result = UploadResult(
                     uploaded: false,
@@ -1863,6 +2095,25 @@ public final class AppModel: ObservableObject {
         }
         await refreshQueueCount()
         return result
+    }
+
+    /// Starts a delete that was intentionally held behind a matching session
+    /// insert. The delete remains durable if this process goes away before
+    /// the follow-up upload completes.
+    private func uploadPendingSessionDelete(
+        sessionID: UUID,
+        accountUserID: UUID
+    ) async {
+        guard currentUserID == accountUserID, let queue else { return }
+        let queued = await queue.items(
+            for: accountUserID,
+            dueAt: Date()
+        )
+        guard let deleteItem = queued.first(where: { item in
+            guard case let .sessionDelete(payload) = item.payload else { return false }
+            return payload.sessionID == sessionID
+        }) else { return }
+        _ = await upload(deleteItem)
     }
 
     /// #675: the explicit-user-action re-attempt for quarantined entries —
@@ -1893,7 +2144,7 @@ public final class AppModel: ObservableObject {
                     id: item.id,
                     accountUserID: item.accountUserID
                 ) else { continue }
-                let result = await upload(item, manual: true)
+                let result = await upload(item, mode: .manual)
                 if !result.uploaded {
                     // #675 F7 + N1: the manual attempt failed — re-stamp the
                     // quarantine NOW so the entry is never auto-retried by a
@@ -1929,7 +2180,27 @@ public final class AppModel: ObservableObject {
     public func discardQuarantinedWrite(id: UUID) async {
         guard let userID = currentUserID, let queue else { return }
         do {
+            let item = await queue.item(id: id, accountUserID: userID)
             if try await queue.discardQuarantined(id: id, accountUserID: userID) {
+                guard currentUserID == userID else {
+                    await refreshQueueCount()
+                    return
+                }
+                if let item, case let .sessionDelete(payload) = item.payload {
+                    _ = routineUndo.discardPendingDelete(
+                        SessionLogReceipt(
+                            sessionID: payload.sessionID,
+                            accountUserID: item.accountUserID
+                        ),
+                        currentUserID: userID
+                    )
+                    // The remote row may have been hidden by Undo before the
+                    // delete was quarantined. Re-fetch so discarding the
+                    // durable delete intent restores the truthful server
+                    // state immediately.
+                    await refreshAll(showSpinner: false)
+                    return
+                }
                 pendingSessions.removeValue(forKey: id)
                 pendingRecordings.removeValue(forKey: id)
                 sessions.removeAll { $0.id == id }
@@ -2169,11 +2440,29 @@ public final class AppModel: ObservableObject {
         // own. The hot drain path never sees these (only the Settings
         // Retry/Discard actions touch them).
         let queued = await queue.items(for: userID, includeQuarantined: true)
+        // Read delete intents first. A session insert and its Undo delete can
+        // overlap in the queue; the delete must win before any optimistic row
+        // is rebuilt from the insert payload.
+        for item in queued {
+            guard case let .sessionDelete(payload) = item.payload else { continue }
+            routineUndo.restorePendingDelete(
+                SessionLogReceipt(
+                    sessionID: payload.sessionID,
+                    accountUserID: item.accountUserID
+                ),
+                currentUserID: userID
+            )
+        }
         for item in queued {
             let rejected = item.quarantined != nil
             switch item.payload {
             case let .session(payload):
                 guard !remoteSessionIDs.contains(payload.id) else { continue }
+                let receipt = SessionLogReceipt(
+                    sessionID: payload.id,
+                    accountUserID: item.accountUserID
+                )
+                guard !routineUndo.isClaimed(receipt) else { continue }
                 pendingSessions[payload.id] = pendingSession(
                     id: payload.id,
                     draft: payload.draft,
@@ -2182,6 +2471,8 @@ public final class AppModel: ObservableObject {
                     groupID: payload.groupID,
                     rejected: rejected
                 )
+            case .sessionDelete:
+                continue
             case let .workout(draft):
                 guard !remoteSessionIDs.contains(draft.sessionID) else { continue }
                 pendingSessions[draft.sessionID] = pendingSession(from: draft, rejected: rejected)
@@ -2282,9 +2573,15 @@ public final class AppModel: ObservableObject {
     }
 
     private func mergeSessions(remote: [SendmeterCore.Session]) {
-        let remoteIDs = Set(remote.map(\.id))
+        let visibleRemote = remote.filter { session in
+            !routineUndo.hasPendingDelete(
+                sessionID: session.id,
+                accountUserID: currentUserID
+            )
+        }
+        let remoteIDs = Set(visibleRemote.map(\.id))
         for id in remoteIDs { pendingSessions.removeValue(forKey: id) }
-        sessions = (remote + pendingSessions.values.filter { !remoteIDs.contains($0.id) })
+        sessions = (visibleRemote + pendingSessions.values.filter { !remoteIDs.contains($0.id) })
             .sorted {
                 if $0.date != $1.date { return $0.date > $1.date }
                 return $0.id.uuidString > $1.id.uuidString
@@ -2326,6 +2623,11 @@ public final class AppModel: ObservableObject {
         tagMetadata = []
         pendingSessions = [:]
         pendingRecordings = [:]
+        routineUndo.reset()
+        // Upload claims belong to their in-flight tasks, not to the loaded UI
+        // snapshot. Keep them until upload's defer releases them: an A→B→A
+        // account transition must not let the returning A duplicate a request
+        // that is still suspended for A. B can proceed through its own key.
         queuedWriteCount = 0
         queueBreadcrumbs = []
         quarantinedWrites = nil

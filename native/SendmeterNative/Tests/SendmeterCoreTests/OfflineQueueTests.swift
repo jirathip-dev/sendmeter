@@ -34,6 +34,54 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertEqual(reloadedItems.first?.payload, TestPayload(value: "one"))
     }
 
+    /// The routine insert has already completed and its queue item has left
+    /// the file. If the follow-up Undo delete cannot be persisted, the failed
+    /// enqueue must not leave a memory-only delete that disappears on reload.
+    func testEnqueuePersistenceFailureAfterCompletedInsertIsTransactional() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queueFile = directory.appendingPathComponent("queue.json")
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let completedInsert = DurableQueueItem(
+            accountUserID: user,
+            payload: TestPayload(value: "inserted")
+        )
+        try await queue.enqueue(completedInsert)
+        try await queue.remove(id: completedInsert.id, accountUserID: user, reason: "uploaded")
+
+        let durableEmptyQueue = try Data(contentsOf: queueFile)
+        try FileManager.default.removeItem(at: queueFile)
+        // A directory at the queue-file path makes the atomic write fail after
+        // the candidate has been built, without relying on process privileges
+        // or a test-only persistence hook.
+        try FileManager.default.createDirectory(at: queueFile, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: queueFile) }
+
+        let deleteIntent = DurableQueueItem(
+            accountUserID: user,
+            payload: TestPayload(value: "delete")
+        )
+        do {
+            try await queue.enqueue(deleteIntent)
+            XCTFail("Expected the queue-file persistence to fail")
+        } catch {
+            // The failure is the behavior under test.
+        }
+
+        let inMemoryItems = await queue.items(for: user, includeQuarantined: true)
+        XCTAssertTrue(inMemoryItems.isEmpty)
+
+        // Restore the last known durable bytes to model the atomic-write
+        // contract and prove that a fresh queue sees no phantom delete.
+        try FileManager.default.removeItem(at: queueFile)
+        try durableEmptyQueue.write(to: queueFile, options: [.atomic])
+        let reloaded = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let reloadedItems = await reloaded.items(for: user, includeQuarantined: true)
+        XCTAssertTrue(reloadedItems.isEmpty)
+    }
+
     func testFailureBackoffAndBreadcrumbRing() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -588,6 +636,68 @@ final class OfflineQueueTests: XCTestCase {
         let visible = await queue.items(for: user, includeQuarantined: true)
         XCTAssertEqual(visible.count, 1)
         XCTAssertNotNil(visible.first?.quarantined)
+    }
+
+    /// An insert completion can race a drain that quarantines its matching
+    /// Undo delete. The completion's pre-await snapshot is stale by the time
+    /// it follows the insert, so the production active-item read must refuse
+    /// to hand that quarantined delete back to upload.
+    func testConcurrentInsertCompletionAndDrainCannotRetryDeleteAfterQuarantine() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let insert = DurableQueueItem(accountUserID: user, payload: TestPayload(value: "insert"))
+        let delete = DurableQueueItem(accountUserID: user, payload: TestPayload(value: "delete"))
+        try await queue.enqueue(insert)
+        try await queue.enqueue(delete)
+
+        let staleDelete = await queue.items(for: user, includeQuarantined: true)
+            .first { $0.id == delete.id }
+        guard let staleDelete else {
+            XCTFail("Expected the delete snapshot before the race")
+            return
+        }
+        XCTAssertNil(staleDelete.quarantined)
+
+        let finished = AsyncStream<Void>.makeStream()
+        let drainTask = Task {
+            var now = Date(timeIntervalSince1970: 10_000)
+            for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+                try? await queue.markFailure(
+                    id: delete.id,
+                    accountUserID: user,
+                    error: "constraint",
+                    classification: .permanent,
+                    code: "23514",
+                    now: now
+                )
+                now = now.addingTimeInterval(30)
+            }
+            finished.continuation.yield(())
+            finished.continuation.finish()
+        }
+        let insertCompletionTask = Task {
+            for await _ in finished.stream { break }
+            // The insert completion has now removed its own queue item and is
+            // following the stale delete snapshot into the normal upload
+            // path. Revalidation must see quarantine, not the old snapshot.
+            try? await queue.remove(id: insert.id, accountUserID: user, reason: "uploaded")
+            return await queue.activeItem(
+                id: staleDelete.id,
+                accountUserID: user,
+                dueAt: Date.distantFuture
+            )
+        }
+
+        await drainTask.value
+        let selectedAfterRace = await insertCompletionTask.value
+        XCTAssertNil(selectedAfterRace)
+        let quarantinedCount = await queue.quarantinedCount(for: user)
+        let activeCount = await queue.count(for: user)
+        XCTAssertEqual(quarantinedCount, 1)
+        XCTAssertEqual(activeCount, 0)
     }
 
     /// #675 F7: a failed MANUAL retry must re-stamp the quarantine

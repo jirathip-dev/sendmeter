@@ -127,33 +127,34 @@ struct WorkoutView: View {
             logRoutineSession(
                 durationMin: durationMin,
                 typeLabel: preset.name,
-                note: "\(preset.name) (auto-logged)"
+                note: "\(preset.name) (auto-logged)",
+                offerUndo: true
             )
         case .partial(let durationMin):
             logRoutineSession(
                 durationMin: durationMin,
                 typeLabel: preset.name,
-                note: "\(preset.name) (partial, interrupted)"
+                note: "\(preset.name) (partial, interrupted)",
+                offerUndo: true
             )
         case .discarded:
             model.toastMessage = "Routine interrupted — too little of it was confirmed to log"
         }
     }
 
-    private func logRoutineSession(durationMin: Int, typeLabel: String, note: String) {
-        let draft = SessionDraft(
-            date: LocalDateSupport.string(from: Date()),
-            type: "routine",
+    private func logRoutineSession(
+        durationMin: Int,
+        typeLabel: String,
+        note: String,
+        offerUndo: Bool = false
+    ) {
+        enqueueRoutineSession(
+            model: model,
+            durationMin: durationMin,
             typeLabel: typeLabel,
-            durationMinutes: durationMin,
-            rpe: 4,
             note: note,
-            phase: model.settings.currentPhase
+            offerUndo: offerUndo
         )
-        Task {
-            await model.logSession(draft)
-            model.toastMessage = "Routine logged · \(durationMin) min"
-        }
     }
 
     private func startWorkout() {
@@ -186,6 +187,36 @@ struct WorkoutView: View {
             Haptics.shared.play(RefusedActionHaptics.cue(tappableAndRefused: true))
         } catch {
             model.errorMessage = error.localizedDescription
+        }
+    }
+}
+
+@MainActor
+private func enqueueRoutineSession(
+    model: AppModel,
+    durationMin: Int,
+    typeLabel: String,
+    note: String,
+    offerUndo: Bool
+) {
+    let draft = SessionDraft(
+        date: LocalDateSupport.string(from: Date()),
+        type: "routine",
+        typeLabel: typeLabel,
+        durationMinutes: durationMin,
+        rpe: 4,
+        note: note,
+        phase: model.settings.currentPhase
+    )
+    let appModel = model
+    Task { @MainActor in
+        guard let receipt = await appModel.logSession(draft) else { return }
+        appModel.toastMessage = "Routine logged · \(durationMin) min"
+        guard offerUndo else { return }
+        appModel.toastAction = AppToastAction(label: "Undo") {
+            Task { @MainActor in
+                await appModel.undoSession(receipt)
+            }
         }
     }
 }
@@ -409,6 +440,7 @@ private struct RoutineRunnerSheet: View {
     /// at log time for the honest elapsed the ≥60s gate and partial-minute
     /// clamping operate on.
     @State private var wallClock: PersistedRoutineRun
+    @State private var exitGate = RoutineGate.ExitGate()
 
     init(presentation: WorkoutView.RoutineRunPresentation) {
         self.routine = presentation.preset
@@ -452,7 +484,7 @@ private struct RoutineRunnerSheet: View {
 
                     if run.isComplete {
                         Button("Log Routine & Close") {
-                            logRoutineAndClose()
+                            closeRoutine()
                         }
                         .buttonStyle(PrimaryActionButtonStyle())
                     } else {
@@ -475,9 +507,13 @@ private struct RoutineRunnerSheet: View {
             }
             .navigationTitle(routine.name)
             .navigationBarTitleDisplayMode(.inline)
+            // A routine must leave through the classified Close path. A
+            // swipe-dismiss otherwise skips the >=60s partial/discard
+            // decision and can clear a real run without telling the user.
+            .interactiveDismissDisabled()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Close") { closeRoutine() }
                 }
             }
             .onAppear {
@@ -487,9 +523,10 @@ private struct RoutineRunnerSheet: View {
                 store.save(wallClock)
             }
             .onDisappear {
-                // The sheet is gone — the run is over, finished or abandoned.
-                // Clearing here (and at log time) is what stops a closed run
-                // from resurrecting on the next launch.
+                // An unclaimed system/parent disappearance must leave the
+                // durable run intact. The classified paths clear before
+                // dismissing; this is only a guarded backstop.
+                guard exitGate.shouldClearPersistenceOnDisappear else { return }
                 store.clear()
             }
         }
@@ -526,42 +563,49 @@ private struct RoutineRunnerSheet: View {
         store.save(wallClock)
     }
 
-    /// The Log Routine & Close decision (#633): a run under the ≥60s bar is
-    /// an accidental open and is discarded visibly (nothing banked); at or
-    /// past it, the session is logged with the honest partial minutes — real
-    /// elapsed, clamped to the routine's staged total, never the full nominal
-    /// total. RPE 4 / note / phase are unchanged from the pre-gate path.
-    private func logRoutineAndClose() {
+    /// Close/X is an interruption unless the completion screen is already
+    /// showing. A completed run uses this same path as the visible Done
+    /// button, including the one-minute floor for a sub-minute routine. It
+    /// uses real elapsed only, so skipped timeline credit cannot fabricate a
+    /// partial session.
+    private func closeRoutine() {
+        let now = Date()
         let totalS = RoutineEngine.stages(for: routine).reduce(0) { $0 + $1.durationSeconds }
-        let outcome = RoutineGate.completionOutcome(
+        guard let decision = exitGate.claim(
+            isComplete: run.isComplete,
             elapsedSeconds: RoutineGate.realElapsedS(
                 wallClock,
-                nowMs: Date().millisecondsSince1970
+                nowMs: now.millisecondsSince1970
             ),
             totalSeconds: totalS
-        )
+        ) else { return }
+
         store.clear()
-        switch outcome {
-        case .discarded:
-            model.toastMessage = "Routine too short to log — nothing saved"
-            dismiss()
-        case .logged(let durationMin):
-            let draft = SessionDraft(
-                date: LocalDateSupport.string(from: Date()),
-                type: "routine",
+        switch decision {
+        case .completed(let durationMin):
+            enqueueRoutineSession(
+                model: model,
+                durationMin: durationMin,
                 typeLabel: routine.name,
-                durationMinutes: durationMin,
-                rpe: 4,
                 note: "Guided routine",
-                phase: model.settings.currentPhase
+                offerUndo: false
             )
-            Task {
-                await model.logSession(draft)
-                model.toastMessage = "Routine logged · \(durationMin) min"
-                dismiss()
-            }
+        case .partial(let durationMin):
+            enqueueRoutineSession(
+                model: model,
+                durationMin: durationMin,
+                typeLabel: routine.name,
+                note: "\(routine.name) (partial)",
+                offerUndo: true
+            )
+        case .discarded:
+            model.toastMessage = run.isComplete
+                ? "Routine too short to log — nothing saved"
+                : "Routine closed — nothing saved"
         }
+        dismiss()
     }
+
 }
 
 private struct RoutineEditorSheet: View {

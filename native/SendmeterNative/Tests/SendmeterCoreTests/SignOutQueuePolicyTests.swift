@@ -244,6 +244,84 @@ final class SignOutQueuePolicyTests: XCTestCase {
         XCTAssertEqual(stillQuarantined.first?.quarantined?.kind, .permanent)
     }
 
+    /// The sign-out snapshot intentionally includes active entries regardless
+    /// of backoff. Revalidation must therefore use the sign-out bypass mode,
+    /// while still refusing an entry that became quarantined after the stale
+    /// snapshot was captured.
+    func testSignOutDrainAttemptsBackedOffActiveItemButNotQuarantinedItem() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let now = Date(timeIntervalSince1970: 10_000)
+        let queue = try DurableQueue<TestQueuePayload>(directoryURL: directory, filename: "queue.json")
+        let backedOff = DurableQueueItem(
+            accountUserID: user,
+            createdAt: now,
+            nextAttemptAt: now.addingTimeInterval(60),
+            payload: TestQueuePayload(value: "backed-off")
+        )
+        let quarantineCandidate = DurableQueueItem(
+            accountUserID: user,
+            createdAt: now,
+            payload: TestQueuePayload(value: "quarantine-me")
+        )
+        try await queue.enqueue(backedOff)
+        try await queue.enqueue(quarantineCandidate)
+
+        var attemptedIDs: [UUID] = []
+        let result = await SignOutQueuePolicy.drainBeforeSignOut(
+            userId: user,
+            drain: { accountUserID in
+                // This is the same stale snapshot shape as the production
+                // pre-sign-out drain: no due-date filter, active only.
+                let snapshot = await queue.items(for: accountUserID)
+                XCTAssertEqual(Set(snapshot.map(\.id)), Set([backedOff.id, quarantineCandidate.id]))
+
+                // Simulate a concurrent permanent rejection landing after
+                // the snapshot but before each upload's revalidation.
+                var failureAt = now
+                for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+                    try? await queue.markFailure(
+                        id: quarantineCandidate.id,
+                        accountUserID: accountUserID,
+                        error: "constraint",
+                        classification: .permanent,
+                        code: "23514",
+                        now: failureAt
+                    )
+                    failureAt = failureAt.addingTimeInterval(30)
+                }
+
+                for item in snapshot {
+                    guard await queue.activeItem(
+                        id: item.id,
+                        accountUserID: accountUserID,
+                        dueAt: QueueUploadMode.signOut.revalidationDueAt(now: now)
+                    ) != nil else { continue }
+                    attemptedIDs.append(item.id)
+                    try? await queue.remove(
+                        id: item.id,
+                        accountUserID: accountUserID,
+                        reason: "uploaded"
+                    )
+                }
+                return attemptedIDs.count
+            },
+            countRemaining: { await queue.count(for: $0) },
+            askAboutRemainder: { _ in .signOut },
+            signOut: {}
+        )
+
+        XCTAssertEqual(attemptedIDs, [backedOff.id])
+        XCTAssertEqual(result.outcome?.uploaded, 1)
+        XCTAssertEqual(result.outcome?.remaining, 0)
+        let activeCount = await queue.count(for: user)
+        XCTAssertEqual(activeCount, 0)
+        let quarantined = await queue.quarantinedItems(for: user)
+        XCTAssertEqual(quarantined.map(\.id), [quarantineCandidate.id])
+    }
+
     /// #675: the account-deletion discard (`DurableQueue.discardAll`) DOES
     /// cover quarantined entries — deleting the account deletes its data, and
     /// a quarantine is a retention state, not a protection.

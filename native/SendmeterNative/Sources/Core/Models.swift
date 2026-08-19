@@ -214,6 +214,19 @@ public struct SessionDraft: Codable, Equatable, Sendable {
     }
 }
 
+/// Stable identity returned by a session-log operation. Consumers that offer
+/// an Undo action must retain this receipt rather than looking up whatever
+/// session happens to be last in the current list.
+public struct SessionLogReceipt: Codable, Equatable, Hashable, Sendable {
+    public let sessionID: UUID
+    public let accountUserID: UUID
+
+    public init(sessionID: UUID, accountUserID: UUID) {
+        self.sessionID = sessionID
+        self.accountUserID = accountUserID
+    }
+}
+
 public struct SessionTypeDefinition: Codable, Equatable, Sendable, Identifiable {
     public let id: String
     public let label: String

@@ -166,15 +166,15 @@ final class RoutineGateTests: XCTestCase {
 
     // MARK: completionOutcome (#633 gate)
 
-    func testCompletionOutcomeDiscardsUnderThe60SecondBar() {
-        XCTAssertEqual(RoutineGate.completionOutcome(elapsedSeconds: 0, totalSeconds: 540), .discarded)
-        XCTAssertEqual(RoutineGate.completionOutcome(elapsedSeconds: 59.9, totalSeconds: 540), .discarded)
+    func testCompletionOutcomeUsesTheCompletedPathBelowTheInterruptionBar() {
+        XCTAssertEqual(RoutineGate.completionOutcome(elapsedSeconds: 0, totalSeconds: 540), .logged(durationMin: 1))
+        XCTAssertEqual(RoutineGate.completionOutcome(elapsedSeconds: 59.9, totalSeconds: 540), .logged(durationMin: 1))
     }
 
-    /// The issue's core case: a completed sub-minute routine (staged total
-    /// under 60s) must NOT bank a session where the web would discard it.
-    func testCompletionOutcomeDiscardsACompletedSubMinuteRoutine() {
-        XCTAssertEqual(RoutineGate.completionOutcome(elapsedSeconds: 45, totalSeconds: 45), .discarded)
+    /// The issue's core case: an explicitly completed sub-minute routine gets
+    /// the web's one-minute floor, even though an interrupted run does not.
+    func testCompletionOutcomeLogsACompletedSubMinuteRoutine() {
+        XCTAssertEqual(RoutineGate.completionOutcome(elapsedSeconds: 45, totalSeconds: 45), .logged(durationMin: 1))
     }
 
     func testCompletionOutcomeLogsRealElapsedMinutesAtTheBar() {
@@ -183,11 +183,24 @@ final class RoutineGateTests: XCTestCase {
         XCTAssertEqual(RoutineGate.completionOutcome(elapsedSeconds: 300, totalSeconds: 540), .logged(durationMin: 5))
     }
 
-    /// A skipped-through run: real elapsed is honest and never inflates —
-    /// 45s of real work logs nothing regardless of how far the position
-    /// fast-forwarded.
-    func testCompletionOutcomeDiscardsASkippedThroughSubMinuteRun() {
-        XCTAssertEqual(RoutineGate.completionOutcome(elapsedSeconds: 45, totalSeconds: 600), .discarded)
+    /// A completed skip-through run still uses real elapsed, not skipped
+    /// timeline credit; 45 real seconds therefore gets the one-minute floor.
+    func testCompletionOutcomeLogsACompletedSkipThroughSubMinuteRun() {
+        XCTAssertEqual(RoutineGate.completionOutcome(elapsedSeconds: 45, totalSeconds: 600), .logged(durationMin: 1))
+    }
+
+    func testInterruptionOutcomeDiscardsAnEarlyCloseUnderAMinute() {
+        XCTAssertEqual(RoutineGate.interruptionOutcome(elapsedSeconds: 45), .discarded)
+    }
+
+    func testInterruptionOutcomeLogsAnEarlyCloseAtAMinute() {
+        XCTAssertEqual(RoutineGate.interruptionOutcome(elapsedSeconds: 60), .logged(durationMin: 1))
+    }
+
+    func testInterruptionOutcomeUsesRealElapsedInsteadOfSkippedCredit() {
+        let run = base(skippedS: 400)
+        let realElapsed = RoutineGate.realElapsedS(run, nowMs: 1_030_000)
+        XCTAssertEqual(RoutineGate.interruptionOutcome(elapsedSeconds: realElapsed), .discarded)
     }
 
     /// A 20-minute real run of a 9-minute routine caps at the staged total
@@ -201,6 +214,69 @@ final class RoutineGateTests: XCTestCase {
             RoutineGate.completionOutcome(elapsedSeconds: 60_000, totalSeconds: 60_000),
             .logged(durationMin: 600)
         )
+    }
+
+    // MARK: stable-ID Undo decision
+
+    func testUndoDecisionUsesTheReceiptSessionIDNotAnotherConcurrentSession() {
+        let account = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let created = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        let later = UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!
+        let receipt = SessionLogReceipt(sessionID: created, accountUserID: account)
+
+        XCTAssertEqual(
+            RoutineGate.undoDecision(receipt: receipt, currentUserID: account),
+            .delete(sessionID: created, accountUserID: account)
+        )
+        XCTAssertNotEqual(
+            RoutineGate.undoDecision(receipt: receipt, currentUserID: account),
+            .delete(sessionID: later, accountUserID: account)
+        )
+    }
+
+    func testUndoDecisionIgnoresMissingReceiptOrDifferentAccount() {
+        let account = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let otherAccount = UUID(uuidString: "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD")!
+        let receipt = SessionLogReceipt(
+            sessionID: UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!,
+            accountUserID: account
+        )
+
+        XCTAssertEqual(RoutineGate.undoDecision(receipt: nil, currentUserID: account), .ignore)
+        XCTAssertEqual(RoutineGate.undoDecision(receipt: receipt, currentUserID: otherAccount), .ignore)
+        XCTAssertEqual(RoutineGate.undoDecision(receipt: receipt, currentUserID: nil), .ignore)
+    }
+
+    // MARK: runner exit claim
+
+    func testCompletedCloseLogsASubMinuteRoutineExactlyOnce() {
+        var gate = RoutineGate.ExitGate()
+
+        XCTAssertEqual(
+            gate.claim(isComplete: true, elapsedSeconds: 45, totalSeconds: 45),
+            .completed(durationMin: 1)
+        )
+        XCTAssertNil(
+            gate.claim(isComplete: true, elapsedSeconds: 45, totalSeconds: 45)
+        )
+        XCTAssertTrue(gate.shouldClearPersistenceOnDisappear)
+    }
+
+    func testUnclaimedRunnerDisappearanceMustPreserveThePersistedRun() {
+        let gate = RoutineGate.ExitGate()
+
+        XCTAssertFalse(gate.hasClaimedExit)
+        XCTAssertFalse(gate.shouldClearPersistenceOnDisappear)
+    }
+
+    func testEarlyCloseUsesPartialClassificationAndClaimsBeforeASecondEvent() {
+        var gate = RoutineGate.ExitGate()
+
+        XCTAssertEqual(
+            gate.claim(isComplete: false, elapsedSeconds: 90, totalSeconds: 600),
+            .partial(durationMin: 2)
+        )
+        XCTAssertNil(gate.claim(isComplete: false, elapsedSeconds: 90, totalSeconds: 600))
     }
 
     // MARK: resolveRoutineResume (web #483 F1/F4/F5/N3 semantics)
