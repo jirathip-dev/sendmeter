@@ -240,7 +240,7 @@ public final class AppModel: ObservableObject {
     private let queue: DurableQueue<PendingWrite>?
     private var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
-    private var pendingRecordings: [UUID: TindeqRecording] = [:]
+    private var pendingRecordings = PendingRecordingOverlay()
     /// Routine Undo claims are keyed by both account and session. The matching
     /// delete intent is persisted in the same queue as inserts; keeping the
     /// claim before the first await lets an in-flight upload reconcile without
@@ -778,6 +778,7 @@ public final class AppModel: ObservableObject {
             workouts = try await remoteWorkouts
             tagMetadata = try await remoteTags
             await restorePendingWrites(
+                accountFetch: accountFetch,
                 userID: userID,
                 remoteSessionIDs: Set(fetchedSessions.map(\.id)),
                 remoteRecordingIDs: Set(fetchedRecordings.map(\.id))
@@ -1179,8 +1180,12 @@ public final class AppModel: ObservableObject {
             completionStatus: completionStatus
         )
         let optimistic = pendingRecording(from: recording)
-        pendingRecordings[optimistic.id] = optimistic
-        mergeRecordings(remote: recordings.filter { pendingRecordings[$0.id] == nil })
+        pendingRecordings.insert(optimistic, accountUserID: userID)
+        mergeRecordings(
+            remote: recordings.filter {
+                !pendingRecordings.contains(id: $0.id, accountUserID: userID)
+            }
+        )
         let item = DurableQueueItem(
             id: recording.id,
             accountUserID: userID,
@@ -1193,8 +1198,12 @@ public final class AppModel: ObservableObject {
             // notice IS the out-loud reporting (no Sentry in this target);
             // `surfaceLostRecordingNoticeIfAny` shows it on next foreground.
             LostRecordingStore.note(reason: "recording", in: .standard)
-            pendingRecordings.removeValue(forKey: recording.id)
-            mergeRecordings(remote: recordings.filter { pendingRecordings[$0.id] == nil })
+            pendingRecordings.removeValue(for: recording.id, accountUserID: userID)
+            mergeRecordings(
+                remote: recordings.filter {
+                    !pendingRecordings.contains(id: $0.id, accountUserID: userID)
+                }
+            )
         }
         // #627: warm the tag's fitted curve in the background so the
         // session-end prediction reads a cached curve instead of fetching.
@@ -1428,7 +1437,7 @@ public final class AppModel: ObservableObject {
     ) async -> TagForceCurve? {
         let byTag = recordings.filter {
             $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedTag
-                && !pendingRecordings.keys.contains($0.id)
+                && !pendingRecordings.contains(id: $0.id, accountUserID: currentUserID)
                 && modalityFilter($0, modality: modality)
                 // #651: warm-up/prehab (submaximal) and salvage blobs
                 // (inflated duration / deflated avg) corrupt CF/W′ — exclude
@@ -1484,7 +1493,7 @@ public final class AppModel: ObservableObject {
 
         let byTag = recordings.filter {
             $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedTag
-                && !pendingRecordings.keys.contains($0.id)
+                && !pendingRecordings.contains(id: $0.id, accountUserID: currentUserID)
                 && ($0.protocolMode != .reverseAction || $0.capacityEvidence == true)
                 // #651: effort-only for PR/trend — warm-up/prehab never win by
                 // walkover. Recovery blobs are deliberately NOT excluded here:
@@ -2025,7 +2034,10 @@ public final class AppModel: ObservableObject {
                 completedDeleteReceipt = receipt
             case let .recording(recording):
                 let saved = try await self.repository.insertRecording(recording)
-                pendingRecordings.removeValue(forKey: recording.id)
+                pendingRecordings.removeValue(
+                    for: recording.id,
+                    accountUserID: item.accountUserID
+                )
                 replaceRecording(saved)
             case let .workout(draft):
                 let saved = try await self.repository.insertPhoneWorkout(draft)
@@ -2211,7 +2223,7 @@ public final class AppModel: ObservableObject {
                     return
                 }
                 pendingSessions.removeValue(forKey: id)
-                pendingRecordings.removeValue(forKey: id)
+                pendingRecordings.removeValue(for: id, accountUserID: userID)
                 sessions.removeAll { $0.id == id }
                 recordings.removeAll { $0.id == id }
             }
@@ -2438,6 +2450,7 @@ public final class AppModel: ObservableObject {
     // MARK: Helpers
 
     private func restorePendingWrites(
+        accountFetch: AccountScopedFetch,
         userID: UUID,
         remoteSessionIDs: Set<UUID>,
         remoteRecordingIDs: Set<UUID>
@@ -2453,6 +2466,29 @@ public final class AppModel: ObservableObject {
         // own. The hot drain path never sees these (only the Settings
         // Retry/Discard actions touch them).
         let queued = await queue.items(for: userID, includeQuarantined: true)
+        // `queue.items` is an async boundary. The account may have switched
+        // while it was suspended; no pending state, including routine Undo,
+        // may be mutated by that stale restore.
+        guard let currentUserID = self.currentUserID,
+              accountFetch.canApply(to: currentUserID)
+        else { return }
+        let restoredRecordings = queued.compactMap { item -> PendingRecordingOverlay.Entry? in
+            guard case let .recording(recording) = item.payload,
+                  !remoteRecordingIDs.contains(recording.id)
+            else { return nil }
+            return PendingRecordingOverlay.Entry(
+                accountUserID: item.accountUserID,
+                recording: pendingRecording(
+                    from: recording,
+                    rejected: item.quarantined != nil
+                )
+            )
+        }
+        guard pendingRecordings.applyRestored(
+            restoredRecordings,
+            capturedBy: accountFetch,
+            currentUserID: currentUserID
+        ) else { return }
         // Read delete intents first. A session insert and its Undo delete can
         // overlap in the queue; the delete must win before any optimistic row
         // is rebuilt from the insert payload.
@@ -2463,7 +2499,7 @@ public final class AppModel: ObservableObject {
                     sessionID: payload.sessionID,
                     accountUserID: item.accountUserID
                 ),
-                currentUserID: userID
+                currentUserID: currentUserID
             )
         }
         for item in queued {
@@ -2479,7 +2515,7 @@ public final class AppModel: ObservableObject {
                 pendingSessions[payload.id] = pendingSession(
                     id: payload.id,
                     draft: payload.draft,
-                    accountUserID: userID,
+                    accountUserID: currentUserID,
                     rpeConfirmed: payload.rpeConfirmed,
                     groupID: payload.groupID,
                     rejected: rejected
@@ -2489,9 +2525,8 @@ public final class AppModel: ObservableObject {
             case let .workout(draft):
                 guard !remoteSessionIDs.contains(draft.sessionID) else { continue }
                 pendingSessions[draft.sessionID] = pendingSession(from: draft, rejected: rejected)
-            case let .recording(recording):
-                guard !remoteRecordingIDs.contains(recording.id) else { continue }
-                pendingRecordings[recording.id] = pendingRecording(from: recording, rejected: rejected)
+            case .recording:
+                continue
             }
         }
     }
@@ -2580,8 +2615,11 @@ public final class AppModel: ObservableObject {
 
     private func mergeRecordings(remote: [TindeqRecording]) {
         let remoteIDs = Set(remote.map(\.id))
-        for id in remoteIDs { pendingRecordings.removeValue(forKey: id) }
-        recordings = (remote + pendingRecordings.values.filter { !remoteIDs.contains($0.id) })
+        if let currentUserID {
+            pendingRecordings.removeValues(withIDs: remoteIDs, accountUserID: currentUserID)
+        }
+        recordings = pendingRecordings
+            .merged(remote: remote, accountUserID: currentUserID)
             .sorted { $0.recordedAt > $1.recordedAt }
     }
 
@@ -2636,7 +2674,7 @@ public final class AppModel: ObservableObject {
         workouts = []
         tagMetadata = []
         pendingSessions = [:]
-        pendingRecordings = [:]
+        pendingRecordings = PendingRecordingOverlay()
         routineUndo.reset()
         // Upload claims belong to their in-flight tasks, not to the loaded UI
         // snapshot. Keep them until upload's defer releases them: an A→B→A
