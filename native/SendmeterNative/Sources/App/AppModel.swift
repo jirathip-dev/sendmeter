@@ -113,11 +113,6 @@ private struct TagCurveKey: Hashable {
     let modality: String
 }
 
-private struct QueueUploadKey: Hashable {
-    let itemID: UUID
-    let accountUserID: UUID
-}
-
 @MainActor
 public final class AppModel: ObservableObject {
     @Published public private(set) var bootState: AppBootState = .loading
@@ -247,8 +242,10 @@ public final class AppModel: ObservableObject {
     private var routineUndo = RoutineUndoState()
     /// Uploads are single-flight per account/item. Queue reads are snapshots;
     /// this synchronous claim prevents an insert completion, a drain, and an
-    /// Undo follow-up from all sending the same item concurrently.
-    private var inFlightUploadKeys: Set<QueueUploadKey> = []
+    /// Undo follow-up from all sending the same item concurrently. The claim
+    /// token makes a late release from an older account task unable to remove
+    /// a newer claim after an account switch.
+    private var inFlightUploadClaims = QueueUploadClaimCoordinator()
     private var nestedCancellables = Set<AnyCancellable>()
     private var didBootstrapUserID: UUID?
     private var recomputeGate = ReadinessRecomputeGate()
@@ -606,7 +603,7 @@ public final class AppModel: ObservableObject {
         guard let queue else { return 0 }
         var uploaded = 0
         for item in await queue.items(for: accountUserID) {
-            if (await upload(item)).uploaded { uploaded += 1 }
+            if (await upload(item, mode: .signOut)).uploaded { uploaded += 1 }
         }
         return uploaded
     }
@@ -1865,7 +1862,7 @@ public final class AppModel: ObservableObject {
         guard let userID = currentUserID, let queue else { return }
         let pending = await queue.items(for: userID)
         for item in pending {
-            _ = await upload(item, manual: true)
+            _ = await upload(item, mode: .manual)
         }
         await refreshQueueCount()
     }
@@ -1910,7 +1907,7 @@ public final class AppModel: ObservableObject {
     @discardableResult
     private func upload(
         _ item: DurableQueueItem<PendingWrite>,
-        manual: Bool = false
+        mode: QueueUploadMode = .automatic
     ) async -> UploadResult {
         guard let queue, currentUserID == item.accountUserID else {
             return UploadResult(uploaded: false, failure: nil)
@@ -1919,12 +1916,12 @@ public final class AppModel: ObservableObject {
             itemID: item.id,
             accountUserID: item.accountUserID
         )
-        guard inFlightUploadKeys.insert(uploadKey).inserted else {
+        guard let uploadClaim = inFlightUploadClaims.claim(uploadKey) else {
             // A second producer may have captured the same queue item before
             // the first producer finished. It must not replay that snapshot.
             return UploadResult(uploaded: false, failure: nil)
         }
-        defer { inFlightUploadKeys.remove(uploadKey) }
+        defer { inFlightUploadClaims.release(uploadClaim) }
 
         // Queue reads are snapshots. Re-read through the active queue filter
         // after claiming the item so an automatic producer cannot upload an
@@ -1934,7 +1931,7 @@ public final class AppModel: ObservableObject {
         guard let currentItem = await queue.activeItem(
             id: item.id,
             accountUserID: item.accountUserID,
-            dueAt: manual ? nil : Date()
+            dueAt: mode.revalidationDueAt(now: Date())
         ), currentUserID == item.accountUserID else {
             return UploadResult(uploaded: false, failure: nil)
         }
@@ -2081,7 +2078,7 @@ public final class AppModel: ObservableObject {
                     error: error.localizedDescription,
                     classification: classification,
                     code: code,
-                    countsTowardQuarantine: !manual
+                    countsTowardQuarantine: mode.countsTowardQuarantine
                 )
                 result = UploadResult(
                     uploaded: false,
@@ -2147,7 +2144,7 @@ public final class AppModel: ObservableObject {
                     id: item.id,
                     accountUserID: item.accountUserID
                 ) else { continue }
-                let result = await upload(item, manual: true)
+                let result = await upload(item, mode: .manual)
                 if !result.uploaded {
                     // #675 F7 + N1: the manual attempt failed — re-stamp the
                     // quarantine NOW so the entry is never auto-retried by a
@@ -2627,7 +2624,7 @@ public final class AppModel: ObservableObject {
         pendingSessions = [:]
         pendingRecordings = [:]
         routineUndo.reset()
-        inFlightUploadKeys.removeAll()
+        inFlightUploadClaims.reset()
         queuedWriteCount = 0
         queueBreadcrumbs = []
         quarantinedWrites = nil
