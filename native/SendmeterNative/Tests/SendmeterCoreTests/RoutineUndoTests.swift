@@ -52,4 +52,15 @@ final class RoutineUndoTests: XCTestCase {
         XCTAssertFalse(state.hasPendingDelete(sessionID: sessionID, accountUserID: account))
         XCTAssertFalse(state.discardPendingDelete(receipt, currentUserID: otherAccount))
     }
+
+    func testFailedDeleteEnqueueRollsBackTheAccountScopedClaim() {
+        let receipt = SessionLogReceipt(sessionID: sessionID, accountUserID: account)
+        var state = RoutineUndoState()
+
+        XCTAssertTrue(state.claim(receipt, currentUserID: account))
+        XCTAssertTrue(state.rollbackClaim(receipt, currentUserID: account))
+        XCTAssertFalse(state.isClaimed(receipt))
+        XCTAssertFalse(state.hasPendingDelete(sessionID: sessionID, accountUserID: account))
+        XCTAssertFalse(state.rollbackClaim(receipt, currentUserID: otherAccount))
+    }
 }

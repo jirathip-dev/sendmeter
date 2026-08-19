@@ -27,6 +27,21 @@ public struct RoutineUndoState: Equatable, Sendable {
         claimedReceipts.contains(receipt)
     }
 
+    /// Rolls back a claim when the durable delete intent could not be written.
+    /// The receipt itself remains the account boundary, and the caller must
+    /// still prove that the current session owns that account before this
+    /// state is changed.
+    @discardableResult
+    public mutating func rollbackClaim(
+        _ receipt: SessionLogReceipt,
+        currentUserID: UUID?
+    ) -> Bool {
+        guard receipt.accountUserID == currentUserID else { return false }
+        let wasClaimed = claimedReceipts.remove(receipt) != nil
+        pendingDeleteReceipts.remove(receipt)
+        return wasClaimed
+    }
+
     public func hasPendingDelete(
         sessionID: UUID,
         accountUserID: UUID?

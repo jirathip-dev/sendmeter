@@ -113,6 +113,11 @@ private struct TagCurveKey: Hashable {
     let modality: String
 }
 
+private struct QueueUploadKey: Hashable {
+    let itemID: UUID
+    let accountUserID: UUID
+}
+
 @MainActor
 public final class AppModel: ObservableObject {
     @Published public private(set) var bootState: AppBootState = .loading
@@ -240,6 +245,10 @@ public final class AppModel: ObservableObject {
     /// claim before the first await lets an in-flight upload reconcile without
     /// resurrecting the exact row the user removed.
     private var routineUndo = RoutineUndoState()
+    /// Uploads are single-flight per account/item. Queue reads are snapshots;
+    /// this synchronous claim prevents an insert completion, a drain, and an
+    /// Undo follow-up from all sending the same item concurrently.
+    private var inFlightUploadKeys: Set<QueueUploadKey> = []
     private var nestedCancellables = Set<AnyCancellable>()
     private var didBootstrapUserID: UUID?
     private var recomputeGate = ReadinessRecomputeGate()
@@ -907,6 +916,8 @@ public final class AppModel: ObservableObject {
         guard routineUndo.claim(receipt, currentUserID: currentUserID) else { return }
         let sessionID = receipt.sessionID
         let accountUserID = receipt.accountUserID
+        let sessionBeforeUndo = sessions.first { $0.id == sessionID }
+        let pendingSessionBeforeUndo = pendingSessions[sessionID]
 
         pendingSessions.removeValue(forKey: sessionID)
         sessions.removeAll { $0.id == sessionID }
@@ -929,6 +940,28 @@ public final class AppModel: ObservableObject {
             guard currentUserID == accountUserID else { return }
             if result.uploaded { toastMessage = "Routine undone" }
         } catch {
+            // The optimistic hide is not durable until the delete intent has
+            // been persisted. Roll it back only for the account that made the
+            // receipt; a sign-out/user switch must never refresh old-account
+            // data into the new account's model.
+            let currentAccount = currentUserID
+            _ = routineUndo.rollbackClaim(receipt, currentUserID: currentAccount)
+            guard currentAccount == accountUserID else { return }
+            if let sessionBeforeUndo {
+                sessions.removeAll { $0.id == sessionID }
+                sessions.append(sessionBeforeUndo)
+            }
+            if let pendingSessionBeforeUndo {
+                pendingSessions[sessionID] = pendingSessionBeforeUndo
+            }
+            mergeSessions(remote: sessions.filter { !$0.pending })
+            // The delete never became durable, so a refresh is the final
+            // authority when the insert may have completed while Undo was
+            // attempting to persist its intent. The local restoration above
+            // keeps the already-inserted row truthful even if this refresh
+            // itself is offline.
+            await refreshAll(showSpinner: false)
+            guard currentUserID == accountUserID else { return }
             surface(error)
         }
     }
@@ -1882,6 +1915,30 @@ public final class AppModel: ObservableObject {
         guard let queue, currentUserID == item.accountUserID else {
             return UploadResult(uploaded: false, failure: nil)
         }
+        let uploadKey = QueueUploadKey(
+            itemID: item.id,
+            accountUserID: item.accountUserID
+        )
+        guard inFlightUploadKeys.insert(uploadKey).inserted else {
+            // A second producer may have captured the same queue item before
+            // the first producer finished. It must not replay that snapshot.
+            return UploadResult(uploaded: false, failure: nil)
+        }
+        defer { inFlightUploadKeys.remove(uploadKey) }
+
+        // Queue reads are snapshots. Re-read through the active queue filter
+        // after claiming the item so an automatic producer cannot upload an
+        // item that another producer quarantined while this snapshot was
+        // suspended. Manual retries are allowed to bypass ordinary backoff,
+        // but never the non-quarantined filter.
+        guard let currentItem = await queue.activeItem(
+            id: item.id,
+            accountUserID: item.accountUserID,
+            dueAt: manual ? nil : Date()
+        ), currentUserID == item.accountUserID else {
+            return UploadResult(uploaded: false, failure: nil)
+        }
+        let item = currentItem
         let result: UploadResult
         do {
             var sessionReceipt: SessionLogReceipt?
@@ -2053,7 +2110,7 @@ public final class AppModel: ObservableObject {
         guard currentUserID == accountUserID, let queue else { return }
         let queued = await queue.items(
             for: accountUserID,
-            includeQuarantined: true
+            dueAt: Date()
         )
         guard let deleteItem = queued.first(where: { item in
             guard case let .sessionDelete(payload) = item.payload else { return false }
@@ -2570,6 +2627,7 @@ public final class AppModel: ObservableObject {
         pendingSessions = [:]
         pendingRecordings = [:]
         routineUndo.reset()
+        inFlightUploadKeys.removeAll()
         queuedWriteCount = 0
         queueBreadcrumbs = []
         quarantinedWrites = nil

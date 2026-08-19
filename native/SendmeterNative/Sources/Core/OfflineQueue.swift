@@ -294,15 +294,16 @@ public actor DurableQueue<Payload: Codable & Sendable> {
     }
 
     public func enqueue(_ item: DurableQueueItem<Payload>) throws {
-        if let index = store.items.firstIndex(where: { $0.id == item.id }) {
-            guard store.items[index].accountUserID == item.accountUserID else {
-                throw DurableQueueError.accountMismatch
+        try transact { state in
+            if let index = state.items.firstIndex(where: { $0.id == item.id }) {
+                guard state.items[index].accountUserID == item.accountUserID else {
+                    throw DurableQueueError.accountMismatch
+                }
+                state.items[index] = item
+            } else {
+                state.items.append(item)
             }
-            store.items[index] = item
-        } else {
-            store.items.append(item)
         }
-        try persist()
     }
 
     /// The entries the hot drain path may attempt: never quarantined, and
@@ -357,6 +358,18 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         store.items.first { $0.id == id && $0.accountUserID == accountUserID }
     }
 
+    /// Re-reads one item through the hot-drain filter. Callers that captured a
+    /// queue item before an await must use this instead of `item` before they
+    /// upload: a stale snapshot may have been quarantined or put on backoff in
+    /// the meantime.
+    public func activeItem(
+        id: UUID,
+        accountUserID: UUID,
+        dueAt date: Date? = nil
+    ) -> DurableQueueItem<Payload>? {
+        items(for: accountUserID, dueAt: date).first { $0.id == id }
+    }
+
     /// #675: the quarantined entries for an account, newest rejection first.
     /// A quarantine is its own honest state — never folded into the active
     /// count, never hidden (the #475 F1 mistake: a count with zero readers).
@@ -383,63 +396,68 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         now: Date = Date(),
         countsTowardQuarantine: Bool = true
     ) throws {
-        guard let index = store.items.firstIndex(where: { $0.id == id }) else {
+        guard let currentIndex = store.items.firstIndex(where: { $0.id == id }) else {
             throw DurableQueueError.itemNotFound
         }
-        guard store.items[index].accountUserID == accountUserID else {
+        guard store.items[currentIndex].accountUserID == accountUserID else {
             throw DurableQueueError.accountMismatch
         }
         // A quarantined entry has no failure path left — nothing should be
         // calling markFailure on it (the drain never returns it). #675 F6: a
         // concurrent drain and manual retry can BOTH snapshot the same due
         // entry before the first markFailure quarantines it, so this is
-        // reachable in production, not just a caller bug. Treat it as a
-        // no-op (the entry is already in its terminal state) rather than
-        // throwing an unreadable `alreadyQuarantined` banner; the drain's
-        // per-item `upload` already treats it as failed and the quarantine
-        // is what the user chose to see.
-        guard store.items[index].quarantined == nil else { return }
-        var item = store.items[index]
-        item.attempts += 1
-        item.updatedAt = now
-        item.lastError = String(error.prefix(500))
+        // reachable in production, not just a caller bug. Preserve the
+        // existing no-op contract for that terminal state.
+        guard store.items[currentIndex].quarantined == nil else { return }
 
-        // #675 F2: auth-shaped failures (`.auth` — revoked/expired token —
-        // and `.parked` — an RLS/permission denial) PARK, they never
-        // quarantine (#273: an identity condition is an environment problem,
-        // not proof the payload is bad — destroying training data over one is
-        // the exact regression the web's forced-sign-out rule exists to
-        // prevent). They are retried with normal backoff like any transient
-        // failure; the session recovery is the app's job, not the queue's.
-        switch classification {
-        case .permanent:
-            // #675 F3: the quarantine bound reads the PERMANENT-specific
-            // counter, so a spell of network/5xx/429 retries (`attempts`)
-            // can never spend the budget. The first permanent rejection after
-            // a long offline stretch gets the full bounded window.
-            //
-            // #675 F5: a manual retry (explicit user action) may OPT OUT of
-            // counting toward the quarantine bound — the user's own
-            // remediation attempt must never be what quarantines the entry.
-            if countsTowardQuarantine {
-                item.permanentAttempts = (item.permanentAttempts ?? 0) + 1
+        try transact { state in
+            guard let index = state.items.firstIndex(where: { $0.id == id }) else {
+                throw DurableQueueError.itemNotFound
             }
-            if (item.permanentAttempts ?? 0) >= DurableQueueItem<Payload>.maxPermanentAttempts {
-                item.quarantined = QueueRejection(
-                    kind: .permanent,
-                    at: now,
-                    code: code,
-                    detail: error
-                )
+            guard state.items[index].accountUserID == accountUserID else {
+                throw DurableQueueError.accountMismatch
             }
-        case .auth, .parked, .retryable:
-            break
+            var item = state.items[index]
+            item.attempts += 1
+            item.updatedAt = now
+            item.lastError = String(error.prefix(500))
+
+            // #675 F2: auth-shaped failures (`.auth` — revoked/expired token —
+            // and `.parked` — an RLS/permission denial) PARK, they never
+            // quarantine (#273: an identity condition is an environment problem,
+            // not proof the payload is bad — destroying training data over one is
+            // the exact regression the web's forced-sign-out rule exists to
+            // prevent). They are retried with normal backoff like any transient
+            // failure; the session recovery is the app's job, not the queue's.
+            switch classification {
+            case .permanent:
+                // #675 F3: the quarantine bound reads the PERMANENT-specific
+                // counter, so a spell of network/5xx/429 retries (`attempts`)
+                // can never spend the budget. The first permanent rejection after
+                // a long offline stretch gets the full bounded window.
+                //
+                // #675 F5: a manual retry (explicit user action) may OPT OUT of
+                // counting toward the quarantine bound — the user's own
+                // remediation attempt must never be what quarantines the entry.
+                if countsTowardQuarantine {
+                    item.permanentAttempts = (item.permanentAttempts ?? 0) + 1
+                }
+                if (item.permanentAttempts ?? 0) >= DurableQueueItem<Payload>.maxPermanentAttempts {
+                    item.quarantined = QueueRejection(
+                        kind: .permanent,
+                        at: now,
+                        code: code,
+                        detail: error
+                    )
+                }
+            case .auth, .parked, .retryable:
+                break
+            }
+            item.nextAttemptAt = now.addingTimeInterval(
+                Self.retryDelay(attempts: item.attempts)
+            )
+            state.items[index] = item
         }
-        item.nextAttemptAt = now.addingTimeInterval(
-            Self.retryDelay(attempts: item.attempts)
-        )
-        store.items[index] = item
-        try persist()
     }
 
     /// #675 F7 + N1: re-apply the quarantine stamp after a failed MANUAL
@@ -500,9 +518,10 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 detail: detail
             )
         }
-        store.items[index].quarantined = stamp
-        store.items[index].updatedAt = now
-        try persist()
+        try transact { state in
+            state.items[index].quarantined = stamp
+            state.items[index].updatedAt = now
+        }
         return true
     }
 
@@ -527,12 +546,13 @@ public actor DurableQueue<Payload: Codable & Sendable> {
             throw DurableQueueError.accountMismatch
         }
         guard let cleared = store.items[index].quarantined else { return nil }
-        store.items[index].quarantined = nil
-        store.items[index].attempts = 0
-        store.items[index].permanentAttempts = nil
-        store.items[index].updatedAt = now
-        store.items[index].nextAttemptAt = now
-        try persist()
+        try transact { state in
+            state.items[index].quarantined = nil
+            state.items[index].attempts = 0
+            state.items[index].permanentAttempts = nil
+            state.items[index].updatedAt = now
+            state.items[index].nextAttemptAt = now
+        }
         return cleared
     }
 
@@ -555,17 +575,19 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         }
         guard store.items[index].quarantined != nil else { return false }
         let item = store.items[index]
-        store.items.remove(at: index)
-        appendBreadcrumb(
-            QueueBreadcrumb(
-                queueItemID: item.id,
-                accountUserID: item.accountUserID,
-                leftQueueAt: now,
-                attempts: item.attempts,
-                reason: reason
+        try transact { state in
+            state.items.remove(at: index)
+            appendBreadcrumb(
+                QueueBreadcrumb(
+                    queueItemID: item.id,
+                    accountUserID: item.accountUserID,
+                    leftQueueAt: now,
+                    attempts: item.attempts,
+                    reason: reason
+                ),
+                to: &state
             )
-        )
-        try persist()
+        }
         return true
     }
 
@@ -582,17 +604,19 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         guard item.accountUserID == accountUserID else {
             throw DurableQueueError.accountMismatch
         }
-        store.items.remove(at: index)
-        appendBreadcrumb(
-            QueueBreadcrumb(
-                queueItemID: item.id,
-                accountUserID: item.accountUserID,
-                leftQueueAt: now,
-                attempts: item.attempts,
-                reason: reason
+        try transact { state in
+            state.items.remove(at: index)
+            appendBreadcrumb(
+                QueueBreadcrumb(
+                    queueItemID: item.id,
+                    accountUserID: item.accountUserID,
+                    leftQueueAt: now,
+                    attempts: item.attempts,
+                    reason: reason
+                ),
+                to: &state
             )
-        )
-        try persist()
+        }
     }
 
     public func discardAll(
@@ -601,19 +625,21 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         now: Date = Date()
     ) throws {
         let removed = store.items.filter { $0.accountUserID == accountUserID }
-        store.items.removeAll { $0.accountUserID == accountUserID }
-        for item in removed {
-            appendBreadcrumb(
-                QueueBreadcrumb(
-                    queueItemID: item.id,
-                    accountUserID: item.accountUserID,
-                    leftQueueAt: now,
-                    attempts: item.attempts,
-                    reason: reason
+        try transact { state in
+            state.items.removeAll { $0.accountUserID == accountUserID }
+            for item in removed {
+                appendBreadcrumb(
+                    QueueBreadcrumb(
+                        queueItemID: item.id,
+                        accountUserID: item.accountUserID,
+                        leftQueueAt: now,
+                        attempts: item.attempts,
+                        reason: reason
+                    ),
+                    to: &state
                 )
-            )
+            }
         }
-        try persist()
     }
 
     public func breadcrumbs(for accountUserID: UUID) -> [QueueBreadcrumb] {
@@ -627,15 +653,26 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         return min(15 * 60, pow(2, Double(boundedAttempt - 1)) * 5)
     }
 
-    private func appendBreadcrumb(_ breadcrumb: QueueBreadcrumb) {
-        store.breadcrumbs.append(breadcrumb)
-        if store.breadcrumbs.count > breadcrumbLimit {
-            store.breadcrumbs.removeFirst(store.breadcrumbs.count - breadcrumbLimit)
+    private func appendBreadcrumb(_ breadcrumb: QueueBreadcrumb, to state: inout Store) {
+        state.breadcrumbs.append(breadcrumb)
+        if state.breadcrumbs.count > breadcrumbLimit {
+            state.breadcrumbs.removeFirst(state.breadcrumbs.count - breadcrumbLimit)
         }
     }
 
-    private func persist() throws {
-        let data = try encoder.encode(store)
+    /// Builds a candidate store and publishes it only after its atomic write
+    /// succeeds. Queue callers can therefore never observe a memory-only
+    /// mutation when persistence fails; the in-memory state remains exactly
+    /// the last durable state and can be retried safely.
+    private func transact(_ mutation: (inout Store) throws -> Void) throws {
+        var candidate = store
+        try mutation(&candidate)
+        try persist(candidate)
+        store = candidate
+    }
+
+    private func persist(_ state: Store) throws {
+        let data = try encoder.encode(state)
         try data.write(to: fileURL, options: [.atomic])
     }
 }
