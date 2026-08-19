@@ -436,7 +436,7 @@ public final class AppModel: ObservableObject {
         TagCatalog.entries(recordings: recordings, metadata: tagMetadata)
     }
 
-    /// Names hidden from the Force-tab picker (and the History force list).
+    /// Names hidden from the Force-tab picker and History force-tag chips.
     public var hiddenTagNames: Set<String> {
         TagCatalog.hiddenNames(tagMetadata)
     }
