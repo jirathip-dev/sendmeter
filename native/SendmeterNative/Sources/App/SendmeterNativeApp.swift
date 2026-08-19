@@ -1,3 +1,4 @@
+import SendmeterCore
 import SwiftUI
 
 @main
@@ -66,20 +67,28 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if let toast = model.toastMessage {
-                AppToast(message: toast, action: model.toastAction) {
-                    model.toastMessage = nil
+            if let toast = model.toast {
+                AppToast(message: toast.message, action: toast.action) {
+                    model.dismissToast(id: toast.id)
                 }
                     .padding(.bottom, 84)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .task(id: toast) {
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        if model.toastMessage == toast { model.toastMessage = nil }
+                    .task(id: toast.id) {
+                        do {
+                            try await Task.sleep(nanoseconds: toast.timeoutNanoseconds)
+                        } catch {
+                            return
+                        }
+                        guard ToastLifecycle.shouldDismiss(
+                            currentID: model.toast?.id,
+                            callbackID: toast.id
+                        ) else { return }
+                        model.dismissToast(id: toast.id)
                     }
             }
         }
         .animation(.easeInOut(duration: 0.2), value: model.errorMessage)
-        .animation(.easeInOut(duration: 0.2), value: model.toastMessage)
+        .animation(.easeInOut(duration: 0.2), value: model.toast?.id)
         .preferredColorScheme(theme.resolvedScheme(prefersDark: systemScheme == .dark))
     }
 }

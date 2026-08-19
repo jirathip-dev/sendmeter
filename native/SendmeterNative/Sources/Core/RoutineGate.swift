@@ -265,6 +265,54 @@ public enum RoutineGate {
         )
     }
 
+    /// State owned by the routine runner while its sheet is presented. The
+    /// first classified exit claims the run synchronously, before the caller
+    /// can enqueue or log anything. A second Close/Done event is ignored, and
+    /// an unclaimed disappearance must preserve the persisted run so it can
+    /// be resumed or classified on the next launch.
+    public struct ExitGate: Equatable, Sendable {
+        public enum Decision: Equatable, Sendable {
+            case completed(durationMin: Int)
+            case partial(durationMin: Int)
+            case discarded
+        }
+
+        public private(set) var hasClaimedExit = false
+
+        public init() {}
+
+        public var shouldClearPersistenceOnDisappear: Bool {
+            hasClaimedExit
+        }
+
+        /// Claims and classifies one exit. The claim is made before returning
+        /// the decision, so a paired toolbar/button tap or re-entrant event
+        /// cannot produce two session writes.
+        public mutating func claim(
+            isComplete: Bool,
+            elapsedSeconds: Double,
+            totalSeconds: Int
+        ) -> Decision? {
+            guard !hasClaimedExit else { return nil }
+            hasClaimedExit = true
+
+            if isComplete {
+                switch completionOutcome(
+                    elapsedSeconds: elapsedSeconds,
+                    totalSeconds: totalSeconds
+                ) {
+                case .logged(let durationMin): return .completed(durationMin: durationMin)
+                case .discarded: return .discarded
+                }
+            }
+
+            switch interruptionOutcome(elapsedSeconds: elapsedSeconds) {
+            case .logged(let durationMin): return .partial(durationMin: durationMin)
+            case .discarded: return .discarded
+            }
+        }
+    }
+
     /// What a persisted run should do on launch: auto-resume, log as
     /// completed/partial, or be discarded — never silently (the caller must
     /// surface a discarded outcome). Mirrors the web's `resolveRoutineResume`

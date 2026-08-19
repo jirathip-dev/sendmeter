@@ -440,7 +440,7 @@ private struct RoutineRunnerSheet: View {
     /// at log time for the honest elapsed the ≥60s gate and partial-minute
     /// clamping operate on.
     @State private var wallClock: PersistedRoutineRun
-    @State private var hasClaimedExit = false
+    @State private var exitGate = RoutineGate.ExitGate()
 
     init(presentation: WorkoutView.RoutineRunPresentation) {
         self.routine = presentation.preset
@@ -484,7 +484,7 @@ private struct RoutineRunnerSheet: View {
 
                     if run.isComplete {
                         Button("Log Routine & Close") {
-                            logRoutineAndClose()
+                            closeRoutine()
                         }
                         .buttonStyle(PrimaryActionButtonStyle())
                     } else {
@@ -507,6 +507,10 @@ private struct RoutineRunnerSheet: View {
             }
             .navigationTitle(routine.name)
             .navigationBarTitleDisplayMode(.inline)
+            // A routine must leave through the classified Close path. A
+            // swipe-dismiss otherwise skips the >=60s partial/discard
+            // decision and can clear a real run without telling the user.
+            .interactiveDismissDisabled()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { closeRoutine() }
@@ -519,9 +523,10 @@ private struct RoutineRunnerSheet: View {
                 store.save(wallClock)
             }
             .onDisappear {
-                // The sheet is gone — the run is over, finished or abandoned.
-                // Clearing here (and at log time) is what stops a closed run
-                // from resurrecting on the next launch.
+                // An unclaimed system/parent disappearance must leave the
+                // durable run intact. The classified paths clear before
+                // dismissing; this is only a guarded backstop.
+                guard exitGate.shouldClearPersistenceOnDisappear else { return }
                 store.clear()
             }
         }
@@ -559,57 +564,25 @@ private struct RoutineRunnerSheet: View {
     }
 
     /// Close/X is an interruption unless the completion screen is already
-    /// showing. It uses real elapsed only, so skipped timeline credit cannot
-    /// fabricate a partial session.
+    /// showing. A completed run uses this same path as the visible Done
+    /// button, including the one-minute floor for a sub-minute routine. It
+    /// uses real elapsed only, so skipped timeline credit cannot fabricate a
+    /// partial session.
     private func closeRoutine() {
-        guard !hasClaimedExit else { return }
-        hasClaimedExit = true
         let now = Date()
-        store.clear()
-        guard !run.isComplete else {
-            dismiss()
-            return
-        }
-        switch RoutineGate.interruptionOutcome(
+        let totalS = RoutineEngine.stages(for: routine).reduce(0) { $0 + $1.durationSeconds }
+        guard let decision = exitGate.claim(
+            isComplete: run.isComplete,
             elapsedSeconds: RoutineGate.realElapsedS(
                 wallClock,
                 nowMs: now.millisecondsSince1970
-            )
-        ) {
-        case .discarded:
-            model.toastMessage = "Routine closed — nothing saved"
-        case .logged(let durationMin):
-            enqueueRoutineSession(
-                model: model,
-                durationMin: durationMin,
-                typeLabel: routine.name,
-                note: "\(routine.name) (partial)",
-                offerUndo: true
-            )
-        }
-        dismiss()
-    }
-
-    /// The explicit completion decision (#633): completion is distinct from
-    /// interruption, so a genuinely completed sub-minute routine still gets
-    /// the web's one-minute floor.
-    private func logRoutineAndClose() {
-        guard !hasClaimedExit else { return }
-        hasClaimedExit = true
-        let totalS = RoutineEngine.stages(for: routine).reduce(0) { $0 + $1.durationSeconds }
-        let outcome = RoutineGate.completionOutcome(
-            elapsedSeconds: RoutineGate.realElapsedS(
-                wallClock,
-                nowMs: Date().millisecondsSince1970
             ),
             totalSeconds: totalS
-        )
+        ) else { return }
+
         store.clear()
-        switch outcome {
-        case .discarded:
-            model.toastMessage = "Routine too short to log — nothing saved"
-            dismiss()
-        case .logged(let durationMin):
+        switch decision {
+        case .completed(let durationMin):
             enqueueRoutineSession(
                 model: model,
                 durationMin: durationMin,
@@ -617,9 +590,22 @@ private struct RoutineRunnerSheet: View {
                 note: "Guided routine",
                 offerUndo: false
             )
-            dismiss()
+        case .partial(let durationMin):
+            enqueueRoutineSession(
+                model: model,
+                durationMin: durationMin,
+                typeLabel: routine.name,
+                note: "\(routine.name) (partial)",
+                offerUndo: true
+            )
+        case .discarded:
+            model.toastMessage = run.isComplete
+                ? "Routine too short to log — nothing saved"
+                : "Routine closed — nothing saved"
         }
+        dismiss()
     }
+
 }
 
 private struct RoutineEditorSheet: View {

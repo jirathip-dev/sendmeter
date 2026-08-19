@@ -207,6 +207,26 @@ public struct AppToastAction {
     }
 }
 
+public struct AppToastState: Identifiable {
+    public let id: UUID
+    public let message: String
+    public let action: AppToastAction?
+
+    public init(
+        id: UUID = UUID(),
+        message: String,
+        action: AppToastAction? = nil
+    ) {
+        self.id = id
+        self.message = message
+        self.action = action
+    }
+
+    public var timeoutNanoseconds: UInt64 {
+        ToastLifecycle.timeoutNanoseconds(hasAction: action != nil)
+    }
+}
+
 public struct AppToast: View {
     let message: String
     let action: AppToastAction?

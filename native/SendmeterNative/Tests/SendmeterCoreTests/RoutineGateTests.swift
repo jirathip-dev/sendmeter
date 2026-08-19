@@ -247,6 +247,38 @@ final class RoutineGateTests: XCTestCase {
         XCTAssertEqual(RoutineGate.undoDecision(receipt: receipt, currentUserID: nil), .ignore)
     }
 
+    // MARK: runner exit claim
+
+    func testCompletedCloseLogsASubMinuteRoutineExactlyOnce() {
+        var gate = RoutineGate.ExitGate()
+
+        XCTAssertEqual(
+            gate.claim(isComplete: true, elapsedSeconds: 45, totalSeconds: 45),
+            .completed(durationMin: 1)
+        )
+        XCTAssertNil(
+            gate.claim(isComplete: true, elapsedSeconds: 45, totalSeconds: 45)
+        )
+        XCTAssertTrue(gate.shouldClearPersistenceOnDisappear)
+    }
+
+    func testUnclaimedRunnerDisappearanceMustPreserveThePersistedRun() {
+        let gate = RoutineGate.ExitGate()
+
+        XCTAssertFalse(gate.hasClaimedExit)
+        XCTAssertFalse(gate.shouldClearPersistenceOnDisappear)
+    }
+
+    func testEarlyCloseUsesPartialClassificationAndClaimsBeforeASecondEvent() {
+        var gate = RoutineGate.ExitGate()
+
+        XCTAssertEqual(
+            gate.claim(isComplete: false, elapsedSeconds: 90, totalSeconds: 600),
+            .partial(durationMin: 2)
+        )
+        XCTAssertNil(gate.claim(isComplete: false, elapsedSeconds: 90, totalSeconds: 600))
+    }
+
     // MARK: resolveRoutineResume (web #483 F1/F4/F5/N3 semantics)
 
     func testResolveWithNoPersistedRunIsNone() {
