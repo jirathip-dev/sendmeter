@@ -185,6 +185,11 @@ struct ForceView: View {
                         knownTags: model.visibleTagNames
                     )
 
+                    ForceConsistencyCard(
+                        recordings: model.recordings,
+                        hiddenTags: model.hiddenTagNames
+                    )
+
                     // #653: training balance + Focus Next for the active
                     // exercise (both sides), arming the recommended zone's
                     // guided protocol — the same arms the ForceMetadataCard
