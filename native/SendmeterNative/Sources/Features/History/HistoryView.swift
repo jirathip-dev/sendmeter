@@ -48,7 +48,8 @@ struct HistoryView: View {
             looseRecordings: looseRecordings,
             groupedRecordings: model.recordings.filter { $0.groupID != nil },
             selectedType: selectedType,
-            selectedTag: selectedTag
+            selectedTag: selectedTag,
+            hiddenTagNames: model.hiddenTagNames
         )
     }
 
@@ -62,17 +63,8 @@ struct HistoryView: View {
     }
 
     private var queryFilteredRecordings: [TindeqRecording] {
-        // #631 (SL-92): hidden tags leave the default force list — their
-        // recordings still exist and remain reachable through search.
-        let base = query.isEmpty
-            ? model.recordings.filter { !model.hiddenTagNames.contains($0.tag) }
-            : model.recordings
-        guard !query.isEmpty else { return base }
-        return base.filter {
-            $0.tag.localizedCaseInsensitiveContains(query)
-                || $0.note.localizedCaseInsensitiveContains(query)
-                || $0.side.label.localizedCaseInsensitiveContains(query)
-        }
+        // #647 (SL-92): hiding a tag removes its chip, not its timeline rows.
+        return HistoryFilters.recordingsMatchingQuery(model.recordings, query: query)
     }
 
     private var filteredSessions: [SendmeterCore.Session] {

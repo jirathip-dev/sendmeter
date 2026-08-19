@@ -73,6 +73,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native History now keeps recordings from hidden Force tags in the timeline while continuing to omit those tags from quick-filter chips.
 - iPhone: the readiness score now updates when the app opens and when you bring it back to the foreground, instead of only after a fresh install — newer Apple Health or Apple Watch data is picked up on open. The refresh is silent and shows a "Syncing" pill while in flight; if the sync fails, or Apple Health briefly returns no data (for example before the watch has written overnight values), your last score stays on screen instead of being blanked, and a pull-to-refresh still forces an update.
 - Force: an untagged free hold (no exercise picked, e.g. in hands-free) now saves the rep with no exercise stamped on it instead of silently filing it under an arbitrary exercise from your list — and the last exercise and side you picked are remembered, so the next free hold keeps your choice rather than leaving it empty.
 - Force: you can now start a free hold without picking an exercise first — the rep saves untagged instead of silently being filed under an arbitrary exercise from your list. The last exercise and side you picked are remembered, so an untagged free hold keeps your previous choice (a remembered side only applies to free holds, never to protocol reps, which keep their own per-hand side).
