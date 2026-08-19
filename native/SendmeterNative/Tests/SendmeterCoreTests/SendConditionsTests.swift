@@ -69,7 +69,7 @@ final class SendConditionsTests: XCTestCase {
             lastFetchedAt: fetchedAt,
             now: fetchedAt.addingTimeInterval(WeatherRefreshPolicy.defaultFreshnessWindow - 1)
         ))
-        XCTAssertTrue(policy.shouldRefresh(
+        XCTAssertFalse(policy.shouldRefresh(
             trigger: .foreground,
             lastFetchedAt: fetchedAt,
             now: fetchedAt.addingTimeInterval(WeatherRefreshPolicy.defaultFreshnessWindow)

@@ -8,7 +8,8 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .library(name: "SendmeterCore", targets: ["SendmeterCore"])
+        .library(name: "SendmeterCore", targets: ["SendmeterCore"]),
+        .library(name: "SendmeterWeather", targets: ["SendmeterWeather"])
     ],
     dependencies: [
         // Local path dependency mirrors project.yml's SendLogWatchCore pin.
@@ -38,10 +39,21 @@ let package = Package(
             path: "Sources",
             sources: ["Core", "App/ChartTheme.swift"]
         ),
+        .target(
+            name: "SendmeterWeather",
+            dependencies: ["SendmeterCore"],
+            path: "Sources",
+            sources: ["Platform/WeatherService.swift"]
+        ),
         .testTarget(
             name: "SendmeterCoreTests",
             dependencies: ["SendmeterCore", "SendLogWatchCore"],
             path: "Tests/SendmeterCoreTests"
+        ),
+        .testTarget(
+            name: "SendmeterWeatherTests",
+            dependencies: ["SendmeterWeather", "SendmeterCore"],
+            path: "Tests/SendmeterWeatherTests"
         )
     ]
 )

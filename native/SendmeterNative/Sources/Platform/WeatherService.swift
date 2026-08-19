@@ -1,4 +1,5 @@
 import CoreLocation
+import Combine
 import Foundation
 import SendmeterCore
 
@@ -162,7 +163,7 @@ public final class WeatherService: ObservableObject {
                 tempC: current.tempC,
                 humidity: current.humidity,
                 hourOfDay: hourOfDay,
-                hist: climate,
+                climate: climate,
                 fetchedAt: now()
             )
             conditions = fresh

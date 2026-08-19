@@ -101,7 +101,7 @@ public struct WeatherRefreshPolicy: Equatable, Sendable {
     ) -> Bool {
         guard trigger != .manual else { return true }
         guard let lastFetchedAt else { return true }
-        return now.timeIntervalSince(lastFetchedAt) >= freshnessWindow
+        return now.timeIntervalSince(lastFetchedAt) > freshnessWindow
     }
 }
 

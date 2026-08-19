@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import SendLogHealthCore
 import SendmeterCore
+import SendmeterWeather
 import SwiftUI
 
 public typealias AuthSession = Auth.Session
