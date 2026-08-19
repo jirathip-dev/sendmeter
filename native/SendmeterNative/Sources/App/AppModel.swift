@@ -2624,7 +2624,10 @@ public final class AppModel: ObservableObject {
         pendingSessions = [:]
         pendingRecordings = [:]
         routineUndo.reset()
-        inFlightUploadClaims.reset()
+        // Upload claims belong to their in-flight tasks, not to the loaded UI
+        // snapshot. Keep them until upload's defer releases them: an A→B→A
+        // account transition must not let the returning A duplicate a request
+        // that is still suspended for A. B can proceed through its own key.
         queuedWriteCount = 0
         queueBreadcrumbs = []
         quarantinedWrites = nil

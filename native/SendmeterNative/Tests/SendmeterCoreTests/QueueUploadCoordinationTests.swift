@@ -21,43 +21,37 @@ final class QueueUploadCoordinationTests: XCTestCase {
         XCTAssertNotNil(coordinator.claim(key))
     }
 
-    /// Models an A→B→A switch while A's first upload is suspended. The old
-    /// task's deferred release runs after the new A task has claimed the same
-    /// account/item key; it must not remove the replacement claim.
-    func testSuspendedAccountAReleaseCannotRemoveReplacementAfterABASwitch() {
+    /// Models an A→B→A switch while A's first upload is suspended. B can
+    /// claim its own account/item key, but returning to A must remain single
+    /// flight until A's original owner releases.
+    func testSuspendedAccountAClaimSurvivesABASwitchAndBIsIndependent() throws {
         let keyA = QueueUploadKey(itemID: itemID, accountUserID: accountA)
         let keyB = QueueUploadKey(itemID: itemID, accountUserID: accountB)
         var coordinator = QueueUploadClaimCoordinator()
 
-        let originalA = coordinator.claim(keyA)
-        XCTAssertNotNil(originalA)
+        let originalA = try XCTUnwrap(coordinator.claim(keyA))
 
-        // clearLoadedData() while switching to B invalidates the old loaded
-        // state, then B briefly owns its own account-scoped item key.
-        coordinator.reset()
-        let claimB = coordinator.claim(keyB)
-        XCTAssertNotNil(claimB)
-
-        // Switching back to A permits a fresh A claim while the original A
-        // task is still suspended.
-        coordinator.reset()
-        let replacementA = coordinator.claim(keyA)
-        XCTAssertNotNil(replacementA)
-        XCTAssertNotEqual(originalA, replacementA)
-
-        if let originalA {
-            coordinator.release(originalA)
-        }
+        // clearLoadedData() while switching accounts leaves the live A claim
+        // alone. B can still claim its distinct account-scoped item key.
+        let claimB = try XCTUnwrap(coordinator.claim(keyB))
         XCTAssertTrue(coordinator.isClaimed(keyA))
+        XCTAssertTrue(coordinator.isClaimed(keyB))
 
-        if let claimB {
-            coordinator.release(claimB)
-        }
-        XCTAssertTrue(coordinator.isClaimed(keyA))
+        // Switching back to A must not permit a duplicate while the original
+        // A task is still suspended.
+        XCTAssertNil(coordinator.claim(keyA))
 
-        if let replacementA {
-            coordinator.release(replacementA)
-        }
+        coordinator.release(originalA)
         XCTAssertFalse(coordinator.isClaimed(keyA))
+
+        // Once the original owner releases, A can claim again while B's
+        // independent claim is still live.
+        let resumedA = try XCTUnwrap(coordinator.claim(keyA))
+        XCTAssertTrue(coordinator.isClaimed(keyB))
+
+        coordinator.release(resumedA)
+        coordinator.release(claimB)
+        XCTAssertFalse(coordinator.isClaimed(keyA))
+        XCTAssertFalse(coordinator.isClaimed(keyB))
     }
 }

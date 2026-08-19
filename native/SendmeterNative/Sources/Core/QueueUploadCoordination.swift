@@ -52,10 +52,11 @@ public struct QueueUploadClaim: Equatable, Sendable {
 
 /// Synchronous single-flight coordination for queue uploads.
 ///
-/// A clear/load transition may invalidate all current claims while an older
-/// task is suspended. Each claim therefore carries an ownership token: a late
-/// `release` from that older task can never remove a newer task's replacement
-/// claim for the same account/item.
+/// Claims are scoped to an account/item key and remain live across clear/load
+/// transitions. A task may stay suspended while another account is loaded;
+/// the other account can claim its distinct key, but the original claim stays
+/// in force until its owning task releases it. Each claim also carries an
+/// ownership token so a stale release can never remove a later claim.
 public struct QueueUploadClaimCoordinator: Sendable {
     private var ownerTokens: [QueueUploadKey: UUID] = [:]
 
@@ -71,7 +72,7 @@ public struct QueueUploadClaimCoordinator: Sendable {
     }
 
     /// Release only the exact ownership token that was returned to the task.
-    /// A reset or replacement claim makes a stale release a no-op.
+    /// A stale release can never remove a later claim for the same key.
     public mutating func release(_ claim: QueueUploadClaim) {
         guard ownerTokens[claim.key] == claim.token else { return }
         ownerTokens.removeValue(forKey: claim.key)
@@ -79,11 +80,5 @@ public struct QueueUploadClaimCoordinator: Sendable {
 
     public func isClaimed(_ key: QueueUploadKey) -> Bool {
         ownerTokens[key] != nil
-    }
-
-    /// Invalidate claims for loaded data being discarded. Existing tasks still
-    /// release their own tokens later, but cannot release a future claim.
-    public mutating func reset() {
-        ownerTokens.removeAll()
     }
 }
