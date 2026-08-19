@@ -133,6 +133,54 @@ final class HistoryTimelineTests: XCTestCase {
         ])
     }
 
+    func testHiddenTaggedGroupedAndLooseRecordingsRemainInHistorySources() {
+        let day = recordingDay(0)
+        let group = UUID()
+        let groupedHidden = recording(
+            id: "00000000-0000-0000-0000-00000000000B",
+            at: 1_000,
+            tag: "Pinch",
+            groupID: group
+        )
+        let looseHidden = recording(
+            id: "00000000-0000-0000-0000-00000000000C",
+            at: 2_000,
+            tag: "Pinch"
+        )
+        let session = session(
+            id: "00000000-0000-0000-0000-00000000000A",
+            date: day,
+            type: "tindeq",
+            groupID: group
+        )
+
+        XCTAssertTrue(
+            HistoryFilters.sessionMatches(
+                session,
+                groupRecordings: [groupedHidden],
+                type: nil,
+                tag: "Pinch"
+            )
+        )
+
+        let source = HistoryFilters.recordingsMatchingQuery(
+            [groupedHidden, looseHidden],
+            query: ""
+        )
+        let items = HistoryTimeline.combinedItems(
+            sessions: [session],
+            recordings: source,
+            timeZone: utc
+        )
+
+        // The grouped recording remains represented by its session, while
+        // the loose recording remains a direct timeline row.
+        XCTAssertEqual(items.map(\.id), [
+            "s-00000000-0000-0000-0000-00000000000A",
+            "r-00000000-0000-0000-0000-00000000000C",
+        ])
+    }
+
     func testOrphanGroupedRecordingIsTreatedAsLoose() {
         // The "PR missing from History" bug: a recording stamped with a group
         // no session references (gauge run never finished) must surface as a

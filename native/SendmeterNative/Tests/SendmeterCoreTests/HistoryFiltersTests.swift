@@ -98,6 +98,49 @@ final class HistoryFiltersTests: XCTestCase {
         XCTAssertEqual(options.tags, ["Crimps", "Hangboard"])
     }
 
+    func testOptionsExcludeHiddenTagsFromLooseAndGroupedRecordings() {
+        let group = UUID()
+        let options = HistoryFilters.options(
+            sessions: [session(id: "00000000-0000-0000-0000-00000000000A", type: "tindeq", typeLabel: "Tindeq", groupID: group)],
+            looseRecordings: [
+                recording(id: "00000000-0000-0000-0000-00000000000B", tag: "Crimps"),
+                recording(id: "00000000-0000-0000-0000-00000000000C", tag: "Pinch"),
+            ],
+            groupedRecordings: [
+                recording(id: "00000000-0000-0000-0000-00000000000D", tag: "Hangboard", groupID: group),
+                recording(id: "00000000-0000-0000-0000-00000000000E", tag: "Slopers", groupID: group),
+            ],
+            selectedType: nil,
+            selectedTag: "Pinch",
+            hiddenTagNames: ["Pinch", "Slopers"]
+        )
+
+        XCTAssertEqual(options.tags, ["Crimps", "Hangboard"])
+        XCTAssertNil(options.activeTag)
+    }
+
+    func testRecordingQueryKeepsHiddenTaggedLooseAndGroupedRecordingsVisible() {
+        let group = UUID()
+        let loose = recording(
+            id: "00000000-0000-0000-0000-00000000000A",
+            tag: "Pinch"
+        )
+        let grouped = recording(
+            id: "00000000-0000-0000-0000-00000000000B",
+            tag: "Pinch",
+            groupID: group
+        )
+
+        XCTAssertEqual(
+            HistoryFilters.recordingsMatchingQuery([loose, grouped], query: "").map(\.id),
+            [loose.id, grouped.id]
+        )
+        XCTAssertEqual(
+            HistoryFilters.recordingsMatchingQuery([loose, grouped], query: "pinch").map(\.id),
+            [loose.id, grouped.id]
+        )
+    }
+
     func testOptionsCoerceStaleSelectionsToNil() {
         let options = HistoryFilters.options(
             sessions: [session(id: "00000000-0000-0000-0000-00000000000A")],

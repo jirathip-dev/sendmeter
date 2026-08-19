@@ -35,14 +35,15 @@ public enum HistoryFilters {
     /// Options come from the complete effective timeline: one type chip per
     /// session type (plus "Tindeq" when loose recordings exist and no tindeq
     /// session does), and one tag chip per distinct recording tag across
-    /// loose AND grouped recordings (the web's set-builder, minus hidden
-    /// tags — native has no tag-hiding feature yet).
+    /// loose AND grouped recordings. Hidden tags are omitted from the chip
+    /// list only; their recordings remain part of the effective timeline.
     public static func options(
         sessions: [Session],
         looseRecordings: [TindeqRecording],
         groupedRecordings: [TindeqRecording],
         selectedType: String?,
-        selectedTag: String?
+        selectedTag: String?,
+        hiddenTagNames: Set<String> = []
     ) -> HistoryFilterOptions {
         var labels: [(id: String, label: String)] = []
         var seenTypes = Set<String>()
@@ -54,7 +55,8 @@ public enum HistoryFilters {
         }
 
         var tags = Set<String>()
-        for recording in looseRecordings + groupedRecordings where !recording.tag.isEmpty {
+        for recording in looseRecordings + groupedRecordings
+            where !recording.tag.isEmpty && !hiddenTagNames.contains(recording.tag) {
             tags.insert(recording.tag)
         }
 
@@ -66,6 +68,21 @@ public enum HistoryFilters {
             },
             activeTag: selectedTag.flatMap { tags.contains($0) ? $0 : nil }
         )
+    }
+
+    /// Recordings shown by the History search/default source. Hidden tags do
+    /// not participate here: hiding a tag only removes its chip, while the
+    /// recording remains visible in All/Force modes and searchable by tag.
+    public static func recordingsMatchingQuery(
+        _ recordings: [TindeqRecording],
+        query: String
+    ) -> [TindeqRecording] {
+        guard !query.isEmpty else { return recordings }
+        return recordings.filter {
+            $0.tag.localizedCaseInsensitiveContains(query)
+                || $0.note.localizedCaseInsensitiveContains(query)
+                || $0.side.label.localizedCaseInsensitiveContains(query)
+        }
     }
 
     /// A session matches a type filter by its own type; a tag filter matches
