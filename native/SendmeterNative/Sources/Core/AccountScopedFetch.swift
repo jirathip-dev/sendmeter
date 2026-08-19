@@ -13,4 +13,19 @@ public struct AccountScopedFetch: Equatable, Sendable {
     public func canApply(to currentUserID: UUID?) -> Bool {
         currentUserID == accountUserID
     }
+
+    /// Run one synchronous publication only while the live account still
+    /// matches the account captured before the async work. Callers must pass
+    /// the result here immediately after the awaited operation returns; the
+    /// closure contains no suspension point, so a stale completion cannot
+    /// publish any part of its result.
+    @discardableResult
+    public func publishIfCurrent(
+        to currentUserID: UUID?,
+        _ publication: () -> Void
+    ) -> Bool {
+        guard canApply(to: currentUserID) else { return false }
+        publication()
+        return true
+    }
 }

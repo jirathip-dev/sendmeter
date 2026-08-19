@@ -74,6 +74,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native: switching accounts during a refresh or Force save no longer lets data from the previous account appear in the new account.
 - Native guided routines now log completed runs when you close them (including sub-minute runs as one minute), save an honest partial when you close after at least a minute, protect the run from swipe-dismiss, and offer Undo for automatically logged interrupted routines.
 - Native Send Conditions now keeps the current score when climate history is temporarily unavailable, uses the same UTC history window as the web app, and avoids unnecessary weather requests for 30 minutes.
 - Native History now keeps recordings from hidden Force tags in the timeline while continuing to omit those tags from quick-filter chips.
