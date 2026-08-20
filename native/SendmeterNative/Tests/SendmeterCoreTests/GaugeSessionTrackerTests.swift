@@ -85,4 +85,21 @@ final class GaugeSessionSaveGateTests: XCTestCase {
         let pending = await gate.pendingCount
         XCTAssertEqual(pending, 0)
     }
+
+    func testStaleSaveEarlyExitStillFinishesTheGate() async {
+        let gate = GaugeSessionSaveGate()
+
+        func staleSave() async -> Bool {
+            await gate.begin()
+            defer { Task { await gate.finish() } }
+            guard false else { return false }
+            return true
+        }
+
+        let result = await staleSave()
+        XCTAssertFalse(result)
+        await gate.waitForIdle()
+        let pending = await gate.pendingCount
+        XCTAssertEqual(pending, 0)
+    }
 }
