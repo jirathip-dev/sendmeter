@@ -1047,8 +1047,14 @@ public final class SendmeterRepository: @unchecked Sendable {
     /// Narrow PATCH used by the History recording editor. Keeping RPE as its
     /// own payload avoids sending a stale session type/duration/note while an
     /// offline recording edit is replayed.
-    public func updateSessionRPE(id: UUID, rpe: Double) async throws -> Session {
-        let body = try await transport.encode(SessionRPEPatch(rpe: rpe))
+    public func updateSessionRPE(
+        id: UUID,
+        rpe: Double,
+        rpeConfirmed: Bool = true
+    ) async throws -> Session {
+        let body = try await transport.encode(
+            SessionRPEPatch(rpe: rpe, rpeConfirmed: rpeConfirmed)
+        )
         let result: OneOrMany<SessionRow> = try await transport.request(
             path: "rest/v1/sessions",
             method: .patch,

@@ -194,6 +194,7 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         accountUserID: UUID,
         createdAt: Date = Date(),
         revision: UUID = UUID(),
+        updatedAt: Date? = nil,
         attempts: Int = 0,
         permanentAttempts: Int = 0,
         nextAttemptAt: Date? = nil,
@@ -205,7 +206,7 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         self.accountUserID = accountUserID
         self.createdAt = createdAt
         self.revision = revision
-        self.updatedAt = createdAt
+        self.updatedAt = updatedAt ?? createdAt
         self.attempts = attempts
         self.permanentAttempts = permanentAttempts == 0 ? nil : permanentAttempts
         self.nextAttemptAt = nextAttemptAt ?? createdAt
@@ -235,6 +236,26 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         self.lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
         self.quarantined = try container.decodeIfPresent(QueueRejection.self, forKey: .quarantined)
         self.payload = try container.decode(Payload.self, forKey: .payload)
+    }
+
+    /// Replace only the payload while preserving the durable backoff,
+    /// quarantine diagnostics, and queue identity. A fresh revision prevents
+    /// a request that claimed the pre-migration payload from mutating the
+    /// normalized item.
+    public func replacingPayload(_ payload: Payload) -> DurableQueueItem<Payload> {
+        DurableQueueItem(
+            id: id,
+            accountUserID: accountUserID,
+            createdAt: createdAt,
+            revision: UUID(),
+            updatedAt: updatedAt,
+            attempts: attempts,
+            permanentAttempts: permanentAttempts ?? 0,
+            nextAttemptAt: nextAttemptAt,
+            lastError: lastError,
+            quarantined: quarantined,
+            payload: payload
+        )
     }
 }
 

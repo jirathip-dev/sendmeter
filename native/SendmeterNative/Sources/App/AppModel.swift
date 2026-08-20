@@ -244,6 +244,14 @@ public final class AppModel: ObservableObject {
     /// replace a just-edited tag/side with an older server row.
     private var pendingRecordingEdits: [UUID: RecordingEdit] = [:]
     private var pendingSessionRPEEdits: [UUID: RecordingEdit] = [:]
+    /// The server-valued session snapshot underneath an optimistic RPE edit.
+    /// Delete uses it for both the immediate UI rollback and the compensating
+    /// narrow PATCH after an already-started request has settled.
+    private var pendingSessionRPEBases: [UUID: SendmeterCore.Session] = [:]
+    /// Delete waits on every session-RPE request that claimed its lane before
+    /// the tombstone/barrier. Continuations are resumed by the last claim's
+    /// defer, so the delete never races the compensation PATCH.
+    private var sessionRPEWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
     /// The session-RPE revision and delete tombstone live in one coordinator;
     /// this keeps every async response's decision tied to current, actor-free
     /// state on the main actor rather than to a stale task closure.
@@ -1629,55 +1637,146 @@ public final class AppModel: ObservableObject {
 
         let previousRecording = recordings.first { $0.id == recording.id } ?? recording
         let previousEdit = pendingRecordingEdits[recording.id]
-        let linkedSessionID = previousEdit?.sessionID ?? recording.groupID.flatMap { groupID in
+        let initialSessionID = previousEdit?.sessionID ?? recording.groupID.flatMap { groupID in
             sessions.first { $0.groupID == groupID && !$0.pending }?.id
         }
-        let queuedEdits = await recordingEditQueueItems(
-            recordingID: recording.id,
-            sessionID: linkedSessionID,
-            accountUserID: userID
-        )
-        let canceledQueueEdits = queuedEdits.filter { item in
-            sourceRecordingID(for: item.payload) == recording.id
+        var barrierSessionID = initialSessionID
+        var barrierToken = initialSessionID.map {
+            recordingEditCoordinator.beginSessionRPEBarrier(sessionID: $0)
         }
-        pendingRecordingEdits.removeValue(forKey: recording.id)
-        let previousSessionEdit: RecordingEdit?
-        let queuedSessionEdits = queuedEdits.compactMap { item -> RecordingEdit? in
-            guard case let .sessionRPEEdit(edit) = item.payload else { return nil }
-            return edit
+        var canceledQueueEdits: [DurableQueueItem<PendingWrite>] = []
+        var previousSessionEdit: RecordingEdit?
+        var previousSessionBase: SendmeterCore.Session?
+        var previousSession = initialSessionID.flatMap { sessionID in
+            sessions.first { $0.id == sessionID && !$0.pending }
         }
-        if let queuedSessionEdit = queuedSessionEdits.first {
-            if queuedSessionEdit.recordingID == recording.id {
-                previousSessionEdit = queuedSessionEdit
-                if let sessionID = queuedSessionEdit.sessionID,
-                   pendingSessionRPEEdits[sessionID]?.recordingID == recording.id {
-                    pendingSessionRPEEdits.removeValue(forKey: sessionID)
+        defer {
+            if let barrierToken {
+                _ = recordingEditCoordinator.endSessionRPEBarrier(barrierToken)
+                if let barrierSessionID {
+                    Task { [weak self] in
+                        await self?.drainSessionRPE(
+                            sessionID: barrierSessionID,
+                            accountUserID: userID
+                        )
+                    }
                 }
-            } else {
-                // A newer linked recording owns the authoritative session key.
-                previousSessionEdit = nil
             }
-        } else if let sessionID = linkedSessionID,
-                  let sessionEdit = pendingSessionRPEEdits[sessionID],
-                  sessionEdit.recordingID == recording.id {
-            // No durable session-scoped replacement exists, so this can only
-            // be the in-memory overlay for the recording being deleted.
-            previousSessionEdit = pendingSessionRPEEdits.removeValue(forKey: sessionID)
-        } else {
-            previousSessionEdit = nil
         }
-        recordings.removeAll { $0.id == recording.id }
-
-        // Cancel the durable edit before the delete request. An older upload
-        // may still be in flight, so the tombstone remains the second line of
-        // defence when its response returns after this removal.
-        await cancelRecordingEdit(
-            recordingID: recording.id,
-            sessionID: previousSessionEdit?.sessionID,
-            accountUserID: userID
-        )
 
         do {
+            guard await migrateLegacyRecordingEdits(userID: userID) != nil else {
+                throw NSError(
+                    domain: "SendmeterNative",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "Recording edits could not be migrated."]
+                )
+            }
+            let queuedEdits = await recordingEditQueueItems(
+                recordingID: recording.id,
+                sessionID: barrierSessionID,
+                accountUserID: userID
+            )
+            if barrierSessionID == nil {
+                let discoveredSessionID = Set(
+                    queuedEdits.compactMap { item -> UUID? in
+                        switch item.payload {
+                        case let .recordingEdit(edit), let .sessionRPEEdit(edit):
+                            return edit.sessionID
+                        default:
+                            return nil
+                        }
+                    }
+                ).sorted { $0.uuidString < $1.uuidString }.first
+                if let discoveredSessionID {
+                    barrierSessionID = discoveredSessionID
+                    barrierToken = recordingEditCoordinator.beginSessionRPEBarrier(
+                        sessionID: discoveredSessionID
+                    )
+                    previousSession = sessions.first {
+                        $0.id == discoveredSessionID && !$0.pending
+                    }
+                }
+            }
+            if let barrierSessionID {
+                await waitForSessionRPEWrites(sessionID: barrierSessionID)
+            }
+
+            canceledQueueEdits = queuedEdits.filter { item in
+                sourceRecordingID(for: item.payload) == recording.id
+            }
+            let candidates = queuedEdits.compactMap { item -> RecordingEditQueueCandidate? in
+                switch item.payload {
+                case let .recordingEdit(edit), let .sessionRPEEdit(edit):
+                    guard edit.sessionID != nil, edit.sessionRPE != nil else { return nil }
+                    return RecordingEditQueueCandidate(
+                        edit: edit,
+                        queueItemID: item.id,
+                        createdAt: item.createdAt,
+                        nextAttemptAt: item.nextAttemptAt
+                    )
+                default:
+                    return nil
+                }
+            }
+            let authoritative = barrierSessionID.flatMap {
+                RecordingEditMigration.authoritativeSessionRPE(
+                    sessionID: $0,
+                    candidates: candidates
+                )
+            }
+            if authoritative?.edit.recordingID == recording.id {
+                previousSessionEdit = authoritative?.edit
+            } else if let barrierSessionID,
+                      let sessionEdit = pendingSessionRPEEdits[barrierSessionID],
+                      sessionEdit.recordingID == recording.id,
+                      authoritative == nil {
+                // A relaunch can restore the optimistic overlay before the
+                // durable item is visible in this snapshot. It is still the
+                // deleted recording's claim when no authoritative queue
+                // replacement exists.
+                previousSessionEdit = sessionEdit
+            }
+
+            pendingRecordingEdits.removeValue(forKey: recording.id)
+            if let previousSessionEdit,
+               let sessionID = previousSessionEdit.sessionID,
+               pendingSessionRPEEdits[sessionID]?.recordingID == recording.id {
+                previousSessionBase = pendingSessionRPEBases.removeValue(forKey: sessionID)
+                    ?? sessions.first { $0.id == sessionID && !$0.pending }
+                pendingSessionRPEEdits.removeValue(forKey: sessionID)
+                if let previousSessionBase {
+                    replaceSession(previousSessionBase)
+                }
+            }
+            recordings.removeAll { $0.id == recording.id }
+
+            // Cancel the durable edit before the delete request. The barrier
+            // has already drained any request that claimed the session lane;
+            // a replacement from another linked recording remains queued.
+            await cancelRecordingEdit(
+                recordingID: recording.id,
+                sessionID: previousSessionEdit?.sessionID,
+                accountUserID: userID
+            )
+            if let barrierSessionID {
+                await waitForSessionRPEWrites(sessionID: barrierSessionID)
+            }
+
+            // A PATCH can have reached PostgREST just before the tombstone
+            // won. Put the session back to the authoritative pre-edit value
+            // while the barrier is held, then soft-delete the recording.
+            if let previousSessionEdit,
+               let sessionID = previousSessionEdit.sessionID,
+               let previousSessionBase {
+                let restoredSession = try await repository.updateSessionRPE(
+                    id: sessionID,
+                    rpe: previousSessionBase.rpe,
+                    rpeConfirmed: previousSessionBase.rpeConfirmed
+                )
+                guard currentUserID == userID else { return }
+                replaceSession(restoredSession)
+            }
             try await repository.softDeleteRecording(id: recording.id)
             guard currentUserID == userID else { return }
             toastMessage = "Force recording moved to Trash."
@@ -1697,6 +1796,12 @@ public final class AppModel: ObservableObject {
             if let previousSessionEdit,
                let sessionID = previousSessionEdit.sessionID {
                 pendingSessionRPEEdits[sessionID] = previousSessionEdit
+                if let previousSessionBase {
+                    pendingSessionRPEBases[sessionID] = previousSessionBase
+                    replaceSession(previousSessionBase)
+                } else if let previousSession {
+                    replaceSession(previousSession)
+                }
             }
             replaceRecording(previousRecording)
             surface(error)
@@ -1706,6 +1811,7 @@ public final class AppModel: ObservableObject {
     public func restoreRecording(_ recording: TindeqRecording) async {
         await perform {
             try await self.repository.restoreRecording(id: recording.id)
+            self.recordingEditCoordinator.clearTombstone(recordingID: recording.id)
             self.deletedRecordings.removeAll { $0.id == recording.id }
             await self.refreshAll(showSpinner: false)
         }
@@ -2005,6 +2111,7 @@ public final class AppModel: ObservableObject {
 
     public func drainQueue() async {
         guard let userID = currentUserID, let queue else { return }
+        guard await migrateLegacyRecordingEdits(userID: userID) != nil else { return }
         let due = await queue.items(for: userID, dueAt: Date())
         for item in due {
             _ = await upload(item)
@@ -2014,6 +2121,7 @@ public final class AppModel: ObservableObject {
 
     public func retryAllQueuedWrites() async {
         guard let userID = currentUserID, let queue else { return }
+        guard await migrateLegacyRecordingEdits(userID: userID) != nil else { return }
         let pending = await queue.items(for: userID)
         for item in pending {
             _ = await upload(item, mode: .manual)
@@ -2040,6 +2148,10 @@ public final class AppModel: ObservableObject {
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "On-device queue is unavailable."]
             ))
+            return false
+        }
+        guard let userID = currentUserID,
+              await migrateLegacyRecordingEdits(userID: userID) != nil else {
             return false
         }
         do {
@@ -2087,49 +2199,143 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    private func sessionRPEOrdering(
-        _ edit: RecordingEdit,
-        createdAt: Date
-    ) -> UInt64 {
-        edit.sessionRPERevision
-            ?? RecordingEditCoordinator.orderingKey(for: createdAt)
-    }
+    /// Normalize every pre-follow-up combined recording edit before any queue
+    /// snapshot is replayed. The durable metadata item keeps its recording
+    /// identity, while exactly one stable session identity carries the
+    /// authoritative RPE for each linked session.
+    ///
+    /// This is deliberately a queue migration rather than a per-item upload
+    /// side effect. If the newer shared item has already uploaded and been
+    /// removed, an older combined item cannot recreate its stale RPE on the
+    /// next relaunch: every combined item was stripped to metadata before the
+    /// shared item was allowed to leave the queue.
+    private func migrateLegacyRecordingEdits(
+        userID: UUID
+    ) async -> [DurableQueueItem<PendingWrite>]? {
+        guard let queue else { return [] }
+        let queued = await queue.items(for: userID, includeQuarantined: true)
+        var legacyItems: [(item: DurableQueueItem<PendingWrite>, edit: RecordingEdit)] = []
+        var candidatesBySession: [UUID: [RecordingEditQueueCandidate]] = [:]
 
-    /// Convert a pre-follow-up combined recording edit into the authoritative
-    /// session-scoped RPE queue identity before the legacy metadata request is
-    /// replayed. The old recording identity remains in place for metadata;
-    /// this prevents an upgrade from silently dropping its session RPE while
-    /// ensuring a newer linked-recording RPE wins by its ordering revision.
-    private func ensureLegacySessionRPEQueueItem(
-        from edit: RecordingEdit,
-        sourceItem: DurableQueueItem<PendingWrite>
-    ) async throws -> DurableQueueItem<PendingWrite>? {
-        guard let sessionID = edit.sessionID, edit.sessionRPE != nil,
-              let queue else { return nil }
-        let queueID = RecordingEditQueueIdentity.sessionRPE(sessionID)
-        let candidateOrder = sessionRPEOrdering(edit, createdAt: sourceItem.createdAt)
-        if let existing = await queue.item(
-            id: queueID,
-            accountUserID: sourceItem.accountUserID
-        ) {
-            if case let .sessionRPEEdit(existingEdit) = existing.payload,
-               sessionRPEOrdering(existingEdit, createdAt: existing.createdAt) >= candidateOrder {
-                return existing
+        for item in queued {
+            switch item.payload {
+            case let .recordingEdit(edit):
+                guard let sessionID = edit.sessionID, edit.sessionRPE != nil else {
+                    continue
+                }
+                legacyItems.append((item, edit))
+                candidatesBySession[sessionID, default: []].append(
+                    RecordingEditQueueCandidate(
+                        edit: edit,
+                        queueItemID: item.id,
+                        createdAt: item.createdAt,
+                        nextAttemptAt: item.nextAttemptAt
+                    )
+                )
+            case let .sessionRPEEdit(edit):
+                guard let sessionID = edit.sessionID, edit.sessionRPE != nil else {
+                    continue
+                }
+                candidatesBySession[sessionID, default: []].append(
+                    RecordingEditQueueCandidate(
+                        edit: edit,
+                        queueItemID: item.id,
+                        createdAt: item.createdAt,
+                        nextAttemptAt: item.nextAttemptAt
+                    )
+                )
+            default:
+                continue
             }
         }
-        let candidate = DurableQueueItem(
-            id: queueID,
-            accountUserID: sourceItem.accountUserID,
-            createdAt: sourceItem.createdAt,
-            attempts: sourceItem.attempts,
-            permanentAttempts: sourceItem.permanentAttempts ?? 0,
-            nextAttemptAt: sourceItem.nextAttemptAt,
-            lastError: sourceItem.lastError,
-            quarantined: sourceItem.quarantined,
-            payload: PendingWrite.sessionRPEEdit(edit)
+
+        var replacements: [DurableQueueItem<PendingWrite>] = legacyItems.map { entry in
+            entry.item.replacingPayload(
+                .recordingEdit(RecordingEditMigration.metadataOnly(entry.edit))
+            )
+        }
+
+        for (sessionID, candidates) in candidatesBySession {
+            guard let authoritative = RecordingEditMigration.authoritativeSessionRPE(
+                sessionID: sessionID,
+                candidates: candidates
+            ) else { continue }
+            guard let legacy = legacyItems.first(where: {
+                $0.item.id == authoritative.queueItemID
+            }) else {
+                // A stable session item already won. All legacy candidates in
+                // this group were still normalized above, so no old combined
+                // item can resurrect the session value later.
+                continue
+            }
+            let source = legacy.item
+            replacements.append(
+                DurableQueueItem(
+                    id: RecordingEditQueueIdentity.sessionRPE(sessionID),
+                    accountUserID: userID,
+                    createdAt: source.createdAt,
+                    updatedAt: source.updatedAt,
+                    attempts: source.attempts,
+                    permanentAttempts: source.permanentAttempts ?? 0,
+                    nextAttemptAt: source.nextAttemptAt,
+                    lastError: source.lastError,
+                    quarantined: source.quarantined,
+                    payload: .sessionRPEEdit(authoritative.edit)
+                )
+            )
+        }
+
+        if !replacements.isEmpty {
+            do {
+                try await queue.enqueue(replacements)
+            } catch {
+                surface(error)
+                return nil
+            }
+        }
+        return await queue.items(for: userID, includeQuarantined: true)
+    }
+
+    private func waitForSessionRPEWrites(sessionID: UUID) async {
+        guard recordingEditCoordinator.hasActiveSessionRPEWrites(sessionID: sessionID) else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            if recordingEditCoordinator.hasActiveSessionRPEWrites(sessionID: sessionID) {
+                sessionRPEWaiters[sessionID, default: []].append(continuation)
+            } else {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func finishSessionRPEWrite(_ token: RecordingEditWriteToken) {
+        _ = recordingEditCoordinator.endSessionRPEWrite(token)
+        guard !recordingEditCoordinator.hasActiveSessionRPEWrites(
+            sessionID: token.sessionID
+        ) else { return }
+        let waiters = sessionRPEWaiters.removeValue(forKey: token.sessionID) ?? []
+        for waiter in waiters { waiter.resume() }
+    }
+
+    private func updateSessionRPE(
+        edit: RecordingEdit,
+        accountUserID: UUID
+    ) async throws -> SendmeterCore.Session? {
+        guard let sessionID = edit.sessionID,
+              let sessionRPE = edit.sessionRPE,
+              currentUserID == accountUserID,
+              let token = recordingEditCoordinator.beginSessionRPEWrite(
+                  recordingID: edit.recordingID,
+                  sessionID: sessionID
+              ) else {
+            return nil
+        }
+        defer { finishSessionRPEWrite(token) }
+        return try await repository.updateSessionRPE(
+            id: sessionID,
+            rpe: sessionRPE
         )
-        try await queue.enqueue(candidate)
-        return candidate
     }
 
     @discardableResult
@@ -2138,6 +2344,9 @@ public final class AppModel: ObservableObject {
         mode: QueueUploadMode = .automatic
     ) async -> UploadResult {
         guard let queue, currentUserID == item.accountUserID else {
+            return UploadResult(uploaded: false, failure: nil)
+        }
+        guard await migrateLegacyRecordingEdits(userID: item.accountUserID) != nil else {
             return UploadResult(uploaded: false, failure: nil)
         }
         let uploadKey = QueueUploadKey(
@@ -2273,21 +2482,10 @@ public final class AppModel: ObservableObject {
                 pendingRecordings.removeValue(forKey: recording.id)
                 replaceRecording(saved)
             case let .recordingEdit(edit):
-                // db6aae7 stored metadata and linked RPE together under the
-                // recording key. Split that legacy item before its metadata
-                // PATCH so upgrading cannot drop the RPE or let it bypass the
-                // session-wide ordering key.
-                let legacySessionRPEItem = try await ensureLegacySessionRPEQueueItem(
-                    from: edit,
-                    sourceItem: item
-                )
                 let savedRecording = try await self.repository.updateRecordingMeta(
                     id: edit.recordingID,
                     payload: edit.recordingPayload
                 )
-                if let legacySessionRPEItem {
-                    _ = await upload(legacySessionRPEItem)
-                }
                 guard currentUserID == item.accountUserID else {
                     // Leave the durable edit for its owning account. No
                     // response from the old account may enter the new user's
@@ -2325,13 +2523,18 @@ public final class AppModel: ObservableObject {
                 }
             case let .sessionRPEEdit(edit):
                 guard let sessionID = edit.sessionID,
-                      let sessionRPE = edit.sessionRPE else {
+                      edit.sessionRPE != nil else {
                     return UploadResult(uploaded: false, failure: nil)
                 }
-                let savedSession = try await self.repository.updateSessionRPE(
-                    id: sessionID,
-                    rpe: sessionRPE
-                )
+                guard let savedSession = try await updateSessionRPE(
+                    edit: edit,
+                    accountUserID: item.accountUserID
+                ) else {
+                    // A delete barrier owns this session lane. Leave the
+                    // durable item for the post-delete drain; a recording
+                    // tombstone is handled by the common stale-item guard.
+                    return UploadResult(uploaded: false, failure: nil)
+                }
                 guard currentUserID == item.accountUserID else {
                     return UploadResult(uploaded: false, failure: nil)
                 }
@@ -2353,6 +2556,7 @@ public final class AppModel: ObservableObject {
                     deleted: recordingEditCoordinator.isDeleted(edit.recordingID)
                 ), pendingSessionRPEEdits[sessionID] == edit {
                     pendingSessionRPEEdits.removeValue(forKey: sessionID)
+                    pendingSessionRPEBases.removeValue(forKey: sessionID)
                     replaceSession(savedSession)
                 }
             case let .workout(draft):
@@ -2482,6 +2686,16 @@ public final class AppModel: ObservableObject {
         _ = await upload(deleteItem)
     }
 
+    private func drainSessionRPE(sessionID: UUID, accountUserID: UUID) async {
+        guard currentUserID == accountUserID, let queue else { return }
+        guard let item = await queue.item(
+            id: RecordingEditQueueIdentity.sessionRPE(sessionID),
+            accountUserID: accountUserID
+        ) else { return }
+        guard case .sessionRPEEdit(_) = item.payload else { return }
+        _ = await upload(item)
+    }
+
     private func recordingEditQueueItems(
         recordingID: UUID,
         sessionID: UUID?,
@@ -2554,6 +2768,7 @@ public final class AppModel: ObservableObject {
     /// replaces the stamp with its own code/detail.
     public func retryQuarantinedWrites(id: UUID? = nil) async {
         guard let userID = currentUserID, let queue else { return }
+        guard await migrateLegacyRecordingEdits(userID: userID) != nil else { return }
         let quarantined = await queue.quarantinedItems(for: userID)
         for item in quarantined where id == nil || item.id == id {
             do {
@@ -2625,6 +2840,9 @@ public final class AppModel: ObservableObject {
                     if let sessionID = edit.sessionID,
                        pendingSessionRPEEdits[sessionID] == edit {
                         pendingSessionRPEEdits.removeValue(forKey: sessionID)
+                        if let base = pendingSessionRPEBases.removeValue(forKey: sessionID) {
+                            replaceSession(base)
+                        }
                     }
                     // The rejected edit may have been visible optimistically;
                     // the server row is authoritative after the user discards
@@ -2636,6 +2854,9 @@ public final class AppModel: ObservableObject {
                     if let sessionID = edit.sessionID,
                        pendingSessionRPEEdits[sessionID] == edit {
                         pendingSessionRPEEdits.removeValue(forKey: sessionID)
+                        if let base = pendingSessionRPEBases.removeValue(forKey: sessionID) {
+                            replaceSession(base)
+                        }
                     }
                     await refreshAll(showSpinner: false)
                     return
@@ -2868,7 +3089,9 @@ public final class AppModel: ObservableObject {
         remoteSessionIDs: Set<UUID>,
         remoteRecordingIDs: Set<UUID>
     ) async {
-        guard let queue else { return }
+        guard let queued = await migrateLegacyRecordingEdits(userID: userID) else {
+            return
+        }
         // #675 F1: restore BOTH the active entries AND the quarantined ones.
         // A quarantined write is data the user still owns — it is on device,
         // was permanently rejected, and must stay visible in History/Force
@@ -2878,7 +3101,6 @@ public final class AppModel: ObservableObject {
         // is badged `rejected`, never "Syncing" — it will NOT upload on its
         // own. The hot drain path never sees these (only the Settings
         // Retry/Discard actions touch them).
-        let queued = await queue.items(for: userID, includeQuarantined: true)
         // Read delete intents first. A session insert and its Undo delete can
         // overlap in the queue; the delete must win before any optimistic row
         // is rebuilt from the insert payload.
@@ -2892,6 +3114,7 @@ public final class AppModel: ObservableObject {
                 currentUserID: userID
             )
         }
+        var restoredSessionRPECandidates: [UUID: [RecordingEditQueueCandidate]] = [:]
         for item in queued {
             let rejected = item.quarantined != nil
             switch item.payload {
@@ -2944,9 +3167,25 @@ public final class AppModel: ObservableObject {
                         sessionRPERevision: edit.sessionRPERevision,
                         createdAt: item.createdAt
                     )
-                    pendingSessionRPEEdits[sessionID] = edit
+                    restoredSessionRPECandidates[sessionID, default: []].append(
+                        RecordingEditQueueCandidate(
+                            edit: edit,
+                            queueItemID: item.id,
+                            createdAt: item.createdAt,
+                            nextAttemptAt: item.nextAttemptAt
+                        )
+                    )
                 }
             }
+        }
+        for (sessionID, candidates) in restoredSessionRPECandidates {
+            guard let authoritative = RecordingEditMigration.authoritativeSessionRPE(
+                sessionID: sessionID,
+                candidates: candidates
+            ), !recordingEditCoordinator.isDeleted(authoritative.edit.recordingID) else {
+                continue
+            }
+            pendingSessionRPEEdits[sessionID] = authoritative.edit
         }
     }
 
@@ -3006,8 +3245,13 @@ public final class AppModel: ObservableObject {
            let previousSessionID = previousEdit.sessionID,
            pendingSessionRPEEdits[previousSessionID] == previousEdit {
             pendingSessionRPEEdits.removeValue(forKey: previousSessionID)
+            pendingSessionRPEBases.removeValue(forKey: previousSessionID)
         }
         if let sessionID = edit.sessionID, edit.sessionRPE != nil {
+            if pendingSessionRPEEdits[sessionID] == nil,
+               let base = sessions.first(where: { $0.id == sessionID && !$0.pending }) {
+                pendingSessionRPEBases[sessionID] = base
+            }
             pendingSessionRPEEdits[sessionID] = edit
         }
 
@@ -3032,7 +3276,9 @@ public final class AppModel: ObservableObject {
         if let sessionID = edit.sessionID,
            pendingSessionRPEEdits[sessionID] == edit {
             pendingSessionRPEEdits.removeValue(forKey: sessionID)
-            if let previousSession {
+            if let base = pendingSessionRPEBases.removeValue(forKey: sessionID) {
+                replaceSession(base)
+            } else if let previousSession {
                 replaceSession(previousSession)
             }
         }
@@ -3102,6 +3348,11 @@ public final class AppModel: ObservableObject {
         }
         let remoteIDs = Set(visibleRemote.map(\.id))
         for id in remoteIDs { pendingSessions.removeValue(forKey: id) }
+        for session in visibleRemote
+            where pendingSessionRPEEdits[session.id] != nil
+                && pendingSessionRPEBases[session.id] == nil {
+            pendingSessionRPEBases[session.id] = session
+        }
         sessions = (visibleRemote + pendingSessions.values.filter { !remoteIDs.contains($0.id) })
             .map { session in
                 pendingSessionRPEEdits[session.id].map {
@@ -3161,6 +3412,7 @@ public final class AppModel: ObservableObject {
         pendingRecordings = [:]
         pendingRecordingEdits = [:]
         pendingSessionRPEEdits = [:]
+        pendingSessionRPEBases = [:]
         recordingEditCoordinator.clearTombstones()
         routineUndo.reset()
         // Upload claims belong to their in-flight tasks, not to the loaded UI

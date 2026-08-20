@@ -277,6 +277,185 @@ final class RecordingEditTests: XCTestCase {
         )
     }
 
+    func testLegacySessionRPEMigrationUsesRevisionNotBackoffEnumerationAcrossRelaunch() {
+        let firstRecordingID = UUID(uuidString: "00000000-0000-0000-0000-000000000681")!
+        let secondRecordingID = UUID(uuidString: "00000000-0000-0000-0000-000000000682")!
+        let thirdRecordingID = UUID(uuidString: "00000000-0000-0000-0000-000000000683")!
+        let first = RecordingEdit(
+            recordingID: firstRecordingID,
+            tag: "first",
+            side: .left,
+            note: "",
+            sessionID: sessionID,
+            sessionRPE: 6,
+            sessionRPERevision: 101
+        )
+        let second = RecordingEdit(
+            recordingID: secondRecordingID,
+            tag: "second",
+            side: .right,
+            note: "",
+            sessionID: sessionID,
+            sessionRPE: 7,
+            sessionRPERevision: 103
+        )
+        let third = RecordingEdit(
+            recordingID: thirdRecordingID,
+            tag: "third",
+            side: .left,
+            note: "",
+            sessionID: sessionID,
+            sessionRPE: 8,
+            sessionRPERevision: 102
+        )
+        let candidates = [
+            // This is the order returned when the newest edit is in a long
+            // backoff window: queue enumeration must not make it lose.
+            RecordingEditQueueCandidate(
+                edit: second,
+                queueItemID: secondRecordingID,
+                createdAt: Date(timeIntervalSince1970: 1_002),
+                nextAttemptAt: Date(timeIntervalSince1970: 5_000)
+            ),
+            RecordingEditQueueCandidate(
+                edit: first,
+                queueItemID: firstRecordingID,
+                createdAt: Date(timeIntervalSince1970: 1_003),
+                nextAttemptAt: Date(timeIntervalSince1970: 1_000)
+            ),
+            RecordingEditQueueCandidate(
+                edit: third,
+                queueItemID: thirdRecordingID,
+                createdAt: Date(timeIntervalSince1970: 1_004),
+                nextAttemptAt: Date(timeIntervalSince1970: 1_001)
+            )
+        ]
+
+        let authoritative = RecordingEditMigration.authoritativeSessionRPE(
+            sessionID: sessionID,
+            candidates: candidates.sorted { $0.nextAttemptAt < $1.nextAttemptAt }
+        )
+        XCTAssertEqual(authoritative?.edit, second)
+
+        // A relaunch can enumerate the same durable entries in a different
+        // nextAttemptAt order. The decision remains the same, and all legacy
+        // combined payloads become metadata-only once the shared item wins.
+        let relaunched = RecordingEditMigration.authoritativeSessionRPE(
+            sessionID: sessionID,
+            candidates: Array(candidates.reversed())
+        )
+        XCTAssertEqual(relaunched?.edit, second)
+        for edit in [first, second, third] {
+            let metadata = RecordingEditMigration.metadataOnly(edit)
+            XCTAssertNil(metadata.sessionID)
+            XCTAssertNil(metadata.sessionRPE)
+            XCTAssertNil(metadata.sessionRPERevision)
+            XCTAssertEqual(metadata.tag, edit.tag)
+        }
+
+        // Once the newer shared item has uploaded and disappeared, an old
+        // combined item is incapable of carrying an RPE back into the queue.
+        XCTAssertNil(RecordingEditMigration.metadataOnly(second).sessionPayload)
+
+        let legacyOld = RecordingEdit(
+            recordingID: firstRecordingID,
+            tag: "legacy-old",
+            side: .left,
+            note: "",
+            sessionID: sessionID,
+            sessionRPE: 5
+        )
+        let legacyNew = RecordingEdit(
+            recordingID: secondRecordingID,
+            tag: "legacy-new",
+            side: .right,
+            note: "",
+            sessionID: sessionID,
+            sessionRPE: 9
+        )
+        let createdOrdering = RecordingEditMigration.authoritativeSessionRPE(
+            sessionID: sessionID,
+            candidates: [
+                RecordingEditQueueCandidate(
+                    edit: legacyNew,
+                    queueItemID: secondRecordingID,
+                    createdAt: Date(timeIntervalSince1970: 2_000),
+                    nextAttemptAt: Date(timeIntervalSince1970: 9_000)
+                ),
+                RecordingEditQueueCandidate(
+                    edit: legacyOld,
+                    queueItemID: firstRecordingID,
+                    createdAt: Date(timeIntervalSince1970: 1_000),
+                    nextAttemptAt: Date(timeIntervalSince1970: 1_001)
+                )
+            ]
+        )
+        XCTAssertEqual(createdOrdering?.edit, legacyNew)
+    }
+
+    func testSessionRPEDeleteBarrierDrainsConcurrentClaimsBeforeReplacement() {
+        let firstRecordingID = recordingID
+        let secondRecordingID = otherID
+        var coordinator = RecordingEditCoordinator()
+
+        let firstClaim = coordinator.beginSessionRPEWrite(
+            recordingID: firstRecordingID,
+            sessionID: sessionID
+        )
+        let secondClaim = coordinator.beginSessionRPEWrite(
+            recordingID: secondRecordingID,
+            sessionID: sessionID
+        )
+        XCTAssertNotNil(firstClaim)
+        XCTAssertNotNil(secondClaim)
+        XCTAssertTrue(coordinator.hasActiveSessionRPEWrites(sessionID: sessionID))
+
+        let barrier = coordinator.beginSessionRPEBarrier(sessionID: sessionID)
+        XCTAssertTrue(coordinator.isSessionRPEBarrierActive(sessionID: sessionID))
+        XCTAssertNil(
+            coordinator.beginSessionRPEWrite(
+                recordingID: UUID(uuidString: "00000000-0000-0000-0000-000000000684")!,
+                sessionID: sessionID
+            )
+        )
+        XCTAssertFalse(coordinator.acceptsSessionRPEWrite(firstClaim!))
+
+        XCTAssertTrue(coordinator.endSessionRPEWrite(firstClaim!))
+        XCTAssertTrue(coordinator.hasActiveSessionRPEWrites(sessionID: sessionID))
+        XCTAssertTrue(coordinator.endSessionRPEWrite(secondClaim!))
+        XCTAssertFalse(coordinator.hasActiveSessionRPEWrites(sessionID: sessionID))
+        XCTAssertTrue(coordinator.endSessionRPEBarrier(barrier))
+
+        let replacement = coordinator.beginSessionRPEWrite(
+            recordingID: secondRecordingID,
+            sessionID: sessionID
+        )
+        XCTAssertNotNil(replacement)
+        XCTAssertTrue(coordinator.endSessionRPEWrite(replacement!))
+    }
+
+    func testRestoreClearsRecordingTombstoneBeforeRefreshCanReplayEdits() {
+        var coordinator = RecordingEditCoordinator()
+        XCTAssertTrue(coordinator.tombstone(recordingID: recordingID))
+        XCTAssertNil(
+            coordinator.beginSessionRPEWrite(
+                recordingID: recordingID,
+                sessionID: sessionID
+            )
+        )
+
+        // This is the ordering used by AppModel: the successful restore
+        // clears the in-memory tombstone before refresh rebuilds overlays.
+        coordinator.clearTombstone(recordingID: recordingID)
+        let replay = coordinator.beginSessionRPEWrite(
+            recordingID: recordingID,
+            sessionID: sessionID
+        )
+        XCTAssertNotNil(replay)
+        XCTAssertTrue(coordinator.acceptsSessionRPEWrite(replay!))
+        XCTAssertTrue(coordinator.endSessionRPEWrite(replay!))
+    }
+
     func testReplacementAfterOlderClaimDoesNotInheritFailureAndSurvivesRelaunch() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
