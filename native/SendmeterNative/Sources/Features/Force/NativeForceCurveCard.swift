@@ -142,7 +142,7 @@ private struct NativeForceCurvePlot: View {
                 context.draw(
                     Text(value.formatted(.number.precision(.fractionLength(0))))
                         .font(.system(size: 8))
-                        .foregroundStyle(axisColor),
+                        .foregroundColor(axisColor),
                     at: CGPoint(x: leadingInset / 2, y: lineY),
                     anchor: .center
                 )
@@ -157,7 +157,7 @@ private struct NativeForceCurvePlot: View {
                 context.draw(
                     Text("\(seconds.formatted(.number.precision(.fractionLength(0))))s")
                         .font(.system(size: 8))
-                        .foregroundStyle(axisColor),
+                        .foregroundColor(axisColor),
                     at: CGPoint(x: lineX, y: size.height - bottomInset / 2),
                     anchor: .center
                 )
