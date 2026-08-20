@@ -434,6 +434,28 @@ final class RecordingEditTests: XCTestCase {
         XCTAssertTrue(coordinator.endSessionRPEWrite(replacement!))
     }
 
+    func testDeleteCompensationNetworkWaitsForAlreadyClaimedRPEWrite() async throws {
+        let harness = RecordingEditNetworkRaceHarness()
+        let claimCandidate = await harness.beginWrite(
+            recordingID: recordingID,
+            sessionID: sessionID
+        )
+        let claim = try XCTUnwrap(claimCandidate)
+
+        let compensation = Task {
+            await harness.runCompensation(sessionID: sessionID)
+        }
+        await harness.waitForBarrierStart()
+        let eventsAtBarrier = await harness.events()
+        XCTAssertEqual(eventsAtBarrier, ["barrier-started"])
+
+        await harness.finishWrite(claim)
+        await compensation.value
+
+        let finalEvents = await harness.events()
+        XCTAssertEqual(finalEvents, ["barrier-started", "rpe-finished", "compensation-started"])
+    }
+
     func testRestoreClearsRecordingTombstoneBeforeRefreshCanReplayEdits() {
         var coordinator = RecordingEditCoordinator()
         XCTAssertTrue(coordinator.tombstone(recordingID: recordingID))
@@ -898,6 +920,66 @@ final class RecordingEditTests: XCTestCase {
         XCTAssertEqual(migratedShared, RecordingQueuePayload(value: "shared-rpe"))
     }
 
+    func testLegacyNormalizationKeepsSharedRPEBelowUnrelatedAccountFloor() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let legacyID = UUID()
+        let stableID = RecordingEditQueueIdentity.sessionRPE(sessionID)
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json"
+        )
+        let legacy = DurableQueueItem(
+            id: legacyID,
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            payload: RecordingQueuePayload(value: "legacy-combined")
+        )
+        try await queue.enqueue(legacy)
+
+        // This floor belongs to another editor identity. It must not be used
+        // to omit the only shared RPE replacement in the same atomic set.
+        let unrelated = DurableQueueItem(
+            id: otherID,
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 1_001),
+            orderingKey: 900,
+            terminalKey: otherID,
+            payload: RecordingQueuePayload(value: "unrelated-newer")
+        )
+        try await queue.enqueue(unrelated)
+        try await queue.remove(id: unrelated.id, accountUserID: account)
+        let floor = await queue.orderingFloor(for: account)
+        XCTAssertEqual(floor?.orderingKey, 900)
+
+        let metadata = legacy.replacingPayload(
+            RecordingQueuePayload(value: "metadata-only"),
+            terminalKey: recordingID
+        )
+        let shared = DurableQueueItem(
+            id: stableID,
+            accountUserID: account,
+            createdAt: legacy.createdAt,
+            orderingKey: 100,
+            terminalKey: recordingID,
+            payload: RecordingQueuePayload(value: "shared-rpe")
+        )
+        let migrationApplied = try await queue.replaceIfCurrent([
+            DurableQueueConditionalReplacement(
+                item: metadata,
+                expectedRevision: legacy.revision
+            ),
+            DurableQueueConditionalReplacement(item: shared, expectedRevision: nil)
+        ])
+        XCTAssertTrue(migrationApplied)
+        let migratedMetadata = await queue.item(id: legacyID, accountUserID: account)?.payload
+        let migratedShared = await queue.item(id: stableID, accountUserID: account)?.payload
+        XCTAssertEqual(migratedMetadata, metadata.payload)
+        XCTAssertEqual(migratedShared, shared.payload)
+    }
+
     func testLegacyMigrationConflictLeavesEveryOtherCombinedItemReconstructible() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -1068,6 +1150,100 @@ final class RecordingEditTests: XCTestCase {
                 watermarkOrderingKey: nil
             ),
             .skipAlreadyApplied
+        )
+    }
+
+    func testDeleteCompensationProofSurvivesWatermarkCompactionAndRelaunch() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let stableID = RecordingEditQueueIdentity.sessionRPE(sessionID)
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json",
+            orderingWatermarkLimit: 1
+        )
+
+        let r1 = DurableQueueItem(
+            id: stableID,
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 3_000),
+            orderingKey: 101,
+            terminalKey: recordingID,
+            payload: RecordingQueuePayload(value: "R1")
+        )
+        try await queue.enqueue(r1)
+        try await queue.remove(id: stableID, accountUserID: account)
+
+        let delete = DurableQueueItem(
+            id: RecordingEditQueueIdentity.delete(recordingID),
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 3_000.5),
+            terminalKey: recordingID,
+            payload: RecordingQueuePayload(value: "delete")
+        )
+        let deleteInstalled = try await queue.enqueueTerminalDelete(
+            delete,
+            terminalKey: recordingID,
+            preservingOrderingIdentities: [stableID]
+        )
+        XCTAssertTrue(deleteInstalled)
+
+        // R2 is a linked-recording edit after the failed delete. The active
+        // delete protection must retain its exact proof even as unrelated
+        // identities fill the bounded watermark window.
+        let r2 = DurableQueueItem(
+            id: stableID,
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 3_001),
+            orderingKey: 202,
+            terminalKey: otherID,
+            payload: RecordingQueuePayload(value: "R2")
+        )
+        try await queue.enqueue(r2)
+        try await queue.remove(id: stableID, accountUserID: account)
+        for ordering in 300...304 {
+            let identity = UUID()
+            try await queue.enqueue(
+                DurableQueueItem(
+                    id: identity,
+                    accountUserID: account,
+                    createdAt: Date(timeIntervalSince1970: Double(ordering)),
+                    orderingKey: UInt64(ordering),
+                    terminalKey: UUID(),
+                    payload: RecordingQueuePayload(value: "unrelated-\(ordering)")
+                )
+            )
+            try await queue.remove(id: identity, accountUserID: account)
+        }
+
+        let watermarkCount = await queue.orderingWatermarkCount(for: account)
+        let retainedWatermark = await queue.orderingWatermark(
+            for: stableID,
+            accountUserID: account
+        )
+        XCTAssertEqual(watermarkCount, 1)
+        XCTAssertEqual(retainedWatermark?.orderingKey, 202)
+
+        let relaunched = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json",
+            orderingWatermarkLimit: 1
+        )
+        let proof = await relaunched.orderingWatermark(
+            for: stableID,
+            accountUserID: account
+        )
+        XCTAssertEqual(proof?.orderingKey, 202)
+        XCTAssertEqual(
+            RecordingDeleteCompensationPolicy.decision(
+                state: .pending,
+                compensationOrderingKey: 101,
+                currentOrderingKey: nil,
+                watermarkOrderingKey: proof?.orderingKey
+            ),
+            .skipSuperseded
         )
     }
 
@@ -1250,6 +1426,54 @@ final class RecordingEditTests: XCTestCase {
         XCTAssertNil(staleItem)
     }
 
+    func testTerminalHistoryGCIsBoundedForAccountWithOnlyOrdinaryDeletes() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json",
+            terminalHistoryLimit: 2
+        )
+        var operationIDs: [UUID] = []
+        var terminalKeys: [UUID] = []
+        for _ in 0..<5 {
+            let terminalKey = UUID()
+            let operationID = UUID()
+            operationIDs.append(operationID)
+            terminalKeys.append(terminalKey)
+            let delete = DurableQueueItem(
+                id: UUID(),
+                accountUserID: account,
+                terminalKey: terminalKey,
+                payload: RecordingQueuePayload(value: "ordinary-delete")
+            )
+            let deleteInstalled = try await queue.enqueueTerminalDelete(
+                delete,
+                terminalKey: terminalKey
+            )
+            XCTAssertTrue(deleteInstalled)
+            let durableDeleteSnapshot = await queue.item(id: delete.id, accountUserID: account)
+            let durableDelete = try XCTUnwrap(durableDeleteSnapshot)
+            let deleteCompleted = try await queue.completeTerminalDelete(
+                id: durableDelete.id,
+                accountUserID: account,
+                expectedRevision: durableDelete.revision,
+                terminalKey: terminalKey,
+                operationID: operationID
+            )
+            XCTAssertTrue(deleteCompleted)
+        }
+        let terminalCount = await queue.terminalizedCount(for: account)
+        let firstTerminalToken = await queue.terminalizedToken(
+            for: terminalKeys[0],
+            accountUserID: account
+        )
+        XCTAssertEqual(terminalCount, 2)
+        XCTAssertNil(firstTerminalToken)
+    }
+
     func testBackwardQueueWithoutOrderingFloorsDerivesSafeReplayFloor() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -1321,8 +1545,86 @@ final class RecordingEditTests: XCTestCase {
         )
         XCTAssertEqual(restoredTerminalOperation, terminalOperation)
     }
+
+    func testRelaunchCoordinatorSeedsPersistedFloorAfterClockCorrection() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json"
+        )
+        let identity = UUID()
+        let future = DurableQueueItem(
+            id: identity,
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 9_000),
+            orderingKey: 9_000_000,
+            terminalKey: recordingID,
+            payload: RecordingQueuePayload(value: "future-claim")
+        )
+        try await queue.enqueue(future)
+        try await queue.remove(id: identity, accountUserID: account)
+        let floorSnapshot = await queue.orderingFloor(for: account)
+        let floor = try XCTUnwrap(floorSnapshot)
+
+        var relaunched = RecordingEditCoordinator(
+            now: Date(timeIntervalSince1970: 2)
+        )
+        relaunched.observe(orderingFloor: floor)
+        XCTAssertGreaterThan(
+            relaunched.nextEditorOrderingKey(now: Date(timeIntervalSince1970: 2)),
+            floor.orderingKey
+        )
+    }
 }
 
 private struct RecordingQueuePayload: Codable, Equatable, Sendable {
     let value: String
+}
+
+private actor RecordingEditNetworkRaceHarness {
+    private var coordinator = RecordingEditCoordinator()
+    private var eventLog: [String] = []
+    private var barrierWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func beginWrite(
+        recordingID: UUID,
+        sessionID: UUID
+    ) -> RecordingEditWriteToken? {
+        coordinator.beginSessionRPEWrite(
+            recordingID: recordingID,
+            sessionID: sessionID
+        )
+    }
+
+    func runCompensation(sessionID: UUID) async {
+        let barrier = coordinator.beginSessionRPEBarrier(sessionID: sessionID)
+        eventLog.append("barrier-started")
+        let waiters = barrierWaiters
+        barrierWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        while coordinator.hasActiveSessionRPEWrites(sessionID: sessionID) {
+            await Task.yield()
+        }
+        eventLog.append("compensation-started")
+        _ = coordinator.endSessionRPEBarrier(barrier)
+    }
+
+    func waitForBarrierStart() async {
+        guard !eventLog.contains("barrier-started") else { return }
+        await withCheckedContinuation { continuation in
+            barrierWaiters.append(continuation)
+        }
+    }
+
+    func finishWrite(_ token: RecordingEditWriteToken) {
+        eventLog.append("rpe-finished")
+        _ = coordinator.endSessionRPEWrite(token)
+    }
+
+    func events() -> [String] {
+        eventLog
+    }
 }

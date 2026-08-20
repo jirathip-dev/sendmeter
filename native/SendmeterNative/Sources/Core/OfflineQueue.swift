@@ -399,6 +399,16 @@ public struct DurableQueueOrderingFloor: Codable, Equatable, Sendable {
     }
 }
 
+/// An identity-specific ordering proof that must survive watermark compaction
+/// while a terminal delete is still retryable. The account-wide floor cannot
+/// prove that a newer claim belongs to this shared session-RPE identity.
+private struct DurableQueueOrderingProtection: Codable, Equatable, Sendable {
+    let queueItemID: UUID
+    let accountUserID: UUID
+    let terminalKey: UUID
+    let terminalItemID: UUID
+}
+
 public struct QueueBreadcrumb: Codable, Equatable, Sendable, Identifiable {
     public let id: UUID
     public let queueItemID: UUID
@@ -446,23 +456,27 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         var terminalized: [DurableQueueTerminal]
         var orderingWatermarks: [DurableQueueOrderingWatermark]
         var orderingFloors: [DurableQueueOrderingFloor]
+        var orderingProtections: [DurableQueueOrderingProtection]
 
         init(
             items: [DurableQueueItem<Payload>],
             breadcrumbs: [QueueBreadcrumb],
             terminalized: [DurableQueueTerminal] = [],
             orderingWatermarks: [DurableQueueOrderingWatermark] = [],
-            orderingFloors: [DurableQueueOrderingFloor] = []
+            orderingFloors: [DurableQueueOrderingFloor] = [],
+            orderingProtections: [DurableQueueOrderingProtection] = []
         ) {
             self.items = items
             self.breadcrumbs = breadcrumbs
             self.terminalized = terminalized
             self.orderingWatermarks = orderingWatermarks
             self.orderingFloors = orderingFloors
+            self.orderingProtections = orderingProtections
         }
 
         private enum CodingKeys: String, CodingKey {
             case items, breadcrumbs, terminalized, orderingWatermarks, orderingFloors
+            case orderingProtections
         }
 
         init(from decoder: Decoder) throws {
@@ -512,6 +526,10 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 }
                 orderingFloors = Array(derived.values)
             }
+            orderingProtections = try container.decodeIfPresent(
+                [DurableQueueOrderingProtection].self,
+                forKey: .orderingProtections
+            ) ?? []
         }
 
         private static func isNewer(
@@ -715,11 +733,11 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 }), !Self.isNewer(item, than: watermark) {
                     continue
                 }
-                if let floor = state.orderingFloors.first(where: {
-                    $0.accountUserID == item.accountUserID
-                }), !Self.isNewer(item, than: floor) {
-                    continue
-                }
+                // An absent shared identity may be omitted only when its own
+                // watermark proves that this replacement is stale. An
+                // account-wide floor can belong to an unrelated recording;
+                // consulting it here would strip the legacy item's only RPE
+                // claim and leave no shared item to replay.
                 state.items.append(item)
                 updateOrderingFloor(for: item, in: &state)
                 applied = true
@@ -790,7 +808,8 @@ public actor DurableQueue<Payload: Codable & Sendable> {
     public func enqueueTerminalDelete(
         _ deleteItem: DurableQueueItem<Payload>,
         terminalKey: UUID,
-        canceling removals: [DurableQueueRemoval] = []
+        canceling removals: [DurableQueueRemoval] = [],
+        preservingOrderingIdentities: [UUID] = []
     ) throws -> Bool {
         guard deleteItem.terminalKey == terminalKey else {
             throw DurableQueueError.accountMismatch
@@ -812,6 +831,22 @@ public actor DurableQueue<Payload: Codable & Sendable> {
             var conditional: [UUID: UUID] = [:]
             for removal in removals {
                 conditional[removal.id] = removal.expectedRevision
+            }
+            for queueItemID in Set(preservingOrderingIdentities) {
+                let protection = DurableQueueOrderingProtection(
+                    queueItemID: queueItemID,
+                    accountUserID: deleteItem.accountUserID,
+                    terminalKey: terminalKey,
+                    terminalItemID: deleteItem.id
+                )
+                if !state.orderingProtections.contains(where: {
+                    $0.queueItemID == protection.queueItemID
+                        && $0.accountUserID == protection.accountUserID
+                        && $0.terminalKey == protection.terminalKey
+                        && $0.terminalItemID == protection.terminalItemID
+                }) {
+                    state.orderingProtections.append(protection)
+                }
             }
             let indexes = state.items.indices.filter { index in
                 let item = state.items[index]
@@ -1030,6 +1065,53 @@ public actor DurableQueue<Payload: Codable & Sendable> {
 
     public func orderingWatermarkCount(for accountUserID: UUID) -> Int {
         store.orderingWatermarks.filter { $0.accountUserID == accountUserID }.count
+    }
+
+    /// Read the durable account-wide semantic floor so a relaunch can seed a
+    /// coordinator above claims whose per-identity watermark was compacted.
+    public func orderingFloor(
+        for accountUserID: UUID
+    ) -> DurableQueueOrderingFloor? {
+        store.orderingFloors.first {
+            $0.accountUserID == accountUserID
+        }
+    }
+
+    /// Pin one semantic identity to a live terminal delete. The pin is
+    /// persisted separately from the bounded watermark list, so a newer claim
+    /// for this identity remains provable through retry and relaunch even when
+    /// unrelated identities compact their watermarks.
+    @discardableResult
+    public func protectOrderingIdentity(
+        queueItemID: UUID,
+        accountUserID: UUID,
+        terminalKey: UUID,
+        terminalItemID: UUID
+    ) throws -> Bool {
+        var protected = false
+        try transact { state in
+            guard state.items.contains(where: {
+                $0.id == terminalItemID
+                    && $0.accountUserID == accountUserID
+                    && $0.terminalKey == terminalKey
+            }) else { return }
+            let protection = DurableQueueOrderingProtection(
+                queueItemID: queueItemID,
+                accountUserID: accountUserID,
+                terminalKey: terminalKey,
+                terminalItemID: terminalItemID
+            )
+            if !state.orderingProtections.contains(where: {
+                $0.queueItemID == protection.queueItemID
+                    && $0.accountUserID == protection.accountUserID
+                    && $0.terminalKey == protection.terminalKey
+                    && $0.terminalItemID == protection.terminalItemID
+            }) {
+                state.orderingProtections.append(protection)
+            }
+            protected = true
+        }
+        return protected
     }
 
     public func terminalizedCount(for accountUserID: UUID) -> Int {
@@ -1453,20 +1535,44 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         } else {
             state.orderingWatermarks.append(watermark)
         }
-        if state.orderingWatermarks.count > orderingWatermarkLimit {
-            state.orderingWatermarks.sort {
-                if $0.orderingKey != $1.orderingKey {
-                    return $0.orderingKey > $1.orderingKey
-                }
-                if $0.createdAt != $1.createdAt {
-                    return $0.createdAt > $1.createdAt
-                }
-                return $0.revision.uuidString > $1.revision.uuidString
-            }
-            state.orderingWatermarks.removeLast(
-                state.orderingWatermarks.count - orderingWatermarkLimit
-            )
+    }
+
+    private func compactOrderingProtections(in state: inout Store) {
+        state.orderingProtections.removeAll { protection in
+            !state.items.contains(where: {
+                $0.id == protection.terminalItemID
+                    && $0.accountUserID == protection.accountUserID
+                    && $0.terminalKey == protection.terminalKey
+            })
         }
+    }
+
+    private func compactOrderingWatermarks(in state: inout Store) {
+        guard state.orderingWatermarks.count > orderingWatermarkLimit else { return }
+        let protected = state.orderingWatermarks.filter { watermark in
+            state.orderingProtections.contains {
+                $0.queueItemID == watermark.queueItemID
+                    && $0.accountUserID == watermark.accountUserID
+            }
+        }
+        let unprotected = state.orderingWatermarks
+            .filter { watermark in
+                !protected.contains(where: {
+                    $0.queueItemID == watermark.queueItemID
+                        && $0.accountUserID == watermark.accountUserID
+                })
+            }
+            .sorted { lhs, rhs in
+                if lhs.orderingKey != rhs.orderingKey {
+                    return lhs.orderingKey > rhs.orderingKey
+                }
+                if lhs.createdAt != rhs.createdAt {
+                    return lhs.createdAt > rhs.createdAt
+                }
+                return lhs.revision.uuidString > rhs.revision.uuidString
+            }
+        let remaining = max(0, orderingWatermarkLimit - protected.count)
+        state.orderingWatermarks = protected + unprotected.prefix(remaining)
     }
 
     private func appendBreadcrumb(_ breadcrumb: QueueBreadcrumb, to state: inout Store) {
@@ -1476,21 +1582,16 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         }
     }
 
-    /// Terminal markers are live delete fences until the account has a
-    /// semantic ordering floor. Once the floor exists, old editor replays are
-    /// rejected even if their per-recording marker is compacted, so retaining
-    /// only the newest terminal history cannot reopen a stale edit. Accounts
-    /// that still contain only pre-ordering legacy entries keep their fences
-    /// rather than trading correctness for a cosmetic bound.
+    /// Terminal history is bounded for every account, including accounts that
+    /// have only ordinary deletes. Semantic editor replay is fenced by its
+    /// identity watermark/floor; terminal markers are retention history, not an
+    /// unbounded substitute for that ordering state.
     private func compactTerminalHistory(
         for accountUserID: UUID,
         in state: inout Store
     ) {
         guard state.terminalized.filter({ $0.accountUserID == accountUserID }).count
-                > terminalHistoryLimit,
-              state.orderingFloors.contains(where: {
-                  $0.accountUserID == accountUserID
-              }) else { return }
+                > terminalHistoryLimit else { return }
         let keep = state.terminalized
             .filter { $0.accountUserID == accountUserID }
             .sorted { $0.completedAt > $1.completedAt }
@@ -1509,6 +1610,8 @@ public actor DurableQueue<Payload: Codable & Sendable> {
     private func transact(_ mutation: (inout Store) throws -> Void) throws {
         var candidate = store
         try mutation(&candidate)
+        compactOrderingProtections(in: &candidate)
+        compactOrderingWatermarks(in: &candidate)
         try persist(candidate)
         store = candidate
     }

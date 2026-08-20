@@ -2271,7 +2271,10 @@ public final class AppModel: ObservableObject {
             guard try await queue.enqueueTerminalDelete(
                 deleteItem,
                 terminalKey: recording.id,
-                canceling: legacyRemovals
+                canceling: legacyRemovals,
+                preservingOrderingIdentities: barrierSessionID.map {
+                    [RecordingEditQueueIdentity.sessionRPE($0)]
+                } ?? []
             ) else {
                 throw NSError(
                     domain: "SendmeterNative",
@@ -3497,36 +3500,88 @@ public final class AppModel: ObservableObject {
                       ) else {
                     return UploadResult(uploaded: false, failure: nil)
                 }
-                if let sessionID = delete.sessionID,
-                   let previousRPE = delete.previousSessionRPE {
-                    let currentRPEClaim = await queue.item(
-                        id: RecordingEditQueueIdentity.sessionRPE(sessionID),
-                        accountUserID: item.accountUserID
-                    )
-                    guard accountFetch.canApply(
-                        to: currentUserID,
-                        accountEpoch: accountEpoch
-                    ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
-                        return UploadResult(uploaded: false, failure: nil)
+                do {
+                    var compensationBarrier: RecordingEditBarrierToken?
+                    if let sessionID = delete.sessionID,
+                       delete.previousSessionRPE != nil {
+                        compensationBarrier = recordingEditCoordinator.beginSessionRPEBarrier(
+                            sessionID: sessionID
+                        )
                     }
-                    let rpeWatermark = await queue.orderingWatermark(
-                        for: RecordingEditQueueIdentity.sessionRPE(sessionID),
-                        accountUserID: item.accountUserID
-                    )
-                    guard accountFetch.canApply(
-                        to: currentUserID,
-                        accountEpoch: accountEpoch
-                    ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
-                        return UploadResult(uploaded: false, failure: nil)
+                    defer {
+                        if let sessionID = delete.sessionID,
+                           let compensationBarrier {
+                            _ = recordingEditCoordinator.endSessionRPEBarrier(
+                                compensationBarrier
+                            )
+                            if !recordingEditCoordinator.hasActiveSessionRPEWrites(
+                                sessionID: sessionID
+                            ) {
+                                Task { [weak self] in
+                                    await self?.drainSessionRPE(
+                                        sessionID: sessionID,
+                                        accountUserID: item.accountUserID,
+                                        capturedBy: accountFetch
+                                    )
+                                }
+                            }
+                        }
                     }
-                    let compensationState = delete.compensationState ?? .pending
-                    let decision = RecordingDeleteCompensationPolicy.decision(
-                        state: compensationState,
-                        compensationOrderingKey: delete.compensationOrderingKey,
-                        currentOrderingKey: currentRPEClaim?.orderingKey,
-                        watermarkOrderingKey: rpeWatermark?.orderingKey
-                    )
-                    switch decision {
+                    if let sessionID = delete.sessionID,
+                       let previousRPE = delete.previousSessionRPE {
+                        await waitForSessionRPEWrites(sessionID: sessionID)
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        guard try await queue.protectOrderingIdentity(
+                            queueItemID: RecordingEditQueueIdentity.sessionRPE(sessionID),
+                            accountUserID: item.accountUserID,
+                            terminalKey: delete.recordingID,
+                            terminalItemID: item.id
+                        ) else {
+                            throw NSError(
+                                domain: "SendmeterNative",
+                                code: 11,
+                                userInfo: [NSLocalizedDescriptionKey: "Recording delete ordering proof was not durable."]
+                            )
+                        }
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        let currentRPEClaim = await queue.item(
+                            id: RecordingEditQueueIdentity.sessionRPE(sessionID),
+                            accountUserID: item.accountUserID
+                        )
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        let rpeWatermark = await queue.orderingWatermark(
+                            for: RecordingEditQueueIdentity.sessionRPE(sessionID),
+                            accountUserID: item.accountUserID
+                        )
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        let compensationState = delete.compensationState ?? .pending
+                        let decision = RecordingDeleteCompensationPolicy.decision(
+                            state: compensationState,
+                            compensationOrderingKey: delete.compensationOrderingKey,
+                            currentOrderingKey: currentRPEClaim?.orderingKey,
+                            watermarkOrderingKey: rpeWatermark?.orderingKey
+                        )
+                        switch decision {
                     case .apply:
                         let restoredSession = try await self.repository.updateSessionRPE(
                             id: sessionID,
@@ -3606,27 +3661,28 @@ public final class AppModel: ObservableObject {
                             return UploadResult(uploaded: false, failure: nil)
                         }
                         item = updatedItem
+                        }
+                    try await self.repository.softDeleteRecording(id: delete.recordingID)
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                        return UploadResult(uploaded: false, failure: nil)
+                    }
+                    guard try await queue.completeTerminalDelete(
+                        id: item.id,
+                        accountUserID: item.accountUserID,
+                        expectedRevision: item.revision,
+                        terminalKey: delete.recordingID,
+                        operationID: delete.operationID
+                    ) else {
+                        throw NSError(
+                            domain: "SendmeterNative",
+                            code: 5,
+                            userInfo: [NSLocalizedDescriptionKey: "Recording delete completion was not durable."]
+                        )
                     }
                 }
-                try await self.repository.softDeleteRecording(id: delete.recordingID)
-                guard accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
-                ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
-                    return UploadResult(uploaded: false, failure: nil)
-                }
-                guard try await queue.completeTerminalDelete(
-                    id: item.id,
-                    accountUserID: item.accountUserID,
-                    expectedRevision: item.revision,
-                    terminalKey: delete.recordingID,
-                    operationID: delete.operationID
-                ) else {
-                    throw NSError(
-                        domain: "SendmeterNative",
-                        code: 5,
-                        userInfo: [NSLocalizedDescriptionKey: "Recording delete completion was not durable."]
-                    )
                 }
             case let .workout(draft):
                 let saved = try await self.repository.insertPhoneWorkout(draft)
@@ -4451,6 +4507,14 @@ public final class AppModel: ObservableObject {
             accountEpoch: accountEpoch
         ) else { return }
         if let queue {
+            let orderingFloor = await queue.orderingFloor(for: userID)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if let orderingFloor {
+                recordingEditCoordinator.observe(orderingFloor: orderingFloor)
+            }
             let terminalizedKeys = await queue.terminalizedKeys(for: userID)
             guard accountFetch.canApply(
                 to: currentUserID,
@@ -4525,6 +4589,35 @@ public final class AppModel: ObservableObject {
                     currentUserID: currentUserID
                 )
             case let .recordingDelete(payload):
+                if let sessionID = payload.sessionID {
+                    do {
+                        guard try await queue.protectOrderingIdentity(
+                            queueItemID: RecordingEditQueueIdentity.sessionRPE(sessionID),
+                            accountUserID: userID,
+                            terminalKey: payload.recordingID,
+                            terminalItemID: item.id
+                        ) else {
+                            surface(NSError(
+                                domain: "SendmeterNative",
+                                code: 10,
+                                userInfo: [NSLocalizedDescriptionKey: "Recording delete ordering proof could not be restored."]
+                            ))
+                            return
+                        }
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ) else { return }
+                    } catch {
+                        if accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ) {
+                            surface(error)
+                        }
+                        return
+                    }
+                }
                 _ = recordingEditCoordinator.ensureDelete(
                     recordingID: payload.recordingID,
                     capturedBy: accountFetch

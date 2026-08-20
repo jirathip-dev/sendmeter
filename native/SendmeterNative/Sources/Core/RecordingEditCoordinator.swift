@@ -217,6 +217,13 @@ public struct RecordingEditCoordinator: Sendable {
         latestRevision = max(latestRevision, observed)
     }
 
+    /// Seed from the persisted account-wide floor as well as live queue items.
+    /// The floor can outlive a compacted per-identity watermark, and must still
+    /// dominate a relaunch that happens after the device clock moves backward.
+    public mutating func observe(orderingFloor: DurableQueueOrderingFloor) {
+        latestRevision = max(latestRevision, orderingFloor.orderingKey)
+    }
+
     /// Begin a delete before its first await. The returned token must own all
     /// later rollback/clear work; matching only the UUID is intentionally not
     /// sufficient across account epochs.
