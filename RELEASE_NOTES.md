@@ -10,6 +10,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Native History: open a Force recording to edit its tag, side, notes, and linked session effort; the original force samples stay unchanged.
 - Native Force now shows the Hill force-duration curve and, when enough data supports it, a deterministic 95% confidence band that widens honestly when the exercise has fewer long-duration efforts.
 - Force now shows consistency as distinct training days across eight rolling seven-day windows, with optional exercise filters that respect hidden tags.
 - The native app now has tactile feedback that mirrors the web app: scrubbing the readiness trend chart ticks once per value change, sheets tick as they open, confirm and destructive actions (sign out, delete) give a heavier tick, a refused guided-protocol start on the Progressor buzzes a warning instead of feeling accepted, connecting the Progressor feels like success and a disconnect feels like an error, and guided protocols cue each segment transition in rhythm (a single buzz on each hold, a double-stutter on side switches and rests, a stutter on completion).

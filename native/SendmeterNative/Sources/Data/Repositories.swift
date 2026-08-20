@@ -4,7 +4,7 @@ import SendmeterCore
 // MARK: - Shared backend models
 
 private let sessionColumns = "id,date,type,type_label,duration_min,rpe,rpe_confirmed,load,note,phase,group_id,workout_source"
-private let recordingColumns = "id,recorded_at,duration_ms,peak_kg,avg_kg,sample_count,note,tag,side,group_id,protocol_run_id,set_no,zone,source,external_load_kg,outcome,planned_duration_ms,actual_duration_ms,rep_no,protocol_mode,target_kg,target_low_kg,target_high_kg,cadence_out_s,cadence_return_s,cadence_markers,set_metrics,setup_note,capacity_evidence,completed_reps,completion_status"
+private let recordingColumns = "id,deleted_at,recorded_at,duration_ms,peak_kg,avg_kg,sample_count,note,tag,side,group_id,protocol_run_id,set_no,zone,source,external_load_kg,outcome,planned_duration_ms,actual_duration_ms,rep_no,protocol_mode,target_kg,target_low_kg,target_high_kg,cadence_out_s,cadence_return_s,cadence_markers,set_metrics,setup_note,capacity_evidence,completed_reps,completion_status"
 private let presetColumns = "id,name,hold_s,holds_s,reps,sets,rest_reps_s,rest_sets_s,target_kg,target_pct,pct_basis,pct_step,target_curve,alternate_sides,protocol_mode,cadence_out_s,cadence_return_s,tolerance_mode,tolerance_value,prepare_s,setup_note,capacity_evidence"
 
 private struct LiveWorkoutRow: Decodable {
@@ -164,6 +164,21 @@ private struct RestorePayload: Encodable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeNil(forKey: .deletedAt)
     }
+}
+
+private struct RecordingTombstoneRow: Decodable {
+    let id: UUID
+    let deletedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case deletedAt = "deleted_at"
+    }
+}
+
+public enum RecordingRestoreError: Error, Equatable, Sendable {
+    case missingTombstoneObservation
+    case tombstoneChanged
 }
 
 private struct SettingsRow: Codable {
@@ -330,6 +345,7 @@ private struct SetMetricsRow: Codable {
 
 private struct RecordingRow: Decodable {
     let id: UUID
+    let deletedAt: String?
     let recordedAt: Date
     let durationMilliseconds: Int
     let peakKilograms: Double?
@@ -363,6 +379,7 @@ private struct RecordingRow: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id, note, tag, side, zone, source, outcome
+        case deletedAt = "deleted_at"
         case recordedAt = "recorded_at"
         case durationMilliseconds = "duration_ms"
         case peakKilograms = "peak_kg"
@@ -392,6 +409,10 @@ private struct RecordingRow: Decodable {
     var model: TindeqRecording {
         TindeqRecording(
             id: id,
+            deletedAt: deletedAt.flatMap {
+                LocalDateSupport.iso8601Date(from: $0)
+            },
+            deletedAtToken: deletedAt,
             recordedAt: recordedAt,
             durationMilliseconds: durationMilliseconds,
             peakKilograms: peakKilograms,
@@ -557,12 +578,6 @@ private struct RecordingInsert: Encodable {
         completionStatus = recording.completionStatus
         samples = recording.samples.map { [$0.milliseconds, $0.kilograms] }
     }
-}
-
-private struct RecordingMetaUpdate: Encodable {
-    let tag: String
-    let side: String
-    let note: String
 }
 
 private struct RecordingGroupUpdate: Encodable {
@@ -1050,6 +1065,32 @@ public final class SendmeterRepository: @unchecked Sendable {
         return row.model()
     }
 
+    /// Narrow PATCH used by the History recording editor. Keeping RPE as its
+    /// own payload avoids sending a stale session type/duration/note while an
+    /// offline recording edit is replayed.
+    public func updateSessionRPE(
+        id: UUID,
+        rpe: Double,
+        rpeConfirmed: Bool = true
+    ) async throws -> Session {
+        let body = try await transport.encode(
+            SessionRPEPatch(rpe: rpe, rpeConfirmed: rpeConfirmed)
+        )
+        let result: OneOrMany<SessionRow> = try await transport.request(
+            path: "rest/v1/sessions",
+            method: .patch,
+            queryItems: [
+                URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())"),
+                URLQueryItem(name: "deleted_at", value: "is.null"),
+                URLQueryItem(name: "select", value: sessionColumns)
+            ],
+            body: body,
+            prefer: "return=representation"
+        )
+        guard let row = result.first else { throw URLError(.cannotParseResponse) }
+        return row.model()
+    }
+
     public func softDeleteSession(id: UUID, at date: Date = Date()) async throws {
         try await patchVoid(
             table: "sessions",
@@ -1302,18 +1343,26 @@ public final class SendmeterRepository: @unchecked Sendable {
         side: TindeqSide,
         note: String
     ) async throws -> TindeqRecording {
-        let body = try await transport.encode(
-            RecordingMetaUpdate(
-                tag: String(tag.prefix(120)),
-                side: side.rawValue,
-                note: String(note.prefix(2_000))
-            )
+        try await updateRecordingMeta(
+            id: id,
+            payload: RecordingMetadataPatch(tag: tag, side: side, note: note)
         )
+    }
+
+    /// Narrow PATCH used by the History recording editor. The payload has no
+    /// `samples` field by construction: the original device trace is
+    /// immutable after capture.
+    public func updateRecordingMeta(
+        id: UUID,
+        payload: RecordingMetadataPatch
+    ) async throws -> TindeqRecording {
+        let body = try await transport.encode(payload)
         let result: OneOrMany<RecordingRow> = try await transport.request(
             path: "rest/v1/tindeq_recordings",
             method: .patch,
             queryItems: [
                 URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())"),
+                URLQueryItem(name: "deleted_at", value: "is.null"),
                 URLQueryItem(name: "select", value: recordingColumns)
             ],
             body: body,
@@ -1335,12 +1384,63 @@ public final class SendmeterRepository: @unchecked Sendable {
         try await patchVoid(
             table: "tindeq_recordings",
             id: id,
-            payload: SoftDeletePayload(deletedAt: date)
+            payload: SoftDeletePayload(deletedAt: date),
+            onlyIfDeletedAtIsNil: true
         )
     }
 
+    /// Compatibility entry point. It first observes the current tombstone and
+    /// then uses the exact conditional PATCH below; it never performs an
+    /// unconditional restore.
     public func restoreRecording(id: UUID) async throws {
-        try await patchVoid(table: "tindeq_recordings", id: id, payload: RestorePayload())
+        let rows: [RecordingTombstoneRow] = try await transport.request(
+            path: "rest/v1/tindeq_recordings",
+            method: .get,
+            queryItems: [
+                URLQueryItem(name: "select", value: "id,deleted_at"),
+                URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())"),
+                URLQueryItem(name: "deleted_at", value: "not.is.null"),
+                URLQueryItem(name: "limit", value: "1")
+            ]
+        )
+        guard let token = rows.first?.deletedAt else {
+            throw RecordingRestoreError.missingTombstoneObservation
+        }
+        try await restoreRecording(id: id, expectedDeletedAtToken: token)
+    }
+
+    /// Restore only the tombstone observed by the caller. If another delete
+    /// wins while this request is in flight, PostgREST matches zero rows and
+    /// this method throws instead of clearing the newer tombstone.
+    public func restoreRecording(
+        id: UUID,
+        expectedDeletedAtToken: String
+    ) async throws {
+        let observation = RecordingRestoreObservation(
+            recordingID: id,
+            deletedAtToken: expectedDeletedAtToken
+        )
+        guard let queryItems = RecordingRestoreRequestPolicy.queryItems(
+            for: observation
+        ) else {
+            throw RecordingRestoreError.missingTombstoneObservation
+        }
+        let body = try await transport.encode(RestorePayload())
+        let rows: [RecordingTombstoneRow]
+        do {
+            rows = try await transport.request(
+                path: "rest/v1/tindeq_recordings",
+                method: .patch,
+                queryItems: queryItems,
+                body: body,
+                prefer: "return=representation"
+            )
+        } catch {
+            throw error
+        }
+        guard rows.contains(where: { $0.id == id && $0.deletedAt == nil }) else {
+            throw RecordingRestoreError.tombstoneChanged
+        }
     }
 
     public func purgeRecording(id: UUID) async throws {
@@ -1652,13 +1752,21 @@ public final class SendmeterRepository: @unchecked Sendable {
     private func patchVoid<Payload: Encodable>(
         table: String,
         id: UUID,
-        payload: Payload
+        payload: Payload,
+        onlyIfDeletedAtIsNil: Bool = false
     ) async throws {
         let body = try await transport.encode(payload)
+        var queryItems = [URLQueryItem(
+            name: "id",
+            value: "eq.\(id.uuidString.lowercased())"
+        )]
+        if onlyIfDeletedAtIsNil {
+            queryItems.append(URLQueryItem(name: "deleted_at", value: "is.null"))
+        }
         try await transport.requestVoid(
             path: "rest/v1/\(table)",
             method: .patch,
-            queryItems: [URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())")],
+            queryItems: queryItems,
             body: body,
             prefer: "return=minimal"
         )

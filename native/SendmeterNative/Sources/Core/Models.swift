@@ -175,7 +175,10 @@ public struct Session: Codable, Equatable, Sendable, Identifiable {
         self.durationMinutes = durationMinutes
         self.rpe = rpe
         self.rpeConfirmed = rpeConfirmed
-        self.load = load ?? Double(durationMinutes) * rpe
+        self.load = load ?? RecordingEditCoordinator.optimisticLoad(
+            durationMinutes: durationMinutes,
+            rpe: rpe
+        )
         self.note = note
         self.phase = phase
         self.groupID = groupID
@@ -377,6 +380,11 @@ public struct WeeklyLoad: Codable, Equatable, Sendable, Identifiable {
 // MARK: - Force / Tindeq
 
 public struct TindeqSample: Codable, Equatable, Sendable {
+    /// A raw device sample is part of the original force trace. History edits
+    /// deliberately never carry this value: changing tag, side, or the linked
+    /// session's RPE must not rewrite the measurements that produced the
+    /// recording's peak, average, and curve. Sample trimming is a separate
+    /// data-integrity decision and is intentionally out of scope here (#676).
     public let milliseconds: Double
     public let kilograms: Double
 
@@ -482,6 +490,11 @@ public struct ReverseActionMetrics: Codable, Equatable, Sendable {
 
 public struct TindeqRecording: Codable, Equatable, Sendable, Identifiable {
     public let id: UUID
+    /// Non-nil only for a row loaded from the recording trash. The raw token
+    /// is retained alongside the parsed Date because PostgREST equality
+    /// filters must use the exact observed tombstone precision.
+    public let deletedAt: Date?
+    public let deletedAtToken: String?
     public let recordedAt: Date
     public let durationMilliseconds: Int
     public let peakKilograms: Double?
@@ -519,6 +532,8 @@ public struct TindeqRecording: Codable, Equatable, Sendable, Identifiable {
 
     public init(
         id: UUID,
+        deletedAt: Date? = nil,
+        deletedAtToken: String? = nil,
         recordedAt: Date,
         durationMilliseconds: Int,
         peakKilograms: Double?,
@@ -552,6 +567,8 @@ public struct TindeqRecording: Codable, Equatable, Sendable, Identifiable {
         rejected: Bool = false
     ) {
         self.id = id
+        self.deletedAt = deletedAt
+        self.deletedAtToken = deletedAtToken
         self.recordedAt = recordedAt
         self.durationMilliseconds = durationMilliseconds
         self.peakKilograms = peakKilograms
@@ -583,6 +600,128 @@ public struct TindeqRecording: Codable, Equatable, Sendable, Identifiable {
         self.completedRepetitions = completedRepetitions
         self.completionStatus = completionStatus
         self.rejected = rejected
+    }
+}
+
+/// The editable part of a History recording detail.
+///
+/// RPE belongs to the session that groups a recording, not to the
+/// `tindeq_recordings` row itself. A loose recording therefore carries no
+/// `sessionID`/`sessionRPE` in its edit. The payload is intentionally limited
+/// to metadata and the linked session's effort; raw samples and all derived
+/// force statistics remain immutable.
+public struct RecordingEdit: Codable, Equatable, Sendable {
+    public let recordingID: UUID
+    public let tag: String
+    public let side: TindeqSide
+    public let note: String
+    public let sessionID: UUID?
+    public let sessionRPE: Double?
+    /// One ordering key for the linked session's RPE, shared by every
+    /// recording edit that points at that session. Nil is retained for queue
+    /// entries written before the coordinator existed; the durable item's
+    /// creation time is their ordering fallback.
+    public let sessionRPERevision: UInt64?
+
+    public init(
+        recordingID: UUID,
+        tag: String,
+        side: TindeqSide,
+        note: String,
+        sessionID: UUID? = nil,
+        sessionRPE: Double? = nil,
+        sessionRPERevision: UInt64? = nil
+    ) {
+        self.recordingID = recordingID
+        self.tag = String(tag.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+        self.side = side
+        self.note = String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2_000))
+        self.sessionID = sessionID
+        self.sessionRPE = sessionRPE.map { min(10, max(1, $0)) }
+        self.sessionRPERevision = sessionID != nil && sessionRPE != nil
+            ? sessionRPERevision
+            : nil
+    }
+
+    /// The exact body sent to `tindeq_recordings`. It contains no samples or
+    /// derived values, so a metadata edit cannot accidentally overwrite the
+    /// original force trace.
+    public var recordingPayload: RecordingMetadataPatch {
+        RecordingMetadataPatch(tag: tag, side: side, note: note)
+    }
+
+    /// The optional body sent to the linked `sessions` row. Editing a loose
+    /// recording has no session payload.
+    public var sessionPayload: SessionRPEPatch? {
+        guard sessionID != nil, let sessionRPE else { return nil }
+        return SessionRPEPatch(rpe: sessionRPE, rpeConfirmed: true)
+    }
+}
+
+/// PostgREST PATCH body for the user-editable recording metadata. Keep this
+/// type separate from `NewTindeqRecording`: the latter owns the original raw
+/// samples and is only for inserts.
+public struct RecordingMetadataPatch: Codable, Equatable, Sendable {
+    public let tag: String
+    public let side: TindeqSide
+    public let note: String
+
+    public init(tag: String, side: TindeqSide, note: String) {
+        self.tag = String(tag.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+        self.side = side
+        self.note = String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2_000))
+    }
+}
+
+/// PostgREST PATCH body for a linked session's RPE. Marking the value
+/// confirmed is the same acknowledgement used by the existing session
+/// editor: changing a predicted value is the review action.
+public struct SessionRPEPatch: Codable, Equatable, Sendable {
+    public let rpe: Double
+    public let rpeConfirmed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case rpe
+        case rpeConfirmed = "rpe_confirmed"
+    }
+
+    public init(rpe: Double, rpeConfirmed: Bool = true) {
+        self.rpe = min(10, max(1, rpe))
+        self.rpeConfirmed = rpeConfirmed
+    }
+}
+
+/// Pure reducer used by the optimistic History state and by relaunch replay.
+/// It only changes fields represented by `RecordingEdit`; raw samples,
+/// summary statistics, protocol provenance, and grouping stay untouched.
+public enum RecordingEditReducer {
+    public static func apply(
+        _ edit: RecordingEdit,
+        to recording: TindeqRecording
+    ) -> TindeqRecording {
+        guard recording.id == edit.recordingID else { return recording }
+        var updated = recording
+        updated.tag = edit.tag
+        updated.side = edit.side
+        updated.note = edit.note
+        return updated
+    }
+
+    public static func apply(
+        _ edit: RecordingEdit,
+        to session: Session
+    ) -> Session {
+        guard edit.sessionID == session.id, let sessionRPE = edit.sessionRPE else {
+            return session
+        }
+        var updated = session
+        updated.rpe = sessionRPE
+        updated.rpeConfirmed = true
+        updated.load = RecordingEditCoordinator.optimisticLoad(
+            durationMinutes: updated.durationMinutes,
+            rpe: sessionRPE
+        )
+        return updated
     }
 }
 

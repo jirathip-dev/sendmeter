@@ -26,6 +26,9 @@ private enum PendingWrite: Codable, Sendable {
     case session(SessionQueuePayload)
     case sessionDelete(SessionDeleteQueuePayload)
     case recording(NewTindeqRecording)
+    case recordingEdit(RecordingEdit)
+    case sessionRPEEdit(RecordingEdit)
+    case recordingDelete(RecordingDeleteQueuePayload)
     case workout(WorkoutDraft)
 }
 
@@ -50,6 +53,9 @@ private extension DurableQueueItem where Payload == PendingWrite {
         case .session: kind = "Session"
         case .sessionDelete: kind = "Session deletion"
         case .recording: kind = "Force recording"
+        case .recordingEdit: kind = "Force recording edit"
+        case .sessionRPEEdit: kind = "Session RPE edit"
+        case .recordingDelete: kind = "Force recording deletion"
         case .workout: kind = "Phone workout"
         }
         return QuarantinedWrite(
@@ -82,6 +88,29 @@ private struct SessionQueuePayload: Codable, Sendable {
 
 private struct SessionDeleteQueuePayload: Codable, Sendable {
     let sessionID: UUID
+}
+
+/// Durable terminal delete intent. The pre-edit session value is carried in
+/// the intent so a relaunch can compensate an RPE PATCH before the recording
+/// delete is retried; no in-memory snapshot is required for correctness.
+private struct RecordingDeleteQueuePayload: Codable, Sendable {
+    let recordingID: UUID
+    let operationID: UUID
+    let sessionID: UUID?
+    let previousSessionRPE: Double?
+    let previousSessionRPEConfirmed: Bool?
+    /// The ordering claim whose optimistic RPE is being compensated. Optional
+    /// for queue files written before delete compensation was made durable.
+    let compensationOrderingKey: UInt64?
+    /// Persisted progress prevents a retry from repeating an already-applied
+    /// compensation; a newer session claim can mark it superseded instead.
+    let compensationState: RecordingDeleteCompensationState?
+}
+
+private struct LegacyRecordingEditMigrationFlight {
+    let id: UUID
+    let accountFetch: AccountScopedFetch
+    let task: Task<[DurableQueueItem<PendingWrite>]?, Never>
 }
 
 /// The free-pull recording context the hands-free loop snapshots when a rep
@@ -238,6 +267,31 @@ public final class AppModel: ObservableObject {
     private var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
     private var pendingRecordings = PendingRecordingOverlay()
+    /// Metadata edits are overlays until the narrow PATCH has landed. Keeping
+    /// them separate from insert placeholders means a refresh/relaunch cannot
+    /// replace a just-edited tag/side with an older server row.
+    private var pendingRecordingEdits: [UUID: RecordingEdit] = [:]
+    private var pendingSessionRPEEdits: [UUID: RecordingEdit] = [:]
+    /// The server-valued session snapshot underneath an optimistic RPE edit.
+    /// Delete uses it for both the immediate UI rollback and the compensating
+    /// narrow PATCH after an already-started request has settled.
+    private var pendingSessionRPEBases: [UUID: SendmeterCore.Session] = [:]
+    /// Delete waits on every session-RPE request that claimed its lane before
+    /// the tombstone/barrier. Continuations are resumed by the last claim's
+    /// defer, so the delete never races the compensation PATCH.
+    private var sessionRPEWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
+    /// Restore waits for an already-claimed delete upload to settle before
+    /// sending the compensating backend request. New delete uploads observe
+    /// the coordinator's restore gate and cannot start in the meantime.
+    private var queueUploadWaiters: [QueueUploadKey: [CheckedContinuation<Void, Never>]] = [:]
+    /// Legacy queue migration is single-flight per account. Without this, two
+    /// re-entrant callers can each snapshot the same combined item and the
+    /// older one can rewrite the stable session identity after the newer save.
+    private var legacyMigrationFlights: [UUID: LegacyRecordingEditMigrationFlight] = [:]
+    /// The session-RPE revision and delete tombstone live in one coordinator;
+    /// this keeps every async response's decision tied to current, actor-free
+    /// state on the main actor rather than to a stale task closure.
+    private var recordingEditCoordinator = RecordingEditCoordinator()
     /// Routine Undo claims are keyed by both account and session. The matching
     /// delete intent is persisted in the same queue as inserts; keeping the
     /// claim before the first await lets an in-flight upload reconcile without
@@ -1880,12 +1934,39 @@ public final class AppModel: ObservableObject {
         }.value
     }
 
-    public func updateRecording(_ recording: TindeqRecording) async {
+    /// Save the History recording editor's metadata and, when the recording is
+    /// linked to a session, its session RPE through the same durable queue used
+    /// for native inserts. `sessionRPE == nil` means leave the linked session's
+    /// current value alone (useful for callers that only edit tag/side/note).
+    public func updateRecording(
+        _ recording: TindeqRecording,
+        sessionRPE: Double? = nil
+    ) async {
         guard let userID = currentUserID else { return }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
+        guard !recordingEditCoordinator.isDeleted(recording.id) else { return }
+        let linkedSession = recording.groupID.flatMap { groupID in
+            sessions.first { $0.groupID == groupID && !$0.pending }
+        }
+        // A metadata-only save must not discard an RPE edit that is already
+        // queued for this linked session. Carry that optimistic value forward
+        // into the coalesced payload so the stable queue item remains the
+        // complete latest form state.
+        let effectiveSessionRPE = sessionRPE ?? linkedSession.flatMap {
+            pendingSessionRPEEdits[$0.id]?.sessionRPE
+        }
+        let editCreatedAt = Date()
+        let sessionRPERevision: UInt64?
+        if linkedSession != nil, effectiveSessionRPE != nil {
+            sessionRPERevision = recordingEditCoordinator.nextSessionRPERevision(
+                now: editCreatedAt
+            )
+        } else {
+            sessionRPERevision = nil
+        }
         // HistoryView passes its already-edited binding here. Capture the row
         // that still owns the current cache key before the first await; using
         // `recording` for both sides would lose Crimp when the draft is Pinch.
@@ -1900,20 +1981,77 @@ public final class AppModel: ObservableObject {
             tag: recording.tag,
             modality: GaugeSessionRPE.modality(of: recording)
         )
-        do {
-            let saved = try await self.repository.updateRecordingMeta(
-                id: recording.id,
-                tag: recording.tag,
-                side: recording.side,
-                note: recording.note
+        let edit = RecordingEdit(
+            recordingID: recording.id,
+            tag: recording.tag,
+            side: recording.side,
+            note: recording.note,
+            sessionID: linkedSession?.id,
+            sessionRPE: effectiveSessionRPE,
+            sessionRPERevision: sessionRPERevision
+        )
+        let previousRecording = recordings.first { $0.id == recording.id } ?? recording
+        let previousSession = linkedSession
+        let editOrderingKey = edit.sessionRPERevision
+            ?? recordingEditCoordinator.nextEditorOrderingKey(now: editCreatedAt)
+
+        applyPendingRecordingEdit(edit)
+        let metadataEdit = RecordingEdit(
+            recordingID: edit.recordingID,
+            tag: edit.tag,
+            side: edit.side,
+            note: edit.note
+        )
+        let metadataItem = DurableQueueItem(
+            id: RecordingEditQueueIdentity.recording(edit.recordingID),
+            accountUserID: userID,
+            createdAt: editCreatedAt,
+            orderingKey: editOrderingKey,
+            terminalKey: edit.recordingID,
+            payload: PendingWrite.recordingEdit(metadataEdit)
+        )
+        let rpeItem: DurableQueueItem<PendingWrite>?
+        if let sessionID = edit.sessionID, edit.sessionRPE != nil {
+            rpeItem = DurableQueueItem(
+                id: RecordingEditQueueIdentity.sessionRPE(sessionID),
+                accountUserID: userID,
+                createdAt: editCreatedAt,
+                orderingKey: editOrderingKey,
+                terminalKey: edit.recordingID,
+                payload: PendingWrite.sessionRPEEdit(edit)
             )
-            let published = accountFetch.publishIfCurrent(
-                to: self.currentUserID,
-                accountEpoch: self.accountEpoch
-            ) {
-                self.replaceRecording(saved)
-            }
-            if published {
+        } else {
+            rpeItem = nil
+        }
+        var items: [DurableQueueItem<PendingWrite>] = [metadataItem]
+        if let rpeItem { items.append(rpeItem) }
+        // Keep this edit on the caller's task through its first upload
+        // attempt. That serializes successive online saves from the detail
+        // view. The stable queue id coalesces successive offline saves, so a
+        // stale metadata PATCH cannot overwrite the newest one on replay.
+        let enqueued = await enqueueAndUpload(
+            items,
+            startUpload: false,
+            capturedBy: accountFetch
+        )
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        if !enqueued {
+            rollbackPendingRecordingEdit(
+                edit,
+                previousRecording: previousRecording,
+                previousSession: previousSession
+            )
+        } else {
+            let metadataResult = await upload(metadataItem, capturedBy: accountFetch)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if metadataResult.uploaded {
+                let saved = recordings.first(where: { $0.id == recording.id }) ?? recording
                 let newKey = TagCurveKey(
                     tag: saved.tag,
                     modality: GaugeSessionRPE.modality(of: saved)
@@ -1924,10 +2062,17 @@ public final class AppModel: ObservableObject {
                     saved: newKey
                 )
                 await refreshTagCurvesForRPE(keys: keys, capturedBy: accountFetch)
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return }
             }
-        } catch {
-            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
-                surface(error)
+            if let rpeItem {
+                _ = await upload(rpeItem, capturedBy: accountFetch)
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return }
             }
         }
     }
@@ -1942,18 +2087,262 @@ public final class AppModel: ObservableObject {
             tag: recording.tag,
             modality: GaugeSessionRPE.modality(of: recording)
         )
-        await perform {
-            try await self.repository.softDeleteRecording(id: recording.id)
+        guard let deleteToken = recordingEditCoordinator.beginDelete(
+            recordingID: recording.id,
+            capturedBy: accountFetch
+        ) else { return }
+
+        let previousRecording = recordings.first { $0.id == recording.id } ?? recording
+        let previousEdit = pendingRecordingEdits[recording.id]
+        let initialSessionID = previousEdit?.sessionID ?? recording.groupID.flatMap { groupID in
+            sessions.first { $0.groupID == groupID && !$0.pending }?.id
+        }
+        var barrierSessionID = initialSessionID
+        var barrierToken = initialSessionID.map {
+            recordingEditCoordinator.beginSessionRPEBarrier(sessionID: $0)
+        }
+        var canceledQueueEdits: [DurableQueueItem<PendingWrite>] = []
+        var previousSessionEdit: RecordingEdit?
+        var previousSessionRPEOrderingKey: UInt64?
+        var previousSessionBase: SendmeterCore.Session?
+        var previousSession = initialSessionID.flatMap { sessionID in
+            sessions.first { $0.id == sessionID && !$0.pending }
+        }
+        var deleteIntentPersisted = false
+        defer {
+            if let barrierToken {
+                _ = recordingEditCoordinator.endSessionRPEBarrier(barrierToken)
+                if let barrierSessionID {
+                    Task { [weak self] in
+                        await self?.drainSessionRPE(
+                            sessionID: barrierSessionID,
+                            accountUserID: userID,
+                            capturedBy: accountFetch
+                        )
+                    }
+                }
+            }
+        }
+
+        do {
+            guard await migrateLegacyRecordingEdits(
+                userID: userID,
+                capturedBy: accountFetch
+            ) != nil,
+            accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else {
+                throw NSError(
+                    domain: "SendmeterNative",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "Recording edits could not be migrated."]
+                )
+            }
+            let queuedEdits = await recordingEditQueueItems(
+                recordingID: recording.id,
+                sessionID: barrierSessionID,
+                accountUserID: userID
+            )
             guard accountFetch.canApply(
-                to: self.currentUserID,
-                accountEpoch: self.accountEpoch
+                to: currentUserID,
+                accountEpoch: accountEpoch
             ) else { return }
-            self.recordings.removeAll { $0.id == recording.id }
-            self.invalidateTagCurveKeys([key])
-            await self.refreshTagCurvesForRPE(
+            if barrierSessionID == nil {
+                let discoveredSessionID = Set(
+                    queuedEdits.compactMap { item -> UUID? in
+                        switch item.payload {
+                        case let .recordingEdit(edit), let .sessionRPEEdit(edit):
+                            return edit.sessionID
+                        default:
+                            return nil
+                        }
+                    }
+                ).sorted { $0.uuidString < $1.uuidString }.first
+                if let discoveredSessionID {
+                    barrierSessionID = discoveredSessionID
+                    barrierToken = recordingEditCoordinator.beginSessionRPEBarrier(
+                        sessionID: discoveredSessionID
+                    )
+                    previousSession = sessions.first {
+                        $0.id == discoveredSessionID && !$0.pending
+                    }
+                }
+            }
+            if let barrierSessionID {
+                await waitForSessionRPEWrites(sessionID: barrierSessionID)
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return }
+            }
+
+            canceledQueueEdits = queuedEdits.filter { item in
+                sourceRecordingID(for: item.payload) == recording.id
+            }
+            let candidates = queuedEdits.compactMap { item -> RecordingEditQueueCandidate? in
+                switch item.payload {
+                case let .recordingEdit(edit), let .sessionRPEEdit(edit):
+                    guard edit.sessionID != nil, edit.sessionRPE != nil else { return nil }
+                    return RecordingEditQueueCandidate(
+                        edit: edit,
+                        queueItemID: item.id,
+                        createdAt: item.createdAt,
+                        nextAttemptAt: item.nextAttemptAt
+                    )
+                default:
+                    return nil
+                }
+            }
+            let authoritative = barrierSessionID.flatMap {
+                RecordingEditMigration.authoritativeSessionRPE(
+                    sessionID: $0,
+                    candidates: candidates
+                )
+            }
+            if authoritative?.edit.recordingID == recording.id {
+                previousSessionEdit = authoritative?.edit
+                previousSessionRPEOrderingKey = authoritative?.ordering.primary
+            } else if let barrierSessionID,
+                      let sessionEdit = pendingSessionRPEEdits[barrierSessionID],
+                      sessionEdit.recordingID == recording.id,
+                      authoritative == nil {
+                // A relaunch can restore the optimistic overlay before the
+                // durable item is visible in this snapshot. It is still the
+                // deleted recording's claim when no authoritative queue
+                // replacement exists.
+                previousSessionEdit = sessionEdit
+                previousSessionRPEOrderingKey = sessionEdit.sessionRPERevision
+            }
+
+            pendingRecordingEdits.removeValue(forKey: recording.id)
+            if let previousSessionEdit,
+               let sessionID = previousSessionEdit.sessionID,
+               pendingSessionRPEEdits[sessionID]?.recordingID == recording.id {
+                previousSessionBase = pendingSessionRPEBases.removeValue(forKey: sessionID)
+                    ?? sessions.first { $0.id == sessionID && !$0.pending }
+                    ?? previousSession
+                pendingSessionRPEEdits.removeValue(forKey: sessionID)
+                if let previousSessionBase {
+                    replaceSession(previousSessionBase)
+                }
+            }
+            recordings.removeAll { $0.id == recording.id }
+            invalidateTagCurveKeys([key])
+
+            let deleteCreatedAt = Date()
+            let deleteItem: DurableQueueItem<PendingWrite> = DurableQueueItem(
+                id: RecordingEditQueueIdentity.delete(recording.id),
+                accountUserID: userID,
+                createdAt: deleteCreatedAt,
+                // The terminal marker, not editor ordering, dominates a
+                // delete. Keeping this at zero prevents the delete's wall
+                // clock from entering the session-RPE watermark/floor.
+                orderingKey: 0,
+                terminalKey: recording.id,
+                payload: .recordingDelete(
+                    RecordingDeleteQueuePayload(
+                        recordingID: recording.id,
+                        operationID: deleteToken.id,
+                        sessionID: previousSessionEdit?.sessionID,
+                        previousSessionRPE: previousSessionBase?.rpe,
+                        previousSessionRPEConfirmed: previousSessionBase?.rpeConfirmed,
+                        compensationOrderingKey: previousSessionRPEOrderingKey,
+                        compensationState: .pending
+                    )
+                )
+            )
+            let legacyRemovals = canceledQueueEdits
+                .filter { $0.terminalKey == nil }
+                .map {
+                    DurableQueueRemoval(
+                        id: $0.id,
+                        accountUserID: $0.accountUserID,
+                        expectedRevision: $0.revision
+                    )
+                }
+            guard let queue else {
+                throw NSError(
+                    domain: "SendmeterNative",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "On-device delete queue is unavailable."]
+                )
+            }
+            guard try await queue.enqueueTerminalDelete(
+                deleteItem,
+                terminalKey: recording.id,
+                canceling: legacyRemovals,
+                preservingOrderingIdentities: barrierSessionID.map {
+                    [RecordingEditQueueIdentity.sessionRPE($0)]
+                } ?? []
+            ) else {
+                throw NSError(
+                    domain: "SendmeterNative",
+                    code: 4,
+                    userInfo: [NSLocalizedDescriptionKey: "The recording delete was already completed."]
+                )
+            }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            deleteIntentPersisted = true
+            let result = await upload(deleteItem, capturedBy: accountFetch)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if result.uploaded {
+                toastMessage = "Force recording moved to Trash."
+            }
+            await refreshTagCurvesForRPE(
                 keys: [key],
                 capturedBy: accountFetch
             )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+        } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            // Once the terminal intent is durable, keep the tombstone and the
+            // optimistic removal. The queue owns retrying the backend delete;
+            // re-enqueuing edits here would reopen the race this path closes.
+            guard !deleteIntentPersisted else {
+                surface(error)
+                return
+            }
+            guard recordingEditCoordinator.clearDelete(
+                deleteToken,
+                currentUserID: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if let previousEdit {
+                pendingRecordingEdits[recording.id] = previousEdit
+            }
+            if let previousSessionEdit,
+               let sessionID = previousSessionEdit.sessionID {
+                pendingSessionRPEEdits[sessionID] = previousSessionEdit
+                if let previousSessionBase {
+                    pendingSessionRPEBases[sessionID] = previousSessionBase
+                    replaceSession(previousSessionBase)
+                } else if let previousSession {
+                    replaceSession(previousSession)
+                }
+            }
+            replaceRecording(previousRecording)
+            await refreshTagCurvesForRPE(
+                keys: [key],
+                capturedBy: accountFetch
+            )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            surface(error)
         }
     }
 
@@ -1967,22 +2356,122 @@ public final class AppModel: ObservableObject {
             tag: recording.tag,
             modality: GaugeSessionRPE.modality(of: recording)
         )
-        await perform {
-            try await self.repository.restoreRecording(id: recording.id)
+        guard let restoreToken = recordingEditCoordinator.beginRestore(
+            recordingID: recording.id,
+            capturedBy: accountFetch
+        ) else { return }
+        // Capture the exact server tombstone before the first await. A Date
+        // rounded from this token is not enough to protect A→B→A restore
+        // completions, so the repository conditions its PATCH on the raw
+        // observed value.
+        let expectedDeletedAtToken = recording.deletedAtToken
+        defer {
+            _ = recordingEditCoordinator.clearRestore(
+                restoreToken,
+                currentUserID: currentUserID,
+                accountEpoch: accountEpoch
+            )
+        }
+        let deleteKey = QueueUploadKey(
+            itemID: RecordingEditQueueIdentity.delete(recording.id),
+            accountUserID: userID
+        )
+        await waitForQueueUpload(deleteKey)
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        let expectedTombstone = recordingEditCoordinator.tombstoneToken(
+            recordingID: recording.id
+        )
+        let expectedTerminalOperation = await queue?.terminalizedToken(
+            for: recording.id,
+            accountUserID: userID
+        )
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        let pendingDelete = await queue?.item(
+            id: RecordingEditQueueIdentity.delete(recording.id),
+            accountUserID: userID
+        )
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        do {
+            guard let expectedDeletedAtToken else {
+                throw RecordingRestoreError.missingTombstoneObservation
+            }
+            try await repository.restoreRecording(
+                id: recording.id,
+                expectedDeletedAtToken: expectedDeletedAtToken
+            )
             guard accountFetch.canApply(
-                to: self.currentUserID,
-                accountEpoch: self.accountEpoch
+                to: currentUserID,
+                accountEpoch: accountEpoch
             ) else { return }
-            self.deletedRecordings.removeAll { $0.id == recording.id }
-            await self.refreshAll(showSpinner: false)
+            if let queue {
+                if let pendingDelete {
+                    guard try await queue.cancelPendingTerminalDelete(
+                        id: pendingDelete.id,
+                        accountUserID: userID,
+                        expectedRevision: pendingDelete.revision,
+                        terminalKey: recording.id
+                    ) else {
+                        throw NSError(
+                            domain: "SendmeterNative",
+                            code: 6,
+                            userInfo: [NSLocalizedDescriptionKey: "The recording delete changed while restoring."]
+                        )
+                    }
+                }
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return }
+                guard try await queue.clearTerminalized(
+                    key: recording.id,
+                    accountUserID: userID,
+                    expectedOperationID: expectedTerminalOperation
+                ) else {
+                    throw NSError(
+                        domain: "SendmeterNative",
+                        code: 7,
+                        userInfo: [NSLocalizedDescriptionKey: "The recording restore changed while restoring."]
+                    )
+                }
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return }
+            }
+            guard recordingEditCoordinator.clearDelete(
+                recordingID: recording.id,
+                expectedToken: expectedTombstone,
+                currentUserID: currentUserID,
+                accountEpoch: accountEpoch,
+                capturedBy: accountFetch
+            ) else { return }
+            deletedRecordings.removeAll { $0.id == recording.id }
+            await refreshAll(showSpinner: false)
             guard accountFetch.canApply(
-                to: self.currentUserID,
-                accountEpoch: self.accountEpoch
+                to: currentUserID,
+                accountEpoch: accountEpoch
             ) else { return }
-            await self.refreshTagCurvesForRPE(
+            await refreshTagCurvesForRPE(
                 keys: [key],
                 capturedBy: accountFetch
             )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+        } catch {
+            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
+                surface(error)
+            }
         }
     }
 
@@ -2284,6 +2773,14 @@ public final class AppModel: ObservableObject {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
+        guard await migrateLegacyRecordingEdits(
+            userID: userID,
+            capturedBy: accountFetch
+        ) != nil,
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return }
         let due = await queue.items(for: userID, dueAt: Date())
         for item in due {
             _ = await upload(item, capturedBy: accountFetch)
@@ -2297,6 +2794,14 @@ public final class AppModel: ObservableObject {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
+        guard await migrateLegacyRecordingEdits(
+            userID: userID,
+            capturedBy: accountFetch
+        ) != nil,
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return }
         let pending = await queue.items(for: userID)
         for item in pending {
             _ = await upload(item, mode: .manual, capturedBy: accountFetch)
@@ -2305,14 +2810,38 @@ public final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func enqueueAndUpload(_ item: DurableQueueItem<PendingWrite>) async -> Bool {
-        guard let userID = currentUserID, userID == item.accountUserID else {
+    private func enqueueAndUpload(
+        _ item: DurableQueueItem<PendingWrite>,
+        startUpload: Bool = true,
+        capturedBy: AccountScopedFetch? = nil
+    ) async -> Bool {
+        await enqueueAndUpload(
+            [item],
+            startUpload: startUpload,
+            capturedBy: capturedBy
+        )
+    }
+
+    @discardableResult
+    private func enqueueAndUpload(
+        _ items: [DurableQueueItem<PendingWrite>],
+        startUpload: Bool = true,
+        capturedBy: AccountScopedFetch? = nil
+    ) async -> Bool {
+        guard let userID = currentUserID,
+              let firstItem = items.first,
+              items.allSatisfy({ $0.accountUserID == firstItem.accountUserID }),
+              userID == firstItem.accountUserID else {
             return false
         }
-        let accountFetch = AccountScopedFetch(
-            accountUserID: userID,
+        let accountFetch = capturedBy ?? AccountScopedFetch(
+            accountUserID: firstItem.accountUserID,
             accountEpoch: accountEpoch
         )
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
         guard let queue else {
             if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
                 surface(NSError(
@@ -2323,11 +2852,48 @@ public final class AppModel: ObservableObject {
             }
             return false
         }
+        guard await migrateLegacyRecordingEdits(
+            userID: userID,
+            capturedBy: accountFetch
+        ) != nil else {
+            return false
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        let editorRecordingIDs = Set(items.compactMap { sourceRecordingID(for: $0.payload) })
+        let editorTerminalKey = editorRecordingIDs.count == 1
+            && items.allSatisfy { $0.terminalKey == editorRecordingIDs.first }
+            ? editorRecordingIDs.first
+            : nil
+        if let editorTerminalKey,
+           recordingEditCoordinator.isDeleted(editorTerminalKey) {
+            return false
+        }
         do {
-            try await queue.enqueue(item)
+            var editorBatchAccepted = true
+            if let editorTerminalKey {
+                editorBatchAccepted = try await queue.enqueueUnlessTerminalizedKeepingNewest(
+                    items,
+                    terminalKey: editorTerminalKey,
+                    accountUserID: userID
+                )
+            } else {
+                try await queue.enqueue(items)
+            }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return true }
+            guard editorBatchAccepted else { return false }
             await refreshQueueCount(for: accountFetch)
-            Task { [weak self] in
-                _ = await self?.upload(item)
+            if startUpload {
+                for item in items {
+                    Task { [weak self] in
+                        _ = await self?.upload(item, capturedBy: accountFetch)
+                    }
+                }
             }
             return true
         } catch {
@@ -2351,6 +2917,269 @@ public final class AppModel: ObservableObject {
     private struct UploadResult {
         let uploaded: Bool
         let failure: UploadFailure?
+
+        init(uploaded: Bool, failure: UploadFailure?) {
+            self.uploaded = uploaded
+            self.failure = failure
+        }
+    }
+
+    private func sourceRecordingID(for payload: PendingWrite) -> UUID? {
+        switch payload {
+        case let .recordingEdit(edit), let .sessionRPEEdit(edit):
+            return edit.recordingID
+        case let .recordingDelete(delete):
+            return delete.recordingID
+        default:
+            return nil
+        }
+    }
+
+    /// Normalize every pre-follow-up combined recording edit before any queue
+    /// snapshot is replayed. The durable metadata item keeps its recording
+    /// identity, while exactly one stable session identity carries the
+    /// authoritative RPE for each linked session.
+    ///
+    /// This is deliberately a queue migration rather than a per-item upload
+    /// side effect. If the newer shared item has already uploaded and been
+    /// removed, an older combined item cannot recreate its stale RPE on the
+    /// next relaunch: every combined item was stripped to metadata before the
+    /// shared item was allowed to leave the queue.
+    private func migrateLegacyRecordingEdits(
+        userID: UUID,
+        capturedBy capturedAccountFetch: AccountScopedFetch? = nil
+    ) async -> [DurableQueueItem<PendingWrite>]? {
+        guard queue != nil else { return [] }
+        let accountFetch = capturedAccountFetch ?? AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+
+        while true {
+            if let flight = legacyMigrationFlights[userID] {
+                let result = await flight.task.value
+                if legacyMigrationFlights[userID]?.id == flight.id {
+                    legacyMigrationFlights.removeValue(forKey: userID)
+                }
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return nil }
+                // A flight captured an earlier A epoch and may have returned
+                // a snapshot that was valid only before B. A later A call
+                // must get a fresh migration flight, even though the UUID is
+                // the same.
+                if flight.accountFetch != accountFetch {
+                    continue
+                }
+                return result
+            }
+
+            let flightID = UUID()
+            let task: Task<[DurableQueueItem<PendingWrite>]?, Never> = Task { [weak self] in
+                guard let self else { return nil }
+                return await self.performLegacyRecordingEditMigration(
+                    userID: userID,
+                    capturedBy: accountFetch
+                )
+            }
+            legacyMigrationFlights[userID] = LegacyRecordingEditMigrationFlight(
+                id: flightID,
+                accountFetch: accountFetch,
+                task: task
+            )
+            let result = await task.value
+            if legacyMigrationFlights[userID]?.id == flightID {
+                legacyMigrationFlights.removeValue(forKey: userID)
+            }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return nil }
+            return result
+        }
+    }
+
+    private func performLegacyRecordingEditMigration(
+        userID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> [DurableQueueItem<PendingWrite>]? {
+        guard let queue,
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return nil }
+        let queued = await queue.items(for: userID, includeQuarantined: true)
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+
+        var currentByID: [UUID: DurableQueueItem<PendingWrite>] = [:]
+        var legacyItems: [(item: DurableQueueItem<PendingWrite>, edit: RecordingEdit)] = []
+        var candidatesBySession: [UUID: [RecordingEditQueueCandidate]] = [:]
+        for item in queued {
+            currentByID[item.id] = item
+            switch item.payload {
+            case let .recordingEdit(edit):
+                guard let sessionID = edit.sessionID, edit.sessionRPE != nil else {
+                    continue
+                }
+                legacyItems.append((item, edit))
+                candidatesBySession[sessionID, default: []].append(
+                    RecordingEditQueueCandidate(
+                        edit: edit,
+                        queueItemID: item.id,
+                        createdAt: item.createdAt,
+                        nextAttemptAt: item.nextAttemptAt
+                    )
+                )
+            case let .sessionRPEEdit(edit):
+                guard let sessionID = edit.sessionID, edit.sessionRPE != nil else {
+                    continue
+                }
+                candidatesBySession[sessionID, default: []].append(
+                    RecordingEditQueueCandidate(
+                        edit: edit,
+                        queueItemID: item.id,
+                        createdAt: item.createdAt,
+                        nextAttemptAt: item.nextAttemptAt
+                    )
+                )
+            default:
+                continue
+            }
+        }
+
+        var replacements: [DurableQueueConditionalReplacement<PendingWrite>] = legacyItems.map { entry in
+            DurableQueueConditionalReplacement(
+                item: entry.item.replacingPayload(
+                    .recordingEdit(RecordingEditMigration.metadataOnly(entry.edit)),
+                    terminalKey: entry.edit.recordingID
+                ),
+                expectedRevision: entry.item.revision
+            )
+        }
+
+        for (sessionID, candidates) in candidatesBySession {
+            guard let authoritative = RecordingEditMigration.authoritativeSessionRPE(
+                sessionID: sessionID,
+                candidates: candidates
+            ) else { continue }
+            guard let legacy = legacyItems.first(where: {
+                $0.item.id == authoritative.queueItemID
+            }) else {
+                // A stable session item already won. All legacy candidates in
+                // this group are still normalized conditionally above.
+                continue
+            }
+            let source = legacy.item
+            let stableID = RecordingEditQueueIdentity.sessionRPE(sessionID)
+            replacements.append(
+                DurableQueueConditionalReplacement(
+                    item: DurableQueueItem(
+                        id: stableID,
+                        accountUserID: userID,
+                        createdAt: source.createdAt,
+                        orderingKey: authoritative.edit.sessionRPERevision
+                            ?? RecordingEditCoordinator.orderingKey(for: source.createdAt),
+                        terminalKey: authoritative.edit.recordingID,
+                        updatedAt: source.updatedAt,
+                        attempts: source.attempts,
+                        permanentAttempts: source.permanentAttempts ?? 0,
+                        nextAttemptAt: source.nextAttemptAt,
+                        lastError: source.lastError,
+                        quarantined: source.quarantined,
+                        payload: .sessionRPEEdit(authoritative.edit)
+                    ),
+                    expectedRevision: currentByID[stableID]?.revision
+                )
+            )
+        }
+
+        do {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return nil }
+            _ = try await queue.replaceIfCurrent(replacements)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return nil }
+        } catch {
+            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
+                surface(error)
+            }
+            return nil
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+        let migrated = await queue.items(for: userID, includeQuarantined: true)
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+        return migrated
+    }
+
+    private func waitForSessionRPEWrites(sessionID: UUID) async {
+        guard recordingEditCoordinator.hasActiveSessionRPEWrites(sessionID: sessionID) else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            if recordingEditCoordinator.hasActiveSessionRPEWrites(sessionID: sessionID) {
+                sessionRPEWaiters[sessionID, default: []].append(continuation)
+            } else {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func waitForQueueUpload(_ key: QueueUploadKey) async {
+        guard inFlightUploadClaims.isClaimed(key) else { return }
+        await withCheckedContinuation { continuation in
+            if inFlightUploadClaims.isClaimed(key) {
+                queueUploadWaiters[key, default: []].append(continuation)
+            } else {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func finishSessionRPEWrite(_ token: RecordingEditWriteToken) {
+        _ = recordingEditCoordinator.endSessionRPEWrite(token)
+        guard !recordingEditCoordinator.hasActiveSessionRPEWrites(
+            sessionID: token.sessionID
+        ) else { return }
+        let waiters = sessionRPEWaiters.removeValue(forKey: token.sessionID) ?? []
+        for waiter in waiters { waiter.resume() }
+    }
+
+    private func updateSessionRPE(
+        edit: RecordingEdit,
+        accountUserID: UUID
+    ) async throws -> SendmeterCore.Session? {
+        guard let sessionID = edit.sessionID,
+              let sessionRPE = edit.sessionRPE,
+              currentUserID == accountUserID,
+              let token = recordingEditCoordinator.beginSessionRPEWrite(
+                  recordingID: edit.recordingID,
+                  sessionID: sessionID
+              ) else {
+            return nil
+        }
+        defer { finishSessionRPEWrite(token) }
+        return try await repository.updateSessionRPE(
+            id: sessionID,
+            rpe: sessionRPE
+        )
     }
 
     @discardableResult
@@ -2372,6 +3201,12 @@ public final class AppModel: ObservableObject {
         guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
             return UploadResult(uploaded: false, failure: nil)
         }
+        guard await migrateLegacyRecordingEdits(
+            userID: item.accountUserID,
+            capturedBy: accountFetch
+        ) != nil else {
+            return UploadResult(uploaded: false, failure: nil)
+        }
         let uploadKey = QueueUploadKey(
             itemID: item.id,
             accountUserID: item.accountUserID
@@ -2381,7 +3216,28 @@ public final class AppModel: ObservableObject {
             // the first producer finished. It must not replay that snapshot.
             return UploadResult(uploaded: false, failure: nil)
         }
-        defer { inFlightUploadClaims.release(uploadClaim) }
+        let claimedItemID = item.id
+        let claimedAccountUserID = item.accountUserID
+        let claimedRevision = item.revision
+        defer {
+            inFlightUploadClaims.release(uploadClaim)
+            if !inFlightUploadClaims.isClaimed(uploadKey) {
+                let waiters = queueUploadWaiters.removeValue(forKey: uploadKey) ?? []
+                for waiter in waiters { waiter.resume() }
+            }
+            // Every return path, including an old request's failure or a
+            // delete/account guard, must drain a replacement that arrived
+            // while this claim was held. Read it after releasing the claim so
+            // the replacement can acquire the same single-flight key.
+            Task { [weak self] in
+                guard let self, let queue = self.queue,
+                      let replacement = await queue.item(
+                          id: claimedItemID,
+                          accountUserID: claimedAccountUserID
+                      ), replacement.revision != claimedRevision else { return }
+                _ = await self.upload(replacement, capturedBy: accountFetch)
+            }
+        }
 
         // Queue reads are snapshots. Re-read through the active queue filter
         // after claiming the item so an automatic producer cannot upload an
@@ -2395,7 +3251,20 @@ public final class AppModel: ObservableObject {
         ), accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
             return UploadResult(uploaded: false, failure: nil)
         }
-        let item = currentItem
+        var item = currentItem
+        let isTerminalDelete: Bool = if case .recordingDelete = item.payload {
+            true
+        } else {
+            false
+        }
+        if !isTerminalDelete,
+           let recordingID = sourceRecordingID(for: item.payload),
+           recordingEditCoordinator.isDeleted(recordingID) {
+            // The terminal delete transaction owns removal of editor items.
+            // Do not remove one here: if delete-intent persistence later
+            // fails, the delete rolls back and this durable edit must remain.
+            return UploadResult(uploaded: false, failure: nil)
+        }
         let result: UploadResult
         do {
             var sessionReceipt: SessionLogReceipt?
@@ -2450,10 +3319,17 @@ public final class AppModel: ObservableObject {
                 // because Undo claimed it. Soft-deleting first is a no-op on
                 // many backends and would let the later insert resurrect the
                 // exact row Undo removed.
-                let hasPendingInsert = await queue.items(
+                let queuedForDelete = await queue.items(
                     for: item.accountUserID,
                     includeQuarantined: true
-                ).contains { queued in
+                )
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                let hasPendingInsert = queuedForDelete.contains { queued in
                     guard queued.id != item.id else { return false }
                     switch queued.payload {
                     case let .session(insertPayload):
@@ -2522,6 +3398,292 @@ public final class AppModel: ObservableObject {
                 ) {
                     pendingCurveSamples.removeValue(forKey: recording.id)
                 }
+            case let .recordingEdit(edit):
+                let savedRecording = try await self.repository.updateRecordingMeta(
+                    id: edit.recordingID,
+                    payload: edit.recordingPayload
+                )
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    // Leave the durable edit for its owning account. No
+                    // response from the old account may enter the new user's
+                    // in-memory History list.
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                if recordingEditCoordinator.isDeleted(edit.recordingID) {
+                    // Leave removal to the atomic terminal-delete
+                    // transaction so a failed delete persist cannot lose the
+                    // edit that the optimistic rollback needs.
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                // A newer edit may have been queued while this request was
+                // suspended. Only clear/apply this edit's optimistic overlay
+                // when it is still current; the newer payload remains the
+                // source of truth for the next upload.
+                let currentQueueRevision = await queue.item(
+                    id: item.id,
+                    accountUserID: item.accountUserID
+                )?.revision
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                let pendingEdit = pendingRecordingEdits[edit.recordingID]
+                let metadataIsCurrent = pendingEdit?.tag == edit.tag
+                    && pendingEdit?.side == edit.side
+                    && pendingEdit?.note == edit.note
+                if RecordingEditRacePolicy.acceptsRecordingResponse(
+                    recordingID: edit.recordingID,
+                    responseRevision: item.revision,
+                    currentRevision: currentQueueRevision,
+                    deleted: recordingEditCoordinator.isDeleted(edit.recordingID)
+                ) && metadataIsCurrent {
+                    pendingRecordingEdits.removeValue(forKey: edit.recordingID)
+                    replaceRecording(savedRecording)
+                }
+            case let .sessionRPEEdit(edit):
+                guard let sessionID = edit.sessionID,
+                      edit.sessionRPE != nil else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                guard let savedSession = try await updateSessionRPE(
+                    edit: edit,
+                    accountUserID: item.accountUserID
+                ) else {
+                    // A delete barrier owns this session lane. Leave the
+                    // durable item for the post-delete drain; a recording
+                    // tombstone is handled by the common stale-item guard.
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                if recordingEditCoordinator.isDeleted(edit.recordingID) {
+                    // See the metadata-edit branch: a tombstone alone is not
+                    // durable cancellation. The delete transaction removes
+                    // this item only after its own intent is persisted.
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                let currentQueueRevision = await queue.item(
+                    id: item.id,
+                    accountUserID: item.accountUserID
+                )?.revision
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                if RecordingEditRacePolicy.acceptsSessionRPEResponse(
+                    responseRevision: item.revision,
+                    currentRevision: currentQueueRevision,
+                    deleted: recordingEditCoordinator.isDeleted(edit.recordingID)
+                ), pendingSessionRPEEdits[sessionID] == edit {
+                    pendingSessionRPEEdits.removeValue(forKey: sessionID)
+                    pendingSessionRPEBases.removeValue(forKey: sessionID)
+                    replaceSession(savedSession)
+                }
+            case let .recordingDelete(delete):
+                suppressSavedToast = true
+                guard recordingEditCoordinator.isDeleted(delete.recordingID),
+                      !recordingEditCoordinator.isRestoring(delete.recordingID),
+                      accountFetch.canApply(
+                          to: currentUserID,
+                          accountEpoch: accountEpoch
+                      ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                do {
+                    var compensationBarrier: RecordingEditBarrierToken?
+                    if let sessionID = delete.sessionID,
+                       delete.previousSessionRPE != nil {
+                        compensationBarrier = recordingEditCoordinator.beginSessionRPEBarrier(
+                            sessionID: sessionID
+                        )
+                    }
+                    defer {
+                        if let sessionID = delete.sessionID,
+                           let compensationBarrier {
+                            _ = recordingEditCoordinator.endSessionRPEBarrier(
+                                compensationBarrier
+                            )
+                            if !recordingEditCoordinator.hasActiveSessionRPEWrites(
+                                sessionID: sessionID
+                            ) {
+                                Task { [weak self] in
+                                    await self?.drainSessionRPE(
+                                        sessionID: sessionID,
+                                        accountUserID: item.accountUserID,
+                                        capturedBy: accountFetch
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if let sessionID = delete.sessionID,
+                       let previousRPE = delete.previousSessionRPE {
+                        await waitForSessionRPEWrites(sessionID: sessionID)
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        guard try await queue.protectOrderingIdentity(
+                            queueItemID: RecordingEditQueueIdentity.sessionRPE(sessionID),
+                            accountUserID: item.accountUserID,
+                            terminalKey: delete.recordingID,
+                            terminalItemID: item.id
+                        ) else {
+                            throw NSError(
+                                domain: "SendmeterNative",
+                                code: 11,
+                                userInfo: [NSLocalizedDescriptionKey: "Recording delete ordering proof was not durable."]
+                            )
+                        }
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        let currentRPEClaim = await queue.item(
+                            id: RecordingEditQueueIdentity.sessionRPE(sessionID),
+                            accountUserID: item.accountUserID
+                        )
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        let rpeWatermark = await queue.orderingWatermark(
+                            for: RecordingEditQueueIdentity.sessionRPE(sessionID),
+                            accountUserID: item.accountUserID
+                        )
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        let compensationState = delete.compensationState ?? .pending
+                        let decision = RecordingDeleteCompensationPolicy.decision(
+                            state: compensationState,
+                            compensationOrderingKey: delete.compensationOrderingKey,
+                            currentOrderingKey: currentRPEClaim?.orderingKey,
+                            watermarkOrderingKey: rpeWatermark?.orderingKey
+                        )
+                        switch decision {
+                    case .apply:
+                        let restoredSession = try await self.repository.updateSessionRPE(
+                            id: sessionID,
+                            rpe: previousRPE,
+                            rpeConfirmed: delete.previousSessionRPEConfirmed ?? true
+                        )
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        let appliedPayload = RecordingDeleteQueuePayload(
+                            recordingID: delete.recordingID,
+                            operationID: delete.operationID,
+                            sessionID: delete.sessionID,
+                            previousSessionRPE: delete.previousSessionRPE,
+                            previousSessionRPEConfirmed: delete.previousSessionRPEConfirmed,
+                            compensationOrderingKey: delete.compensationOrderingKey,
+                            compensationState: .applied
+                        )
+                        let updatedItem = item.replacingPayload(
+                            .recordingDelete(appliedPayload)
+                        )
+                        guard try await queue.enqueueIfCurrent(
+                            updatedItem,
+                            expectedRevision: item.revision
+                        ) else {
+                            throw NSError(
+                                domain: "SendmeterNative",
+                                code: 8,
+                                userInfo: [NSLocalizedDescriptionKey: "Recording delete compensation progress was not durable."]
+                            )
+                        }
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        item = updatedItem
+                        _ = accountFetch.publishIfCurrent(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ) {
+                            replaceSession(restoredSession)
+                        }
+                    case .skipAlreadyApplied:
+                        break
+                    case .skipSuperseded:
+                        let supersededPayload = RecordingDeleteQueuePayload(
+                            recordingID: delete.recordingID,
+                            operationID: delete.operationID,
+                            sessionID: delete.sessionID,
+                            previousSessionRPE: delete.previousSessionRPE,
+                            previousSessionRPEConfirmed: delete.previousSessionRPEConfirmed,
+                            compensationOrderingKey: delete.compensationOrderingKey,
+                            compensationState: .superseded
+                        )
+                        let updatedItem = item.replacingPayload(
+                            .recordingDelete(supersededPayload)
+                        )
+                        guard try await queue.enqueueIfCurrent(
+                            updatedItem,
+                            expectedRevision: item.revision
+                        ) else {
+                            throw NSError(
+                                domain: "SendmeterNative",
+                                code: 8,
+                                userInfo: [NSLocalizedDescriptionKey: "Recording delete ordering changed while retrying."]
+                            )
+                        }
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                            return UploadResult(uploaded: false, failure: nil)
+                        }
+                        item = updatedItem
+                        }
+                    try await self.repository.softDeleteRecording(id: delete.recordingID)
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ), recordingEditCoordinator.isDeleted(delete.recordingID) else {
+                        return UploadResult(uploaded: false, failure: nil)
+                    }
+                    guard try await queue.completeTerminalDelete(
+                        id: item.id,
+                        accountUserID: item.accountUserID,
+                        expectedRevision: item.revision,
+                        terminalKey: delete.recordingID,
+                        operationID: delete.operationID
+                    ) else {
+                        throw NSError(
+                            domain: "SendmeterNative",
+                            code: 5,
+                            userInfo: [NSLocalizedDescriptionKey: "Recording delete completion was not durable."]
+                        )
+                    }
+                }
+                }
             case let .workout(draft):
                 let saved = try await self.repository.insertPhoneWorkout(draft)
                 let publishedWorkout = accountFetch.publishIfCurrent(
@@ -2538,16 +3700,38 @@ public final class AppModel: ObservableObject {
             if let sessionReceipt, routineUndo.isClaimed(sessionReceipt) {
                 suppressSavedToast = true
             }
-            do {
-                try await queue.remove(
-                    id: item.id,
-                    accountUserID: item.accountUserID,
-                    reason: "uploaded"
-                )
-            } catch let error as DurableQueueError {
-                // Undo may have removed the same queue item while its upload
-                // was in flight. That is already the desired terminal state.
-                if !(suppressSavedToast && error == .itemNotFound) { throw error }
+            // If a producer replaced this payload while its request was
+            // suspended, keep that newer item; removing by id here would
+            // otherwise lose it.
+            let shouldRemoveUploadedItem = await queue.item(
+                id: item.id,
+                accountUserID: item.accountUserID
+            )?.revision == item.revision
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else {
+                return UploadResult(uploaded: false, failure: nil)
+            }
+            if shouldRemoveUploadedItem {
+                do {
+                    try await queue.remove(
+                        id: item.id,
+                        accountUserID: item.accountUserID,
+                        reason: "uploaded"
+                    )
+                } catch let error as DurableQueueError {
+                    // Undo may have removed the same queue item while its
+                    // upload was in flight. That is already the desired
+                    // terminal state.
+                    if !(suppressSavedToast && error == .itemNotFound) { throw error }
+                }
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
             }
             if let finishedSessionInsertID {
                 await uploadPendingSessionDelete(
@@ -2589,6 +3773,19 @@ public final class AppModel: ObservableObject {
             }
             result = UploadResult(uploaded: true, failure: nil)
         } catch {
+            if case .recordingDelete = item.payload {
+                // A delete intent is terminally durable until both the
+                // backend mutation and the terminal marker commit. Keep it in
+                // the queue on any failure so relaunch can retry safely.
+            } else if let recordingID = sourceRecordingID(for: item.payload),
+               recordingEditCoordinator.isDeleted(recordingID) {
+                // The tombstone may still be in the pre-persist window. Do
+                // not turn a failed delete persistence into lost edit data;
+                // the terminal transaction, when durable, removes it.
+                result = UploadResult(uploaded: false, failure: nil)
+                await refreshQueueCount(for: accountFetch)
+                return result
+            }
             do {
                 // #675: classify the rejection. A permanent one (constraint /
                 // malformed / forbidden-with-valid-token) earns the entry a
@@ -2604,22 +3801,30 @@ public final class AppModel: ObservableObject {
                 // toward the permanent-attempt bound.
                 let classification = (error as? ServerRejectionClassifying)?.rejectionClass ?? .retryable
                 let code = (error as? PostgRESTError)?.code
-                try await queue.markFailure(
+                let applied = try await queue.markFailure(
                     id: item.id,
                     accountUserID: item.accountUserID,
                     error: error.localizedDescription,
                     classification: classification,
                     code: code,
-                    countsTowardQuarantine: mode.countsTowardQuarantine
+                    countsTowardQuarantine: mode.countsTowardQuarantine,
+                    expectedRevision: item.revision
                 )
-                result = UploadResult(
-                    uploaded: false,
-                    failure: UploadFailure(
-                        classification: classification,
-                        code: code,
-                        detail: error.localizedDescription
+                if applied {
+                    result = UploadResult(
+                        uploaded: false,
+                        failure: UploadFailure(
+                            classification: classification,
+                            code: code,
+                            detail: error.localizedDescription
+                        )
                     )
-                )
+                } else {
+                    // The queue identity now holds a newer replacement. The
+                    // old request must not spend its backoff/quarantine
+                    // budget or report its error against that replacement.
+                    result = UploadResult(uploaded: false, failure: nil)
+                }
             } catch {
                 if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
                     surface(error)
@@ -2656,6 +3861,62 @@ public final class AppModel: ObservableObject {
         _ = await upload(deleteItem, capturedBy: accountFetch)
     }
 
+    private func drainSessionRPE(
+        sessionID: UUID,
+        accountUserID: UUID,
+        capturedBy capturedAccountFetch: AccountScopedFetch? = nil
+    ) async {
+        guard let queue,
+              let currentUserID,
+              currentUserID == accountUserID else { return }
+        let accountFetch = capturedAccountFetch ?? AccountScopedFetch(
+            accountUserID: accountUserID,
+            accountEpoch: accountEpoch
+        )
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        guard let item = await queue.item(
+            id: RecordingEditQueueIdentity.sessionRPE(sessionID),
+            accountUserID: accountUserID
+        ) else { return }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        guard case .sessionRPEEdit(_) = item.payload else { return }
+        _ = await upload(item, capturedBy: accountFetch)
+    }
+
+    private func recordingEditQueueItems(
+        recordingID: UUID,
+        sessionID: UUID?,
+        accountUserID: UUID
+    ) async -> [DurableQueueItem<PendingWrite>] {
+        guard let queue else { return [] }
+        var ids = [RecordingEditQueueIdentity.recording(recordingID)]
+        if let sessionID {
+            ids.append(RecordingEditQueueIdentity.sessionRPE(sessionID))
+        }
+        var items: [DurableQueueItem<PendingWrite>] = []
+        for id in ids {
+            if let item = await queue.item(id: id, accountUserID: accountUserID) {
+                items.append(item)
+            }
+        }
+        // The session may not be in the current in-memory fetch (for
+        // example, a relaunch raced the first refresh). Find a durable RPE
+        // edit by its recording source as a second, account-scoped lookup.
+        let allQueuedItems = await queue.items(for: accountUserID, includeQuarantined: true)
+        for item in allQueuedItems
+            where sourceRecordingID(for: item.payload) == recordingID
+                && !items.contains(where: { $0.id == item.id }) {
+            items.append(item)
+        }
+        return items
+    }
+
     /// #675: the explicit-user-action re-attempt for quarantined entries —
     /// native mirror of the web's `retryStuckRecordings` (#484). With `id` it
     /// retries ONE quarantined entry (the per-item Settings action); without,
@@ -2681,6 +3942,14 @@ public final class AppModel: ObservableObject {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
+        guard await migrateLegacyRecordingEdits(
+            userID: userID,
+            capturedBy: accountFetch
+        ) != nil else { return }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
         let quarantined = await queue.quarantinedItems(for: userID)
         for item in quarantined where id == nil || item.id == id {
             do {
@@ -2738,15 +4007,44 @@ public final class AppModel: ObservableObject {
         )
         do {
             let item = await queue.item(id: id, accountUserID: userID)
-            if try await queue.discardQuarantined(id: id, accountUserID: userID) {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            guard try await queue.discardQuarantined(
+                id: id,
+                accountUserID: userID,
+                expectedRevision: item?.revision
+            ) else {
+                await refreshQueueCount(for: accountFetch)
                 guard accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
-                ) else {
-                    await refreshQueueCount()
-                    return
+                ) else { return }
+                if let item, case .recordingDelete = item.payload {
+                    // A concurrent retry or replacement won the revision
+                    // check. The selected delete was not discarded, so
+                    // refetch both views rather than leaving an optimistic
+                    // tombstone/Trash row from the stale snapshot visible.
+                    await refreshAll(showSpinner: false)
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else { return }
+                    await refreshTrash()
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else { return }
                 }
-                if let item, case let .sessionDelete(payload) = item.payload {
+                return
+            }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if let item {
+                if case let .sessionDelete(payload) = item.payload {
                     _ = routineUndo.discardPendingDelete(
                         SessionLogReceipt(
                             sessionID: payload.sessionID,
@@ -2759,6 +4057,105 @@ public final class AppModel: ObservableObject {
                     // durable delete intent restores the truthful server
                     // state immediately.
                     await refreshAll(showSpinner: false)
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else { return }
+                    return
+                }
+                if case let .recordingDelete(payload) = item.payload {
+                    let terminalOperation = await queue.terminalizedToken(
+                        for: payload.recordingID,
+                        accountUserID: userID
+                    )
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else { return }
+                    let tombstone = recordingEditCoordinator.tombstoneToken(
+                        recordingID: payload.recordingID
+                    )
+                    if RecordingDeleteDiscardPolicy.ownsExactDelete(
+                        operationID: payload.operationID,
+                        tombstone: tombstone,
+                        terminalOperationID: terminalOperation
+                    ) {
+                        if terminalOperation == payload.operationID {
+                            guard try await queue.clearTerminalized(
+                                key: payload.recordingID,
+                                accountUserID: userID,
+                                expectedOperationID: payload.operationID
+                            ) else {
+                                throw NSError(
+                                    domain: "SendmeterNative",
+                                    code: 9,
+                                    userInfo: [NSLocalizedDescriptionKey: "The recording delete changed before it was discarded."]
+                                )
+                            }
+                            guard accountFetch.canApply(
+                                to: currentUserID,
+                                accountEpoch: accountEpoch
+                            ) else { return }
+                        }
+                        if let tombstone, tombstone.id == payload.operationID {
+                            _ = recordingEditCoordinator.clearDelete(
+                                tombstone,
+                                currentUserID: currentUserID,
+                                accountEpoch: accountEpoch
+                            )
+                        }
+                    }
+                    // A quarantined terminal delete has an unknown backend
+                    // outcome. Clear only its exact local ownership above,
+                    // then refetch both active and trash lists so the UI tells
+                    // the truth instead of guessing that discard restored it.
+                    await refreshAll(showSpinner: false)
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else { return }
+                    await refreshTrash()
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else { return }
+                    toastMessage = "Force recording delete discarded; state refreshed."
+                    return
+                }
+                if case let .recordingEdit(edit) = item.payload {
+                    if pendingRecordingEdits[edit.recordingID] == edit {
+                        pendingRecordingEdits.removeValue(forKey: edit.recordingID)
+                    }
+                    if let sessionID = edit.sessionID,
+                       pendingSessionRPEEdits[sessionID] == edit {
+                        pendingSessionRPEEdits.removeValue(forKey: sessionID)
+                        if let base = pendingSessionRPEBases.removeValue(forKey: sessionID) {
+                            replaceSession(base)
+                        }
+                    }
+                    // The rejected edit may have been visible optimistically;
+                    // the server row is authoritative after the user discards
+                    // it. A refresh also handles a session RPE overlay.
+                    await refreshAll(showSpinner: false)
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else { return }
+                    return
+                }
+                if case let .sessionRPEEdit(edit) = item.payload {
+                    if let sessionID = edit.sessionID,
+                       pendingSessionRPEEdits[sessionID] == edit {
+                        pendingSessionRPEEdits.removeValue(forKey: sessionID)
+                        if let base = pendingSessionRPEBases.removeValue(forKey: sessionID) {
+                            replaceSession(base)
+                        }
+                    }
+                    await refreshAll(showSpinner: false)
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else { return }
                     return
                 }
                 let affectedKey: TagCurveKey? = {
@@ -2768,7 +4165,7 @@ public final class AppModel: ObservableObject {
                             modality: GaugeSessionRPE.modality(of: existing)
                         )
                     }
-                    if let item, case let .recording(recording) = item.payload {
+                    if case let .recording(recording) = item.payload {
                         let pending = pendingRecording(from: recording)
                         return TagCurveKey(
                             tag: pending.tag,
@@ -2793,9 +4190,14 @@ public final class AppModel: ObservableObject {
                 }
             }
         } catch {
-            surface(error)
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
-        await refreshQueueCount()
+        await refreshQueueCount(for: accountFetch)
     }
 
     private func refreshQueueCount(for accountFetch: AccountScopedFetch? = nil) async {
@@ -3094,7 +4496,37 @@ public final class AppModel: ObservableObject {
         remoteSessionIDs: Set<UUID>,
         remoteRecordingIDs: Set<UUID>
     ) async {
-        guard let queue else { return }
+        guard let queued = await migrateLegacyRecordingEdits(
+            userID: userID,
+            capturedBy: accountFetch
+        ) else {
+            return
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        if let queue {
+            let orderingFloor = await queue.orderingFloor(for: userID)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if let orderingFloor {
+                recordingEditCoordinator.observe(orderingFloor: orderingFloor)
+            }
+            let terminalizedKeys = await queue.terminalizedKeys(for: userID)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            for recordingID in terminalizedKeys {
+                _ = recordingEditCoordinator.ensureDelete(
+                    recordingID: recordingID,
+                    capturedBy: accountFetch
+                )
+            }
+        }
         // #675 F1: restore BOTH the active entries AND the quarantined ones.
         // A quarantined write is data the user still owns — it is on device,
         // was permanently rejected, and must stay visible in History/Force
@@ -3104,7 +4536,6 @@ public final class AppModel: ObservableObject {
         // is badged `rejected`, never "Syncing" — it will NOT upload on its
         // own. The hot drain path never sees these (only the Settings
         // Retry/Discard actions touch them).
-        let queued = await queue.items(for: userID, includeQuarantined: true)
         // `queue.items` is an async boundary. The account may have switched
         // while it was suspended; no pending state, including routine Undo,
         // may be mutated by that stale restore.
@@ -3119,7 +4550,8 @@ public final class AppModel: ObservableObject {
         }
         let restoredRecordings = queued.compactMap { item -> PendingRecordingOverlay.Entry? in
             guard case let .recording(recording) = item.payload,
-                  !remoteRecordingIDs.contains(recording.id)
+                  !remoteRecordingIDs.contains(recording.id),
+                  !recordingEditCoordinator.isDeleted(recording.id)
             else { return nil }
             return PendingRecordingOverlay.Entry(
                 accountUserID: item.accountUserID,
@@ -3147,15 +4579,54 @@ public final class AppModel: ObservableObject {
         // overlap in the queue; the delete must win before any optimistic row
         // is rebuilt from the insert payload.
         for item in queued {
-            guard case let .sessionDelete(payload) = item.payload else { continue }
-            routineUndo.restorePendingDelete(
-                SessionLogReceipt(
-                    sessionID: payload.sessionID,
-                    accountUserID: item.accountUserID
-                ),
-                currentUserID: currentUserID
-            )
+            switch item.payload {
+            case let .sessionDelete(payload):
+                routineUndo.restorePendingDelete(
+                    SessionLogReceipt(
+                        sessionID: payload.sessionID,
+                        accountUserID: item.accountUserID
+                    ),
+                    currentUserID: currentUserID
+                )
+            case let .recordingDelete(payload):
+                if let sessionID = payload.sessionID, let queue {
+                    do {
+                        guard try await queue.protectOrderingIdentity(
+                            queueItemID: RecordingEditQueueIdentity.sessionRPE(sessionID),
+                            accountUserID: userID,
+                            terminalKey: payload.recordingID,
+                            terminalItemID: item.id
+                        ) else {
+                            surface(NSError(
+                                domain: "SendmeterNative",
+                                code: 10,
+                                userInfo: [NSLocalizedDescriptionKey: "Recording delete ordering proof could not be restored."]
+                            ))
+                            return
+                        }
+                        guard accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ) else { return }
+                    } catch {
+                        if accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ) {
+                            surface(error)
+                        }
+                        return
+                    }
+                }
+                _ = recordingEditCoordinator.ensureDelete(
+                    recordingID: payload.recordingID,
+                    capturedBy: accountFetch
+                )
+            default:
+                continue
+            }
         }
+        var restoredSessionRPECandidates: [UUID: [RecordingEditQueueCandidate]] = [:]
         for item in queued {
             let rejected = item.quarantined != nil
             switch item.payload {
@@ -3176,12 +4647,62 @@ public final class AppModel: ObservableObject {
                 )
             case .sessionDelete:
                 continue
+            case .recordingDelete:
+                continue
             case let .workout(draft):
                 guard !remoteSessionIDs.contains(draft.sessionID) else { continue }
                 pendingSessions[draft.sessionID] = pendingSession(from: draft, rejected: rejected)
             case .recording:
+                // Recording inserts were restored into the account-scoped
+                // overlay before this switch.
+                continue
+            case let .recordingEdit(edit):
+                // The edit is an overlay, not a second recording placeholder:
+                // the base row may already be on the server, or may still be
+                // rebuilt from a queued insert in the pass above.
+                guard !recordingEditCoordinator.isDeleted(edit.recordingID) else {
+                    continue
+                }
+                recordingEditCoordinator.observe(
+                    sessionRPERevision: item.orderingKey == 0
+                        ? edit.sessionRPERevision
+                        : item.orderingKey,
+                    createdAt: item.createdAt
+                )
+                pendingRecordingEdits[edit.recordingID] = edit
+                if let sessionID = edit.sessionID, edit.sessionRPE != nil {
+                    pendingSessionRPEEdits[sessionID] = edit
+                }
+            case let .sessionRPEEdit(edit):
+                guard !recordingEditCoordinator.isDeleted(edit.recordingID) else {
+                    continue
+                }
+                if let sessionID = edit.sessionID, edit.sessionRPE != nil {
+                    recordingEditCoordinator.observe(
+                        sessionRPERevision: item.orderingKey == 0
+                            ? edit.sessionRPERevision
+                            : item.orderingKey,
+                        createdAt: item.createdAt
+                    )
+                    restoredSessionRPECandidates[sessionID, default: []].append(
+                        RecordingEditQueueCandidate(
+                            edit: edit,
+                            queueItemID: item.id,
+                            createdAt: item.createdAt,
+                            nextAttemptAt: item.nextAttemptAt
+                        )
+                    )
+                }
+            }
+        }
+        for (sessionID, candidates) in restoredSessionRPECandidates {
+            guard let authoritative = RecordingEditMigration.authoritativeSessionRPE(
+                sessionID: sessionID,
+                candidates: candidates
+            ), !recordingEditCoordinator.isDeleted(authoritative.edit.recordingID) else {
                 continue
             }
+            pendingSessionRPEEdits[sessionID] = authoritative.edit
         }
     }
 
@@ -3230,6 +4751,56 @@ public final class AppModel: ObservableObject {
         )
     }
 
+    /// Apply a recording edit synchronously, before the first queue await, so
+    /// History reflects the user's choice even when the network is offline.
+    /// The same reducer is replayed over a fresh server fetch after relaunch.
+    private func applyPendingRecordingEdit(_ edit: RecordingEdit) {
+        let previousEdit = pendingRecordingEdits[edit.recordingID]
+        pendingRecordingEdits[edit.recordingID] = edit
+        if let previousEdit,
+           previousEdit.sessionID != edit.sessionID,
+           let previousSessionID = previousEdit.sessionID,
+           pendingSessionRPEEdits[previousSessionID] == previousEdit {
+            pendingSessionRPEEdits.removeValue(forKey: previousSessionID)
+            pendingSessionRPEBases.removeValue(forKey: previousSessionID)
+        }
+        if let sessionID = edit.sessionID, edit.sessionRPE != nil {
+            if pendingSessionRPEEdits[sessionID] == nil,
+               let base = sessions.first(where: { $0.id == sessionID && !$0.pending }) {
+                pendingSessionRPEBases[sessionID] = base
+            }
+            pendingSessionRPEEdits[sessionID] = edit
+        }
+
+        if let index = recordings.firstIndex(where: { $0.id == edit.recordingID }) {
+            recordings[index] = RecordingEditReducer.apply(edit, to: recordings[index])
+        }
+        if let sessionID = edit.sessionID,
+           let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+            sessions[index] = RecordingEditReducer.apply(edit, to: sessions[index])
+        }
+    }
+
+    private func rollbackPendingRecordingEdit(
+        _ edit: RecordingEdit,
+        previousRecording: TindeqRecording,
+        previousSession: SendmeterCore.Session?
+    ) {
+        if pendingRecordingEdits[edit.recordingID] == edit {
+            pendingRecordingEdits.removeValue(forKey: edit.recordingID)
+            replaceRecording(previousRecording)
+        }
+        if let sessionID = edit.sessionID,
+           pendingSessionRPEEdits[sessionID] == edit {
+            pendingSessionRPEEdits.removeValue(forKey: sessionID)
+            if let base = pendingSessionRPEBases.removeValue(forKey: sessionID) {
+                replaceSession(base)
+            } else if let previousSession {
+                replaceSession(previousSession)
+            }
+        }
+    }
+
     private func pendingRecording(from recording: NewTindeqRecording, rejected: Bool = false) -> TindeqRecording {
         TindeqRecording(
             id: recording.id,
@@ -3269,12 +4840,21 @@ public final class AppModel: ObservableObject {
 
     private func mergeRecordings(remote: [TindeqRecording]) {
         let previous = recordings
-        let remoteIDs = Set(remote.map(\.id))
+        let visibleRemote = remote.filter {
+            !recordingEditCoordinator.isDeleted($0.id)
+        }
+        let remoteIDs = Set(visibleRemote.map(\.id))
         if let currentUserID {
             pendingRecordings.removeValues(withIDs: remoteIDs, accountUserID: currentUserID)
         }
         recordings = pendingRecordings
-            .merged(remote: remote, accountUserID: currentUserID)
+            .merged(remote: visibleRemote, accountUserID: currentUserID)
+            .filter { !recordingEditCoordinator.isDeleted($0.id) }
+            .map { recording in
+                pendingRecordingEdits[recording.id].map {
+                    RecordingEditReducer.apply($0, to: recording)
+                } ?? recording
+            }
             .sorted { $0.recordedAt > $1.recordedAt }
         let affectedKeys = changedTagCurveKeys(before: previous, after: recordings)
         invalidateTagCurveKeys(affectedKeys)
@@ -3289,7 +4869,17 @@ public final class AppModel: ObservableObject {
         }
         let remoteIDs = Set(visibleRemote.map(\.id))
         for id in remoteIDs { pendingSessions.removeValue(forKey: id) }
+        for session in visibleRemote
+            where pendingSessionRPEEdits[session.id] != nil
+                && pendingSessionRPEBases[session.id] == nil {
+            pendingSessionRPEBases[session.id] = session
+        }
         sessions = (visibleRemote + pendingSessions.values.filter { !remoteIDs.contains($0.id) })
+            .map { session in
+                pendingSessionRPEEdits[session.id].map {
+                    RecordingEditReducer.apply($0, to: session)
+                } ?? session
+            }
             .sorted {
                 if $0.date != $1.date { return $0.date > $1.date }
                 return $0.id.uuidString > $1.id.uuidString
@@ -3303,7 +4893,10 @@ public final class AppModel: ObservableObject {
     private func replaceSession(_ session: SendmeterCore.Session) {
         pendingSessions.removeValue(forKey: session.id)
         sessions.removeAll { $0.id == session.id }
-        sessions.append(session)
+        let visible = pendingSessionRPEEdits[session.id].map {
+            RecordingEditReducer.apply($0, to: session)
+        } ?? session
+        sessions.append(visible)
         sessions.sort {
             if $0.date != $1.date { return $0.date > $1.date }
             return $0.id.uuidString > $1.id.uuidString
@@ -3312,10 +4905,17 @@ public final class AppModel: ObservableObject {
     }
 
     private func replaceRecording(_ recording: TindeqRecording) {
+        guard !recordingEditCoordinator.isDeleted(recording.id) else {
+            recordings.removeAll { $0.id == recording.id }
+            return
+        }
         let previousRecording = recordings.first(where: { $0.id == recording.id })
         let previous = recordings
         recordings.removeAll { $0.id == recording.id }
-        recordings.append(recording)
+        let visible = pendingRecordingEdits[recording.id].map {
+            RecordingEditReducer.apply($0, to: recording)
+        } ?? recording
+        recordings.append(visible)
         recordings.sort { $0.recordedAt > $1.recordedAt }
         let oldKey = previousRecording.map {
             TagCurveKey(
@@ -3428,6 +5028,16 @@ public final class AppModel: ObservableObject {
         pendingSessions = [:]
         pendingRecordings = PendingRecordingOverlay()
         pendingCurveSamples = [:]
+        pendingRecordingEdits = [:]
+        pendingSessionRPEEdits = [:]
+        pendingSessionRPEBases = [:]
+        let staleRPEWaiters = sessionRPEWaiters.values.flatMap { $0 }
+        sessionRPEWaiters.removeAll()
+        for waiter in staleRPEWaiters { waiter.resume() }
+        let staleQueueUploadWaiters = queueUploadWaiters.values.flatMap { $0 }
+        queueUploadWaiters.removeAll()
+        for waiter in staleQueueUploadWaiters { waiter.resume() }
+        recordingEditCoordinator.resetAccountScopedState()
         routineUndo.reset()
         // Upload claims belong to their in-flight tasks, not to the loaded UI
         // snapshot. Keep them until upload's defer releases them: an A→B→A
