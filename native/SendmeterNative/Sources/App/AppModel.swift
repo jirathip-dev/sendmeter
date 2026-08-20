@@ -1605,8 +1605,9 @@ public final class AppModel: ObservableObject {
             accountFetch: accountFetch,
             generation: generation
         )
-        let task = Task { [weak self] in
-            await self?.runTagCurveWarm(key: key, request: request)
+        let task: Task<Void, Never> = Task { [weak self] in
+            guard let self else { return }
+            await self.runTagCurveWarm(key: key, request: request)
         }
         tagCurveWarmTasks[key] = task
         tagCurveWarmTaskGenerations[key] = generation
