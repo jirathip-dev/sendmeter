@@ -96,6 +96,18 @@ struct ForceView: View {
         return ZoneCurveInput(curve)
     }
 
+    /// The native analysis card uses the same all-sides static curve that is
+    /// warmed for the session-end RPE prediction. It is intentionally read
+    /// from the published cache rather than fitting in the view body.
+    private var forceCurve: ForceCurveModel? {
+        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return nil }
+        return model.tagCurves.first(where: {
+            $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
+                && $0.modality == "static"
+        })?.forceCurveModel
+    }
+
     /// The zone stamped onto recordings saved under the current selection:
     /// the armed Focus-Next quality wins (a guided run's holds carry the zone
     /// they were performed under as a fact — #653 review finding 1), otherwise
@@ -190,6 +202,14 @@ struct ForceView: View {
                         hiddenTags: model.hiddenTagNames,
                         hasLoadedRecordings: model.hasLoadedRecordings
                     )
+
+                    if !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        NativeForceCurveCard(
+                            tag: tag,
+                            model: forceCurve,
+                            hasLoadedRecordings: model.hasLoadedRecordings
+                        )
+                    }
 
                     // #653: training balance + Focus Next for the active
                     // exercise (both sides), arming the recommended zone's

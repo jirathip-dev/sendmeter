@@ -19,13 +19,26 @@ public struct TagForceCurve: Codable, Equatable, Sendable {
     /// The fit's maximum short-window force (web `maxF`) — the cap on the
     /// predicted 5s peak. Optional for pre-#653 cache shapes.
     public let maxForceKilograms: Double?
+    /// Full static/movement curve for the native analysis card. The RPE
+    /// prediction only needs `cf`/`wPrime`; keeping the fitted model here
+    /// lets the Force tab render the same confidence band without fitting a
+    /// second time.
+    public let forceCurveModel: ForceCurveModel?
 
-    public init(tag: String, modality: String, cf: Double, wPrime: Double, maxForceKilograms: Double? = nil) {
+    public init(
+        tag: String,
+        modality: String,
+        cf: Double,
+        wPrime: Double,
+        maxForceKilograms: Double? = nil,
+        forceCurveModel: ForceCurveModel? = nil
+    ) {
         self.tag = tag
         self.modality = modality
         self.cf = cf
         self.wPrime = wPrime
         self.maxForceKilograms = maxForceKilograms
+        self.forceCurveModel = forceCurveModel
     }
 }
 
@@ -70,6 +83,10 @@ public enum GaugeSessionRPE {
         recording.protocolMode == .reverseAction ? "reverse_action" : "static"
     }
 
+    private static func normalizedTag(_ tag: String) -> String {
+        tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     /// The web's per-rep tag→curve lookup (`predictGaugeSessionRpe`): each rep
     /// is measured against ITS OWN tag's curve for that rep's modality.
     public static func predict(
@@ -77,13 +94,13 @@ public enum GaugeSessionRPE {
         curves: [TagForceCurve]
     ) -> GaugeSessionRPEPrediction {
         let byTagModality = Dictionary(
-            curves.map { ("\($0.tag)|\($0.modality)", $0) },
+            curves.map { ("\(normalizedTag($0.tag))|\($0.modality)", $0) },
             uniquingKeysWith: { first, _ in first }
         )
         let effortReps = recordings.compactMap { recording -> DepletionRep? in
             let isEffort = recording.zone != .prehab
             guard isEffort else { return nil }
-            let key = "\(recording.tag)|\(modality(of: recording))"
+            let key = "\(normalizedTag(recording.tag))|\(modality(of: recording))"
             let curve = byTagModality[key]
             return DepletionRep(
                 peakKg: recording.peakKilograms ?? 0,

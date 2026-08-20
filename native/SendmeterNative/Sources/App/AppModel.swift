@@ -137,10 +137,7 @@ public struct FreePullContext: Sendable, Equatable {
     }
 }
 
-private struct TagCurveKey: Hashable {
-    let tag: String
-    let modality: String
-}
+private typealias TagCurveKey = TagCurveCacheKey
 
 @MainActor
 public final class AppModel: ObservableObject {
@@ -345,9 +342,16 @@ public final class AppModel: ObservableObject {
     private let reconcileCoalescer = RealtimeRefreshCoalescer()
     private var reconcileFlushTask: Task<Void, Never>?
     private var tagCurveCache: [TagCurveKey: TagForceCurve] = [:]
+    private var tagCurveGenerations = TagCurveCacheGenerationIndex()
+    private var tagCurveBandGenerations: [TagCurveKey: UInt64] = [:]
     private var keepAwakeRelease: (() -> Void)?
-    private var pendingWarmKeys: [TagCurveKey: AccountScopedFetch] = [:]
-    private var warmTask: Task<Void, Never>?
+    private var tagCurveWarmTasks: [TagCurveKey: Task<Void, Never>] = [:]
+    private var tagCurveWarmTaskGenerations: [TagCurveKey: UInt64] = [:]
+    /// Samples for optimistic rows (and restored queue rows) are retained
+    /// separately because TindeqRecording is metadata-only. This is what lets
+    /// the point-estimate RPE fit include a just-saved rep before its network
+    /// insert has reconciled.
+    private var pendingCurveSamples: [UUID: [TindeqSample]] = [:]
 
     public init(
         auth: AuthService? = nil,
@@ -914,6 +918,11 @@ public final class AppModel: ObservableObject {
                 accountEpoch: accountEpoch
             ) {
                 mergeSessions(remote: fetchedSessions)
+                // This is the explicit authoritative refresh boundary. A
+                // server sample blob can change without metadata changing, so
+                // refreshAll is allowed to invalidate every fit; realtime
+                // rep reconciliation below stays key-scoped.
+                invalidateTagCurveCache()
                 mergeRecordings(remote: fetchedRecordings)
                 hasLoadedRecordings = true
             }
@@ -957,7 +966,7 @@ public final class AppModel: ObservableObject {
                 )
             )
         }
-        for key in keys where tagCurveCache[key] == nil {
+        for key in keys {
             warmTagCurveIfMissing(
                 tag: key.tag,
                 modality: key.modality,
@@ -1379,12 +1388,29 @@ public final class AppModel: ObservableObject {
             completionStatus: completionStatus
         )
         let optimistic = pendingRecording(from: recording)
+        let savedKey = TagCurveKey(
+            tag: recording.tag,
+            modality: GaugeSessionRPE.modality(of: optimistic)
+        )
+        // Keep the just-captured samples beside the metadata-only optimistic
+        // row. This is the only local copy available before the queue upload
+        // has reconciled, and it must participate in the point estimate used
+        // by the session-end RPE lookup.
+        pendingCurveSamples[recording.id] = recording.samples
         pendingRecordings.insert(optimistic, accountUserID: userID)
+        invalidateTagCurveKeys([savedKey])
         mergeRecordings(
             remote: recordings.filter {
                 !pendingRecordings.contains(id: $0.id, accountUserID: userID)
             }
         )
+        await refreshTagCurvesForRPE(
+            keys: [savedKey],
+            capturedBy: accountFetch
+        )
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+            return .stale
+        }
         let item = DurableQueueItem(
             id: recording.id,
             accountUserID: userID,
@@ -1401,20 +1427,21 @@ public final class AppModel: ObservableObject {
             // `surfaceLostRecordingNoticeIfAny` shows it on next foreground.
             LostRecordingStore.note(reason: "recording", in: .standard)
             pendingRecordings.removeValue(for: recording.id, accountUserID: userID)
+            pendingCurveSamples.removeValue(forKey: recording.id)
+            invalidateTagCurveKeys([savedKey])
             mergeRecordings(
                 remote: recordings.filter {
                     !pendingRecordings.contains(id: $0.id, accountUserID: userID)
                 }
             )
+            await refreshTagCurvesForRPE(
+                keys: [savedKey],
+                capturedBy: accountFetch
+            )
         }
-        // #627: warm the tag's fitted curve in the background so the
-        // session-end prediction reads a cached curve instead of fetching.
-        let savedModality = recording.protocolMode == .reverseAction ? "reverse_action" : "static"
-        warmTagCurveIfMissing(
-            tag: recording.tag,
-            modality: savedModality,
-            capturedBy: accountFetch
-        )
+        // The point fit above is awaited before the save gate finishes. The
+        // chart-only band is already queued for this key and is allowed to
+        // replace that point estimate in the background.
         return enqueued ? .saved : .failed
     }
 
@@ -1588,7 +1615,7 @@ public final class AppModel: ObservableObject {
                 tag: recording.tag,
                 modality: GaugeSessionRPE.modality(of: recording)
             )
-            guard !recording.tag.isEmpty, !seen.contains(key) else { return nil }
+            guard !key.tag.isEmpty, !seen.contains(key) else { return nil }
             seen.insert(key)
             return tagCurveCache[key]
         }
@@ -1596,9 +1623,9 @@ public final class AppModel: ObservableObject {
 
     /// Background-warm the tag's fitted curve (mirrors the web's cached
     /// `fetchTagCurves()` registry): computed from the native recordings via
-    /// ForceCurveEngine, cached per tag+modality. Requests are queued and
-    /// drained by ONE background task, so a burst (refreshAll warming every
-    /// tag at once) warms them all instead of cancelling down to the last.
+    /// ForceCurveEngine, cached per tag+modality. Each key owns its task, so a
+    /// new rep only cancels/restarts the affected fit instead of discarding
+    /// unrelated tags' work.
     public func warmTagCurveIfMissing(tag: String, modality: String) {
         guard let userID = currentUserID else { return }
         warmTagCurveIfMissing(
@@ -1619,43 +1646,68 @@ public final class AppModel: ObservableObject {
         guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
             return
         }
-        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !normalized.isEmpty, !modality.isEmpty else { return }
         let key = TagCurveKey(tag: tag, modality: modality)
-        guard tagCurveCache[key] == nil else { return }
-        pendingWarmKeys[key] = accountFetch
-        guard warmTask == nil else { return }
-        warmTask = Task { [weak self] in
-            await self?.drainWarmQueue()
+        guard !key.tag.isEmpty, !key.modality.isEmpty else { return }
+        let generation = tagCurveGenerations.generation(for: key)
+        // A chart fit that completed with no capability model is still a
+        // completed answer for this generation. It must not be retried on
+        // every view update until the next input invalidation.
+        guard tagCurveBandGenerations[key] != generation,
+              tagCurveWarmTasks[key] == nil
+        else { return }
+        let request = TagCurveCacheRequest(
+            accountFetch: accountFetch,
+            generation: generation
+        )
+        let task: Task<Void, Never> = Task { [weak self] in
+            guard let self else { return }
+            await self.runTagCurveWarm(key: key, request: request)
         }
+        tagCurveWarmTasks[key] = task
+        tagCurveWarmTaskGenerations[key] = generation
     }
 
-    private func drainWarmQueue() async {
-        defer { warmTask = nil }
-        while !Task.isCancelled {
-            let requests = pendingWarmKeys
-            pendingWarmKeys = [:]
-            guard !requests.isEmpty else { return }
-            for (key, accountFetch) in requests {
-                guard !Task.isCancelled else { return }
-                guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
-                    continue
-                }
-                let normalized = key.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                if let curve = await computeTagCurve(
-                    tag: key.tag,
-                    modality: key.modality,
-                    normalizedTag: normalized
-                ) {
-                    _ = accountFetch.publishIfCurrent(
-                        to: currentUserID,
-                        accountEpoch: accountEpoch
-                    ) {
-                        tagCurveCache[key] = curve
-                        publishTagCurves()
-                    }
-                }
+    private func runTagCurveWarm(
+        key: TagCurveKey,
+        request: TagCurveCacheRequest
+    ) async {
+        defer {
+            if tagCurveWarmTaskGenerations[key] == request.generation {
+                tagCurveWarmTaskGenerations.removeValue(forKey: key)
+                tagCurveWarmTasks.removeValue(forKey: key)
             }
+        }
+        guard request.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch,
+            currentGeneration: tagCurveGenerations.generation(for: key)
+        ) else { return }
+        let curve = await computeTagCurve(
+            key: key,
+            purpose: .chartBand
+        )
+        guard !Task.isCancelled,
+              request.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch,
+                  currentGeneration: tagCurveGenerations.generation(for: key)
+              )
+        else { return }
+        _ = request.accountFetch.publishIfCurrent(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) {
+            if let curve {
+                tagCurveCache[key] = curve
+            } else if tagCurveCache[key] == nil {
+                // A chart-only fetch/fit failure must not erase the awaited
+                // point estimate that the save path already made available
+                // to synchronous RPE. It will be replaced on the next input
+                // invalidation or authoritative refresh.
+                tagCurveCache.removeValue(forKey: key)
+            }
+            tagCurveBandGenerations[key] = request.generation
+            publishTagCurves()
         }
     }
 
@@ -1665,15 +1717,88 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// Rebuilds only the point estimate needed by the synchronous RPE lookup.
+    /// The 200-resample display band is deliberately scheduled separately so
+    /// a rep save never pays that chart-only cost before the session-end gate
+    /// releases.
+    private func refreshTagCurvesForRPE(
+        keys: Set<TagCurveKey>,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async {
+        for key in keys.sorted(by: tagCurveKeySort) {
+            guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+                return
+            }
+            let request = TagCurveCacheRequest(
+                accountFetch: accountFetch,
+                generation: tagCurveGenerations.generation(for: key)
+            )
+            let curve = await computeTagCurve(
+                key: key,
+                purpose: .pointEstimate
+            )
+            guard request.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch,
+                currentGeneration: tagCurveGenerations.generation(for: key)
+            ) else { continue }
+            _ = request.accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                if let curve {
+                    tagCurveCache[key] = curve
+                } else {
+                    // A current no-fit result must remove an old curve rather
+                    // than leave stale CF/W′/Max values on the Force card.
+                    tagCurveCache.removeValue(forKey: key)
+                }
+                // A point estimate is not a completed chart fit. The next
+                // line schedules the band-only replacement for this key.
+                tagCurveBandGenerations.removeValue(forKey: key)
+                publishTagCurves()
+            }
+            warmTagCurveIfMissing(
+                tag: key.tag,
+                modality: key.modality,
+                capturedBy: accountFetch
+            )
+        }
+    }
+
+    private func tagCurveKeySort(_ lhs: TagCurveKey, _ rhs: TagCurveKey) -> Bool {
+        lhs.tag < rhs.tag || (lhs.tag == rhs.tag && lhs.modality < rhs.modality)
+    }
+
     private func computeTagCurve(
-        tag: String,
-        modality: String,
-        normalizedTag: String
+        key: TagCurveKey,
+        purpose: TagCurveFitPurpose
     ) async -> TagForceCurve? {
-        let byTag = recordings.filter {
-            $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedTag
-                && !pendingRecordings.contains(id: $0.id, accountUserID: currentUserID)
-                && modalityFilter($0, modality: modality)
+        let recordingsSnapshot = recordings
+        let pendingIDs = Set(
+            recordingsSnapshot.compactMap { recording in
+                pendingRecordings.contains(id: recording.id, accountUserID: currentUserID)
+                    ? recording.id
+                    : nil
+            }
+        )
+        let locallyAvailableSampleIDs = Set(
+            pendingCurveSamples.compactMap { id, samples in
+                samples.isEmpty ? nil : id
+            }
+        )
+        let byTag = recordingsSnapshot.filter {
+            TagCurveKey(
+                tag: $0.tag,
+                modality: GaugeSessionRPE.modality(of: $0)
+            ) == key
+                && !$0.rejected
+                && TagCurveCachePolicy.includes(
+                    recordingID: $0.id,
+                    pendingIDs: pendingIDs,
+                    locallyAvailableSampleIDs: locallyAvailableSampleIDs
+                )
+                && modalityFilter($0, modality: key.modality)
                 // #651: warm-up/prehab (submaximal) and salvage blobs
                 // (inflated duration / deflated avg) corrupt CF/W′ — exclude
                 // them exactly like the web's `curveCandidateRecordings`.
@@ -1682,32 +1807,58 @@ public final class AppModel: ObservableObject {
         guard !byTag.isEmpty else { return nil }
         let candidates = ForceCurveEngine.pickCurveRecordings(byTag)
         guard !candidates.isEmpty else { return nil }
-        let sampleSets = await withTaskGroup(of: [TindeqSample]?.self) { group in
-            for candidate in candidates {
+        let repository = self.repository
+        let localSamples = pendingCurveSamples
+        let sampleSets = await withTaskGroup(of: ForceCurveSampleFetch.self) { group in
+            for (candidateIndex, candidate) in candidates.enumerated() {
                 group.addTask {
-                    let samples = try? await self.repository.fetchRecordingSamples(id: candidate.id)
-                    return (samples?.isEmpty == false) ? samples : nil
+                    if let samples = localSamples[candidate.id], !samples.isEmpty {
+                        return ForceCurveSampleFetch(
+                            candidateIndex: candidateIndex,
+                            samples: samples
+                        )
+                    }
+                    let samples = try? await repository.fetchRecordingSamples(id: candidate.id)
+                    return ForceCurveSampleFetch(
+                        candidateIndex: candidateIndex,
+                        samples: (samples?.isEmpty == false) ? samples : nil
+                    )
                 }
             }
-            var values: [[TindeqSample]] = []
+            var completed: [ForceCurveSampleFetch] = []
             for await result in group {
-                if let result { values.append(result) }
+                completed.append(result)
             }
-            return values
+            return ForceCurveEngine.orderedSampleSets(
+                candidateCount: candidates.count,
+                completed: completed
+            )
         }
-        guard !sampleSets.isEmpty else { return nil }
-        let references = await Task.detached(priority: .utility) {
-            ForceCurveEngine.references(metadata: byTag, sampleSets: sampleSets)
+        guard !Task.isCancelled, !sampleSets.isEmpty else { return nil }
+        let curveModel = await Task.detached(priority: .utility) {
+            ForceCurveEngine.compute(
+                recordings: sampleSets,
+                bootstrapSamples: purpose.bootstrapSamples
+            )
         }.value
-        guard let cf = references.criticalForceKilograms,
-              let wPrime = references.impulseAboveCriticalForceKilogramSeconds
+        guard !Task.isCancelled,
+              let curveModel,
+              let cf = curveModel.criticalForceKilograms,
+              let wPrime = curveModel.impulseAboveCriticalForceKilogramSeconds
         else { return nil }
+        let displayTag = recordingsSnapshot.first {
+            TagCurveKey(
+                tag: $0.tag,
+                modality: GaugeSessionRPE.modality(of: $0)
+            ) == key
+        }?.tag ?? key.tag
         return TagForceCurve(
-            tag: tag,
-            modality: modality,
+            tag: displayTag,
+            modality: key.modality,
             cf: cf,
             wPrime: wPrime,
-            maxForceKilograms: references.maximumForceKilograms
+            maxForceKilograms: curveModel.maximumForceKilograms,
+            forceCurveModel: curveModel
         )
     }
 
@@ -1816,6 +1967,20 @@ public final class AppModel: ObservableObject {
         } else {
             sessionRPERevision = nil
         }
+        // HistoryView passes its already-edited binding here. Capture the row
+        // that still owns the current cache key before the first await; using
+        // `recording` for both sides would lose Crimp when the draft is Pinch.
+        let authoritativeBefore = recordings.first(where: { $0.id == recording.id })
+        let authoritativeOldKey = authoritativeBefore.map {
+            TagCurveKey(
+                tag: $0.tag,
+                modality: GaugeSessionRPE.modality(of: $0)
+            )
+        }
+        let draftKey = TagCurveKey(
+            tag: recording.tag,
+            modality: GaugeSessionRPE.modality(of: recording)
+        )
         let edit = RecordingEdit(
             recordingID: recording.id,
             tag: recording.tag,
@@ -1880,11 +2045,28 @@ public final class AppModel: ObservableObject {
                 previousSession: previousSession
             )
         } else {
-            _ = await upload(metadataItem, capturedBy: accountFetch)
+            let metadataResult = await upload(metadataItem, capturedBy: accountFetch)
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
+            if metadataResult.uploaded {
+                let saved = recordings.first(where: { $0.id == recording.id }) ?? recording
+                let newKey = TagCurveKey(
+                    tag: saved.tag,
+                    modality: GaugeSessionRPE.modality(of: saved)
+                )
+                let keys = TagCurveCachePolicy.metadataEditKeys(
+                    authoritativeBefore: authoritativeOldKey,
+                    draft: draftKey,
+                    saved: newKey
+                )
+                await refreshTagCurvesForRPE(keys: keys, capturedBy: accountFetch)
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return }
+            }
             if let rpeItem {
                 _ = await upload(rpeItem, capturedBy: accountFetch)
                 guard accountFetch.canApply(
@@ -1900,6 +2082,10 @@ public final class AppModel: ObservableObject {
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
+        )
+        let key = TagCurveKey(
+            tag: recording.tag,
+            modality: GaugeSessionRPE.modality(of: recording)
         )
         guard let deleteToken = recordingEditCoordinator.beginDelete(
             recordingID: recording.id,
@@ -2042,6 +2228,7 @@ public final class AppModel: ObservableObject {
                 }
             }
             recordings.removeAll { $0.id == recording.id }
+            invalidateTagCurveKeys([key])
 
             let deleteCreatedAt = Date()
             let deleteItem = DurableQueueItem(
@@ -2105,6 +2292,14 @@ public final class AppModel: ObservableObject {
             if result.uploaded {
                 toastMessage = "Force recording moved to Trash."
             }
+            await refreshTagCurvesForRPE(
+                keys: [key],
+                capturedBy: accountFetch
+            )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
         } catch {
             guard accountFetch.canApply(
                 to: currentUserID,
@@ -2136,6 +2331,14 @@ public final class AppModel: ObservableObject {
                 }
             }
             replaceRecording(previousRecording)
+            await refreshTagCurvesForRPE(
+                keys: [key],
+                capturedBy: accountFetch
+            )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             surface(error)
         }
     }
@@ -2145,6 +2348,10 @@ public final class AppModel: ObservableObject {
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
+        )
+        let key = TagCurveKey(
+            tag: recording.tag,
+            modality: GaugeSessionRPE.modality(of: recording)
         )
         guard let restoreToken = recordingEditCoordinator.beginRestore(
             recordingID: recording.id,
@@ -2246,6 +2453,14 @@ public final class AppModel: ObservableObject {
             ) else { return }
             deletedRecordings.removeAll { $0.id == recording.id }
             await refreshAll(showSpinner: false)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            await refreshTagCurvesForRPE(
+                keys: [key],
+                capturedBy: accountFetch
+            )
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
@@ -3140,6 +3355,12 @@ public final class AppModel: ObservableObject {
                 completedDeleteReceipt = receipt
             case let .recording(recording):
                 let saved = try await self.repository.insertRecording(recording)
+                let oldKey = TagCurveKey(
+                    tag: recording.tag,
+                    modality: GaugeSessionRPE.modality(
+                        of: self.pendingRecording(from: recording)
+                    )
+                )
                 let publishedRecording = accountFetch.publishIfCurrent(
                     to: currentUserID,
                     accountEpoch: accountEpoch
@@ -3152,6 +3373,27 @@ public final class AppModel: ObservableObject {
                 }
                 guard publishedRecording else {
                     return UploadResult(uploaded: false, failure: nil)
+                }
+                let newKey = TagCurveKey(
+                    tag: saved.tag,
+                    modality: GaugeSessionRPE.modality(of: saved)
+                )
+                // The queue's network completion is another input boundary:
+                // an equal server row still replaces the optimistic fit, and
+                // a normalized/different row touches both old and new keys.
+                let affectedKeys = TagCurveCachePolicy.affectedKeys(
+                    old: oldKey,
+                    new: newKey
+                )
+                await refreshTagCurvesForRPE(
+                    keys: affectedKeys,
+                    capturedBy: accountFetch
+                )
+                if accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
+                    pendingCurveSamples.removeValue(forKey: recording.id)
                 }
             case let .recordingEdit(edit):
                 let savedRecording = try await self.repository.updateRecordingMeta(
@@ -3860,10 +4102,36 @@ public final class AppModel: ObservableObject {
                     ) else { return }
                     return
                 }
+                let affectedKey: TagCurveKey? = {
+                    if let existing = recordings.first(where: { $0.id == id }) {
+                        return TagCurveKey(
+                            tag: existing.tag,
+                            modality: GaugeSessionRPE.modality(of: existing)
+                        )
+                    }
+                    if let item, case let .recording(recording) = item.payload {
+                        let pending = pendingRecording(from: recording)
+                        return TagCurveKey(
+                            tag: pending.tag,
+                            modality: GaugeSessionRPE.modality(of: pending)
+                        )
+                    }
+                    return nil
+                }()
                 pendingSessions.removeValue(forKey: id)
                 pendingRecordings.removeValue(for: id, accountUserID: userID)
+                pendingCurveSamples.removeValue(forKey: id)
                 sessions.removeAll { $0.id == id }
+                let beforeCount = recordings.count
                 recordings.removeAll { $0.id == id }
+                let keys = affectedKey.map { Set([$0]) } ?? Set<TagCurveKey>()
+                if recordings.count != beforeCount || !keys.isEmpty {
+                    invalidateTagCurveKeys(keys)
+                    await refreshTagCurvesForRPE(
+                        keys: keys,
+                        capturedBy: accountFetch
+                    )
+                }
             }
         } catch {
             if accountFetch.canApply(
@@ -4124,6 +4392,7 @@ public final class AppModel: ObservableObject {
                     hasLoadedRecordings = true
                 }
                 guard publishedRecordings else { return }
+                warmTagCurvesIfMissing(capturedBy: accountFetch)
             }
             if slices.contains(.workouts) {
                 let fetchedWorkouts = try await repository.fetchWorkouts()
@@ -4212,6 +4481,9 @@ public final class AppModel: ObservableObject {
                   accountEpoch: self.accountEpoch
               )
         else { return }
+        for id in remoteRecordingIDs {
+            pendingCurveSamples.removeValue(forKey: id)
+        }
         let restoredRecordings = queued.compactMap { item -> PendingRecordingOverlay.Entry? in
             guard case let .recording(recording) = item.payload,
                   !remoteRecordingIDs.contains(recording.id),
@@ -4231,6 +4503,14 @@ public final class AppModel: ObservableObject {
             currentUserID: currentUserID,
             accountEpoch: self.accountEpoch
         ) else { return }
+        for item in queued {
+            guard case let .recording(recording) = item.payload,
+                  item.quarantined == nil,
+                  !remoteRecordingIDs.contains(recording.id),
+                  !recording.samples.isEmpty
+            else { continue }
+            pendingCurveSamples[recording.id] = recording.samples
+        }
         // Read delete intents first. A session insert and its Undo delete can
         // overlap in the queue; the delete must win before any optimistic row
         // is rebuilt from the insert payload.
@@ -4466,6 +4746,7 @@ public final class AppModel: ObservableObject {
     }
 
     private func mergeRecordings(remote: [TindeqRecording]) {
+        let previous = recordings
         let visibleRemote = remote.filter {
             !recordingEditCoordinator.isDeleted($0.id)
         }
@@ -4482,6 +4763,8 @@ public final class AppModel: ObservableObject {
                 } ?? recording
             }
             .sorted { $0.recordedAt > $1.recordedAt }
+        let affectedKeys = changedTagCurveKeys(before: previous, after: recordings)
+        invalidateTagCurveKeys(affectedKeys)
     }
 
     private func mergeSessions(remote: [SendmeterCore.Session]) {
@@ -4533,12 +4816,104 @@ public final class AppModel: ObservableObject {
             recordings.removeAll { $0.id == recording.id }
             return
         }
+        let previousRecording = recordings.first(where: { $0.id == recording.id })
+        let previous = recordings
         recordings.removeAll { $0.id == recording.id }
         let visible = pendingRecordingEdits[recording.id].map {
             RecordingEditReducer.apply($0, to: recording)
         } ?? recording
         recordings.append(visible)
         recordings.sort { $0.recordedAt > $1.recordedAt }
+        let oldKey = previousRecording.map {
+            TagCurveKey(
+                tag: $0.tag,
+                modality: GaugeSessionRPE.modality(of: $0)
+            )
+        }
+        let newKey = TagCurveKey(
+            tag: recording.tag,
+            modality: GaugeSessionRPE.modality(of: recording)
+        )
+        // Do this even when the server returned metadata equal to the
+        // optimistic row. Its samples are a new fit input boundary, and the
+        // old cache may have been built before this recording existed.
+        if recordings != previous || previousRecording != nil {
+            invalidateTagCurveKeys(
+                TagCurveCachePolicy.affectedKeys(old: oldKey, new: newKey)
+            )
+        }
+    }
+
+    private func changedTagCurveKeys(
+        before: [TindeqRecording],
+        after: [TindeqRecording]
+    ) -> Set<TagCurveKey> {
+        let oldByID = Dictionary(uniqueKeysWithValues: before.map { ($0.id, $0) })
+        let newByID = Dictionary(uniqueKeysWithValues: after.map { ($0.id, $0) })
+        let ids = Set(oldByID.keys).union(newByID.keys)
+        var keys = Set<TagCurveKey>()
+        for id in ids {
+            let old = oldByID[id]
+            let new = newByID[id]
+            guard old != new else { continue }
+            let oldKey = old.map {
+                TagCurveKey(
+                    tag: $0.tag,
+                    modality: GaugeSessionRPE.modality(of: $0)
+                )
+            }
+            let newKey = new.map {
+                TagCurveKey(
+                    tag: $0.tag,
+                    modality: GaugeSessionRPE.modality(of: $0)
+                )
+            }
+            keys.formUnion(TagCurveCachePolicy.affectedKeys(old: oldKey, new: newKey))
+        }
+        return keys
+    }
+
+    /// Drop only the affected fitted curves. An old fit may still be
+    /// suspended in `computeTagCurve`; its per-key request stamp is rejected
+    /// on resume, and its task is cancelled where the repository permits it.
+    /// Clearing the published entries prevents stale Max/CF/W′ while the
+    /// replacement point estimate or chart fit is pending.
+    private func invalidateTagCurveKeys(_ keys: Set<TagCurveKey>) {
+        guard !keys.isEmpty else { return }
+        tagCurveGenerations.invalidate(keys)
+        for key in keys {
+            tagCurveWarmTasks[key]?.cancel()
+            tagCurveWarmTasks.removeValue(forKey: key)
+            tagCurveWarmTaskGenerations.removeValue(forKey: key)
+            tagCurveCache.removeValue(forKey: key)
+            tagCurveBandGenerations.removeValue(forKey: key)
+            tagCurves.removeAll {
+                TagCurveKey(tag: $0.tag, modality: $0.modality) == key
+            }
+        }
+        publishTagCurves()
+    }
+
+    /// Full refresh/account reset invalidation remains broader by design, but
+    /// still advances every known key so an old task cannot publish after the
+    /// snapshot is replaced.
+    private func invalidateTagCurveCache() {
+        let keys = Set(recordings.map {
+            TagCurveKey(
+                tag: $0.tag,
+                modality: GaugeSessionRPE.modality(of: $0)
+            )
+        })
+            .union(tagCurveCache.keys)
+            .union(tagCurveWarmTasks.keys)
+            .union(tagCurveBandGenerations.keys)
+        tagCurveGenerations.invalidate(keys)
+        for task in tagCurveWarmTasks.values { task.cancel() }
+        tagCurveWarmTasks.removeAll()
+        tagCurveWarmTaskGenerations.removeAll()
+        tagCurveCache.removeAll()
+        tagCurveBandGenerations.removeAll()
+        tagCurves = []
     }
 
     private func resetAccountState() {
@@ -4559,6 +4934,7 @@ public final class AppModel: ObservableObject {
         tagMetadata = []
         pendingSessions = [:]
         pendingRecordings = PendingRecordingOverlay()
+        pendingCurveSamples = [:]
         pendingRecordingEdits = [:]
         pendingSessionRPEEdits = [:]
         pendingSessionRPEBases = [:]
@@ -4579,9 +4955,7 @@ public final class AppModel: ObservableObject {
         quarantinedWrites = nil
         gaugeSessionTracker.reset()
         guidedProtocolActive = false
-        tagCurveCache = [:]
-        tagCurves = []
-        pendingWarmKeys = [:]
+        invalidateTagCurveCache()
         handsFree.handleDisconnected()
         keepAwakeRelease?()
         keepAwakeRelease = nil
