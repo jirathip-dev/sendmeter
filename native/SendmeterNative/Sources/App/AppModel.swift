@@ -769,15 +769,15 @@ public final class AppModel: ObservableObject {
             isRefreshing = true
         }
         defer {
-            guard let refreshCompletion,
-                  refreshCompletion.owns(
-                      currentUserID: currentUserID,
-                      accountEpoch: accountEpoch,
-                      activeOwner: refreshingOwner
-                  )
-            else { return }
-            isRefreshing = false
-            refreshingOwner = nil
+            if let refreshCompletion,
+               refreshCompletion.owns(
+                   currentUserID: currentUserID,
+                   accountEpoch: accountEpoch,
+                   activeOwner: refreshingOwner
+               ) {
+                isRefreshing = false
+                refreshingOwner = nil
+            }
         }
         do {
             let today = LocalDateSupport.string(from: Date())
