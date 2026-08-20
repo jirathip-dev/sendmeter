@@ -98,4 +98,36 @@ final class AccountScopedFetchTests: XCTestCase {
             activeOwner: second
         ))
     }
+
+    func testOneCapturedQueueScopeRejectsStaleCountAndErrorPublication() {
+        let fetch = AccountScopedFetch(accountUserID: accountA, accountEpoch: 0)
+        var publishedCount: Int?
+        var publishedError: String?
+
+        XCTAssertFalse(fetch.publishIfCurrent(to: accountA, accountEpoch: 1) {
+            publishedCount = 3
+        })
+        XCTAssertFalse(fetch.publishIfCurrent(to: accountA, accountEpoch: 1) {
+            publishedError = "old account failed"
+        })
+
+        XCTAssertNil(publishedCount)
+        XCTAssertNil(publishedError)
+    }
+
+    func testOneCapturedQueueScopePublishesCountAndErrorForItsOwner() {
+        let fetch = AccountScopedFetch(accountUserID: accountA, accountEpoch: 4)
+        var publishedCount: Int?
+        var publishedError: String?
+
+        XCTAssertTrue(fetch.publishIfCurrent(to: accountA, accountEpoch: 4) {
+            publishedCount = 3
+        })
+        XCTAssertTrue(fetch.publishIfCurrent(to: accountA, accountEpoch: 4) {
+            publishedError = "current account failed"
+        })
+
+        XCTAssertEqual(publishedCount, 3)
+        XCTAssertEqual(publishedError, "current account failed")
+    }
 }

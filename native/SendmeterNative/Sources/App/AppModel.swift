@@ -1187,7 +1187,33 @@ public final class AppModel: ObservableObject {
         repetitionNumber: Int? = nil,
         partial: Bool = false
     ) async -> Bool {
-        guard let userID = currentUserID else { return false }
+        await saveForceSummaryOutcome(
+            summary,
+            tag: tag,
+            side: side,
+            zone: zone,
+            preset: preset,
+            targetBand: targetBand,
+            protocolRunID: protocolRunID,
+            setNumber: setNumber,
+            repetitionNumber: repetitionNumber,
+            partial: partial
+        ).didPersist
+    }
+
+    private func saveForceSummaryOutcome(
+        _ summary: ForceSummary,
+        tag: String,
+        side: TindeqSide,
+        zone: RecordedZone?,
+        preset: TindeqPreset? = nil,
+        targetBand: ForceTargetBand? = nil,
+        protocolRunID: UUID? = nil,
+        setNumber: Int? = nil,
+        repetitionNumber: Int? = nil,
+        partial: Bool = false
+    ) async -> ForceSaveOutcome {
+        guard let userID = currentUserID else { return .stale }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
@@ -1197,11 +1223,11 @@ public final class AppModel: ObservableObject {
         // claimed synchronously — before the first await below (#613's
         // RepSettlement contract).
         await gaugeSessionSaveGate.begin()
-        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
-            return false
-        }
         defer {
             Task { await gaugeSessionSaveGate.finish() }
+        }
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+            return .stale
         }
 
         // #627: the gauge session is minted lazily on the FIRST save; every
@@ -1312,7 +1338,7 @@ public final class AppModel: ObservableObject {
         )
         let enqueued = await enqueueAndUpload(item)
         guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
-            return false
+            return .stale
         }
         if !enqueued {
             // #632: the rep is lost — the only copy was the in-memory
@@ -1335,7 +1361,7 @@ public final class AppModel: ObservableObject {
             modality: savedModality,
             capturedBy: accountFetch
         )
-        return enqueued
+        return enqueued ? .saved : .failed
     }
 
     // MARK: Gauge session (#627)
@@ -1459,7 +1485,7 @@ public final class AppModel: ObservableObject {
         let trimEndMilliseconds = handsFree.consumeTrimEndMilliseconds()
         Task {
             let trimmed = trimSummary(summary, endMilliseconds: trimEndMilliseconds)
-            let enqueued = await saveForceSummary(
+            let outcome = await saveForceSummaryOutcome(
                 trimmed,
                 tag: context.tag,
                 side: context.side,
@@ -1467,12 +1493,14 @@ public final class AppModel: ObservableObject {
                 preset: context.preset,
                 targetBand: context.targetBand
             )
-            if enqueued {
+            if outcome.didPersist {
                 tindeq.clearCompletedRecording()
                 handsFree.rearmAfterSave()
-            } else {
+            } else if outcome.shouldDisarmHandsFree {
                 handsFree.disarm()
-                errorMessage = "Hands-free pull couldn't be saved."
+                if outcome.shouldReportHandsFreeFailure {
+                    errorMessage = "Hands-free pull couldn't be saved."
+                }
             }
         }
     }
@@ -2036,20 +2064,28 @@ public final class AppModel: ObservableObject {
 
     public func drainQueue() async {
         guard let userID = currentUserID, let queue else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         let due = await queue.items(for: userID, dueAt: Date())
         for item in due {
-            _ = await upload(item)
+            _ = await upload(item, capturedBy: accountFetch)
         }
-        await refreshQueueCount()
+        await refreshQueueCount(for: accountFetch)
     }
 
     public func retryAllQueuedWrites() async {
         guard let userID = currentUserID, let queue else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         let pending = await queue.items(for: userID)
         for item in pending {
-            _ = await upload(item, mode: .manual)
+            _ = await upload(item, mode: .manual, capturedBy: accountFetch)
         }
-        await refreshQueueCount()
+        await refreshQueueCount(for: accountFetch)
     }
 
     @discardableResult
@@ -2104,15 +2140,19 @@ public final class AppModel: ObservableObject {
     @discardableResult
     private func upload(
         _ item: DurableQueueItem<PendingWrite>,
-        mode: QueueUploadMode = .automatic
+        mode: QueueUploadMode = .automatic,
+        capturedBy capturedAccountFetch: AccountScopedFetch? = nil
     ) async -> UploadResult {
         guard let queue else {
             return UploadResult(uploaded: false, failure: nil)
         }
-        let accountFetch = AccountScopedFetch(
+        let accountFetch = capturedAccountFetch ?? AccountScopedFetch(
             accountUserID: item.accountUserID,
             accountEpoch: accountEpoch
         )
+        guard accountFetch.accountUserID == item.accountUserID else {
+            return UploadResult(uploaded: false, failure: nil)
+        }
         guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
             return UploadResult(uploaded: false, failure: nil)
         }
@@ -2370,7 +2410,7 @@ public final class AppModel: ObservableObject {
             guard case let .sessionDelete(payload) = item.payload else { return false }
             return payload.sessionID == sessionID
         }) else { return }
-        _ = await upload(deleteItem)
+        _ = await upload(deleteItem, capturedBy: accountFetch)
     }
 
     /// #675: the explicit-user-action re-attempt for quarantined entries —
@@ -2394,6 +2434,10 @@ public final class AppModel: ObservableObject {
     /// replaces the stamp with its own code/detail.
     public func retryQuarantinedWrites(id: UUID? = nil) async {
         guard let userID = currentUserID, let queue else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         let quarantined = await queue.quarantinedItems(for: userID)
         for item in quarantined where id == nil || item.id == id {
             do {
@@ -2401,7 +2445,11 @@ public final class AppModel: ObservableObject {
                     id: item.id,
                     accountUserID: item.accountUserID
                 ) else { continue }
-                let result = await upload(item, mode: .manual)
+                let result = await upload(
+                    item,
+                    mode: .manual,
+                    capturedBy: accountFetch
+                )
                 if !result.uploaded {
                     // #675 F7 + N1: the manual attempt failed — re-stamp the
                     // quarantine NOW so the entry is never auto-retried by a
@@ -2422,10 +2470,15 @@ public final class AppModel: ObservableObject {
                     )
                 }
             } catch {
-                surface(error)
+                if accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
+                    surface(error)
+                }
             }
         }
-        await refreshQueueCount()
+        await refreshQueueCount(for: accountFetch)
     }
 
     /// #675: discard ONE quarantined entry. Quarantined-only (the Settings
