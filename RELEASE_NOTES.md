@@ -11,6 +11,7 @@ CI, dependency updates, and refactors unless users experience a change.
 ### Added
 
 - Native History: open a Force recording to edit its tag, side, notes, and linked session effort; the original force samples stay unchanged.
+- Force now shows consistency as distinct training days across eight rolling seven-day windows, with optional exercise filters that respect hidden tags.
 - The native app now has tactile feedback that mirrors the web app: scrubbing the readiness trend chart ticks once per value change, sheets tick as they open, confirm and destructive actions (sign out, delete) give a heavier tick, a refused guided-protocol start on the Progressor buzzes a warning instead of feeling accepted, connecting the Progressor feels like success and a disconnect feels like an error, and guided protocols cue each segment transition in rhythm (a single buzz on each hold, a double-stutter on side switches and rests, a stutter on completion).
 - Apple Watch resisted-movement runs now show the live force trace underneath the movement display — a compact sparkline strip while the gauge is measuring — so you can see your force rhythm while the cadence clock guides each rep. Between sets the strip steps aside and the countdown is the whole screen again; runs without a force sensor stay honestly trace-free. (The phone's Force fullscreen already showed the live trace during movement work, so nothing changes there.)
 - sendmeter-mcp: a local, per-user, read-only MCP server that exposes your Sendmeter data (training sessions, readiness, ACWR, Tindeq recordings) to MCP-capable agents as six read-only tools. It signs in as you, never holds a service-role key or a refresh token, and makes no write paths — see `mcp/README.md`.
@@ -74,6 +75,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native: switching accounts during a refresh or Force save no longer lets data from the previous account appear in the new account.
 - Native guided routines now log completed runs when you close them (including sub-minute runs as one minute), save an honest partial when you close after at least a minute, protect the run from swipe-dismiss, and offer Undo for automatically logged interrupted routines.
 - Native Send Conditions now keeps the current score when climate history is temporarily unavailable, uses the same UTC history window as the web app, and avoids unnecessary weather requests for 30 minutes.
 - Native History now keeps recordings from hidden Force tags in the timeline while continuing to omit those tags from quick-filter chips.
