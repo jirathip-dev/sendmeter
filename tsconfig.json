@@ -5,6 +5,7 @@
     "types": ["@types/web-bluetooth", "vite/client"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
     "jsx": "react-jsx",
     "strict": true,
     "noUncheckedIndexedAccess": true,

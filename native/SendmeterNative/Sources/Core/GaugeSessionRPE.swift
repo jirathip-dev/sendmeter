@@ -19,13 +19,26 @@ public struct TagForceCurve: Codable, Equatable, Sendable {
     /// The fit's maximum short-window force (web `maxF`) — the cap on the
     /// predicted 5s peak. Optional for pre-#653 cache shapes.
     public let maxForceKilograms: Double?
+    /// Full static/movement curve for the native analysis card. The RPE
+    /// prediction only needs `cf`/`wPrime`; keeping the fitted model here
+    /// lets the Force tab render the same confidence band without fitting a
+    /// second time.
+    public let forceCurveModel: ForceCurveModel?
 
-    public init(tag: String, modality: String, cf: Double, wPrime: Double, maxForceKilograms: Double? = nil) {
+    public init(
+        tag: String,
+        modality: String,
+        cf: Double,
+        wPrime: Double,
+        maxForceKilograms: Double? = nil,
+        forceCurveModel: ForceCurveModel? = nil
+    ) {
         self.tag = tag
         self.modality = modality
         self.cf = cf
         self.wPrime = wPrime
         self.maxForceKilograms = maxForceKilograms
+        self.forceCurveModel = forceCurveModel
     }
 }
 

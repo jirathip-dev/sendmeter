@@ -1,6 +1,24 @@
 import XCTest
 @testable import SendmeterCore
 
+private struct ForceCurveBootstrapFixture: Decodable {
+    let seed: UInt32
+    let bootstrapSamples: Int
+    let lowSampleIndices: [Int]
+    let comparisonWindowIndex: Int
+    let recordings: [[[Double]]]
+    let expected: Expected
+
+    struct Expected: Decodable {
+        let points: [[Double]]
+        let criticalForceKilograms: Double
+        let impulseAboveCriticalForceKilogramSeconds: Double
+        let capabilityFit: [Double]
+        let band: [[Double]]
+        let lowBand: [[Double]]
+    }
+}
+
 final class ForceCurveEngineTests: XCTestCase {
     func testMeanMaxUsesStepResampling() {
         let samples = (0...20).map {
@@ -92,5 +110,113 @@ final class ForceCurveEngineTests: XCTestCase {
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertEqual(object?["milliseconds"] as? Int, 0)
         XCTAssertEqual(object?["repetition"] as? Int, 1)
+    }
+
+    func testBootstrapMatchesWebFixture() throws {
+        // KEEP-IN-SYNC with src/lib/force-curve.test.ts: both tests decode
+        // this exact JSON fixture and compare the web-produced expected band.
+        let fixture = try loadBootstrapFixture()
+        XCTAssertEqual(fixture.seed, 0x0352c0de)
+
+        let model = try XCTUnwrap(
+            ForceCurveEngine.compute(
+                recordings: fixture.recordings.map(samples(from:)),
+                bootstrapSamples: fixture.bootstrapSamples,
+                seed: fixture.seed
+            )
+        )
+
+        XCTAssertEqual(model.points.count, fixture.expected.points.count)
+        for (index, expected) in fixture.expected.points.enumerated() {
+            XCTAssertEqual(model.points[index].windowSeconds, expected[0], accuracy: 1e-10)
+            XCTAssertEqual(model.points[index].kilograms, expected[1], accuracy: 1e-10)
+        }
+        XCTAssertEqual(model.criticalForceKilograms ?? 0, fixture.expected.criticalForceKilograms, accuracy: 1e-9)
+        XCTAssertEqual(
+            model.impulseAboveCriticalForceKilogramSeconds ?? 0,
+            fixture.expected.impulseAboveCriticalForceKilogramSeconds,
+            accuracy: 1e-9
+        )
+
+        let fit = try XCTUnwrap(model.capabilityFit)
+        XCTAssertEqual(fit.exponent, fixture.expected.capabilityFit[0], accuracy: 1e-10)
+        XCTAssertEqual(fit.tau, fixture.expected.capabilityFit[1], accuracy: 1e-9)
+        XCTAssertEqual(fit.sumSquaredError, fixture.expected.capabilityFit[2], accuracy: 1e-9)
+
+        let band = try XCTUnwrap(model.confidenceBand)
+        XCTAssertEqual(band.count, 65)
+        for expected in fixture.expected.band {
+            let index = Int(expected[0])
+            XCTAssertEqual(band[index].windowSeconds, expected[1], accuracy: 1e-10)
+            XCTAssertEqual(band[index].kilograms, expected[2], accuracy: 1e-9)
+            XCTAssertEqual(band[index].lowKilograms, expected[3], accuracy: 1e-9)
+            XCTAssertEqual(band[index].highKilograms, expected[4], accuracy: 1e-9)
+        }
+    }
+
+    func testLowSampleFixtureProducesAWiderTailBand() throws {
+        let fixture = try loadBootstrapFixture()
+        let recordings = fixture.recordings.map(samples(from:))
+        let full = try XCTUnwrap(
+            ForceCurveEngine.compute(
+                recordings: recordings,
+                bootstrapSamples: fixture.bootstrapSamples,
+                seed: fixture.seed
+            )
+        )
+        let low = try XCTUnwrap(
+            ForceCurveEngine.compute(
+                recordings: fixture.lowSampleIndices.map { recordings[$0] },
+                bootstrapSamples: fixture.bootstrapSamples,
+                seed: fixture.seed
+            )
+        )
+        let fullBand = try XCTUnwrap(full.confidenceBand)
+        let lowBand = try XCTUnwrap(low.confidenceBand)
+        let index = fixture.comparisonWindowIndex
+        let fullWidth = fullBand[index].highKilograms - fullBand[index].lowKilograms
+        let lowWidth = lowBand[index].highKilograms - lowBand[index].lowKilograms
+        XCTAssertGreaterThan(lowWidth, fullWidth)
+
+        for expected in fixture.expected.lowBand {
+            let bandIndex = Int(expected[0])
+            XCTAssertEqual(lowBand[bandIndex].windowSeconds, expected[1], accuracy: 1e-10)
+            XCTAssertEqual(lowBand[bandIndex].kilograms, expected[2], accuracy: 1e-9)
+            XCTAssertEqual(lowBand[bandIndex].lowKilograms, expected[3], accuracy: 1e-9)
+            XCTAssertEqual(lowBand[bandIndex].highKilograms, expected[4], accuracy: 1e-9)
+        }
+    }
+
+    func testBootstrapIsDeterministicForTheSameSeed() throws {
+        let fixture = try loadBootstrapFixture()
+        let recordings = fixture.recordings.map(samples(from:))
+        let first = ForceCurveEngine.compute(
+            recordings: recordings,
+            bootstrapSamples: fixture.bootstrapSamples,
+            seed: fixture.seed
+        )
+        let second = ForceCurveEngine.compute(
+            recordings: recordings,
+            bootstrapSamples: fixture.bootstrapSamples,
+            seed: fixture.seed
+        )
+        XCTAssertEqual(first, second)
+    }
+
+    private func loadBootstrapFixture() throws -> ForceCurveBootstrapFixture {
+        let url = try XCTUnwrap(
+            Bundle.module.url(
+                forResource: "force-curve-bootstrap",
+                withExtension: "json",
+                subdirectory: "Fixtures"
+            )
+        )
+        return try JSONDecoder().decode(ForceCurveBootstrapFixture.self, from: Data(contentsOf: url))
+    }
+
+    private func samples(from recording: [[Double]]) -> [TindeqSample] {
+        recording.map { pair in
+            TindeqSample(milliseconds: pair[0], kilograms: pair[1])
+        }
     }
 }

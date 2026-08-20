@@ -1642,18 +1642,20 @@ public final class AppModel: ObservableObject {
             return values
         }
         guard !sampleSets.isEmpty else { return nil }
-        let references = await Task.detached(priority: .utility) {
-            ForceCurveEngine.references(metadata: byTag, sampleSets: sampleSets)
+        let curveModel = await Task.detached(priority: .utility) {
+            ForceCurveEngine.compute(recordings: sampleSets)
         }.value
-        guard let cf = references.criticalForceKilograms,
-              let wPrime = references.impulseAboveCriticalForceKilogramSeconds
+        guard let curveModel,
+              let cf = curveModel.criticalForceKilograms,
+              let wPrime = curveModel.impulseAboveCriticalForceKilogramSeconds
         else { return nil }
         return TagForceCurve(
             tag: tag,
             modality: modality,
             cf: cf,
             wPrime: wPrime,
-            maxForceKilograms: references.maximumForceKilograms
+            maxForceKilograms: curveModel.maximumForceKilograms,
+            forceCurveModel: curveModel
         )
     }
 

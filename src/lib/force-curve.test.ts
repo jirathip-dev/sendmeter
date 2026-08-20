@@ -21,6 +21,29 @@ import {
 import { curveCandidateRecordings } from "./zoneHistory";
 import type { TindeqSample } from "../types";
 import type { CapabilityFit } from "./capabilityModel";
+// KEEP-IN-SYNC with native/SendmeterNative/Tests/SendmeterCoreTests/Fixtures:
+// native SwiftPM tests decode these exact JSON bytes and compare the same
+// web-produced expected points/band with tolerance.
+import rawBootstrapFixture from "../../native/SendmeterNative/Tests/SendmeterCoreTests/Fixtures/force-curve-bootstrap.json";
+
+type BootstrapBandEntry = [number, number, number, number, number];
+type BootstrapFixture = {
+  seed: number;
+  bootstrapSamples: number;
+  lowSampleIndices: number[];
+  comparisonWindowIndex: number;
+  recordings: Array<Array<[number, number]>>;
+  expected: {
+    points: Array<[number, number]>;
+    criticalForceKilograms: number;
+    impulseAboveCriticalForceKilogramSeconds: number;
+    capabilityFit: [number, number, number];
+    band: BootstrapBandEntry[];
+    lowBand: BootstrapBandEntry[];
+  };
+};
+
+const bootstrapFixture = rawBootstrapFixture as BootstrapFixture;
 
 // Spy-mode mock (#489 review F1): real implementations, call counting only —
 // the grid-search work-count test below needs to observe how many times
@@ -459,6 +482,59 @@ describe("computeForceCurve — display uncertainty and coverage", () => {
     expect(m.coverage?.independentDurations).toBe(1);
     expect(m.coverage?.message).toContain("distinctly different duration");
     expect(m.coverage?.message).not.toContain("longest evidence");
+  });
+});
+
+describe("computeForceCurve — native parity fixture (#677)", () => {
+  const recordings: TindeqSample[][] = bootstrapFixture.recordings.map((recording) =>
+    recording.map(([t, kg]) => ({ t, kg })),
+  );
+  const options = { bootstrapSamples: bootstrapFixture.bootstrapSamples };
+
+  it("keeps the shared fixture's 200-sample web output stable", () => {
+    expect(bootstrapFixture.seed).toBe(0x0352c0de);
+    const model = computeForceCurve(recordings, options)!;
+    const expected = bootstrapFixture.expected;
+
+    expect(model.points.map((point) => [point.windowS, point.kg])).toEqual(expected.points);
+    expect(model.cf).toBeCloseTo(expected.criticalForceKilograms, 10);
+    expect(model.wPrime).toBeCloseTo(expected.impulseAboveCriticalForceKilogramSeconds, 10);
+    expect(model.confidenceBand).toHaveLength(65);
+
+    const fit = model.capabilityFit!;
+    expect([fit.p, fit.tau, fit.sse]).toEqual([
+      expect.closeTo(expected.capabilityFit[0]!, 1e-10),
+      expect.closeTo(expected.capabilityFit[1]!, 1e-10),
+      expect.closeTo(expected.capabilityFit[2]!, 1e-10),
+    ]);
+
+    for (const [index, windowS, kg, lowKg, highKg] of expected.band) {
+      const actual = model.confidenceBand![index]!;
+      expect(actual.windowS).toBeCloseTo(windowS, 12);
+      expect(actual.kg).toBeCloseTo(kg, 10);
+      expect(actual.lowKg).toBeCloseTo(lowKg, 10);
+      expect(actual.highKg).toBeCloseTo(highKg, 10);
+    }
+  });
+
+  it("makes the low-sample tail visibly wider", () => {
+    const lowSampleRecordings = bootstrapFixture.lowSampleIndices.map((index) => recordings[index]!);
+    const full = computeForceCurve(recordings, options)!;
+    const low = computeForceCurve(lowSampleRecordings, options)!;
+    const index = bootstrapFixture.comparisonWindowIndex;
+    const fullPoint = full.confidenceBand![index]!;
+    const lowPoint = low.confidenceBand![index]!;
+
+    expect(lowPoint.highKg - lowPoint.lowKg).toBeGreaterThan(
+      fullPoint.highKg - fullPoint.lowKg,
+    );
+    for (const [bandIndex, windowS, kg, lowKg, highKg] of bootstrapFixture.expected.lowBand) {
+      const actual = low.confidenceBand![bandIndex]!;
+      expect(actual.windowS).toBeCloseTo(windowS, 12);
+      expect(actual.kg).toBeCloseTo(kg, 10);
+      expect(actual.lowKg).toBeCloseTo(lowKg, 10);
+      expect(actual.highKg).toBeCloseTo(highKg, 10);
+    }
   });
 });
 

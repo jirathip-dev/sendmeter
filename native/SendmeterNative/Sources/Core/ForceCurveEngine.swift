@@ -10,6 +10,25 @@ public struct ForceCurvePoint: Codable, Equatable, Sendable {
     }
 }
 
+public struct ForceCurveConfidencePoint: Codable, Equatable, Sendable {
+    public let windowSeconds: Double
+    public let kilograms: Double
+    public let lowKilograms: Double
+    public let highKilograms: Double
+
+    public init(
+        windowSeconds: Double,
+        kilograms: Double,
+        lowKilograms: Double,
+        highKilograms: Double
+    ) {
+        self.windowSeconds = windowSeconds
+        self.kilograms = kilograms
+        self.lowKilograms = lowKilograms
+        self.highKilograms = highKilograms
+    }
+}
+
 public struct ForceCapabilityFit: Codable, Equatable, Sendable {
     public let criticalForceKilograms: Double
     public let maximumForceKilograms: Double
@@ -38,19 +57,22 @@ public struct ForceCurveModel: Codable, Equatable, Sendable {
     public let criticalForceKilograms: Double?
     public let impulseAboveCriticalForceKilogramSeconds: Double?
     public let capabilityFit: ForceCapabilityFit?
+    public let confidenceBand: [ForceCurveConfidencePoint]?
 
     public init(
         points: [ForceCurvePoint],
         maximumForceKilograms: Double,
         criticalForceKilograms: Double?,
         impulseAboveCriticalForceKilogramSeconds: Double?,
-        capabilityFit: ForceCapabilityFit?
+        capabilityFit: ForceCapabilityFit?,
+        confidenceBand: [ForceCurveConfidencePoint]? = nil
     ) {
         self.points = points
         self.maximumForceKilograms = maximumForceKilograms
         self.criticalForceKilograms = criticalForceKilograms
         self.impulseAboveCriticalForceKilogramSeconds = impulseAboveCriticalForceKilogramSeconds
         self.capabilityFit = capabilityFit
+        self.confidenceBand = confidenceBand
     }
 }
 
@@ -128,6 +150,13 @@ public enum ForceCurveEngine {
     private static let resampleHertz = 10.0
     private static let fitMinimumWindowSeconds = 10.0
     private static let fitMinimumDistinctWindows = 3
+    private static let displayBandWindowsSeconds: [Double] = (0...64).map { index in
+        if index == 0 { return 1 }
+        if index == 64 { return 120 }
+        return exp(log(120) * Double(index) / 64)
+    }
+    /// The fixed LCG seed shared with `src/lib/force-curve.ts`.
+    public static let bootstrapSeed: UInt32 = 0x0352c0de
     private static let pickWindowDays = 90.0
     private static let pickPerBucket = 3
     private static let pickLongest = 3
@@ -155,19 +184,118 @@ public enum ForceCurveEngine {
         return best.isFinite ? best : nil
     }
 
-    public static func compute(recordings: [[TindeqSample]], fitDepth: Int = 3) -> ForceCurveModel? {
+    public static func compute(
+        recordings: [[TindeqSample]],
+        fitDepth: Int = 3,
+        bootstrapSamples: Int = 200,
+        seed: UInt32 = bootstrapSeed
+    ) -> ForceCurveModel? {
         let prepared = recordings.map { samples in
-            windowsSeconds.map { meanMaxForce(samples: samples, windowSeconds: $0) }
+            PreparedEffort(
+                values: windowsSeconds.map { meanMaxForce(samples: samples, windowSeconds: $0) },
+                durationMilliseconds: samples.last?.milliseconds ?? 0
+            )
+        }
+        guard let model = computeCore(efforts: prepared, fitDepth: fitDepth) else { return nil }
+
+        // KEEP-IN-SYNC with src/lib/force-curve.ts: the point estimate above
+        // is computed once from the full data. The fixed-seed, recording-level
+        // bootstrap below only supplies the display uncertainty band; it must
+        // never change CF, W′, or the Hill fit used for targets/RPE.
+        guard model.capabilityFit != nil,
+              recordings.count >= 3,
+              bootstrapSamples > 0
+        else { return model }
+
+        let firstWindow = model.points[0].windowSeconds
+        let lastWindow = model.points[model.points.count - 1].windowSeconds
+        let bandWindows = displayBandWindowsSeconds.filter {
+            $0 >= firstWindow && $0 <= lastWindow
+        }
+        var predictions = Array(repeating: [Double](), count: bandWindows.count)
+        var randomState = seed
+
+        for _ in 0..<bootstrapSamples {
+            var sample: [PreparedEffort] = []
+            sample.reserveCapacity(prepared.count)
+            for _ in prepared.indices {
+                // JavaScript's `Math.imul(... ) >>> 0` is a wrapping UInt32
+                // multiply/add. Dividing by 2^32 preserves the web's [0, 1)
+                // LCG draw and therefore the exact resample sequence.
+                randomState = randomState &* 1_664_525 &+ 1_013_904_223
+                let random = Double(randomState) / 4_294_967_296
+                let index = min(prepared.count - 1, Int(random * Double(prepared.count)))
+                sample.append(prepared[index])
+            }
+            guard let fitted = computeCore(efforts: sample, fitDepth: fitDepth),
+                  let capabilityFit = fitted.capabilityFit
+            else { continue }
+            for (index, windowSeconds) in bandWindows.enumerated() {
+                predictions[index].append(
+                    predictCapabilityFit(capabilityFit, seconds: windowSeconds)
+                )
+            }
         }
 
+        let minimumPredictions = max(20.0, Double(bootstrapSamples) * 0.2)
+        var confidenceBand: [ForceCurveConfidencePoint] = []
+        confidenceBand.reserveCapacity(bandWindows.count)
+        for (index, windowSeconds) in bandWindows.enumerated() {
+            var values = predictions[index]
+            guard Double(values.count) >= minimumPredictions else { continue }
+            values.sort()
+            confidenceBand.append(
+                ForceCurveConfidencePoint(
+                    windowSeconds: windowSeconds,
+                    kilograms: predictCapabilityFit(model.capabilityFit!, seconds: windowSeconds),
+                    lowKilograms: percentile(values, p: 0.025),
+                    highKilograms: percentile(values, p: 0.975)
+                )
+            )
+        }
+
+        return ForceCurveModel(
+            points: model.points,
+            maximumForceKilograms: model.maximumForceKilograms,
+            criticalForceKilograms: model.criticalForceKilograms,
+            impulseAboveCriticalForceKilogramSeconds: model.impulseAboveCriticalForceKilogramSeconds,
+            capabilityFit: model.capabilityFit,
+            confidenceBand: confidenceBand.isEmpty ? nil : confidenceBand
+        )
+    }
+
+    public static func predictCapabilityFit(
+        _ fit: ForceCapabilityFit,
+        seconds: Double
+    ) -> Double {
+        let safeSeconds = max(0.001, seconds)
+        let scale = 1 + pow(1 / fit.tau, fit.exponent)
+        return fit.criticalForceKilograms
+            + (fit.maximumForceKilograms - fit.criticalForceKilograms)
+            * scale
+            / (1 + pow(safeSeconds / fit.tau, fit.exponent))
+    }
+
+    private struct PreparedEffort: Sendable {
+        let values: [Double?]
+        let durationMilliseconds: Double
+    }
+
+    private static func computeCore(
+        efforts: [PreparedEffort],
+        fitDepth: Int
+    ) -> ForceCurveModel? {
         var points: [ForceCurvePoint] = []
         var regressionX: [Double] = []
         var regressionY: [Double] = []
         var fitWindows = Set<Double>()
 
         for (windowIndex, windowSeconds) in windowsSeconds.enumerated() {
-            let values = prepared.compactMap { effort -> Double? in
-                guard effort.indices.contains(windowIndex), let value = effort[windowIndex], value > 0 else {
+            let values = efforts.compactMap { effort -> Double? in
+                guard effort.values.indices.contains(windowIndex),
+                      let value = effort.values[windowIndex],
+                      value > 0
+                else {
                     return nil
                 }
                 return value
@@ -222,8 +350,17 @@ public enum ForceCurveEngine {
             maximumForceKilograms: maximumForce,
             criticalForceKilograms: criticalForce,
             impulseAboveCriticalForceKilogramSeconds: impulse,
-            capabilityFit: capability
+            capabilityFit: capability,
+            confidenceBand: nil
         )
+    }
+
+    private static func percentile(_ sorted: [Double], p: Double) -> Double {
+        let index = min(
+            sorted.count - 1,
+            max(0, Int(floor(p * Double(sorted.count))))
+        )
+        return sorted[index]
     }
 
     public static func references(
@@ -231,7 +368,10 @@ public enum ForceCurveEngine {
         sampleSets: [[TindeqSample]]
     ) -> ForceReferences {
         let personalRecord = metadata.compactMap(\.peakKilograms).filter { $0 > 0 }.max()
-        let model = compute(recordings: sampleSets)
+        // References drive targets/RPE and do not render the chart; keep this
+        // hot path on the existing point-estimate cost. The tag-curve cache
+        // computes the full confidence band for the Force card.
+        let model = compute(recordings: sampleSets, bootstrapSamples: 0)
         return ForceReferences(
             personalRecordKilograms: personalRecord,
             criticalForceKilograms: model?.criticalForceKilograms,
