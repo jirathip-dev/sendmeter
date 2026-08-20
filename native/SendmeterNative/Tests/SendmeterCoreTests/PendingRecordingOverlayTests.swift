@@ -28,8 +28,9 @@ final class PendingRecordingOverlayTests: XCTestCase {
 
         let applied = overlay.applyRestored(
             [PendingRecordingOverlay.Entry(accountUserID: accountA, recording: restoredA)],
-            capturedBy: AccountScopedFetch(accountUserID: accountA),
-            currentUserID: accountB
+            capturedBy: AccountScopedFetch(accountUserID: accountA, accountEpoch: 0),
+            currentUserID: accountB,
+            accountEpoch: 1
         )
 
         XCTAssertFalse(applied)
@@ -43,8 +44,9 @@ final class PendingRecordingOverlayTests: XCTestCase {
 
         let applied = overlay.applyRestored(
             [PendingRecordingOverlay.Entry(accountUserID: accountA, recording: restoredA)],
-            capturedBy: AccountScopedFetch(accountUserID: accountA),
-            currentUserID: accountA
+            capturedBy: AccountScopedFetch(accountUserID: accountA, accountEpoch: 0),
+            currentUserID: accountA,
+            accountEpoch: 0
         )
 
         XCTAssertTrue(applied)

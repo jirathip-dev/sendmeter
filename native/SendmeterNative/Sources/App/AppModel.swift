@@ -254,6 +254,10 @@ public final class AppModel: ObservableObject {
     private var inFlightUploadClaims = QueueUploadClaimCoordinator()
     private var nestedCancellables = Set<AnyCancellable>()
     private var didBootstrapUserID: UUID?
+    /// Increments whenever the loaded account state is reset. User IDs alone
+    /// cannot reject a stale A completion after an A→B→A transition.
+    private var accountEpoch: UInt64 = 0
+    private var refreshingOwner: AccountScopedCompletion?
     private var recomputeGate = ReadinessRecomputeGate()
     /// #661: silent foreground/appear health sync. The policy is pure Core
     /// (`HealthRefreshPolicy`, unit-tested); `lastHealthRefreshStartedAt` is
@@ -288,7 +292,7 @@ public final class AppModel: ObservableObject {
     private var reconcileFlushTask: Task<Void, Never>?
     private var tagCurveCache: [TagCurveKey: TagForceCurve] = [:]
     private var keepAwakeRelease: (() -> Void)?
-    private var pendingWarmKeys: Set<TagCurveKey> = []
+    private var pendingWarmKeys: [TagCurveKey: AccountScopedFetch] = [:]
     private var warmTask: Task<Void, Never>?
 
     public init(
@@ -709,7 +713,7 @@ public final class AppModel: ObservableObject {
             bootState = .signedIn
             watch.relaySession(session)
             if changedUser || didBootstrapUserID != session.user.id {
-                clearLoadedData()
+                resetAccountState()
                 await refreshAll(showSpinner: true)
                 didBootstrapUserID = session.user.id
                 await acceptStoredWatchCompletions()
@@ -733,7 +737,7 @@ public final class AppModel: ObservableObject {
             watch.relaySession(nil)
             authSession = nil
             didBootstrapUserID = nil
-            clearLoadedData()
+            resetAccountState()
             bootState = .signedOut
             await tearDownRealtime()
         }
@@ -753,9 +757,28 @@ public final class AppModel: ObservableObject {
 
     public func refreshAll(showSpinner: Bool = true) async {
         guard let userID = currentUserID else { return }
-        let accountFetch = AccountScopedFetch(accountUserID: userID)
-        if showSpinner { isRefreshing = true }
-        defer { if showSpinner { isRefreshing = false } }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let refreshCompletion = showSpinner
+            ? AccountScopedCompletion(fetch: accountFetch)
+            : nil
+        if let refreshCompletion {
+            refreshingOwner = refreshCompletion
+            isRefreshing = true
+        }
+        defer {
+            guard let refreshCompletion,
+                  refreshCompletion.owns(
+                      currentUserID: currentUserID,
+                      accountEpoch: accountEpoch,
+                      activeOwner: refreshingOwner
+                  )
+            else { return }
+            isRefreshing = false
+            refreshingOwner = nil
+        }
         do {
             let today = LocalDateSupport.string(from: Date())
             async let remoteSessions = repository.fetchSessions(accountUserID: userID)
@@ -771,37 +794,58 @@ public final class AppModel: ObservableObject {
             let fetchedSessions = try await remoteSessions
             let fetchedRecordings = try await remoteRecordings
             let fetchedSettings = try await remoteSettings
-            let publishedSettings = accountFetch.publishIfCurrent(to: currentUserID) {
+            let publishedSettings = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
                 settings = fetchedSettings
             }
             guard publishedSettings else { return }
             let fetchedPeriods = try await remotePeriods
-            let publishedPeriods = accountFetch.publishIfCurrent(to: currentUserID) {
+            let publishedPeriods = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
                 phasePeriods = fetchedPeriods
             }
             guard publishedPeriods else { return }
             let fetchedHealth = try await remoteHealth
-            let publishedHealth = accountFetch.publishIfCurrent(to: currentUserID) {
+            let publishedHealth = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
                 healthMetrics = fetchedHealth
             }
             guard publishedHealth else { return }
             let fetchedPresets = try await remotePresets
-            let publishedPresets = accountFetch.publishIfCurrent(to: currentUserID) {
+            let publishedPresets = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
                 presets = fetchedPresets
             }
             guard publishedPresets else { return }
             let fetchedRoutines = try await remoteRoutines
-            let publishedRoutines = accountFetch.publishIfCurrent(to: currentUserID) {
+            let publishedRoutines = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
                 routines = fetchedRoutines
             }
             guard publishedRoutines else { return }
             let fetchedWorkouts = try await remoteWorkouts
-            let publishedWorkouts = accountFetch.publishIfCurrent(to: currentUserID) {
+            let publishedWorkouts = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
                 workouts = fetchedWorkouts
             }
             guard publishedWorkouts else { return }
             let fetchedTags = try await remoteTags
-            let publishedTags = accountFetch.publishIfCurrent(to: currentUserID) {
+            let publishedTags = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
                 tagMetadata = fetchedTags
             }
             guard publishedTags else { return }
@@ -811,16 +855,22 @@ public final class AppModel: ObservableObject {
                 remoteSessionIDs: Set(fetchedSessions.map(\.id)),
                 remoteRecordingIDs: Set(fetchedRecordings.map(\.id))
             )
-            let publishedLists = accountFetch.publishIfCurrent(to: currentUserID) {
+            let publishedLists = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
                 mergeSessions(remote: fetchedSessions)
                 mergeRecordings(remote: fetchedRecordings)
                 hasLoadedRecordings = true
             }
             guard publishedLists else { return }
-            await refreshQueueCount()
-            warmTagCurvesIfMissing()
+            await refreshQueueCount(for: accountFetch)
+            guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+                return
+            }
+            warmTagCurvesIfMissing(capturedBy: accountFetch)
         } catch {
-            if accountFetch.canApply(to: currentUserID) {
+            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
                 surface(error)
             }
         }
@@ -831,6 +881,19 @@ public final class AppModel: ObservableObject {
     /// `ForceCurveEngine.pickCurveRecordings`), so the gauge-session end
     /// reads cached curves instead of fetching.
     public func warmTagCurvesIfMissing() {
+        guard let userID = currentUserID else { return }
+        warmTagCurvesIfMissing(
+            capturedBy: AccountScopedFetch(
+                accountUserID: userID,
+                accountEpoch: accountEpoch
+            )
+        )
+    }
+
+    private func warmTagCurvesIfMissing(capturedBy accountFetch: AccountScopedFetch) {
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+            return
+        }
         var keys = Set<TagCurveKey>()
         for recording in recordings where !recording.tag.isEmpty {
             keys.insert(
@@ -841,19 +904,36 @@ public final class AppModel: ObservableObject {
             )
         }
         for key in keys where tagCurveCache[key] == nil {
-            warmTagCurveIfMissing(tag: key.tag, modality: key.modality)
+            warmTagCurveIfMissing(
+                tag: key.tag,
+                modality: key.modality,
+                capturedBy: accountFetch
+            )
         }
     }
 
     public func refreshTrash() async {
         guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         do {
             async let sessionTrash = repository.fetchDeletedSessions(accountUserID: userID)
             async let recordingTrash = repository.fetchDeletedRecordings()
-            deletedSessions = try await sessionTrash
-            deletedRecordings = try await recordingTrash
+            let fetchedSessions = try await sessionTrash
+            let fetchedRecordings = try await recordingTrash
+            _ = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                deletedSessions = fetchedSessions
+                deletedRecordings = fetchedRecordings
+            }
         } catch {
-            surface(error)
+            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
+                surface(error)
+            }
         }
     }
 
@@ -1108,11 +1188,18 @@ public final class AppModel: ObservableObject {
         partial: Bool = false
     ) async -> Bool {
         guard let userID = currentUserID else { return false }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
 
         // The session-end snapshot must count this rep, so the gate is
         // claimed synchronously — before the first await below (#613's
         // RepSettlement contract).
         await gaugeSessionSaveGate.begin()
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+            return false
+        }
         defer {
             Task { await gaugeSessionSaveGate.finish() }
         }
@@ -1224,6 +1311,9 @@ public final class AppModel: ObservableObject {
             payload: PendingWrite.recording(recording)
         )
         let enqueued = await enqueueAndUpload(item)
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+            return false
+        }
         if !enqueued {
             // #632: the rep is lost — the only copy was the in-memory
             // optimistic row being discarded below. The durable one-shot
@@ -1240,7 +1330,11 @@ public final class AppModel: ObservableObject {
         // #627: warm the tag's fitted curve in the background so the
         // session-end prediction reads a cached curve instead of fetching.
         let savedModality = recording.protocolMode == .reverseAction ? "reverse_action" : "static"
-        warmTagCurveIfMissing(tag: recording.tag, modality: savedModality)
+        warmTagCurveIfMissing(
+            tag: recording.tag,
+            modality: savedModality,
+            capturedBy: accountFetch
+        )
         return enqueued
     }
 
@@ -1424,11 +1518,30 @@ public final class AppModel: ObservableObject {
     /// drained by ONE background task, so a burst (refreshAll warming every
     /// tag at once) warms them all instead of cancelling down to the last.
     public func warmTagCurveIfMissing(tag: String, modality: String) {
+        guard let userID = currentUserID else { return }
+        warmTagCurveIfMissing(
+            tag: tag,
+            modality: modality,
+            capturedBy: AccountScopedFetch(
+                accountUserID: userID,
+                accountEpoch: accountEpoch
+            )
+        )
+    }
+
+    private func warmTagCurveIfMissing(
+        tag: String,
+        modality: String,
+        capturedBy accountFetch: AccountScopedFetch
+    ) {
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+            return
+        }
         let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty, !modality.isEmpty else { return }
         let key = TagCurveKey(tag: tag, modality: modality)
         guard tagCurveCache[key] == nil else { return }
-        pendingWarmKeys.insert(key)
+        pendingWarmKeys[key] = accountFetch
         guard warmTask == nil else { return }
         warmTask = Task { [weak self] in
             await self?.drainWarmQueue()
@@ -1436,21 +1549,29 @@ public final class AppModel: ObservableObject {
     }
 
     private func drainWarmQueue() async {
-        warmTask = nil
+        defer { warmTask = nil }
         while !Task.isCancelled {
-            let keys = Array(pendingWarmKeys)
-            pendingWarmKeys = []
-            guard !keys.isEmpty else { return }
-            for key in keys {
+            let requests = pendingWarmKeys
+            pendingWarmKeys = [:]
+            guard !requests.isEmpty else { return }
+            for (key, accountFetch) in requests {
                 guard !Task.isCancelled else { return }
+                guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+                    continue
+                }
                 let normalized = key.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 if let curve = await computeTagCurve(
                     tag: key.tag,
                     modality: key.modality,
                     normalizedTag: normalized
                 ) {
-                    tagCurveCache[key] = curve
-                    publishTagCurves()
+                    _ = accountFetch.publishIfCurrent(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) {
+                        tagCurveCache[key] = curve
+                        publishTagCurves()
+                    }
                 }
             }
         }
@@ -1582,7 +1703,10 @@ public final class AppModel: ObservableObject {
 
     public func updateRecording(_ recording: TindeqRecording) async {
         guard let userID = currentUserID else { return }
-        let accountFetch = AccountScopedFetch(accountUserID: userID)
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         do {
             let saved = try await self.repository.updateRecordingMeta(
                 id: recording.id,
@@ -1590,11 +1714,14 @@ public final class AppModel: ObservableObject {
                 side: recording.side,
                 note: recording.note
             )
-            accountFetch.publishIfCurrent(to: self.currentUserID) {
+            accountFetch.publishIfCurrent(
+                to: self.currentUserID,
+                accountEpoch: self.accountEpoch
+            ) {
                 self.replaceRecording(saved)
             }
         } catch {
-            if accountFetch.canApply(to: currentUserID) {
+            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
                 surface(error)
             }
         }
@@ -1927,23 +2054,35 @@ public final class AppModel: ObservableObject {
 
     @discardableResult
     private func enqueueAndUpload(_ item: DurableQueueItem<PendingWrite>) async -> Bool {
+        guard let userID = currentUserID, userID == item.accountUserID else {
+            return false
+        }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         guard let queue else {
-            surface(NSError(
-                domain: "SendmeterNative",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "On-device queue is unavailable."]
-            ))
+            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
+                surface(NSError(
+                    domain: "SendmeterNative",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "On-device queue is unavailable."]
+                ))
+            }
             return false
         }
         do {
             try await queue.enqueue(item)
-            await refreshQueueCount()
+            await refreshQueueCount(for: accountFetch)
             Task { [weak self] in
                 _ = await self?.upload(item)
             }
             return true
         } catch {
-            surface(error)
+            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
+                surface(error)
+            }
+            await refreshQueueCount(for: accountFetch)
             return false
         }
     }
@@ -1970,8 +2109,11 @@ public final class AppModel: ObservableObject {
         guard let queue else {
             return UploadResult(uploaded: false, failure: nil)
         }
-        let accountFetch = AccountScopedFetch(accountUserID: item.accountUserID)
-        guard accountFetch.canApply(to: currentUserID) else {
+        let accountFetch = AccountScopedFetch(
+            accountUserID: item.accountUserID,
+            accountEpoch: accountEpoch
+        )
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
             return UploadResult(uploaded: false, failure: nil)
         }
         let uploadKey = QueueUploadKey(
@@ -1994,7 +2136,7 @@ public final class AppModel: ObservableObject {
             id: item.id,
             accountUserID: item.accountUserID,
             dueAt: mode.revalidationDueAt(now: Date())
-        ), accountFetch.canApply(to: currentUserID) else {
+        ), accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
             return UploadResult(uploaded: false, failure: nil)
         }
         let item = currentItem
@@ -2022,7 +2164,10 @@ public final class AppModel: ObservableObject {
                         rpeConfirmed: payload.rpeConfirmed,
                         groupID: payload.groupID
                     )
-                    guard currentUserID == item.accountUserID else {
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else {
                         // The request belonged to the original account. Do
                         // not merge its result into a newly signed-in one;
                         // leave the durable item for that account to reconcile.
@@ -2069,7 +2214,10 @@ public final class AppModel: ObservableObject {
                     accountUserID: item.accountUserID
                 )
                 try await self.repository.softDeleteSession(id: deletePayload.sessionID)
-                guard currentUserID == item.accountUserID else {
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
                     // The request belonged to the original account. Leave
                     // the durable intent for that account to reconcile rather
                     // than allowing a new account's UI to acknowledge it.
@@ -2078,7 +2226,10 @@ public final class AppModel: ObservableObject {
                 completedDeleteReceipt = receipt
             case let .recording(recording):
                 let saved = try await self.repository.insertRecording(recording)
-                let publishedRecording = accountFetch.publishIfCurrent(to: currentUserID) {
+                let publishedRecording = accountFetch.publishIfCurrent(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
                     pendingRecordings.removeValue(
                         for: recording.id,
                         accountUserID: item.accountUserID
@@ -2090,7 +2241,10 @@ public final class AppModel: ObservableObject {
                 }
             case let .workout(draft):
                 let saved = try await self.repository.insertPhoneWorkout(draft)
-                let publishedWorkout = accountFetch.publishIfCurrent(to: currentUserID) {
+                let publishedWorkout = accountFetch.publishIfCurrent(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
                     pendingSessions.removeValue(forKey: draft.sessionID)
                     replaceSession(saved)
                 }
@@ -2115,21 +2269,39 @@ public final class AppModel: ObservableObject {
             if let finishedSessionInsertID {
                 await uploadPendingSessionDelete(
                     sessionID: finishedSessionInsertID,
-                    accountUserID: item.accountUserID
+                    accountUserID: item.accountUserID,
+                    accountFetch: accountFetch
                 )
-            }
-            if let completedDeleteReceipt {
-                guard currentUserID == item.accountUserID else {
+                guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
                     return UploadResult(uploaded: false, failure: nil)
                 }
-                _ = routineUndo.markDeleteCompleted(
-                    completedDeleteReceipt,
-                    currentUserID: item.accountUserID
-                )
-                sessions.removeAll { $0.id == completedDeleteReceipt.sessionID }
-                mergeSessions(remote: sessions.filter { !$0.pending })
             }
-            _ = accountFetch.publishIfCurrent(to: currentUserID) {
+            if let completedDeleteReceipt {
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                let publishedDelete = accountFetch.publishIfCurrent(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
+                    _ = routineUndo.markDeleteCompleted(
+                        completedDeleteReceipt,
+                        currentUserID: item.accountUserID
+                    )
+                    sessions.removeAll { $0.id == completedDeleteReceipt.sessionID }
+                    mergeSessions(remote: sessions.filter { !$0.pending })
+                }
+                guard publishedDelete else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+            }
+            _ = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
                 if !suppressSavedToast { toastMessage = "Saved" }
             }
             result = UploadResult(uploaded: true, failure: nil)
@@ -2166,7 +2338,7 @@ public final class AppModel: ObservableObject {
                     )
                 )
             } catch {
-                if accountFetch.canApply(to: currentUserID) {
+                if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
                     surface(error)
                 }
                 result = UploadResult(uploaded: false, failure: nil)
@@ -2181,13 +2353,19 @@ public final class AppModel: ObservableObject {
     /// the follow-up upload completes.
     private func uploadPendingSessionDelete(
         sessionID: UUID,
-        accountUserID: UUID
+        accountUserID: UUID,
+        accountFetch: AccountScopedFetch
     ) async {
-        guard currentUserID == accountUserID, let queue else { return }
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch),
+              let queue
+        else { return }
         let queued = await queue.items(
             for: accountUserID,
             dueAt: Date()
         )
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+            return
+        }
         guard let deleteItem = queued.first(where: { item in
             guard case let .sessionDelete(payload) = item.payload else { return false }
             return payload.sessionID == sessionID
@@ -2299,12 +2477,18 @@ public final class AppModel: ObservableObject {
             quarantinedWrites = nil
             return
         }
-        let fetch = accountFetch ?? AccountScopedFetch(accountUserID: userID)
-        guard fetch.canApply(to: userID) else { return }
+        let fetch = accountFetch ?? AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: self.accountEpoch
+        )
+        guard fetch.canApply(to: userID, accountEpoch: self.accountEpoch) else { return }
         let count = await queue.count(for: userID)
         let breadcrumbs = await queue.breadcrumbs(for: userID)
         let quarantined = await queue.quarantinedItems(for: userID).map { $0.summary() }
-        _ = fetch.publishIfCurrent(to: currentUserID) {
+        _ = fetch.publishIfCurrent(
+            to: currentUserID,
+            accountEpoch: self.accountEpoch
+        ) {
             queuedWriteCount = count
             queueBreadcrumbs = breadcrumbs
             quarantinedWrites = quarantined
@@ -2314,13 +2498,28 @@ public final class AppModel: ObservableObject {
     // MARK: Watch completions
 
     private func acceptStoredWatchCompletions() async {
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         for completion in watch.drainStoredCompletions() {
-            await acceptWatchCompletion(completion)
+            await acceptWatchCompletion(completion, accountFetch: accountFetch)
         }
     }
 
-    private func acceptWatchCompletion(_ completion: WatchWorkoutCompletion) async {
+    private func acceptWatchCompletion(
+        _ completion: WatchWorkoutCompletion,
+        accountFetch: AccountScopedFetch? = nil
+    ) async {
         guard let userID = currentUserID else { return }
+        let accountFetch = accountFetch ?? AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: self.accountEpoch
+        )
+        guard accountFetch.canApply(to: userID, accountEpoch: self.accountEpoch) else {
+            return
+        }
         if let owner = completion.accountUserID, owner != userID { return }
         let pending = completion.pendingSession()
         guard !sessions.contains(where: { $0.id == pending.id && !$0.pending }) else { return }
@@ -2328,7 +2527,12 @@ public final class AppModel: ObservableObject {
         mergeSessions(remote: sessions.filter { !$0.pending })
         do {
             let refreshed = try await self.repository.fetchSessions(accountUserID: userID)
-            mergeSessions(remote: refreshed)
+            _ = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: self.accountEpoch
+            ) {
+                mergeSessions(remote: refreshed)
+            }
         } catch {
             // The watch queue is the durable source until its upload lands.
             // Keep the visible pending item rather than treating network delay
@@ -2397,9 +2601,19 @@ public final class AppModel: ObservableObject {
     /// query to the session user (#626 review).
     private func refreshLiveWorkoutRow() async {
         guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         do {
-            if let row = try await repository.fetchLiveWorkout(),
-               liveWorkoutOwnedBy(row, userID: userID, trustsUnstamped: false) {
+            let row = try await repository.fetchLiveWorkout()
+            guard let row,
+                  liveWorkoutOwnedBy(row, userID: userID, trustsUnstamped: false)
+            else { return }
+            _ = accountFetch.publishIfCurrent(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
                 acceptLiveWorkout(
                     row,
                     source: .serverFallback,
@@ -2478,18 +2692,27 @@ public final class AppModel: ObservableObject {
 
     private func refreshReconcileSlices(_ slices: Set<ReconcileSlice>) async {
         guard let userID = currentUserID else { return }
-        let accountFetch = AccountScopedFetch(accountUserID: userID)
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         do {
             if slices.contains(.sessions) {
                 let fetchedSessions = try await repository.fetchSessions(accountUserID: userID)
-                let publishedSessions = accountFetch.publishIfCurrent(to: currentUserID) {
+                let publishedSessions = accountFetch.publishIfCurrent(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
                     mergeSessions(remote: fetchedSessions)
                 }
                 guard publishedSessions else { return }
             }
             if slices.contains(.recordings) {
                 let fetchedRecordings = try await repository.fetchRecordings()
-                let publishedRecordings = accountFetch.publishIfCurrent(to: currentUserID) {
+                let publishedRecordings = accountFetch.publishIfCurrent(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
                     mergeRecordings(remote: fetchedRecordings)
                     hasLoadedRecordings = true
                 }
@@ -2497,14 +2720,20 @@ public final class AppModel: ObservableObject {
             }
             if slices.contains(.workouts) {
                 let fetchedWorkouts = try await repository.fetchWorkouts()
-                let publishedWorkouts = accountFetch.publishIfCurrent(to: currentUserID) {
+                let publishedWorkouts = accountFetch.publishIfCurrent(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
                     workouts = fetchedWorkouts
                 }
                 guard publishedWorkouts else { return }
             }
             if slices.contains(.health) {
                 let fetchedHealth = try await repository.fetchHealthMetrics()
-                let publishedHealth = accountFetch.publishIfCurrent(to: currentUserID) {
+                let publishedHealth = accountFetch.publishIfCurrent(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
                     healthMetrics = fetchedHealth
                 }
                 guard publishedHealth else { return }
@@ -2550,7 +2779,10 @@ public final class AppModel: ObservableObject {
         // while it was suspended; no pending state, including routine Undo,
         // may be mutated by that stale restore.
         guard let currentUserID = self.currentUserID,
-              accountFetch.canApply(to: currentUserID)
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: self.accountEpoch
+              )
         else { return }
         let restoredRecordings = queued.compactMap { item -> PendingRecordingOverlay.Entry? in
             guard case let .recording(recording) = item.payload,
@@ -2567,7 +2799,8 @@ public final class AppModel: ObservableObject {
         guard pendingRecordings.applyRestored(
             restoredRecordings,
             capturedBy: accountFetch,
-            currentUserID: currentUserID
+            currentUserID: currentUserID,
+            accountEpoch: self.accountEpoch
         ) else { return }
         // Read delete intents first. A session insert and its Undo delete can
         // overlap in the queue; the delete must win before any optimistic row
@@ -2740,7 +2973,10 @@ public final class AppModel: ObservableObject {
         recordings.sort { $0.recordedAt > $1.recordedAt }
     }
 
-    private func clearLoadedData() {
+    private func resetAccountState() {
+        accountEpoch &+= 1
+        refreshingOwner = nil
+        isRefreshing = false
         sessions = []
         hasLoadedSessions = false
         deletedSessions = []
@@ -2767,6 +3003,7 @@ public final class AppModel: ObservableObject {
         guidedProtocolActive = false
         tagCurveCache = [:]
         tagCurves = []
+        pendingWarmKeys = [:]
         handsFree.handleDisconnected()
         keepAwakeRelease?()
         keepAwakeRelease = nil

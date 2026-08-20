@@ -10,11 +10,11 @@ final class AccountScopedFetchTests: XCTestCase {
     /// completion resumes. The stale completion must not publish rows or
     /// claim that B's history is loaded.
     func testSuspendedAccountACompletionCannotPublishIntoAccountB() {
-        let fetch = AccountScopedFetch(accountUserID: accountA)
+        let fetch = AccountScopedFetch(accountUserID: accountA, accountEpoch: 0)
         var publishedRows: [Int] = []
         var hasLoadedRecordings = false
 
-        let published = fetch.publishIfCurrent(to: accountB) {
+        let published = fetch.publishIfCurrent(to: accountB, accountEpoch: 1) {
             publishedRows = [1]
             hasLoadedRecordings = true
         }
@@ -25,11 +25,11 @@ final class AccountScopedFetchTests: XCTestCase {
     }
 
     func testCompletionForTheCapturedAccountCanPublish() {
-        let fetch = AccountScopedFetch(accountUserID: accountA)
+        let fetch = AccountScopedFetch(accountUserID: accountA, accountEpoch: 0)
         var publishedRows: [Int] = []
         var hasLoadedRecordings = false
 
-        let published = fetch.publishIfCurrent(to: accountA) {
+        let published = fetch.publishIfCurrent(to: accountA, accountEpoch: 0) {
             publishedRows = [1]
             hasLoadedRecordings = true
         }
@@ -40,10 +40,10 @@ final class AccountScopedFetchTests: XCTestCase {
     }
 
     func testStaleRecordingCompletionCannotReplaceTheCurrentRows() {
-        let fetch = AccountScopedFetch(accountUserID: accountA)
+        let fetch = AccountScopedFetch(accountUserID: accountA, accountEpoch: 0)
         var recordings = [2]
 
-        let published = fetch.publishIfCurrent(to: accountB) {
+        let published = fetch.publishIfCurrent(to: accountB, accountEpoch: 1) {
             recordings = [1]
         }
 
@@ -52,14 +52,50 @@ final class AccountScopedFetchTests: XCTestCase {
     }
 
     func testRecordingCompletionForTheCurrentAccountCanReplaceRows() {
-        let fetch = AccountScopedFetch(accountUserID: accountA)
+        let fetch = AccountScopedFetch(accountUserID: accountA, accountEpoch: 0)
         var recordings = [2]
 
-        let published = fetch.publishIfCurrent(to: accountA) {
+        let published = fetch.publishIfCurrent(to: accountA, accountEpoch: 0) {
             recordings = [1]
         }
 
         XCTAssertTrue(published)
         XCTAssertEqual(recordings, [1])
+    }
+
+    func testAccountACompletionIsRejectedAfterABASwitch() {
+        let fetch = AccountScopedFetch(accountUserID: accountA, accountEpoch: 0)
+
+        XCTAssertFalse(fetch.canApply(to: accountA, accountEpoch: 1))
+        XCTAssertFalse(fetch.canApply(to: accountB, accountEpoch: 1))
+        XCTAssertFalse(fetch.canApply(to: accountA, accountEpoch: 2))
+
+        let currentA = AccountScopedFetch(accountUserID: accountA, accountEpoch: 2)
+        XCTAssertTrue(currentA.canApply(to: accountA, accountEpoch: 2))
+    }
+
+    func testOnlyTheActiveCompletionOwnerCanFinishTheRefresh() {
+        let first = AccountScopedCompletion(
+            fetch: AccountScopedFetch(accountUserID: accountA, accountEpoch: 0)
+        )
+        let second = AccountScopedCompletion(
+            fetch: AccountScopedFetch(accountUserID: accountA, accountEpoch: 0)
+        )
+
+        XCTAssertFalse(first.owns(
+            currentUserID: accountA,
+            accountEpoch: 0,
+            activeOwner: second
+        ))
+        XCTAssertTrue(second.owns(
+            currentUserID: accountA,
+            accountEpoch: 0,
+            activeOwner: second
+        ))
+        XCTAssertFalse(second.owns(
+            currentUserID: accountA,
+            accountEpoch: 1,
+            activeOwner: second
+        ))
     }
 }

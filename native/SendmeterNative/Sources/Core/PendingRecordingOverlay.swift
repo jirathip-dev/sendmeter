@@ -33,9 +33,12 @@ public struct PendingRecordingOverlay: Sendable {
     public mutating func applyRestored(
         _ restored: [Entry],
         capturedBy accountFetch: AccountScopedFetch,
-        currentUserID: UUID?
+        currentUserID: UUID?,
+        accountEpoch: UInt64
     ) -> Bool {
-        guard accountFetch.canApply(to: currentUserID) else { return false }
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+            return false
+        }
         for entry in restored where entry.accountUserID == accountFetch.accountUserID {
             entries[entry.recording.id] = entry
         }
