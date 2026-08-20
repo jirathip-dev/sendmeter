@@ -490,6 +490,11 @@ public struct ReverseActionMetrics: Codable, Equatable, Sendable {
 
 public struct TindeqRecording: Codable, Equatable, Sendable, Identifiable {
     public let id: UUID
+    /// Non-nil only for a row loaded from the recording trash. The raw token
+    /// is retained alongside the parsed Date because PostgREST equality
+    /// filters must use the exact observed tombstone precision.
+    public let deletedAt: Date?
+    public let deletedAtToken: String?
     public let recordedAt: Date
     public let durationMilliseconds: Int
     public let peakKilograms: Double?
@@ -527,6 +532,8 @@ public struct TindeqRecording: Codable, Equatable, Sendable, Identifiable {
 
     public init(
         id: UUID,
+        deletedAt: Date? = nil,
+        deletedAtToken: String? = nil,
         recordedAt: Date,
         durationMilliseconds: Int,
         peakKilograms: Double?,
@@ -560,6 +567,8 @@ public struct TindeqRecording: Codable, Equatable, Sendable, Identifiable {
         rejected: Bool = false
     ) {
         self.id = id
+        self.deletedAt = deletedAt
+        self.deletedAtToken = deletedAtToken
         self.recordedAt = recordedAt
         self.durationMilliseconds = durationMilliseconds
         self.peakKilograms = peakKilograms

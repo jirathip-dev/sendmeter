@@ -810,6 +810,517 @@ final class RecordingEditTests: XCTestCase {
         XCTAssertEqual(restored.payload, RecordingQueuePayload(value: "new"))
         XCTAssertEqual(restored.attempts, 0)
     }
+
+    func testLegacyMigrationReplacementSetIsAtomicOnPersistenceFailure() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let firstID = UUID()
+        let secondID = UUID()
+        let legacyFirst = DurableQueueItem(
+            id: firstID,
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            payload: RecordingQueuePayload(value: "combined-first")
+        )
+        let legacySecond = DurableQueueItem(
+            id: secondID,
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 1_001),
+            payload: RecordingQueuePayload(value: "combined-second")
+        )
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json"
+        )
+        try await queue.enqueue([legacyFirst, legacySecond])
+        let fileURL = directory.appendingPathComponent("recording-edits.json")
+        let durableBeforeMigration = try Data(contentsOf: fileURL)
+        let replacements = [
+            DurableQueueConditionalReplacement(
+                item: legacyFirst.replacingPayload(
+                    RecordingQueuePayload(value: "metadata-first"),
+                    terminalKey: recordingID
+                ),
+                expectedRevision: legacyFirst.revision
+            ),
+            DurableQueueConditionalReplacement(
+                item: DurableQueueItem(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-0000000006F1")!,
+                    accountUserID: account,
+                    createdAt: legacySecond.createdAt,
+                    orderingKey: 200,
+                    terminalKey: recordingID,
+                    payload: RecordingQueuePayload(value: "shared-rpe")
+                ),
+                expectedRevision: nil
+            ),
+            DurableQueueConditionalReplacement(
+                item: legacySecond.replacingPayload(
+                    RecordingQueuePayload(value: "metadata-second"),
+                    terminalKey: otherID
+                ),
+                expectedRevision: legacySecond.revision
+            )
+        ]
+
+        try FileManager.default.removeItem(at: fileURL)
+        try FileManager.default.createDirectory(at: fileURL, withIntermediateDirectories: false)
+        do {
+            _ = try await queue.replaceIfCurrent(replacements)
+            XCTFail("a failed persistence must not partially normalize legacy items")
+        } catch {
+            // The old combined set remains the recovery source.
+        }
+        let failedFirst = await queue.item(id: firstID, accountUserID: account)?.payload
+        let failedSecond = await queue.item(id: secondID, accountUserID: account)?.payload
+        let failedShared = await queue.item(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000006F1")!,
+            accountUserID: account
+        )
+        XCTAssertEqual(failedFirst, legacyFirst.payload)
+        XCTAssertEqual(failedSecond, legacySecond.payload)
+        XCTAssertNil(failedShared)
+
+        try FileManager.default.removeItem(at: fileURL)
+        try durableBeforeMigration.write(to: fileURL, options: [.atomic])
+        let migrated = try await queue.replaceIfCurrent(replacements)
+        XCTAssertTrue(migrated)
+        let migratedFirst = await queue.item(id: firstID, accountUserID: account)?.payload
+        let migratedSecond = await queue.item(id: secondID, accountUserID: account)?.payload
+        let migratedShared = await queue.item(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000006F1")!,
+            accountUserID: account
+        )?.payload
+        XCTAssertEqual(migratedFirst, RecordingQueuePayload(value: "metadata-first"))
+        XCTAssertEqual(migratedSecond, RecordingQueuePayload(value: "metadata-second"))
+        XCTAssertEqual(migratedShared, RecordingQueuePayload(value: "shared-rpe"))
+    }
+
+    func testLegacyMigrationConflictLeavesEveryOtherCombinedItemReconstructible() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let first = DurableQueueItem(
+            id: UUID(),
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 2_000),
+            payload: RecordingQueuePayload(value: "legacy-first")
+        )
+        let second = DurableQueueItem(
+            id: UUID(),
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 2_001),
+            payload: RecordingQueuePayload(value: "legacy-second")
+        )
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json"
+        )
+        try await queue.enqueue([first, second])
+        let newerSecond = DurableQueueItem(
+            id: second.id,
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 2_002),
+            orderingKey: 2_002,
+            terminalKey: otherID,
+            payload: RecordingQueuePayload(value: "newer-second")
+        )
+        try await queue.enqueue(newerSecond)
+        let replacements = [
+            DurableQueueConditionalReplacement(
+                item: first.replacingPayload(
+                    RecordingQueuePayload(value: "metadata-first"),
+                    terminalKey: recordingID
+                ),
+                expectedRevision: first.revision
+            ),
+            DurableQueueConditionalReplacement(
+                item: second.replacingPayload(
+                    RecordingQueuePayload(value: "metadata-second"),
+                    terminalKey: otherID
+                ),
+                expectedRevision: second.revision
+            )
+        ]
+        let applied = try await queue.replaceIfCurrent(replacements)
+        let currentFirst = await queue.item(id: first.id, accountUserID: account)?.payload
+        let currentSecond = await queue.item(id: second.id, accountUserID: account)?.payload
+        XCTAssertFalse(applied)
+        XCTAssertEqual(currentFirst, first.payload)
+        XCTAssertEqual(currentSecond, newerSecond.payload)
+    }
+
+    func testConcurrentMigrationTransactionsPublishOnlyOneCompleteReplacement() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let legacy = DurableQueueItem(
+            id: UUID(),
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 2_500),
+            payload: RecordingQueuePayload(value: "legacy-combined")
+        )
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json"
+        )
+        try await queue.enqueue(legacy)
+        let first = DurableQueueConditionalReplacement(
+            item: legacy.replacingPayload(
+                RecordingQueuePayload(value: "metadata-A"),
+                terminalKey: recordingID
+            ),
+            expectedRevision: legacy.revision
+        )
+        let second = DurableQueueConditionalReplacement(
+            item: legacy.replacingPayload(
+                RecordingQueuePayload(value: "metadata-B"),
+                terminalKey: recordingID
+            ),
+            expectedRevision: legacy.revision
+        )
+        let results = await withTaskGroup(of: Bool.self, returning: [Bool].self) { group in
+            group.addTask { (try? await queue.replaceIfCurrent([first])) == true }
+            group.addTask { (try? await queue.replaceIfCurrent([second])) == true }
+            var values: [Bool] = []
+            for await value in group { values.append(value) }
+            return values
+        }
+        XCTAssertEqual(results.filter { $0 }.count, 1)
+        let current = await queue.item(id: legacy.id, accountUserID: account)
+        XCTAssertTrue(
+            current?.payload == RecordingQueuePayload(value: "metadata-A")
+                || current?.payload == RecordingQueuePayload(value: "metadata-B")
+        )
+    }
+
+    func testDeleteCompensationSkipsFrozenR1AfterR2UploadAndRelaunch() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json"
+        )
+        let stableID = RecordingEditQueueIdentity.sessionRPE(sessionID)
+        let r1 = DurableQueueItem(
+            id: stableID,
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 3_000),
+            orderingKey: 101,
+            terminalKey: recordingID,
+            payload: RecordingQueuePayload(value: "R1")
+        )
+        try await queue.enqueue(r1)
+        try await queue.remove(id: stableID, accountUserID: account)
+        let r2 = DurableQueueItem(
+            id: stableID,
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 3_001),
+            orderingKey: 202,
+            terminalKey: otherID,
+            payload: RecordingQueuePayload(value: "R2")
+        )
+        try await queue.enqueue(r2)
+        try await queue.remove(id: stableID, accountUserID: account)
+
+        let watermark = await queue.orderingWatermark(
+            for: stableID,
+            accountUserID: account
+        )
+        XCTAssertEqual(
+            RecordingDeleteCompensationPolicy.decision(
+                state: .pending,
+                compensationOrderingKey: 101,
+                currentOrderingKey: nil,
+                watermarkOrderingKey: watermark?.orderingKey
+            ),
+            .skipSuperseded
+        )
+        let relaunched = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json"
+        )
+        let relaunchedWatermark = await relaunched.orderingWatermark(
+            for: stableID,
+            accountUserID: account
+        )
+        XCTAssertEqual(relaunchedWatermark?.orderingKey, 202)
+        XCTAssertEqual(
+            RecordingDeleteCompensationPolicy.decision(
+                state: .pending,
+                compensationOrderingKey: 101,
+                currentOrderingKey: nil,
+                watermarkOrderingKey: relaunchedWatermark?.orderingKey
+            ),
+            .skipSuperseded
+        )
+        XCTAssertEqual(
+            RecordingDeleteCompensationPolicy.decision(
+                state: .applied,
+                compensationOrderingKey: 101,
+                currentOrderingKey: 202,
+                watermarkOrderingKey: nil
+            ),
+            .skipAlreadyApplied
+        )
+    }
+
+    func testRestoreRequestUsesExactObservedTombstoneAcrossDelayedABA() {
+        let old = "2026-08-20T01:02:03.123456Z"
+        let newer = "2026-08-20T01:02:04.123456Z"
+        let observation = RecordingRestoreObservation(
+            recordingID: recordingID,
+            deletedAtToken: old
+        )
+        let requestItems = RecordingRestoreRequestPolicy.queryItems(for: observation)
+        XCTAssertEqual(requestItems?.first?.name, "id")
+        XCTAssertEqual(requestItems?.first?.value, "eq.\(recordingID.uuidString.lowercased())")
+        XCTAssertEqual(requestItems?.dropFirst().first?.value, "eq.\(old)")
+        XCTAssertEqual(
+            RecordingRestoreRequestPolicy.deletedAtFilterValue(for: old),
+            "eq.\(old)"
+        )
+        XCTAssertNotEqual(
+            RecordingRestoreRequestPolicy.deletedAtFilterValue(for: old),
+            RecordingRestoreRequestPolicy.deletedAtFilterValue(for: newer)
+        )
+        XCTAssertTrue(
+            RecordingRestoreRequestPolicy.acceptsBackendTombstone(
+                observedToken: old,
+                backendToken: old
+            )
+        )
+        XCTAssertFalse(
+            RecordingRestoreRequestPolicy.acceptsBackendTombstone(
+                observedToken: old,
+                backendToken: newer
+            )
+        )
+        XCTAssertNil(RecordingRestoreRequestPolicy.deletedAtFilterValue(for: "bad\nvalue"))
+    }
+
+    func testQuarantineDiscardOnlyOwnsExactDeleteOperationAcrossABA() {
+        let account = UUID()
+        let oldOperation = UUID()
+        let newOperation = UUID()
+        _ = RecordingEditDeleteToken(
+            id: oldOperation,
+            recordingID: recordingID,
+            accountUserID: account,
+            accountEpoch: 10
+        )
+        let newToken = RecordingEditDeleteToken(
+            id: newOperation,
+            recordingID: recordingID,
+            accountUserID: account,
+            accountEpoch: 12
+        )
+        XCTAssertFalse(
+            RecordingDeleteDiscardPolicy.ownsExactDelete(
+                operationID: oldOperation,
+                tombstone: newToken,
+                terminalOperationID: newOperation
+            )
+        )
+        XCTAssertTrue(
+            RecordingDeleteDiscardPolicy.ownsExactDelete(
+                operationID: newOperation,
+                tombstone: newToken,
+                terminalOperationID: nil
+            )
+        )
+        XCTAssertTrue(
+            RecordingDeleteDiscardPolicy.ownsExactDelete(
+                operationID: oldOperation,
+                tombstone: nil,
+                terminalOperationID: oldOperation
+            )
+        )
+    }
+
+    func testWatermarksAreBoundedAndFloorBlocksEvictedStaleReplay() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json",
+            orderingWatermarkLimit: 2
+        )
+        var identities: [UUID] = []
+        for ordering in 1...4 {
+            let identity = UUID()
+            identities.append(identity)
+            try await queue.enqueue(
+                DurableQueueItem(
+                    id: identity,
+                    accountUserID: account,
+                    createdAt: Date(timeIntervalSince1970: Double(ordering)),
+                    orderingKey: UInt64(ordering),
+                    terminalKey: UUID(),
+                    payload: RecordingQueuePayload(value: "R\(ordering)")
+                )
+            )
+            try await queue.remove(id: identity, accountUserID: account)
+        }
+        let watermarkCount = await queue.orderingWatermarkCount(for: account)
+        XCTAssertEqual(watermarkCount, 2)
+        let stale = DurableQueueItem(
+            id: identities[0],
+            accountUserID: account,
+            createdAt: Date(timeIntervalSince1970: 1),
+            orderingKey: 1,
+            terminalKey: recordingID,
+            payload: RecordingQueuePayload(value: "stale")
+        )
+        let staleAccepted = try await queue.enqueueUnlessTerminalizedKeepingNewest(
+            [stale],
+            terminalKey: recordingID,
+            accountUserID: account
+        )
+        let staleItem = await queue.item(id: identities[0], accountUserID: account)
+        XCTAssertFalse(staleAccepted)
+        XCTAssertNil(staleItem)
+    }
+
+    func testTerminalHistoryGCIsBoundedWithoutReopeningOlderEditorReplay() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json",
+            orderingWatermarkLimit: 2,
+            terminalHistoryLimit: 2
+        )
+        var firstKey = recordingID
+        for ordering in 1...3 {
+            let key = ordering == 1 ? firstKey : UUID()
+            let editor = DurableQueueItem(
+                id: UUID(),
+                accountUserID: account,
+                orderingKey: UInt64(ordering),
+                terminalKey: key,
+                payload: RecordingQueuePayload(value: "edit-\(ordering)")
+            )
+            try await queue.enqueue(editor)
+            let delete = DurableQueueItem(
+                id: UUID(),
+                accountUserID: account,
+                terminalKey: key,
+                payload: RecordingQueuePayload(value: "delete-\(ordering)")
+            )
+            let installed = try await queue.enqueueTerminalDelete(delete, terminalKey: key)
+            let durableDelete = await queue.item(id: delete.id, accountUserID: account)
+            XCTAssertTrue(installed)
+            let completed = try await queue.completeTerminalDelete(
+                id: try XCTUnwrap(durableDelete).id,
+                accountUserID: account,
+                expectedRevision: try XCTUnwrap(durableDelete).revision,
+                terminalKey: key,
+                operationID: UUID()
+            )
+            XCTAssertTrue(completed)
+            firstKey = key
+        }
+        let terminalCount = await queue.terminalizedCount(for: account)
+        XCTAssertEqual(terminalCount, 2)
+        let stale = DurableQueueItem(
+            id: UUID(),
+            accountUserID: account,
+            orderingKey: 1,
+            terminalKey: recordingID,
+            payload: RecordingQueuePayload(value: "stale-after-terminal-GC")
+        )
+        let accepted = try await queue.enqueueUnlessTerminalizedKeepingNewest(
+            [stale],
+            terminalKey: recordingID,
+            accountUserID: account
+        )
+        XCTAssertFalse(accepted)
+        let staleItem = await queue.item(id: stale.id, accountUserID: account)
+        XCTAssertNil(staleItem)
+    }
+
+    func testBackwardQueueWithoutOrderingFloorsDerivesSafeReplayFloor() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = UUID()
+        let identity = UUID()
+        let createdAt = Date(timeIntervalSince1970: 4_000)
+        let revision = UUID()
+        let watermark = DurableQueueOrderingWatermark(
+            queueItemID: identity,
+            accountUserID: account,
+            orderingKey: 400,
+            createdAt: createdAt,
+            revision: revision
+        )
+        let terminalOperation = UUID()
+        let legacyTerminal = DurableQueueTerminal(
+            key: recordingID,
+            accountUserID: account,
+            operationID: terminalOperation,
+            completedAt: createdAt
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var legacyTerminalObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoder.encode(legacyTerminal))
+        ) as! [String: Any]
+        legacyTerminalObject.removeValue(forKey: "completedAt")
+        let data = try JSONSerialization.data(withJSONObject: [
+            "items": [],
+            "breadcrumbs": [],
+            "terminalized": [legacyTerminalObject],
+            "orderingWatermarks": [
+                try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: encoder.encode(watermark))
+                )
+            ]
+        ])
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        try data.write(
+            to: directory.appendingPathComponent("recording-edits.json"),
+            options: [.atomic]
+        )
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json",
+            orderingWatermarkLimit: 2
+        )
+        let stale = DurableQueueItem(
+            id: identity,
+            accountUserID: account,
+            createdAt: createdAt,
+            orderingKey: 399,
+            terminalKey: otherID,
+            payload: RecordingQueuePayload(value: "stale")
+        )
+        let accepted = try await queue.enqueueUnlessTerminalizedKeepingNewest(
+            [stale],
+            terminalKey: otherID,
+            accountUserID: account
+        )
+        XCTAssertFalse(accepted)
+        let restoredTerminalOperation = await queue.terminalizedToken(
+            for: recordingID,
+            accountUserID: account
+        )
+        XCTAssertEqual(restoredTerminalOperation, terminalOperation)
+    }
 }
 
 private struct RecordingQueuePayload: Codable, Equatable, Sendable {

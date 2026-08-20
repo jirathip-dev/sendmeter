@@ -301,6 +301,20 @@ public struct DurableQueueRemoval: Equatable, Sendable {
     }
 }
 
+/// One member of an all-or-nothing queue migration. `expectedRevision` is
+/// validated for every member before any replacement is published, so a
+/// migration cannot normalize half of a legacy combined edit set and leave
+/// the other half carrying the old shared-session claim.
+public struct DurableQueueConditionalReplacement<Payload: Codable & Sendable>: Sendable {
+    public let item: DurableQueueItem<Payload>
+    public let expectedRevision: UUID?
+
+    public init(item: DurableQueueItem<Payload>, expectedRevision: UUID?) {
+        self.item = item
+        self.expectedRevision = expectedRevision
+    }
+}
+
 /// A persisted terminal marker outlives the queue item itself. This closes
 /// the crash window after a backend delete succeeds but before the process can
 /// remove the durable delete intent: an old editor task cannot enqueue again,
@@ -309,11 +323,31 @@ public struct DurableQueueTerminal: Codable, Equatable, Hashable, Sendable {
     public let key: UUID
     public let accountUserID: UUID
     public let operationID: UUID
+    public let completedAt: Date
 
-    public init(key: UUID, accountUserID: UUID, operationID: UUID) {
+    public init(
+        key: UUID,
+        accountUserID: UUID,
+        operationID: UUID,
+        completedAt: Date = Date()
+    ) {
         self.key = key
         self.accountUserID = accountUserID
         self.operationID = operationID
+        self.completedAt = completedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key, accountUserID, operationID, completedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(UUID.self, forKey: .key)
+        accountUserID = try container.decode(UUID.self, forKey: .accountUserID)
+        operationID = try container.decode(UUID.self, forKey: .operationID)
+        completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+            ?? .distantPast
     }
 }
 
@@ -335,6 +369,29 @@ public struct DurableQueueOrderingWatermark: Codable, Equatable, Sendable {
         revision: UUID
     ) {
         self.queueItemID = queueItemID
+        self.accountUserID = accountUserID
+        self.orderingKey = orderingKey
+        self.createdAt = createdAt
+        self.revision = revision
+    }
+}
+
+/// A compact account-wide ordering floor. Per-identity watermarks can be
+/// garbage-collected, but this floor remains so an old replay cannot recreate
+/// a removed identity after its individual watermark has left the bounded
+/// history window.
+public struct DurableQueueOrderingFloor: Codable, Equatable, Sendable {
+    public let accountUserID: UUID
+    public let orderingKey: UInt64
+    public let createdAt: Date
+    public let revision: UUID
+
+    public init(
+        accountUserID: UUID,
+        orderingKey: UInt64,
+        createdAt: Date,
+        revision: UUID
+    ) {
         self.accountUserID = accountUserID
         self.orderingKey = orderingKey
         self.createdAt = createdAt
@@ -388,21 +445,24 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         var breadcrumbs: [QueueBreadcrumb]
         var terminalized: [DurableQueueTerminal]
         var orderingWatermarks: [DurableQueueOrderingWatermark]
+        var orderingFloors: [DurableQueueOrderingFloor]
 
         init(
             items: [DurableQueueItem<Payload>],
             breadcrumbs: [QueueBreadcrumb],
             terminalized: [DurableQueueTerminal] = [],
-            orderingWatermarks: [DurableQueueOrderingWatermark] = []
+            orderingWatermarks: [DurableQueueOrderingWatermark] = [],
+            orderingFloors: [DurableQueueOrderingFloor] = []
         ) {
             self.items = items
             self.breadcrumbs = breadcrumbs
             self.terminalized = terminalized
             self.orderingWatermarks = orderingWatermarks
+            self.orderingFloors = orderingFloors
         }
 
         private enum CodingKeys: String, CodingKey {
-            case items, breadcrumbs, terminalized, orderingWatermarks
+            case items, breadcrumbs, terminalized, orderingWatermarks, orderingFloors
         }
 
         init(from decoder: Decoder) throws {
@@ -417,11 +477,61 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 [DurableQueueOrderingWatermark].self,
                 forKey: .orderingWatermarks
             ) ?? []
+            if let persisted = try container.decodeIfPresent(
+                [DurableQueueOrderingFloor].self,
+                forKey: .orderingFloors
+            ) {
+                orderingFloors = persisted
+            } else {
+                // Files written before floors existed still have enough
+                // semantic claims in their live items/watermarks to derive a
+                // safe account-wide lower bound.
+                var derived: [UUID: DurableQueueOrderingFloor] = [:]
+                for claim in items.map({
+                    DurableQueueOrderingFloor(
+                        accountUserID: $0.accountUserID,
+                        orderingKey: $0.orderingKey,
+                        createdAt: $0.createdAt,
+                        revision: $0.revision
+                    )
+                }) + orderingWatermarks.map({
+                    DurableQueueOrderingFloor(
+                        accountUserID: $0.accountUserID,
+                        orderingKey: $0.orderingKey,
+                        createdAt: $0.createdAt,
+                        revision: $0.revision
+                    )
+                }) where claim.orderingKey != 0 {
+                    if let current = derived[claim.accountUserID] {
+                        if Self.isNewer(claim, than: current) {
+                            derived[claim.accountUserID] = claim
+                        }
+                    } else {
+                        derived[claim.accountUserID] = claim
+                    }
+                }
+                orderingFloors = Array(derived.values)
+            }
+        }
+
+        private static func isNewer(
+            _ lhs: DurableQueueOrderingFloor,
+            than rhs: DurableQueueOrderingFloor
+        ) -> Bool {
+            if lhs.orderingKey != rhs.orderingKey {
+                return lhs.orderingKey > rhs.orderingKey
+            }
+            if lhs.createdAt != rhs.createdAt {
+                return lhs.createdAt > rhs.createdAt
+            }
+            return lhs.revision.uuidString > rhs.revision.uuidString
         }
     }
 
     private let fileURL: URL
     private let breadcrumbLimit: Int
+    private let orderingWatermarkLimit: Int
+    private let terminalHistoryLimit: Int
     private var store: Store
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -429,10 +539,14 @@ public actor DurableQueue<Payload: Codable & Sendable> {
     public init(
         directoryURL: URL,
         filename: String,
-        breadcrumbLimit: Int = 10
+        breadcrumbLimit: Int = 10,
+        orderingWatermarkLimit: Int = 128,
+        terminalHistoryLimit: Int = 128
     ) throws {
         guard !filename.isEmpty else { throw DurableQueueError.invalidDirectory }
         self.breadcrumbLimit = max(1, breadcrumbLimit)
+        self.orderingWatermarkLimit = max(1, orderingWatermarkLimit)
+        self.terminalHistoryLimit = max(1, terminalHistoryLimit)
         self.fileURL = directoryURL.appendingPathComponent(filename, isDirectory: false)
 
         let encoder = JSONEncoder()
@@ -481,6 +595,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                     if item.terminalKey != nil || item.orderingKey != 0 {
                         if Self.isNewer(item, than: state.items[index]) {
                             state.items[index] = item
+                            updateOrderingFloor(for: item, in: &state)
                         }
                     } else {
                         state.items[index] = item
@@ -491,7 +606,13 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                     }), !Self.isNewer(item, than: watermark) {
                         continue
                     }
+                    if let floor = state.orderingFloors.first(where: {
+                        $0.accountUserID == item.accountUserID
+                    }), !Self.isNewer(item, than: floor) {
+                        continue
+                    }
                     state.items.append(item)
+                    updateOrderingFloor(for: item, in: &state)
                 }
             }
         }
@@ -521,14 +642,88 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 }), !Self.isNewer(item, than: watermark) {
                     return
                 }
+                if let floor = state.orderingFloors.first(where: {
+                    $0.accountUserID == item.accountUserID
+                }), !Self.isNewer(item, than: floor) {
+                    return
+                }
                 state.items.append(item)
+                updateOrderingFloor(for: item, in: &state)
                 applied = true
                 return
             }
             guard state.items[index].accountUserID == item.accountUserID,
                   state.items[index].revision == expectedRevision else { return }
             state.items[index] = item
+            updateOrderingFloor(for: item, in: &state)
             applied = true
+        }
+        return applied
+    }
+
+    /// Apply a complete conditional replacement set in one persistence
+    /// transaction. Every expected revision is checked against the same
+    /// snapshot before any item is changed. A conflict, terminal marker, or
+    /// persistence error therefore leaves the original queue reconstructible;
+    /// there is no observable partial migration.
+    @discardableResult
+    public func replaceIfCurrent(
+        _ replacements: [DurableQueueConditionalReplacement<Payload>]
+    ) throws -> Bool {
+        guard !replacements.isEmpty else { return false }
+        var applied = false
+        try transact { state in
+            // Validate the entire snapshot first. A stale absent item is only
+            // allowed when the caller explicitly expected it to be absent and
+            // a newer watermark already represents that identity; this lets
+            // metadata normalization complete without recreating an older
+            // shared RPE claim.
+            for replacement in replacements {
+                let item = replacement.item
+                if state.terminalized.contains(where: {
+                    $0.key == item.terminalKey
+                        && $0.accountUserID == item.accountUserID
+                        && item.terminalKey != nil
+                }) {
+                    return
+                }
+                guard let index = state.items.firstIndex(where: { $0.id == item.id }) else {
+                    guard replacement.expectedRevision == nil else { return }
+                    continue
+                }
+                guard state.items[index].accountUserID == item.accountUserID,
+                      state.items[index].revision == replacement.expectedRevision else {
+                    return
+                }
+            }
+
+            for replacement in replacements {
+                let item = replacement.item
+                if let index = state.items.firstIndex(where: { $0.id == item.id }) {
+                    // The validation above proved this is still the exact
+                    // snapshot. Replacing it is unconditional within this
+                    // single transaction, including an older legacy item
+                    // whose payload is being stripped to metadata.
+                    state.items[index] = item
+                    updateOrderingFloor(for: item, in: &state)
+                    applied = true
+                    continue
+                }
+
+                if let watermark = state.orderingWatermarks.first(where: {
+                    $0.queueItemID == item.id && $0.accountUserID == item.accountUserID
+                }), !Self.isNewer(item, than: watermark) {
+                    continue
+                }
+                if let floor = state.orderingFloors.first(where: {
+                    $0.accountUserID == item.accountUserID
+                }), !Self.isNewer(item, than: floor) {
+                    continue
+                }
+                state.items.append(item)
+                updateOrderingFloor(for: item, in: &state)
+                applied = true
+            }
         }
         return applied
     }
@@ -563,6 +758,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                     }
                     if Self.isNewer(item, than: state.items[index]) {
                         state.items[index] = item
+                        updateOrderingFloor(for: item, in: &state)
                         changed = true
                     }
                 } else {
@@ -571,7 +767,13 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                     }), !Self.isNewer(item, than: watermark) {
                         continue
                     }
+                    if let floor = state.orderingFloors.first(where: {
+                        $0.accountUserID == accountUserID
+                    }), !Self.isNewer(item, than: floor) {
+                        continue
+                    }
                     state.items.append(item)
+                    updateOrderingFloor(for: item, in: &state)
                     changed = true
                 }
             }
@@ -683,9 +885,11 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 DurableQueueTerminal(
                     key: terminalKey,
                     accountUserID: accountUserID,
-                    operationID: operationID
+                    operationID: operationID,
+                    completedAt: Date()
                 )
             )
+            compactTerminalHistory(for: accountUserID, in: &state)
             completed = true
         }
         return completed
@@ -822,6 +1026,14 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         store.orderingWatermarks.first {
             $0.queueItemID == queueItemID && $0.accountUserID == accountUserID
         }
+    }
+
+    public func orderingWatermarkCount(for accountUserID: UUID) -> Int {
+        store.orderingWatermarks.filter { $0.accountUserID == accountUserID }.count
+    }
+
+    public func terminalizedCount(for accountUserID: UUID) -> Int {
+        store.terminalized.filter { $0.accountUserID == accountUserID }.count
     }
 
     /// Re-reads one item through the hot-drain filter. Callers that captured a
@@ -1042,13 +1254,17 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         id: UUID,
         accountUserID: UUID,
         reason: String = "quarantine-discarded",
-        now: Date = Date()
+        now: Date = Date(),
+        expectedRevision: UUID? = nil
     ) throws -> Bool {
         guard let index = store.items.firstIndex(where: { $0.id == id }) else {
             throw DurableQueueError.itemNotFound
         }
         guard store.items[index].accountUserID == accountUserID else {
             throw DurableQueueError.accountMismatch
+        }
+        guard expectedRevision == nil || store.items[index].revision == expectedRevision else {
+            return false
         }
         guard store.items[index].quarantined != nil else { return false }
         let item = store.items[index]
@@ -1163,10 +1379,64 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         return lhs.revision.uuidString > rhs.revision.uuidString
     }
 
+    private static func isNewer(
+        _ lhs: DurableQueueItem<Payload>,
+        than rhs: DurableQueueOrderingFloor
+    ) -> Bool {
+        if lhs.orderingKey != rhs.orderingKey {
+            return lhs.orderingKey > rhs.orderingKey
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt > rhs.createdAt
+        }
+        return lhs.revision.uuidString > rhs.revision.uuidString
+    }
+
+    private static func isNewer(
+        _ lhs: DurableQueueOrderingFloor,
+        than rhs: DurableQueueOrderingFloor
+    ) -> Bool {
+        if lhs.orderingKey != rhs.orderingKey {
+            return lhs.orderingKey > rhs.orderingKey
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt > rhs.createdAt
+        }
+        return lhs.revision.uuidString > rhs.revision.uuidString
+    }
+
+    private func updateOrderingFloor(
+        for item: DurableQueueItem<Payload>,
+        in state: inout Store
+    ) {
+        guard item.orderingKey != 0, item.terminalKey != nil else { return }
+        let floor = DurableQueueOrderingFloor(
+            accountUserID: item.accountUserID,
+            orderingKey: item.orderingKey,
+            createdAt: item.createdAt,
+            revision: item.revision
+        )
+        if let index = state.orderingFloors.firstIndex(where: {
+            $0.accountUserID == item.accountUserID
+        }) {
+            if Self.isNewer(floor, than: state.orderingFloors[index]) {
+                state.orderingFloors[index] = floor
+            }
+        } else {
+            state.orderingFloors.append(floor)
+        }
+    }
+
     private func recordOrderingWatermark(
         for item: DurableQueueItem<Payload>,
         in state: inout Store
     ) {
+        // Delete intents use terminal markers, not semantic editor ordering.
+        // Only an editor identity with a monotonic claim may enter this
+        // history; otherwise a delete's wall clock would pollute the RPE
+        // ordering floor and consume retention for no replay-safety benefit.
+        guard item.orderingKey != 0, item.terminalKey != nil else { return }
+        updateOrderingFloor(for: item, in: &state)
         let watermark = DurableQueueOrderingWatermark(
             queueItemID: item.id,
             accountUserID: item.accountUserID,
@@ -1183,12 +1453,52 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         } else {
             state.orderingWatermarks.append(watermark)
         }
+        if state.orderingWatermarks.count > orderingWatermarkLimit {
+            state.orderingWatermarks.sort {
+                if $0.orderingKey != $1.orderingKey {
+                    return $0.orderingKey > $1.orderingKey
+                }
+                if $0.createdAt != $1.createdAt {
+                    return $0.createdAt > $1.createdAt
+                }
+                return $0.revision.uuidString > $1.revision.uuidString
+            }
+            state.orderingWatermarks.removeLast(
+                state.orderingWatermarks.count - orderingWatermarkLimit
+            )
+        }
     }
 
     private func appendBreadcrumb(_ breadcrumb: QueueBreadcrumb, to state: inout Store) {
         state.breadcrumbs.append(breadcrumb)
         if state.breadcrumbs.count > breadcrumbLimit {
             state.breadcrumbs.removeFirst(state.breadcrumbs.count - breadcrumbLimit)
+        }
+    }
+
+    /// Terminal markers are live delete fences until the account has a
+    /// semantic ordering floor. Once the floor exists, old editor replays are
+    /// rejected even if their per-recording marker is compacted, so retaining
+    /// only the newest terminal history cannot reopen a stale edit. Accounts
+    /// that still contain only pre-ordering legacy entries keep their fences
+    /// rather than trading correctness for a cosmetic bound.
+    private func compactTerminalHistory(
+        for accountUserID: UUID,
+        in state: inout Store
+    ) {
+        guard state.terminalized.filter({ $0.accountUserID == accountUserID }).count
+                > terminalHistoryLimit,
+              state.orderingFloors.contains(where: {
+                  $0.accountUserID == accountUserID
+              }) else { return }
+        let keep = state.terminalized
+            .filter { $0.accountUserID == accountUserID }
+            .sorted { $0.completedAt > $1.completedAt }
+            .prefix(terminalHistoryLimit)
+        let keepKeys = Set(keep.map(\.key))
+        state.terminalized.removeAll {
+            $0.accountUserID == accountUserID
+                && !keepKeys.contains($0.key)
         }
     }
 

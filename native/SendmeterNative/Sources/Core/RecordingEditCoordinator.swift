@@ -194,6 +194,14 @@ public struct RecordingEditCoordinator: Sendable {
     }
 
     public mutating func nextSessionRPERevision(now: Date = Date()) -> UInt64 {
+        nextEditorOrderingKey(now: now)
+    }
+
+    /// All semantic editor identities share this account-scoped monotonic
+    /// sequence. RPE claims use the same method, while metadata-only edits use
+    /// it to keep the compact account floor from rejecting a legitimate edit
+    /// after a relaunch or a clock correction.
+    public mutating func nextEditorOrderingKey(now: Date = Date()) -> UInt64 {
         let clock = Self.orderingKey(for: now)
         if latestRevision == UInt64.max {
             return latestRevision
@@ -489,5 +497,104 @@ public enum RecordingEditRacePolicy {
         than other: UInt64
     ) -> Bool {
         revision > other
+    }
+}
+
+/// Durable progress for the compensating session-RPE PATCH that precedes a
+/// recording soft-delete. It is part of the delete intent, not inferred from
+/// an old in-memory snapshot, so a failed delete can be retried after a newer
+/// linked-recording edit without applying the frozen R1 value again.
+public enum RecordingDeleteCompensationState: String, Codable, Sendable, Equatable {
+    case pending
+    case applied
+    /// A newer durable session-RPE claim superseded the delete's frozen
+    /// compensation. The delete may proceed while preserving that newer RPE.
+    case superseded
+}
+
+public enum RecordingDeleteCompensationDecision: Equatable, Sendable {
+    case apply
+    case skipAlreadyApplied
+    case skipSuperseded
+}
+
+public enum RecordingDeleteCompensationPolicy {
+    /// Durable session-RPE claims and their watermarks are authoritative. A
+    /// claim newer than the delete's captured ordering means the old
+    /// compensation must not run, even after the newer item uploaded and left
+    /// only its watermark behind.
+    public static func decision(
+        state: RecordingDeleteCompensationState,
+        compensationOrderingKey: UInt64?,
+        currentOrderingKey: UInt64?,
+        watermarkOrderingKey: UInt64?
+    ) -> RecordingDeleteCompensationDecision {
+        switch state {
+        case .applied:
+            return .skipAlreadyApplied
+        case .superseded:
+            return .skipSuperseded
+        case .pending:
+            let captured = compensationOrderingKey ?? 0
+            let newest = max(currentOrderingKey ?? 0, watermarkOrderingKey ?? 0)
+            return newest > captured ? .skipSuperseded : .apply
+        }
+    }
+}
+
+/// The exact soft-delete observation used to condition a restore PATCH. A
+/// Date alone is not sufficient because Postgres may return microseconds that
+/// an in-memory Date formatter would round away.
+public struct RecordingRestoreObservation: Equatable, Sendable {
+    public let recordingID: UUID
+    public let deletedAtToken: String
+
+    public init(recordingID: UUID, deletedAtToken: String) {
+        self.recordingID = recordingID
+        self.deletedAtToken = deletedAtToken
+    }
+}
+
+public enum RecordingRestoreRequestPolicy {
+    public static func deletedAtFilterValue(for observedToken: String) -> String? {
+        guard !observedToken.isEmpty,
+              !observedToken.contains("\n"),
+              !observedToken.contains("\r") else { return nil }
+        return "eq.\(observedToken)"
+    }
+
+    public static func acceptsBackendTombstone(
+        observedToken: String,
+        backendToken: String?
+    ) -> Bool {
+        backendToken == observedToken
+    }
+
+    public static func queryItems(
+        for observation: RecordingRestoreObservation
+    ) -> [URLQueryItem]? {
+        guard let deletedAt = deletedAtFilterValue(for: observation.deletedAtToken) else {
+            return nil
+        }
+        return [
+            URLQueryItem(
+                name: "id",
+                value: "eq.\(observation.recordingID.uuidString.lowercased())"
+            ),
+            URLQueryItem(name: "deleted_at", value: deletedAt),
+            URLQueryItem(name: "select", value: "id,deleted_at")
+        ]
+    }
+}
+
+public enum RecordingDeleteDiscardPolicy {
+    /// Quarantine discard may clear only the operation that the user chose.
+    /// A newer delete/restore cycle must remain untouched.
+    public static func ownsExactDelete(
+        operationID: UUID,
+        tombstone: RecordingEditDeleteToken?,
+        terminalOperationID: UUID?
+    ) -> Bool {
+        tombstone?.id == operationID || terminalOperationID == operationID
     }
 }
