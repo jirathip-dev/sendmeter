@@ -19,6 +19,10 @@ public enum RecordingEditQueueIdentity {
         namespaced(sessionID, namespace: 0xE2)
     }
 
+    public static func delete(_ recordingID: UUID) -> UUID {
+        namespaced(recordingID, namespace: 0xE3)
+    }
+
     private static func namespaced(_ id: UUID, namespace: UInt8) -> UUID {
         var bytes = id.uuid
         bytes.0 = namespace
@@ -45,6 +49,47 @@ public struct RecordingEditBarrierToken: Equatable, Sendable {
     public init(id: UUID = UUID(), sessionID: UUID) {
         self.id = id
         self.sessionID = sessionID
+    }
+}
+
+/// Ownership for a recording delete tombstone. The account epoch is part of
+/// the token rather than inferred from the user UUID, so an old A operation
+/// cannot clear a newer A tombstone after an A→B→A transition.
+public struct RecordingEditDeleteToken: Equatable, Sendable {
+    public let id: UUID
+    public let recordingID: UUID
+    public let accountUserID: UUID
+    public let accountEpoch: UInt64
+
+    public init(
+        id: UUID = UUID(),
+        recordingID: UUID,
+        accountUserID: UUID,
+        accountEpoch: UInt64
+    ) {
+        self.id = id
+        self.recordingID = recordingID
+        self.accountUserID = accountUserID
+        self.accountEpoch = accountEpoch
+    }
+}
+
+public struct RecordingEditRestoreToken: Equatable, Sendable {
+    public let id: UUID
+    public let recordingID: UUID
+    public let accountUserID: UUID
+    public let accountEpoch: UInt64
+
+    public init(
+        id: UUID = UUID(),
+        recordingID: UUID,
+        accountUserID: UUID,
+        accountEpoch: UInt64
+    ) {
+        self.id = id
+        self.recordingID = recordingID
+        self.accountUserID = accountUserID
+        self.accountEpoch = accountEpoch
     }
 }
 
@@ -139,7 +184,8 @@ public enum RecordingEditMigration {
 /// queue identity above remains the one session-scoped coalescing key.
 public struct RecordingEditCoordinator: Sendable {
     private var latestRevision: UInt64
-    private var deletedRecordingIDs: Set<UUID> = []
+    private var deletedRecordingIDs: [UUID: RecordingEditDeleteToken] = [:]
+    private var restoringRecordingIDs: [UUID: RecordingEditRestoreToken] = [:]
     private var activeSessionRPEWrites: [UUID: Set<UUID>] = [:]
     private var sessionRPEBarriers: [UUID: Set<UUID>] = [:]
 
@@ -163,21 +209,172 @@ public struct RecordingEditCoordinator: Sendable {
         latestRevision = max(latestRevision, observed)
     }
 
+    /// Begin a delete before its first await. The returned token must own all
+    /// later rollback/clear work; matching only the UUID is intentionally not
+    /// sufficient across account epochs.
+    @discardableResult
+    public mutating func beginDelete(
+        recordingID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) -> RecordingEditDeleteToken? {
+        guard deletedRecordingIDs[recordingID] == nil,
+              restoringRecordingIDs[recordingID] == nil else { return nil }
+        let token = RecordingEditDeleteToken(
+            recordingID: recordingID,
+            accountUserID: accountFetch.accountUserID,
+            accountEpoch: accountFetch.accountEpoch
+        )
+        deletedRecordingIDs[recordingID] = token
+        return token
+    }
+
+    /// Reserve the restore lane before its first await. A delete upload that
+    /// has not claimed the queue yet will observe this gate and stop; a delete
+    /// that already claimed it is awaited by AppModel before the backend
+    /// restore is attempted.
+    @discardableResult
+    public mutating func beginRestore(
+        recordingID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) -> RecordingEditRestoreToken? {
+        guard restoringRecordingIDs[recordingID] == nil else { return nil }
+        let token = RecordingEditRestoreToken(
+            recordingID: recordingID,
+            accountUserID: accountFetch.accountUserID,
+            accountEpoch: accountFetch.accountEpoch
+        )
+        restoringRecordingIDs[recordingID] = token
+        return token
+    }
+
+    public func isRestoring(_ recordingID: UUID) -> Bool {
+        restoringRecordingIDs[recordingID] != nil
+    }
+
+    @discardableResult
+    public mutating func clearRestore(
+        _ token: RecordingEditRestoreToken,
+        currentUserID: UUID?,
+        accountEpoch: UInt64
+    ) -> Bool {
+        guard currentUserID == token.accountUserID,
+              accountEpoch == token.accountEpoch,
+              restoringRecordingIDs[token.recordingID] == token else {
+            return false
+        }
+        restoringRecordingIDs.removeValue(forKey: token.recordingID)
+        return true
+    }
+
+    /// Restore a tombstone read from the durable terminal marker during a
+    /// relaunch. A live token for the same recording/epoch is retained.
+    @discardableResult
+    public mutating func ensureDelete(
+        recordingID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) -> RecordingEditDeleteToken {
+        if let existing = deletedRecordingIDs[recordingID],
+           existing.accountUserID == accountFetch.accountUserID,
+           existing.accountEpoch == accountFetch.accountEpoch {
+            return existing
+        }
+        let token = RecordingEditDeleteToken(
+            recordingID: recordingID,
+            accountUserID: accountFetch.accountUserID,
+            accountEpoch: accountFetch.accountEpoch
+        )
+        deletedRecordingIDs[recordingID] = token
+        return token
+    }
+
+    public func tombstoneToken(recordingID: UUID) -> RecordingEditDeleteToken? {
+        deletedRecordingIDs[recordingID]
+    }
+
+    public func ownsDelete(
+        _ token: RecordingEditDeleteToken,
+        currentUserID: UUID?,
+        accountEpoch: UInt64
+    ) -> Bool {
+        currentUserID == token.accountUserID
+            && accountEpoch == token.accountEpoch
+            && deletedRecordingIDs[token.recordingID] == token
+    }
+
+    /// Clear only the exact tombstone captured before the restore request. If
+    /// the recording was re-deleted while that request was suspended, or the
+    /// old epoch returned after A→B→A, this is a no-op.
+    @discardableResult
+    public mutating func clearDelete(
+        _ token: RecordingEditDeleteToken,
+        currentUserID: UUID?,
+        accountEpoch: UInt64
+    ) -> Bool {
+        guard ownsDelete(
+            token,
+            currentUserID: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        deletedRecordingIDs.removeValue(forKey: token.recordingID)
+        return true
+    }
+
+    /// Restore-side variant for a recording that had no in-memory token at
+    /// the start of the request. `expectedToken == nil` means the restore
+    /// proves that no newer delete appeared while it was suspended.
+    @discardableResult
+    public mutating func clearDelete(
+        recordingID: UUID,
+        expectedToken: RecordingEditDeleteToken?,
+        currentUserID: UUID?,
+        accountEpoch: UInt64,
+        capturedBy accountFetch: AccountScopedFetch
+    ) -> Bool {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ), deletedRecordingIDs[recordingID] == expectedToken else {
+            return false
+        }
+        deletedRecordingIDs.removeValue(forKey: recordingID)
+        return true
+    }
+
+    /// Legacy pure-test compatibility. Production AppModel uses `beginDelete`
+    /// so the scope is never omitted.
     @discardableResult
     public mutating func tombstone(recordingID: UUID) -> Bool {
-        deletedRecordingIDs.insert(recordingID).inserted
+        guard deletedRecordingIDs[recordingID] == nil else { return false }
+        let token = RecordingEditDeleteToken(
+            recordingID: recordingID,
+            accountUserID: UUID(),
+            accountEpoch: 0
+        )
+        deletedRecordingIDs[recordingID] = token
+        return true
     }
 
     public mutating func clearTombstone(recordingID: UUID) {
-        deletedRecordingIDs.remove(recordingID)
+        deletedRecordingIDs.removeValue(forKey: recordingID)
     }
 
     public mutating func clearTombstones() {
         deletedRecordingIDs.removeAll()
     }
 
+    /// Drop account-owned tombstones and session lanes when AppModel advances
+    /// its account epoch. In-flight old-account tasks can still finish, but
+    /// their AccountScopedFetch rejects publication and their late token
+    /// release cannot strand a barrier for the next sign-in.
+    public mutating func resetAccountScopedState() {
+        deletedRecordingIDs.removeAll()
+        restoringRecordingIDs.removeAll()
+        activeSessionRPEWrites.removeAll()
+        sessionRPEBarriers.removeAll()
+    }
+
     public func isDeleted(_ recordingID: UUID) -> Bool {
-        deletedRecordingIDs.contains(recordingID)
+        deletedRecordingIDs[recordingID] != nil
     }
 
     /// Claim the session-RPE network lane before the first await. A delete

@@ -1363,7 +1363,8 @@ public final class SendmeterRepository: @unchecked Sendable {
         try await patchVoid(
             table: "tindeq_recordings",
             id: id,
-            payload: SoftDeletePayload(deletedAt: date)
+            payload: SoftDeletePayload(deletedAt: date),
+            onlyIfDeletedAtIsNil: true
         )
     }
 
@@ -1680,13 +1681,21 @@ public final class SendmeterRepository: @unchecked Sendable {
     private func patchVoid<Payload: Encodable>(
         table: String,
         id: UUID,
-        payload: Payload
+        payload: Payload,
+        onlyIfDeletedAtIsNil: Bool = false
     ) async throws {
         let body = try await transport.encode(payload)
+        var queryItems = [URLQueryItem(
+            name: "id",
+            value: "eq.\(id.uuidString.lowercased())"
+        )]
+        if onlyIfDeletedAtIsNil {
+            queryItems.append(URLQueryItem(name: "deleted_at", value: "is.null"))
+        }
         try await transport.requestVoid(
             path: "rest/v1/\(table)",
             method: .patch,
-            queryItems: [URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())")],
+            queryItems: queryItems,
             body: body,
             prefer: "return=minimal"
         )

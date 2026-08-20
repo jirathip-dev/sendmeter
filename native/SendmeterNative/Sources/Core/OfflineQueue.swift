@@ -158,6 +158,16 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
     /// that claimed the previous revision must not apply its failure/backoff
     /// to the replacement.
     public let revision: UUID
+    /// Semantic ordering for coalesced editor writes. Generic queue users may
+    /// leave this at zero; the recording editor supplies its monotonic RPE or
+    /// creation ordering so an older re-entrant task cannot replace newer
+    /// durable state merely because it resumed later.
+    public let orderingKey: UInt64
+    /// A recording's terminal-delete key. Editor writes carry the recording
+    /// id here so the queue can atomically reject/remove every stale write
+    /// for that recording, while a shared session-RPE item from another
+    /// recording keeps its own key.
+    public let terminalKey: UUID?
     public var updatedAt: Date
     public var attempts: Int
     /// #675 F3: how many times THIS entry has been rejected with a
@@ -194,6 +204,8 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         accountUserID: UUID,
         createdAt: Date = Date(),
         revision: UUID = UUID(),
+        orderingKey: UInt64 = 0,
+        terminalKey: UUID? = nil,
         updatedAt: Date? = nil,
         attempts: Int = 0,
         permanentAttempts: Int = 0,
@@ -206,6 +218,8 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         self.accountUserID = accountUserID
         self.createdAt = createdAt
         self.revision = revision
+        self.orderingKey = orderingKey
+        self.terminalKey = terminalKey
         self.updatedAt = updatedAt ?? createdAt
         self.attempts = attempts
         self.permanentAttempts = permanentAttempts == 0 ? nil : permanentAttempts
@@ -216,7 +230,8 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, accountUserID, createdAt, revision, updatedAt, attempts
+        case id, accountUserID, createdAt, revision, orderingKey, terminalKey
+        case updatedAt, attempts
         case permanentAttempts, nextAttemptAt, lastError, quarantined, payload
     }
 
@@ -229,6 +244,8 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         self.accountUserID = try container.decode(UUID.self, forKey: .accountUserID)
         self.createdAt = try container.decode(Date.self, forKey: .createdAt)
         self.revision = try container.decodeIfPresent(UUID.self, forKey: .revision) ?? UUID()
+        self.orderingKey = try container.decodeIfPresent(UInt64.self, forKey: .orderingKey) ?? 0
+        self.terminalKey = try container.decodeIfPresent(UUID.self, forKey: .terminalKey)
         self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         self.attempts = try container.decode(Int.self, forKey: .attempts)
         self.permanentAttempts = try container.decodeIfPresent(Int.self, forKey: .permanentAttempts)
@@ -243,11 +260,22 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
     /// a request that claimed the pre-migration payload from mutating the
     /// normalized item.
     public func replacingPayload(_ payload: Payload) -> DurableQueueItem<Payload> {
+        replacingPayload(payload, terminalKey: terminalKey)
+    }
+
+    /// Payload replacement used by migration when an old combined item is
+    /// normalized into the recording-scoped terminal-delete lane.
+    public func replacingPayload(
+        _ payload: Payload,
+        terminalKey: UUID?
+    ) -> DurableQueueItem<Payload> {
         DurableQueueItem(
             id: id,
             accountUserID: accountUserID,
             createdAt: createdAt,
             revision: UUID(),
+            orderingKey: orderingKey,
+            terminalKey: terminalKey,
             updatedAt: updatedAt,
             attempts: attempts,
             permanentAttempts: permanentAttempts ?? 0,
@@ -256,6 +284,61 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
             quarantined: quarantined,
             payload: payload
         )
+    }
+}
+
+/// A conditional queue removal. It is used by migration/delete transactions
+/// for legacy items that do not yet carry a terminal key.
+public struct DurableQueueRemoval: Equatable, Sendable {
+    public let id: UUID
+    public let accountUserID: UUID
+    public let expectedRevision: UUID
+
+    public init(id: UUID, accountUserID: UUID, expectedRevision: UUID) {
+        self.id = id
+        self.accountUserID = accountUserID
+        self.expectedRevision = expectedRevision
+    }
+}
+
+/// A persisted terminal marker outlives the queue item itself. This closes
+/// the crash window after a backend delete succeeds but before the process can
+/// remove the durable delete intent: an old editor task cannot enqueue again,
+/// and a relaunch can restore the recording tombstone from this marker.
+public struct DurableQueueTerminal: Codable, Equatable, Hashable, Sendable {
+    public let key: UUID
+    public let accountUserID: UUID
+    public let operationID: UUID
+
+    public init(key: UUID, accountUserID: UUID, operationID: UUID) {
+        self.key = key
+        self.accountUserID = accountUserID
+        self.operationID = operationID
+    }
+}
+
+/// The last semantic claim for a queue identity, retained after the item is
+/// uploaded and removed. Recording-editor migration uses this to ensure an
+/// older legacy item cannot recreate an already-uploaded shared RPE item.
+public struct DurableQueueOrderingWatermark: Codable, Equatable, Sendable {
+    public let queueItemID: UUID
+    public let accountUserID: UUID
+    public let orderingKey: UInt64
+    public let createdAt: Date
+    public let revision: UUID
+
+    public init(
+        queueItemID: UUID,
+        accountUserID: UUID,
+        orderingKey: UInt64,
+        createdAt: Date,
+        revision: UUID
+    ) {
+        self.queueItemID = queueItemID
+        self.accountUserID = accountUserID
+        self.orderingKey = orderingKey
+        self.createdAt = createdAt
+        self.revision = revision
     }
 }
 
@@ -303,6 +386,38 @@ public actor DurableQueue<Payload: Codable & Sendable> {
     private struct Store: Codable, Sendable {
         var items: [DurableQueueItem<Payload>]
         var breadcrumbs: [QueueBreadcrumb]
+        var terminalized: [DurableQueueTerminal]
+        var orderingWatermarks: [DurableQueueOrderingWatermark]
+
+        init(
+            items: [DurableQueueItem<Payload>],
+            breadcrumbs: [QueueBreadcrumb],
+            terminalized: [DurableQueueTerminal] = [],
+            orderingWatermarks: [DurableQueueOrderingWatermark] = []
+        ) {
+            self.items = items
+            self.breadcrumbs = breadcrumbs
+            self.terminalized = terminalized
+            self.orderingWatermarks = orderingWatermarks
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case items, breadcrumbs, terminalized, orderingWatermarks
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            items = try container.decode([DurableQueueItem<Payload>].self, forKey: .items)
+            breadcrumbs = try container.decode([QueueBreadcrumb].self, forKey: .breadcrumbs)
+            terminalized = try container.decodeIfPresent(
+                [DurableQueueTerminal].self,
+                forKey: .terminalized
+            ) ?? []
+            orderingWatermarks = try container.decodeIfPresent(
+                [DurableQueueOrderingWatermark].self,
+                forKey: .orderingWatermarks
+            ) ?? []
+        }
     }
 
     private let fileURL: URL
@@ -353,16 +468,295 @@ public actor DurableQueue<Payload: Codable & Sendable> {
     public func enqueue(_ items: [DurableQueueItem<Payload>]) throws {
         try transact { state in
             for item in items {
+                if let terminalKey = item.terminalKey,
+                   state.terminalized.contains(where: {
+                       $0.key == terminalKey && $0.accountUserID == item.accountUserID
+                   }) {
+                    continue
+                }
                 if let index = state.items.firstIndex(where: { $0.id == item.id }) {
                     guard state.items[index].accountUserID == item.accountUserID else {
                         throw DurableQueueError.accountMismatch
                     }
-                    state.items[index] = item
+                    if item.terminalKey != nil || item.orderingKey != 0 {
+                        if Self.isNewer(item, than: state.items[index]) {
+                            state.items[index] = item
+                        }
+                    } else {
+                        state.items[index] = item
+                    }
                 } else {
+                    if let watermark = state.orderingWatermarks.first(where: {
+                        $0.queueItemID == item.id && $0.accountUserID == item.accountUserID
+                    }), !Self.isNewer(item, than: watermark) {
+                        continue
+                    }
                     state.items.append(item)
                 }
             }
         }
+    }
+
+    /// Replace one migration snapshot only while the queue still contains the
+    /// revision that snapshot observed. `nil` means the item must still be
+    /// absent. This makes a stale migration a no-op instead of an unconditional
+    /// stable-ID overwrite.
+    @discardableResult
+    public func enqueueIfCurrent(
+        _ item: DurableQueueItem<Payload>,
+        expectedRevision: UUID?
+    ) throws -> Bool {
+        var applied = false
+        try transact { state in
+            if let terminalKey = item.terminalKey,
+               state.terminalized.contains(where: {
+                   $0.key == terminalKey && $0.accountUserID == item.accountUserID
+               }) {
+                return
+            }
+            guard let index = state.items.firstIndex(where: { $0.id == item.id }) else {
+                guard expectedRevision == nil else { return }
+                if let watermark = state.orderingWatermarks.first(where: {
+                    $0.queueItemID == item.id && $0.accountUserID == item.accountUserID
+                }), !Self.isNewer(item, than: watermark) {
+                    return
+                }
+                state.items.append(item)
+                applied = true
+                return
+            }
+            guard state.items[index].accountUserID == item.accountUserID,
+                  state.items[index].revision == expectedRevision else { return }
+            state.items[index] = item
+            applied = true
+        }
+        return applied
+    }
+
+    /// Coalesce recording-editor writes only while their recording has not
+    /// reached a durable terminal delete. Existing newer semantic ordering is
+    /// retained; returning `true` means at least one item from the batch was
+    /// durably accepted, while `false` means the terminal marker won or a
+    /// newer/watermarked claim already superseded the batch.
+    @discardableResult
+    public func enqueueUnlessTerminalizedKeepingNewest(
+        _ items: [DurableQueueItem<Payload>],
+        terminalKey: UUID,
+        accountUserID: UUID
+    ) throws -> Bool {
+        guard !items.isEmpty,
+              items.allSatisfy({
+                  $0.accountUserID == accountUserID && $0.terminalKey == terminalKey
+              }) else {
+            throw DurableQueueError.accountMismatch
+        }
+        var accepted = false
+        try transact { state in
+            guard !state.terminalized.contains(where: {
+                $0.key == terminalKey && $0.accountUserID == accountUserID
+            }) else { return }
+            var changed = false
+            for item in items {
+                if let index = state.items.firstIndex(where: { $0.id == item.id }) {
+                    guard state.items[index].accountUserID == accountUserID else {
+                        throw DurableQueueError.accountMismatch
+                    }
+                    if Self.isNewer(item, than: state.items[index]) {
+                        state.items[index] = item
+                        changed = true
+                    }
+                } else {
+                    if let watermark = state.orderingWatermarks.first(where: {
+                        $0.queueItemID == item.id && $0.accountUserID == accountUserID
+                    }), !Self.isNewer(item, than: watermark) {
+                        continue
+                    }
+                    state.items.append(item)
+                    changed = true
+                }
+            }
+            accepted = changed
+        }
+        return accepted
+    }
+
+    /// Atomically removes all editor writes for a recording (including stale
+    /// legacy items supplied as conditional removals) and installs its durable
+    /// delete intent. If persistence fails, neither side of the transaction is
+    /// published and the caller must not touch the backend.
+    @discardableResult
+    public func enqueueTerminalDelete(
+        _ deleteItem: DurableQueueItem<Payload>,
+        terminalKey: UUID,
+        canceling removals: [DurableQueueRemoval] = []
+    ) throws -> Bool {
+        guard deleteItem.terminalKey == terminalKey else {
+            throw DurableQueueError.accountMismatch
+        }
+        guard removals.allSatisfy({ $0.accountUserID == deleteItem.accountUserID }) else {
+            throw DurableQueueError.accountMismatch
+        }
+        var installed = false
+        try transact { state in
+            guard !state.terminalized.contains(where: {
+                $0.key == terminalKey && $0.accountUserID == deleteItem.accountUserID
+            }) else { return }
+            if let existingDelete = state.items.first(where: { $0.id == deleteItem.id }) {
+                guard existingDelete.accountUserID == deleteItem.accountUserID else {
+                    throw DurableQueueError.accountMismatch
+                }
+                return
+            }
+            var conditional: [UUID: UUID] = [:]
+            for removal in removals {
+                conditional[removal.id] = removal.expectedRevision
+            }
+            let indexes = state.items.indices.filter { index in
+                let item = state.items[index]
+                guard item.accountUserID == deleteItem.accountUserID,
+                      item.id != deleteItem.id else { return false }
+                if item.terminalKey == terminalKey { return true }
+                return conditional[item.id] == item.revision
+            }
+            for index in indexes.reversed() {
+                let item = state.items.remove(at: index)
+                recordOrderingWatermark(for: item, in: &state)
+                appendBreadcrumb(
+                    QueueBreadcrumb(
+                        queueItemID: item.id,
+                        accountUserID: item.accountUserID,
+                        leftQueueAt: Date(),
+                        attempts: item.attempts,
+                        reason: "recording-deleted"
+                    ),
+                    to: &state
+                )
+            }
+            state.items.append(deleteItem)
+            installed = true
+        }
+        return installed
+    }
+
+    /// Complete a backend recording delete and persist its terminal marker in
+    /// one transaction. The delete item must still be the claimed revision;
+    /// otherwise an intervening replacement remains durable for a later retry.
+    @discardableResult
+    public func completeTerminalDelete(
+        id: UUID,
+        accountUserID: UUID,
+        expectedRevision: UUID,
+        terminalKey: UUID,
+        operationID: UUID,
+        reason: String = "recording-deleted"
+    ) throws -> Bool {
+        var completed = false
+        try transact { state in
+            guard !state.terminalized.contains(where: {
+                $0.key == terminalKey && $0.accountUserID == accountUserID
+            }),
+            state.items.contains(where: {
+                $0.id == id
+                    && $0.accountUserID == accountUserID
+                    && $0.revision == expectedRevision
+            }) else { return }
+            let indexes = state.items.indices.filter { index in
+                let item = state.items[index]
+                return item.accountUserID == accountUserID
+                    && (item.id == id || item.terminalKey == terminalKey)
+            }
+            for index in indexes.reversed() {
+                let item = state.items.remove(at: index)
+                recordOrderingWatermark(for: item, in: &state)
+                appendBreadcrumb(
+                    QueueBreadcrumb(
+                        queueItemID: item.id,
+                        accountUserID: item.accountUserID,
+                        leftQueueAt: Date(),
+                        attempts: item.attempts,
+                        reason: reason
+                    ),
+                    to: &state
+                )
+            }
+            state.terminalized.append(
+                DurableQueueTerminal(
+                    key: terminalKey,
+                    accountUserID: accountUserID,
+                    operationID: operationID
+                )
+            )
+            completed = true
+        }
+        return completed
+    }
+
+    public func terminalizedToken(
+        for key: UUID,
+        accountUserID: UUID
+    ) -> UUID? {
+        store.terminalized.first {
+            $0.key == key && $0.accountUserID == accountUserID
+        }?.operationID
+    }
+
+    public func terminalizedKeys(for accountUserID: UUID) -> Set<UUID> {
+        Set(store.terminalized.filter { $0.accountUserID == accountUserID }.map(\.key))
+    }
+
+    /// Cancel an uncompleted delete intent only if the restore operation still
+    /// owns the revision it observed before its network await.
+    @discardableResult
+    public func cancelPendingTerminalDelete(
+        id: UUID,
+        accountUserID: UUID,
+        expectedRevision: UUID,
+        terminalKey: UUID
+    ) throws -> Bool {
+        var canceled = false
+        try transact { state in
+            guard let index = state.items.firstIndex(where: {
+                $0.id == id
+                    && $0.accountUserID == accountUserID
+                    && $0.revision == expectedRevision
+                    && $0.terminalKey == terminalKey
+            }) else { return }
+            let item = state.items.remove(at: index)
+            recordOrderingWatermark(for: item, in: &state)
+            appendBreadcrumb(
+                QueueBreadcrumb(
+                    queueItemID: item.id,
+                    accountUserID: item.accountUserID,
+                    leftQueueAt: Date(),
+                    attempts: item.attempts,
+                    reason: "recording-restored"
+                ),
+                to: &state
+            )
+            canceled = true
+        }
+        return canceled
+    }
+
+    @discardableResult
+    public func clearTerminalized(
+        key: UUID,
+        accountUserID: UUID,
+        expectedOperationID: UUID?
+    ) throws -> Bool {
+        let current = store.terminalized.first {
+            $0.key == key && $0.accountUserID == accountUserID
+        }
+        guard current?.operationID == expectedOperationID else {
+            return current == nil && expectedOperationID == nil
+        }
+        guard current != nil else { return true }
+        try transact { state in
+            state.terminalized.removeAll {
+                $0.key == key && $0.accountUserID == accountUserID
+            }
+        }
+        return true
     }
 
     /// The entries the hot drain path may attempt: never quarantined, and
@@ -415,6 +809,19 @@ public actor DurableQueue<Payload: Codable & Sendable> {
 
     public func item(id: UUID, accountUserID: UUID) -> DurableQueueItem<Payload>? {
         store.items.first { $0.id == id && $0.accountUserID == accountUserID }
+    }
+
+    /// Return the last semantic claim retained for an identity after its
+    /// queue item was removed. This is primarily useful to test/reconcile
+    /// editor migrations; callers should use the conditional enqueue methods
+    /// to enforce it transactionally.
+    public func orderingWatermark(
+        for queueItemID: UUID,
+        accountUserID: UUID
+    ) -> DurableQueueOrderingWatermark? {
+        store.orderingWatermarks.first {
+            $0.queueItemID == queueItemID && $0.accountUserID == accountUserID
+        }
     }
 
     /// Re-reads one item through the hot-drain filter. Callers that captured a
@@ -647,6 +1054,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         let item = store.items[index]
         try transact { state in
             state.items.remove(at: index)
+            recordOrderingWatermark(for: item, in: &state)
             appendBreadcrumb(
                 QueueBreadcrumb(
                     queueItemID: item.id,
@@ -676,6 +1084,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         }
         try transact { state in
             state.items.remove(at: index)
+            recordOrderingWatermark(for: item, in: &state)
             appendBreadcrumb(
                 QueueBreadcrumb(
                     queueItemID: item.id,
@@ -698,6 +1107,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         try transact { state in
             state.items.removeAll { $0.accountUserID == accountUserID }
             for item in removed {
+                recordOrderingWatermark(for: item, in: &state)
                 appendBreadcrumb(
                     QueueBreadcrumb(
                         queueItemID: item.id,
@@ -721,6 +1131,58 @@ public actor DurableQueue<Payload: Codable & Sendable> {
     public static func retryDelay(attempts: Int) -> TimeInterval {
         let boundedAttempt = min(max(1, attempts), 10)
         return min(15 * 60, pow(2, Double(boundedAttempt - 1)) * 5)
+    }
+
+    /// Compare durable editor claims independently of queue enumeration or
+    /// retry backoff. A migration/relaunch may observe an older claim after a
+    /// newer replacement has already been persisted; the newer semantic
+    /// ordering must win in that case.
+    private static func isNewer(
+        _ lhs: DurableQueueItem<Payload>,
+        than rhs: DurableQueueItem<Payload>
+    ) -> Bool {
+        if lhs.orderingKey != rhs.orderingKey {
+            return lhs.orderingKey > rhs.orderingKey
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt > rhs.createdAt
+        }
+        return lhs.revision.uuidString > rhs.revision.uuidString
+    }
+
+    private static func isNewer(
+        _ lhs: DurableQueueItem<Payload>,
+        than rhs: DurableQueueOrderingWatermark
+    ) -> Bool {
+        if lhs.orderingKey != rhs.orderingKey {
+            return lhs.orderingKey > rhs.orderingKey
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt > rhs.createdAt
+        }
+        return lhs.revision.uuidString > rhs.revision.uuidString
+    }
+
+    private func recordOrderingWatermark(
+        for item: DurableQueueItem<Payload>,
+        in state: inout Store
+    ) {
+        let watermark = DurableQueueOrderingWatermark(
+            queueItemID: item.id,
+            accountUserID: item.accountUserID,
+            orderingKey: item.orderingKey,
+            createdAt: item.createdAt,
+            revision: item.revision
+        )
+        if let index = state.orderingWatermarks.firstIndex(where: {
+            $0.queueItemID == item.id && $0.accountUserID == item.accountUserID
+        }) {
+            if Self.isNewer(item, than: state.orderingWatermarks[index]) {
+                state.orderingWatermarks[index] = watermark
+            }
+        } else {
+            state.orderingWatermarks.append(watermark)
+        }
     }
 
     private func appendBreadcrumb(_ breadcrumb: QueueBreadcrumb, to state: inout Store) {
