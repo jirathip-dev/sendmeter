@@ -1885,7 +1885,17 @@ public final class AppModel: ObservableObject {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        let oldKey = TagCurveKey(
+        // HistoryView passes its already-edited binding here. Capture the row
+        // that still owns the current cache key before the first await; using
+        // `recording` for both sides would lose Crimp when the draft is Pinch.
+        let authoritativeBefore = recordings.first(where: { $0.id == recording.id })
+        let authoritativeOldKey = authoritativeBefore.map {
+            TagCurveKey(
+                tag: $0.tag,
+                modality: GaugeSessionRPE.modality(of: $0)
+            )
+        }
+        let draftKey = TagCurveKey(
             tag: recording.tag,
             modality: GaugeSessionRPE.modality(of: recording)
         )
@@ -1907,7 +1917,11 @@ public final class AppModel: ObservableObject {
                     tag: saved.tag,
                     modality: GaugeSessionRPE.modality(of: saved)
                 )
-                let keys = TagCurveCachePolicy.affectedKeys(old: oldKey, new: newKey)
+                let keys = TagCurveCachePolicy.metadataEditKeys(
+                    authoritativeBefore: authoritativeOldKey,
+                    draft: draftKey,
+                    saved: newKey
+                )
                 await refreshTagCurvesForRPE(keys: keys, capturedBy: accountFetch)
             }
         } catch {

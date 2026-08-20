@@ -86,4 +86,37 @@ final class TagCurveCachePolicyTests: XCTestCase {
             TagCurveCacheKey(tag: "crimp", modality: "static")
         )
     }
+
+    func testMetadataEditHarnessNormalizesSameKey() {
+        let authoritativeBefore = TagCurveCacheKey(tag: "  Crimp ", modality: "static")
+        let draft = TagCurveCacheKey(tag: "crimp", modality: "static")
+        let saved = TagCurveCacheKey(tag: " CRIMP ", modality: "static")
+
+        XCTAssertEqual(
+            TagCurveCachePolicy.metadataEditKeys(
+                authoritativeBefore: authoritativeBefore,
+                draft: draft,
+                saved: saved
+            ),
+            Set([TagCurveCacheKey(tag: "crimp", modality: "static")])
+        )
+    }
+
+    func testMetadataEditHarnessKeepsAuthoritativeOldAndSavedNewKeys() {
+        let authoritativeBefore = TagCurveCacheKey(tag: "Crimp", modality: "static")
+        let draft = TagCurveCacheKey(tag: "Pinch", modality: "static")
+        let saved = TagCurveCacheKey(tag: "Pinch", modality: "static")
+
+        XCTAssertEqual(
+            TagCurveCachePolicy.metadataEditKeys(
+                authoritativeBefore: authoritativeBefore,
+                draft: draft,
+                saved: saved
+            ),
+            Set([
+                TagCurveCacheKey(tag: "crimp", modality: "static"),
+                TagCurveCacheKey(tag: "pinch", modality: "static")
+            ])
+        )
+    }
 }

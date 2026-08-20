@@ -48,6 +48,19 @@ public enum TagCurveCachePolicy {
         Set([old, new].compactMap { $0 })
     }
 
+    /// Resolve the cache keys touched by a metadata edit. The draft already
+    /// contains the user's new values, so it is not a safe source for the old
+    /// key. Callers must capture `authoritativeBefore` from the account-scoped
+    /// model before awaiting persistence; the draft is only a fallback for a
+    /// row that is no longer present locally.
+    public static func metadataEditKeys(
+        authoritativeBefore: TagCurveCacheKey?,
+        draft: TagCurveCacheKey,
+        saved: TagCurveCacheKey
+    ) -> Set<TagCurveCacheKey> {
+        affectedKeys(old: authoritativeBefore ?? draft, new: saved)
+    }
+
     /// A pending recording is fit-eligible only when its samples are locally
     /// available. The explicit inclusion set is the optimistic sample store;
     /// without it, pending metadata must not silently produce a fit with no
