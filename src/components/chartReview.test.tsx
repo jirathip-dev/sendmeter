@@ -169,6 +169,44 @@ describe("#516 chart review regressions", () => {
     expect(root.querySelectorAll('circle[role="button"]')).toHaveLength(0);
   });
 
+  it("only exposes the 95% band when the model has one", () => {
+    const withoutBand = parse(renderToStaticMarkup(
+      <ForceCurveCard
+        tag="FDP"
+        model={curveModel}
+        periods={[]}
+        computing={false}
+        error={null}
+        modality="static"
+      />,
+    ));
+    expect(withoutBand.querySelector('svg[role="group"]')?.getAttribute("aria-label"))
+      .toBe("Force duration curve with quality regions and measured envelope");
+    expect(withoutBand.textContent).not.toContain("95% band");
+    expect(withoutBand.querySelector('[aria-label="95% bootstrap confidence band"]')).toBeNull();
+
+    const withBand = parse(renderToStaticMarkup(
+      <ForceCurveCard
+        tag="FDP"
+        model={{
+          ...curveModel,
+          confidenceBand: [
+            { windowS: 1, kg: 40, lowKg: 36, highKg: 43 },
+            { windowS: 120, kg: 21, lowKg: 18, highKg: 24 },
+          ],
+        }}
+        periods={[]}
+        computing={false}
+        error={null}
+        modality="static"
+      />,
+    ));
+    expect(withBand.querySelector('svg[role="group"]')?.getAttribute("aria-label"))
+      .toContain("confidence band");
+    expect(withBand.textContent).toContain("95% band shown");
+    expect(withBand.querySelector('[aria-label="95% bootstrap confidence band"]')).not.toBeNull();
+  });
+
   it("keeps every active curve window distinct with semantic colour and dash cues", () => {
     mountedRoot = mount(
       container,

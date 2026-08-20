@@ -48,7 +48,8 @@ let package = Package(
         .testTarget(
             name: "SendmeterCoreTests",
             dependencies: ["SendmeterCore", "SendLogWatchCore"],
-            path: "Tests/SendmeterCoreTests"
+            path: "Tests/SendmeterCoreTests",
+            resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "SendmeterWeatherTests",
