@@ -29,6 +29,34 @@ final class ForceCurveEngineTests: XCTestCase {
         XCTAssertEqual(result ?? 0, 20, accuracy: 0.001)
     }
 
+    func testConcurrentSampleFetchesReconstructCandidateOrderBeforeBootstrap() throws {
+        let fixture = try loadBootstrapFixture()
+        let recordings = fixture.recordings.map(samples(from:))
+        let completionOrder = fixture.recordings.indices.reversed().map { index in
+            ForceCurveSampleFetch(candidateIndex: index, samples: recordings[index])
+        }
+
+        let ordered = ForceCurveEngine.orderedSampleSets(
+            candidateCount: recordings.count,
+            completed: completionOrder
+        )
+        XCTAssertEqual(ordered, recordings)
+
+        // The LCG deliberately draws by candidate index. If a caller feeds
+        // TaskGroup completion order directly into compute, the band changes
+        // even though the same recordings were fetched successfully.
+        let inCandidateOrder = try XCTUnwrap(
+            ForceCurveEngine.compute(recordings: ordered, bootstrapSamples: 40)
+        )
+        let inCompletionOrder = try XCTUnwrap(
+            ForceCurveEngine.compute(
+                recordings: completionOrder.compactMap(\.samples),
+                bootstrapSamples: 40
+            )
+        )
+        XCTAssertNotEqual(inCandidateOrder.confidenceBand, inCompletionOrder.confidenceBand)
+    }
+
     func testCriticalForceFitRecoversKnownHyperbola() {
         let cf = 20.0
         let impulse = 100.0

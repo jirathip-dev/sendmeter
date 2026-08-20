@@ -29,6 +29,19 @@ public struct ForceCurveConfidencePoint: Codable, Equatable, Sendable {
     }
 }
 
+/// One result from the concurrent recording-sample fetch used by AppModel.
+/// The candidate index is retained because TaskGroup completion order is not
+/// an input-order contract, while the deterministic bootstrap is index-based.
+public struct ForceCurveSampleFetch: Equatable, Sendable {
+    public let candidateIndex: Int
+    public let samples: [TindeqSample]?
+
+    public init(candidateIndex: Int, samples: [TindeqSample]?) {
+        self.candidateIndex = candidateIndex
+        self.samples = samples
+    }
+}
+
 public struct ForceCapabilityFit: Codable, Equatable, Sendable {
     public let criticalForceKilograms: Double
     public let maximumForceKilograms: Double
@@ -182,6 +195,22 @@ public enum ForceCurveEngine {
             best = max(best, (prefix[index + count] - prefix[index]) / Double(count))
         }
         return best.isFinite ? best : nil
+    }
+
+    /// Rebuild sample sets in candidate order after a concurrent fetch.
+    /// Missing/empty results are omitted, but successful results never inherit
+    /// the completion order of the task group that produced them.
+    public static func orderedSampleSets(
+        candidateCount: Int,
+        completed: [ForceCurveSampleFetch]
+    ) -> [[TindeqSample]] {
+        guard candidateCount > 0 else { return [] }
+        var byCandidate = Array<[TindeqSample]?>(repeating: nil, count: candidateCount)
+        for result in completed where byCandidate.indices.contains(result.candidateIndex) {
+            guard let samples = result.samples, !samples.isEmpty else { continue }
+            byCandidate[result.candidateIndex] = samples
+        }
+        return byCandidate.compactMap { $0 }
     }
 
     public static func compute(

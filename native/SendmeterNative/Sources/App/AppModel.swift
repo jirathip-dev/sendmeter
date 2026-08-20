@@ -291,8 +291,9 @@ public final class AppModel: ObservableObject {
     private let reconcileCoalescer = RealtimeRefreshCoalescer()
     private var reconcileFlushTask: Task<Void, Never>?
     private var tagCurveCache: [TagCurveKey: TagForceCurve] = [:]
+    private var tagCurveGeneration: UInt64 = 0
     private var keepAwakeRelease: (() -> Void)?
-    private var pendingWarmKeys: [TagCurveKey: AccountScopedFetch] = [:]
+    private var pendingWarmKeys: [TagCurveKey: TagCurveCacheRequest] = [:]
     private var warmTask: Task<Void, Never>?
 
     public init(
@@ -1353,14 +1354,10 @@ public final class AppModel: ObservableObject {
                 }
             )
         }
-        // #627: warm the tag's fitted curve in the background so the
-        // session-end prediction reads a cached curve instead of fetching.
-        let savedModality = recording.protocolMode == .reverseAction ? "reverse_action" : "static"
-        warmTagCurveIfMissing(
-            tag: recording.tag,
-            modality: savedModality,
-            capturedBy: accountFetch
-        )
+        // #627: rewarm every current key after invalidation. A new recording
+        // clears the cache because it may change any tag's fit inputs; warming
+        // only the saved tag would leave unrelated tags permanently empty.
+        warmTagCurvesIfMissing(capturedBy: accountFetch)
         return enqueued ? .saved : .failed
     }
 
@@ -1569,7 +1566,10 @@ public final class AppModel: ObservableObject {
         guard !normalized.isEmpty, !modality.isEmpty else { return }
         let key = TagCurveKey(tag: tag, modality: modality)
         guard tagCurveCache[key] == nil else { return }
-        pendingWarmKeys[key] = accountFetch
+        pendingWarmKeys[key] = TagCurveCacheRequest(
+            accountFetch: accountFetch,
+            generation: tagCurveGeneration
+        )
         guard warmTask == nil else { return }
         warmTask = Task { [weak self] in
             await self?.drainWarmQueue()
@@ -1582,9 +1582,13 @@ public final class AppModel: ObservableObject {
             let requests = pendingWarmKeys
             pendingWarmKeys = [:]
             guard !requests.isEmpty else { return }
-            for (key, accountFetch) in requests {
+            for (key, request) in requests {
                 guard !Task.isCancelled else { return }
-                guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+                guard request.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch,
+                    currentGeneration: tagCurveGeneration
+                ) else {
                     continue
                 }
                 let normalized = key.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1593,7 +1597,12 @@ public final class AppModel: ObservableObject {
                     modality: key.modality,
                     normalizedTag: normalized
                 ) {
-                    _ = accountFetch.publishIfCurrent(
+                    guard request.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch,
+                        currentGeneration: tagCurveGeneration
+                    ) else { continue }
+                    _ = request.accountFetch.publishIfCurrent(
                         to: currentUserID,
                         accountEpoch: accountEpoch
                     ) {
@@ -1628,18 +1637,24 @@ public final class AppModel: ObservableObject {
         guard !byTag.isEmpty else { return nil }
         let candidates = ForceCurveEngine.pickCurveRecordings(byTag)
         guard !candidates.isEmpty else { return nil }
-        let sampleSets = await withTaskGroup(of: [TindeqSample]?.self) { group in
-            for candidate in candidates {
+        let sampleSets = await withTaskGroup(of: ForceCurveSampleFetch.self) { group in
+            for (candidateIndex, candidate) in candidates.enumerated() {
                 group.addTask {
                     let samples = try? await self.repository.fetchRecordingSamples(id: candidate.id)
-                    return (samples?.isEmpty == false) ? samples : nil
+                    return ForceCurveSampleFetch(
+                        candidateIndex: candidateIndex,
+                        samples: (samples?.isEmpty == false) ? samples : nil
+                    )
                 }
             }
-            var values: [[TindeqSample]] = []
+            var completed: [ForceCurveSampleFetch] = []
             for await result in group {
-                if let result { values.append(result) }
+                completed.append(result)
             }
-            return values
+            return ForceCurveEngine.orderedSampleSets(
+                candidateCount: candidates.count,
+                completed: completed
+            )
         }
         guard !sampleSets.isEmpty else { return nil }
         let curveModel = await Task.detached(priority: .utility) {
@@ -1744,11 +1759,14 @@ public final class AppModel: ObservableObject {
                 side: recording.side,
                 note: recording.note
             )
-            accountFetch.publishIfCurrent(
+            let published = accountFetch.publishIfCurrent(
                 to: self.currentUserID,
                 accountEpoch: self.accountEpoch
             ) {
                 self.replaceRecording(saved)
+            }
+            if published {
+                warmTagCurvesIfMissing(capturedBy: accountFetch)
             }
         } catch {
             if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
@@ -1760,7 +1778,12 @@ public final class AppModel: ObservableObject {
     public func deleteRecording(_ recording: TindeqRecording) async {
         await perform {
             try await self.repository.softDeleteRecording(id: recording.id)
+            let beforeCount = self.recordings.count
             self.recordings.removeAll { $0.id == recording.id }
+            if self.recordings.count != beforeCount {
+                self.invalidateTagCurveCache()
+                self.warmTagCurvesIfMissing()
+            }
         }
     }
 
@@ -2516,7 +2539,12 @@ public final class AppModel: ObservableObject {
                 pendingSessions.removeValue(forKey: id)
                 pendingRecordings.removeValue(for: id, accountUserID: userID)
                 sessions.removeAll { $0.id == id }
+                let beforeCount = recordings.count
                 recordings.removeAll { $0.id == id }
+                if recordings.count != beforeCount {
+                    invalidateTagCurveCache()
+                    warmTagCurvesIfMissing()
+                }
             }
         } catch {
             surface(error)
@@ -2772,6 +2800,7 @@ public final class AppModel: ObservableObject {
                     hasLoadedRecordings = true
                 }
                 guard publishedRecordings else { return }
+                warmTagCurvesIfMissing(capturedBy: accountFetch)
             }
             if slices.contains(.workouts) {
                 let fetchedWorkouts = try await repository.fetchWorkouts()
@@ -2982,6 +3011,7 @@ public final class AppModel: ObservableObject {
     }
 
     private func mergeRecordings(remote: [TindeqRecording]) {
+        let previous = recordings
         let remoteIDs = Set(remote.map(\.id))
         if let currentUserID {
             pendingRecordings.removeValues(withIDs: remoteIDs, accountUserID: currentUserID)
@@ -2989,6 +3019,9 @@ public final class AppModel: ObservableObject {
         recordings = pendingRecordings
             .merged(remote: remote, accountUserID: currentUserID)
             .sorted { $0.recordedAt > $1.recordedAt }
+        if recordings != previous {
+            invalidateTagCurveCache()
+        }
     }
 
     private func mergeSessions(remote: [SendmeterCore.Session]) {
@@ -3023,9 +3056,25 @@ public final class AppModel: ObservableObject {
     }
 
     private func replaceRecording(_ recording: TindeqRecording) {
+        let previous = recordings
         recordings.removeAll { $0.id == recording.id }
         recordings.append(recording)
         recordings.sort { $0.recordedAt > $1.recordedAt }
+        if recordings != previous {
+            invalidateTagCurveCache()
+        }
+    }
+
+    /// Drop every fitted curve when the recording snapshot changes. An old
+    /// fit may still be suspended in `computeTagCurve`; its request stamp is
+    /// rejected on resume, while the next warm pass computes from this latest
+    /// snapshot. Clearing the published list also prevents the Force card from
+    /// presenting stale Max/CF/W′ while the replacement fit is pending.
+    private func invalidateTagCurveCache() {
+        tagCurveGeneration &+= 1
+        tagCurveCache.removeAll()
+        tagCurves = []
+        pendingWarmKeys.removeAll()
     }
 
     private func resetAccountState() {
@@ -3056,9 +3105,7 @@ public final class AppModel: ObservableObject {
         quarantinedWrites = nil
         gaugeSessionTracker.reset()
         guidedProtocolActive = false
-        tagCurveCache = [:]
-        tagCurves = []
-        pendingWarmKeys = [:]
+        invalidateTagCurveCache()
         handsFree.handleDisconnected()
         keepAwakeRelease?()
         keepAwakeRelease = nil

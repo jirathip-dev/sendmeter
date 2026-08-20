@@ -21,10 +21,15 @@ struct NativeForceCurveCard: View {
                 SectionLabel("Force duration curve · \(tag)", systemImage: "chart.xyaxis.line")
 
                 if let model {
+                    let hasConfidenceBand = (model.confidenceBand?.count ?? 0) >= 2
                     NativeForceCurvePlot(model: model)
                         .frame(height: 190)
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("Force duration curve with 95 percent confidence band")
+                        .accessibilityLabel(
+                            hasConfidenceBand
+                                ? "Force duration curve with 95 percent confidence band"
+                                : "Force duration curve"
+                        )
                         .accessibilityValue(accessibilityValue(for: model))
 
                     HStack(spacing: 12) {
@@ -40,10 +45,12 @@ struct NativeForceCurveCard: View {
                             .fill(ChartToken.force.color(scheme))
                             .frame(width: 10, height: 3)
                         Text("Hill fit")
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(ChartToken.force.color(scheme).opacity(0.18))
-                            .frame(width: 10, height: 8)
-                        Text("95% band")
+                        if hasConfidenceBand {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(ChartToken.force.color(scheme).opacity(0.18))
+                                .frame(width: 10, height: 8)
+                            Text("95% band")
+                        }
                     }
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -71,10 +78,14 @@ struct NativeForceCurveCard: View {
 
     private func accessibilityValue(for model: ForceCurveModel) -> String {
         let band = model.confidenceBand
-        guard let first = band?.first, let last = band?.last else {
-            return "No confidence band yet"
+        let maximum = "Max \(model.maximumForceKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
+        guard let first = band?.first,
+              let last = band?.last,
+              (band?.count ?? 0) >= 2
+        else {
+            return maximum
         }
-        return "Max \(model.maximumForceKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms, confidence band from \(first.windowSeconds.formatted(.number.precision(.fractionLength(0)))) to \(last.windowSeconds.formatted(.number.precision(.fractionLength(0)))) seconds"
+        return "\(maximum), 95 percent confidence band from \(first.windowSeconds.formatted(.number.precision(.fractionLength(0)))) to \(last.windowSeconds.formatted(.number.precision(.fractionLength(0)))) seconds"
     }
 }
 
@@ -166,9 +177,24 @@ private struct NativeForceCurvePlot: View {
                     bandPath,
                     with: .color(forceColor.opacity(ChartToken.force.bandOpacity(scheme)))
                 )
+            }
 
+            let fitPoints: [(windowSeconds: Double, kilograms: Double)] = if let band = model.confidenceBand,
+                                                                                 band.count >= 2 {
+                band.map { ($0.windowSeconds, $0.kilograms) }
+            } else if let capabilityFit = model.capabilityFit {
+                model.points.map {
+                    (
+                        $0.windowSeconds,
+                        ForceCurveEngine.predictCapabilityFit(capabilityFit, seconds: $0.windowSeconds)
+                    )
+                }
+            } else {
+                []
+            }
+            if fitPoints.count >= 2 {
                 var fitPath = Path()
-                for (index, point) in band.enumerated() {
+                for (index, point) in fitPoints.enumerated() {
                     let location = CGPoint(x: x(point.windowSeconds), y: y(point.kilograms))
                     if index == 0 { fitPath.move(to: location) } else { fitPath.addLine(to: location) }
                 }
