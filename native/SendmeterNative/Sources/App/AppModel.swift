@@ -2231,7 +2231,7 @@ public final class AppModel: ObservableObject {
             invalidateTagCurveKeys([key])
 
             let deleteCreatedAt = Date()
-            let deleteItem = DurableQueueItem(
+            let deleteItem: DurableQueueItem<PendingWrite> = DurableQueueItem(
                 id: RecordingEditQueueIdentity.delete(recording.id),
                 accountUserID: userID,
                 createdAt: deleteCreatedAt,
@@ -2980,7 +2980,7 @@ public final class AppModel: ObservableObject {
             }
 
             let flightID = UUID()
-            let task = Task { [weak self] in
+            let task: Task<[DurableQueueItem<PendingWrite>]?, Never> = Task { [weak self] in
                 guard let self else { return nil }
                 return await self.performLegacyRecordingEditMigration(
                     userID: userID,
@@ -4165,7 +4165,7 @@ public final class AppModel: ObservableObject {
                             modality: GaugeSessionRPE.modality(of: existing)
                         )
                     }
-                    if let item, case let .recording(recording) = item.payload {
+                    if case let .recording(recording) = item.payload {
                         let pending = pendingRecording(from: recording)
                         return TagCurveKey(
                             tag: pending.tag,
@@ -4589,7 +4589,7 @@ public final class AppModel: ObservableObject {
                     currentUserID: currentUserID
                 )
             case let .recordingDelete(payload):
-                if let sessionID = payload.sessionID {
+                if let sessionID = payload.sessionID, let queue {
                     do {
                         guard try await queue.protectOrderingIdentity(
                             queueItemID: RecordingEditQueueIdentity.sessionRPE(sessionID),
