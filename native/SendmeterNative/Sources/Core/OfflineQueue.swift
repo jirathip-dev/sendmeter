@@ -154,6 +154,10 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
     public let id: UUID
     public let accountUserID: UUID
     public let createdAt: Date
+    /// Changes whenever an existing queue identity is replaced. An upload
+    /// that claimed the previous revision must not apply its failure/backoff
+    /// to the replacement.
+    public let revision: UUID
     public var updatedAt: Date
     public var attempts: Int
     /// #675 F3: how many times THIS entry has been rejected with a
@@ -189,6 +193,7 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         id: UUID = UUID(),
         accountUserID: UUID,
         createdAt: Date = Date(),
+        revision: UUID = UUID(),
         attempts: Int = 0,
         permanentAttempts: Int = 0,
         nextAttemptAt: Date? = nil,
@@ -199,6 +204,7 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         self.id = id
         self.accountUserID = accountUserID
         self.createdAt = createdAt
+        self.revision = revision
         self.updatedAt = createdAt
         self.attempts = attempts
         self.permanentAttempts = permanentAttempts == 0 ? nil : permanentAttempts
@@ -206,6 +212,29 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         self.lastError = lastError
         self.quarantined = quarantined
         self.payload = payload
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, accountUserID, createdAt, revision, updatedAt, attempts
+        case permanentAttempts, nextAttemptAt, lastError, quarantined, payload
+    }
+
+    /// Queue files written before replacement revisions existed decode with a
+    /// fresh revision. Their payload and backoff remain intact; only the claim
+    /// token is new, which is exactly what a relaunch needs.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.accountUserID = try container.decode(UUID.self, forKey: .accountUserID)
+        self.createdAt = try container.decode(Date.self, forKey: .createdAt)
+        self.revision = try container.decodeIfPresent(UUID.self, forKey: .revision) ?? UUID()
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        self.attempts = try container.decode(Int.self, forKey: .attempts)
+        self.permanentAttempts = try container.decodeIfPresent(Int.self, forKey: .permanentAttempts)
+        self.nextAttemptAt = try container.decode(Date.self, forKey: .nextAttemptAt)
+        self.lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
+        self.quarantined = try container.decodeIfPresent(QueueRejection.self, forKey: .quarantined)
+        self.payload = try container.decode(Payload.self, forKey: .payload)
     }
 }
 
@@ -294,14 +323,23 @@ public actor DurableQueue<Payload: Codable & Sendable> {
     }
 
     public func enqueue(_ item: DurableQueueItem<Payload>) throws {
+        try enqueue([item])
+    }
+
+    /// Enqueue a group of related writes in one durable transaction. Recording
+    /// metadata and its session-RPE ordering claim use this to avoid leaving
+    /// only half of an editor save on disk when persistence fails.
+    public func enqueue(_ items: [DurableQueueItem<Payload>]) throws {
         try transact { state in
-            if let index = state.items.firstIndex(where: { $0.id == item.id }) {
-                guard state.items[index].accountUserID == item.accountUserID else {
-                    throw DurableQueueError.accountMismatch
+            for item in items {
+                if let index = state.items.firstIndex(where: { $0.id == item.id }) {
+                    guard state.items[index].accountUserID == item.accountUserID else {
+                        throw DurableQueueError.accountMismatch
+                    }
+                    state.items[index] = item
+                } else {
+                    state.items.append(item)
                 }
-                state.items[index] = item
-            } else {
-                state.items.append(item)
             }
         }
     }
@@ -387,6 +425,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         }.count
     }
 
+    @discardableResult
     public func markFailure(
         id: UUID,
         accountUserID: UUID,
@@ -394,13 +433,17 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         classification: RejectionClass,
         code: String? = nil,
         now: Date = Date(),
-        countsTowardQuarantine: Bool = true
-    ) throws {
+        countsTowardQuarantine: Bool = true,
+        expectedRevision: UUID? = nil
+    ) throws -> Bool {
         guard let currentIndex = store.items.firstIndex(where: { $0.id == id }) else {
             throw DurableQueueError.itemNotFound
         }
         guard store.items[currentIndex].accountUserID == accountUserID else {
             throw DurableQueueError.accountMismatch
+        }
+        guard expectedRevision == nil || store.items[currentIndex].revision == expectedRevision else {
+            return false
         }
         // A quarantined entry has no failure path left — nothing should be
         // calling markFailure on it (the drain never returns it). #675 F6: a
@@ -408,14 +451,18 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         // entry before the first markFailure quarantines it, so this is
         // reachable in production, not just a caller bug. Preserve the
         // existing no-op contract for that terminal state.
-        guard store.items[currentIndex].quarantined == nil else { return }
+        guard store.items[currentIndex].quarantined == nil else { return false }
 
+        var applied = false
         try transact { state in
             guard let index = state.items.firstIndex(where: { $0.id == id }) else {
                 throw DurableQueueError.itemNotFound
             }
             guard state.items[index].accountUserID == accountUserID else {
                 throw DurableQueueError.accountMismatch
+            }
+            guard expectedRevision == nil || state.items[index].revision == expectedRevision else {
+                return
             }
             var item = state.items[index]
             item.attempts += 1
@@ -457,7 +504,9 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 Self.retryDelay(attempts: item.attempts)
             )
             state.items[index] = item
+            applied = true
         }
+        return applied
     }
 
     /// #675 F7 + N1: re-apply the quarantine stamp after a failed MANUAL

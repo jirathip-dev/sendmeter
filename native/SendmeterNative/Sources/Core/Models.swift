@@ -175,7 +175,10 @@ public struct Session: Codable, Equatable, Sendable, Identifiable {
         self.durationMinutes = durationMinutes
         self.rpe = rpe
         self.rpeConfirmed = rpeConfirmed
-        self.load = load ?? Double(durationMinutes) * rpe
+        self.load = load ?? RecordingEditCoordinator.optimisticLoad(
+            durationMinutes: durationMinutes,
+            rpe: rpe
+        )
         self.note = note
         self.phase = phase
         self.groupID = groupID
@@ -605,6 +608,11 @@ public struct RecordingEdit: Codable, Equatable, Sendable {
     public let note: String
     public let sessionID: UUID?
     public let sessionRPE: Double?
+    /// One ordering key for the linked session's RPE, shared by every
+    /// recording edit that points at that session. Nil is retained for queue
+    /// entries written before the coordinator existed; the durable item's
+    /// creation time is their ordering fallback.
+    public let sessionRPERevision: UInt64?
 
     public init(
         recordingID: UUID,
@@ -612,7 +620,8 @@ public struct RecordingEdit: Codable, Equatable, Sendable {
         side: TindeqSide,
         note: String,
         sessionID: UUID? = nil,
-        sessionRPE: Double? = nil
+        sessionRPE: Double? = nil,
+        sessionRPERevision: UInt64? = nil
     ) {
         self.recordingID = recordingID
         self.tag = String(tag.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
@@ -620,6 +629,9 @@ public struct RecordingEdit: Codable, Equatable, Sendable {
         self.note = String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2_000))
         self.sessionID = sessionID
         self.sessionRPE = sessionRPE.map { min(10, max(1, $0)) }
+        self.sessionRPERevision = sessionID != nil && sessionRPE != nil
+            ? sessionRPERevision
+            : nil
     }
 
     /// The exact body sent to `tindeq_recordings`. It contains no samples or
@@ -696,7 +708,10 @@ public enum RecordingEditReducer {
         var updated = session
         updated.rpe = sessionRPE
         updated.rpeConfirmed = true
-        updated.load = Double(updated.durationMinutes) * sessionRPE
+        updated.load = RecordingEditCoordinator.optimisticLoad(
+            durationMinutes: updated.durationMinutes,
+            rpe: sessionRPE
+        )
         return updated
     }
 }

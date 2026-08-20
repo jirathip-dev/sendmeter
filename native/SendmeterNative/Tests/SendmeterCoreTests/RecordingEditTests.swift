@@ -174,4 +174,196 @@ final class RecordingEditTests: XCTestCase {
         )
         XCTAssertNil(loose.sessionPayload)
     }
+
+    func testSessionRPEUsesOneKeyAcrossLinkedRecordingsAndCoordinatorSurvivesRelaunch() {
+        let otherRecordingID = UUID(uuidString: "00000000-0000-0000-0000-000000000679")!
+        let firstEdit = RecordingEdit(
+            recordingID: recordingID,
+            tag: "left",
+            side: .left,
+            note: "",
+            sessionID: sessionID,
+            sessionRPE: 6.5
+        )
+        let secondEdit = RecordingEdit(
+            recordingID: otherRecordingID,
+            tag: "right",
+            side: .right,
+            note: "",
+            sessionID: sessionID,
+            sessionRPE: 7.5
+        )
+        let sessionKey = RecordingEditQueueIdentity.sessionRPE(sessionID)
+        XCTAssertEqual(
+            sessionKey,
+            RecordingEditQueueIdentity.sessionRPE(firstEdit.sessionID!)
+        )
+        XCTAssertEqual(
+            sessionKey,
+            RecordingEditQueueIdentity.sessionRPE(secondEdit.sessionID!)
+        )
+        XCTAssertNotEqual(
+            RecordingEditQueueIdentity.recording(recordingID),
+            RecordingEditQueueIdentity.recording(otherRecordingID)
+        )
+
+        var coordinator = RecordingEditCoordinator(now: Date(timeIntervalSince1970: 1_000))
+        let first = coordinator.nextSessionRPERevision(
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        let second = coordinator.nextSessionRPERevision(
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        XCTAssertGreaterThan(second, first)
+
+        var relaunched = RecordingEditCoordinator(now: Date(timeIntervalSince1970: 900))
+        relaunched.observe(
+            sessionRPERevision: second,
+            createdAt: Date(timeIntervalSince1970: 1_000)
+        )
+        XCTAssertGreaterThan(
+            relaunched.nextSessionRPERevision(now: Date(timeIntervalSince1970: 1_000)),
+            second
+        )
+    }
+
+    func testOptimisticLoadMatchesDatabaseRoundForOddHalfPoint() {
+        XCTAssertEqual(
+            RecordingEditCoordinator.optimisticLoad(durationMinutes: 9, rpe: 6.5),
+            59
+        )
+
+        let oddSession = Session(
+            id: sessionID,
+            date: "2026-08-20",
+            type: "tindeq",
+            typeLabel: "Tindeq",
+            durationMinutes: 9,
+            rpe: 6.5,
+            note: "",
+            phase: .strength
+        )
+        XCTAssertEqual(oddSession.load, 59)
+    }
+
+    func testDeleteTombstoneRejectsStaleResponseEvenWhenClaimRevisionMatches() {
+        let responseRevision = UUID()
+        var coordinator = RecordingEditCoordinator()
+        XCTAssertTrue(coordinator.tombstone(recordingID: recordingID))
+        XCTAssertTrue(coordinator.isDeleted(recordingID))
+        XCTAssertFalse(coordinator.tombstone(recordingID: recordingID))
+        XCTAssertFalse(
+            RecordingEditRacePolicy.acceptsRecordingResponse(
+                recordingID: recordingID,
+                responseRevision: responseRevision,
+                currentRevision: responseRevision,
+                deleted: true
+            )
+        )
+        XCTAssertFalse(
+            RecordingEditRacePolicy.acceptsSessionRPEResponse(
+                responseRevision: responseRevision,
+                currentRevision: responseRevision,
+                deleted: true
+            )
+        )
+        XCTAssertFalse(
+            RecordingEditRacePolicy.acceptsRecordingResponse(
+                recordingID: recordingID,
+                responseRevision: responseRevision,
+                currentRevision: UUID(),
+                deleted: false
+            )
+        )
+    }
+
+    func testReplacementAfterOlderClaimDoesNotInheritFailureAndSurvivesRelaunch() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let account = UUID()
+        let queue = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json"
+        )
+        let queueID = RecordingEditQueueIdentity.recording(recordingID)
+        let key = QueueUploadKey(itemID: queueID, accountUserID: account)
+        var claims = QueueUploadClaimCoordinator()
+        let olderClaim = try XCTUnwrap(claims.claim(key))
+        let now = Date(timeIntervalSince1970: 10_000)
+        let older = DurableQueueItem(
+            id: queueID,
+            accountUserID: account,
+            createdAt: now,
+            payload: RecordingQueuePayload(value: "old")
+        )
+        try await queue.enqueue(older)
+        let claimedItem = await queue.activeItem(
+            id: queueID,
+            accountUserID: account,
+            dueAt: now
+        )
+        let claimed = try XCTUnwrap(claimedItem)
+
+        let replacement = DurableQueueItem(
+            id: queueID,
+            accountUserID: account,
+            createdAt: now.addingTimeInterval(1),
+            payload: RecordingQueuePayload(value: "new")
+        )
+        try await queue.enqueue(replacement)
+
+        let staleFailureApplied = try await queue.markFailure(
+            id: queueID,
+            accountUserID: account,
+            error: "old request failed",
+            classification: .retryable,
+            now: now.addingTimeInterval(2),
+            expectedRevision: claimed.revision
+        )
+        XCTAssertFalse(staleFailureApplied)
+        let stalePermanentFailureApplied = try await queue.markFailure(
+            id: queueID,
+            accountUserID: account,
+            error: "old request was permanently rejected",
+            classification: .permanent,
+            now: now.addingTimeInterval(3),
+            expectedRevision: claimed.revision
+        )
+        XCTAssertFalse(stalePermanentFailureApplied)
+
+        let currentItem = await queue.item(id: queueID, accountUserID: account)
+        let current = try XCTUnwrap(currentItem)
+        XCTAssertEqual(current.payload, RecordingQueuePayload(value: "new"))
+        XCTAssertEqual(current.attempts, 0)
+        XCTAssertNil(current.permanentAttempts)
+        XCTAssertNil(current.quarantined)
+        XCTAssertEqual(current.nextAttemptAt, replacement.nextAttemptAt)
+        let notYetDue = await queue.items(for: account, dueAt: now)
+        XCTAssertTrue(notYetDue.isEmpty)
+
+        // The replacement cannot claim while the old request owns the key,
+        // but becomes immediately claimable once the old request releases.
+        XCTAssertNil(claims.claim(key))
+        claims.release(olderClaim)
+        XCTAssertNotNil(claims.claim(key))
+
+        let reloaded = try DurableQueue<RecordingQueuePayload>(
+            directoryURL: directory,
+            filename: "recording-edits.json"
+        )
+        let restoredItem = await reloaded.activeItem(
+            id: queueID,
+            accountUserID: account,
+            dueAt: now.addingTimeInterval(1)
+        )
+        let restored = try XCTUnwrap(restoredItem)
+        XCTAssertEqual(restored.payload, RecordingQueuePayload(value: "new"))
+        XCTAssertEqual(restored.attempts, 0)
+    }
+}
+
+private struct RecordingQueuePayload: Codable, Equatable, Sendable {
+    let value: String
 }

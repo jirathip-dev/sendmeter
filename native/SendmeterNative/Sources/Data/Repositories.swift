@@ -1054,6 +1054,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             method: .patch,
             queryItems: [
                 URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())"),
+                URLQueryItem(name: "deleted_at", value: "is.null"),
                 URLQueryItem(name: "select", value: sessionColumns)
             ],
             body: body,
@@ -1334,6 +1335,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             method: .patch,
             queryItems: [
                 URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())"),
+                URLQueryItem(name: "deleted_at", value: "is.null"),
                 URLQueryItem(name: "select", value: recordingColumns)
             ],
             body: body,
