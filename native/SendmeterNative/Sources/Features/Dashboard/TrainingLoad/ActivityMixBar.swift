@@ -19,6 +19,10 @@ struct ActivityMixBar: View {
     /// so this tracks the last tick independently of the rendered state.
     @State private var tickedIndex: Int?
 
+    private let tooltipHeight: CGFloat = 48
+    private let visualBarHeight = CGFloat(TrainingLoadInteraction.activityMixVisualHeight)
+    private let hitTargetHeight = CGFloat(TrainingLoadInteraction.activityMixHitHeight)
+
     private var description: String {
         activities
             .map { "\($0.label) \(TrainingLoad.formatSharePercent($0.percentage))" }
@@ -27,36 +31,42 @@ struct ActivityMixBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let selectedIndex, let activity = activity(at: selectedIndex) {
-                TrainingLoadTooltip {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(activity.label)
-                            .font(.subheadline.weight(.semibold))
-                        Text("\(TrainingLoad.formatAU(activity.load)) AU · \(TrainingLoad.formatSharePercent(activity.percentage))")
-                            .font(.caption2.monospacedDigit())
+            ZStack(alignment: .topLeading) {
+                if let selectedIndex, let activity = activity(at: selectedIndex) {
+                    TrainingLoadTooltip {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(activity.label)
+                                .font(.subheadline.weight(.semibold))
+                            Text("\(TrainingLoad.formatAU(activity.load)) AU · \(TrainingLoad.formatSharePercent(activity.percentage))")
+                                .font(.caption2.monospacedDigit())
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(height: tooltipHeight, alignment: .topLeading)
 
             GeometryReader { proxy in
                 let total = proxy.size.width
                 ZStack(alignment: .leading) {
+                    visualBar(width: total)
+
                     HStack(spacing: 0) {
                         ForEach(Array(activities.enumerated()), id: \.offset) { index, activity in
                             Button {
                                 toggleSelection(index)
                             } label: {
-                                RoundedRectangle(cornerRadius: 0, style: .continuous)
-                                    .fill(ChartActivityHue.color(forActivityID: activity.type, scheme: scheme))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 0, style: .continuous)
-                                            .stroke(index == selectedIndex ? Color.primary : .clear, lineWidth: 1.5)
+                                Color.clear
+                                    .frame(
+                                        width: total * CGFloat(activity.percentage) / 100,
+                                        height: hitTargetHeight
                                     )
                             }
                             .buttonStyle(.plain)
-                            .frame(width: total * CGFloat(activity.percentage) / 100)
-                            .opacity(selectedIndex == nil || selectedIndex == index ? 1 : 0.5)
+                            .frame(
+                                width: total * CGFloat(activity.percentage) / 100,
+                                height: hitTargetHeight
+                            )
                             .accessibilityLabel(activity.label)
                             .accessibilityValue(
                                 "\(TrainingLoad.formatAU(activity.load)) AU, \(TrainingLoad.formatSharePercent(activity.percentage))"
@@ -66,13 +76,15 @@ struct ActivityMixBar: View {
                             .accessibilityAddTraits(selectedIndex == index ? .isSelected : [])
                         }
                     }
-                    .frame(width: total, alignment: .leading)
+                    .frame(width: total, height: hitTargetHeight, alignment: .leading)
 
                     // A single surface makes a scrub usable even when a
-                    // segment is narrower than a fingertip. The clear layer
-                    // is not an additional VoiceOver element; the buttons
-                    // beneath retain the per-activity labels and actions.
+                    // segment is narrower than a fingertip. It is 44pt tall,
+                    // while `visualBar` above remains the 10pt painted bar.
+                    // The clear layer is not an additional VoiceOver element;
+                    // the transparent buttons retain per-activity actions.
                     Color.clear
+                        .frame(width: total, height: hitTargetHeight)
                         .contentShape(Rectangle())
                         .gesture(
                             SpatialTapGesture()
@@ -91,11 +103,9 @@ struct ActivityMixBar: View {
                         )
                         .accessibilityHidden(true)
                 }
-                .frame(width: total, height: 10, alignment: .leading)
-                .background(Color(uiColor: .secondarySystemFill), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .frame(width: total, height: hitTargetHeight, alignment: .leading)
             }
-            .frame(height: 10)
+            .frame(height: hitTargetHeight)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Activity mix: \(description)")
@@ -115,18 +125,36 @@ struct ActivityMixBar: View {
         return activities[index]
     }
 
-    private func index(at x: CGFloat, width: CGFloat) -> Int? {
-        guard !activities.isEmpty, width > 0 else { return nil }
-        let position = max(0, min(x, width))
-        var start: CGFloat = 0
-        for (index, activity) in activities.enumerated() {
-            let segmentWidth = width * CGFloat(activity.percentage) / 100
-            if position < start + segmentWidth || index == activities.count - 1 {
-                return index
+    private func visualBar(width: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(activities.enumerated()), id: \.offset) { index, activity in
+                RoundedRectangle(cornerRadius: 0, style: .continuous)
+                    .fill(ChartActivityHue.color(forActivityID: activity.type, scheme: scheme))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 0, style: .continuous)
+                            .stroke(index == selectedIndex ? Color.primary : .clear, lineWidth: 1.5)
+                    )
+                    .opacity(selectedIndex == nil || selectedIndex == index ? 1 : 0.5)
+                    .frame(
+                        width: width * CGFloat(activity.percentage) / 100,
+                        height: visualBarHeight
+                    )
             }
-            start += segmentWidth
         }
-        return nil
+        .frame(width: width, height: visualBarHeight, alignment: .leading)
+        .background(
+            Color(uiColor: .secondarySystemFill),
+            in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+    }
+
+    private func index(at x: CGFloat, width: CGFloat) -> Int? {
+        TrainingLoadInteraction.activityMixIndex(
+            x: Double(x),
+            width: Double(width),
+            percentages: activities.map(\.percentage)
+        )
     }
 
     private func select(_ index: Int) {
@@ -136,7 +164,9 @@ struct ActivityMixBar: View {
 
     private func toggleSelection(_ index: Int) {
         guard activities.indices.contains(index) else { return }
-        setSelection(tickedIndex == index ? nil : index)
+        setSelection(
+            TrainingLoadInteraction.toggledSelection(current: tickedIndex, candidate: index)
+        )
     }
 
     private func setSelection(_ index: Int?) {

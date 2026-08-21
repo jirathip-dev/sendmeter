@@ -159,28 +159,34 @@ private struct WeeklyBarsView: View {
     /// so this must track the last tick independently of the rendered state.
     @State private var tickedIndex: Int?
 
-    private let barSpacing: CGFloat = 8
+    private let barSpacing = CGFloat(TrainingLoadInteraction.weeklyBarSpacing)
+    /// Reserve the tooltip slot even when nothing is selected. This keeps the
+    /// chart's origin fixed while a drag changes the selected bar.
+    private let tooltipHeight: CGFloat = 60
 
     private var maxW: Double { max(weeks.map(\.total).max() ?? 0, 1) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let selectedIndex, let week = week(at: selectedIndex) {
-                TrainingLoadTooltip {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(week.label)
-                            .font(.subheadline.weight(.semibold))
-                        Text("\(TrainingLoad.formatAU(week.total)) AU")
-                            .font(.caption2.monospacedDigit())
-                        if let delta = delta(for: selectedIndex) {
-                            Text(deltaLabel(delta))
+            ZStack(alignment: .topLeading) {
+                if let selectedIndex, let week = week(at: selectedIndex) {
+                    TrainingLoadTooltip {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(week.label)
+                                .font(.subheadline.weight(.semibold))
+                            Text("\(TrainingLoad.formatAU(week.total)) AU")
                                 .font(.caption2.monospacedDigit())
-                                .foregroundStyle(deltaColor(delta))
+                            if let delta = delta(for: selectedIndex) {
+                                Text(deltaLabel(delta))
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(deltaColor(delta))
+                            }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(height: tooltipHeight, alignment: .topLeading)
 
             GeometryReader { proxy in
                 ZStack(alignment: .bottomLeading) {
@@ -301,10 +307,12 @@ private struct WeeklyBarsView: View {
     }
 
     private func index(at x: CGFloat, width: CGFloat) -> Int? {
-        guard !weeks.isEmpty, width > 0 else { return nil }
-        let slot = (width + barSpacing) / CGFloat(weeks.count)
-        let raw = Int((max(0, min(x, width)) / slot).rounded(.down))
-        return min(max(raw, 0), weeks.count - 1)
+        TrainingLoadInteraction.weeklyBarIndex(
+            x: Double(x),
+            width: Double(width),
+            count: weeks.count,
+            spacing: Double(barSpacing)
+        )
     }
 
     private func select(_ index: Int) {
@@ -314,7 +322,9 @@ private struct WeeklyBarsView: View {
 
     private func toggleSelection(_ index: Int) {
         guard weeks.indices.contains(index) else { return }
-        setSelection(tickedIndex == index ? nil : index)
+        setSelection(
+            TrainingLoadInteraction.toggledSelection(current: tickedIndex, candidate: index)
+        )
     }
 
     private func setSelection(_ index: Int?) {

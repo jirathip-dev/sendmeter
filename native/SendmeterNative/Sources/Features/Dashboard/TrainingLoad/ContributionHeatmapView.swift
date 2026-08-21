@@ -185,7 +185,12 @@ struct ContributionHeatmapView: View {
             .accessibilityAddTraits(cell.future ? [] : .isButton)
             .accessibilityAction {
                 guard !cell.future else { return }
-                select(tickedDate == cell.date ? nil : cell.date)
+                select(
+                    TrainingLoadInteraction.toggledSelection(
+                        current: tickedDate,
+                        candidate: cell.date
+                    )
+                )
             }
             .accessibilityHidden(cell.future)
     }
@@ -221,7 +226,12 @@ struct ContributionHeatmapView: View {
                         if let cell = cell(at: value.location, cellSize: cellSize, grid: grid) {
                             // Tap-again on the selected day dismisses the
                             // tooltip (F7); a first tap selects.
-                            select(tickedDate == cell.date ? nil : cell.date)
+                            select(
+                                TrainingLoadInteraction.toggledSelection(
+                                    current: tickedDate,
+                                    candidate: cell.date
+                                )
+                            )
                         }
                     }
             )
