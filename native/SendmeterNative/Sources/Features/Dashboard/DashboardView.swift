@@ -516,25 +516,28 @@ private struct SendConditionsCard: View {
                 )
 
                 // Reserve every real state at the current Dynamic Type before
-                // the row measures this card. Hidden views keep their layout
-                // size but add no pixels or accessibility elements.
+                // the row measures this card. Always include the ProgressView
+                // footprint: using the live fetching value here would let the
+                // row grow when loading starts and shrink when it finishes.
+                // Hidden views keep their layout size but add no pixels or
+                // accessibility elements.
                 SendConditionsCardContent(
                     state: .empty,
-                    isFetching: model.weather.isFetching,
+                    isFetching: true,
                     refresh: {}
                 )
                 .hidden()
                 .accessibilityHidden(true)
                 SendConditionsCardContent(
                     state: .failed,
-                    isFetching: model.weather.isFetching,
+                    isFetching: true,
                     refresh: {}
                 )
                 .hidden()
                 .accessibilityHidden(true)
                 SendConditionsCardContent(
                     state: .populated(SendConditionsCardContent.layoutReservation),
-                    isFetching: model.weather.isFetching,
+                    isFetching: true,
                     refresh: {}
                 )
                 .hidden()
