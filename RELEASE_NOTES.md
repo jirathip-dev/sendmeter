@@ -10,7 +10,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
-- Native Manual workouts now open in a phase-tinted full-page timer with BOULDER/DONE controls, persisted 1/2/3/5-minute rest targets, rest-over haptic/audio feedback, and a minimize action that keeps the workout running.
+- Native Manual workouts now open in an adaptive, phase-tinted full-page timer with BOULDER/DONE controls, persisted 1/2/3/5-minute rest targets, rest-over haptic/audio feedback (including a sound notification when backgrounded), and a minimize action that keeps the workout running.
 - Native Force now shows Static capacity and Resisted movement progress tiles; the Static detail sheet includes the recent peak trend, force-duration model, and side comparison, while movement metrics stay execution-only and never alter Static PR, Hill/CF, or asymmetry.
 - Native Training Load charts now support tap/scrub tooltips for weekly load and activity mix, with selection haptics and heatmap selection/dismissal feedback.
 - Native History: open a Force recording to edit its tag, side, notes, and linked session effort; the original force samples stay unchanged.

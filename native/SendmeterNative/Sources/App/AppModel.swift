@@ -254,6 +254,9 @@ public final class AppModel: ObservableObject {
     public let gaugeSessionSaveGate: GaugeSessionSaveGate
     /// #628: refcounted screen keep-awake while connected/armed/measuring.
     public let keepAwake: KeepAwakeCoordinator
+    /// #708: owns the Manual workout rest deadline outside the fullscreen
+    /// presentation so minimize/background transitions cannot suspend it.
+    public let manualWorkoutRest: ManualWorkoutRestScheduler
 
     public private(set) var gaugeSessionTracker = GaugeSessionTracker()
     public var freePullContext = FreePullContext()
@@ -425,6 +428,7 @@ public final class AppModel: ObservableObject {
         self.handsFree = HandsFreeForceController()
         self.guidedActivity = GuidedProtocolActivityManager()
         self.gaugeSessionSaveGate = GaugeSessionSaveGate()
+        self.manualWorkoutRest = ManualWorkoutRestScheduler()
         self.keepAwake = KeepAwakeCoordinator { active in
             await MainActor.run {
                 UIApplication.shared.isIdleTimerDisabled = active
@@ -1564,6 +1568,7 @@ public final class AppModel: ObservableObject {
     /// a hold or protocol), armed, or measuring — the web's `useWakeLock`
     /// rule — and the last release restores the idle timer.
     public func scenePhaseChanged(_ phase: ScenePhase) {
+        manualWorkoutRest.scenePhaseChanged(phase)
         if phase == .active {
             updateKeepAwake()
             // #671: resume the display-rate flush driver for a live stream
@@ -5231,6 +5236,7 @@ public final class AppModel: ObservableObject {
         guidedProtocolActive = false
         invalidateTagCurveCache()
         handsFree.handleDisconnected()
+        manualWorkoutRest.stop()
         keepAwakeRelease?()
         keepAwakeRelease = nil
         // The mirror must not survive an account change even without an

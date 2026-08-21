@@ -7,14 +7,14 @@ import SwiftUI
 /// saves the workout.
 struct ManualWorkoutFullscreen: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var engine: PhoneWorkoutEngine?
     let isSaving: Bool
+    let restTarget: Int
+    let onRestTargetChange: (Int) -> Void
     let onMinimize: () -> Void
     let onEnd: () -> Void
 
-    @AppStorage(ManualWorkoutRest.restTargetKey)
-    private var storedRestTarget = ManualWorkoutRest.defaultRestTarget
-    @State private var announcedRestKey: String?
     @State private var restOverPulse = false
 
     var body: some View {
@@ -22,11 +22,6 @@ struct ManualWorkoutFullscreen: View {
             if let currentEngine = engine {
                 let snapshot = makeSnapshot(engine: currentEngine, now: context.date)
                 screen(snapshot: snapshot)
-                    .task(id: snapshot.alertKey) {
-                        guard let key = snapshot.alertKey, announcedRestKey != key else { return }
-                        announcedRestKey = key
-                        ManualWorkoutRestAlert.play()
-                    }
                     .task(id: snapshot.phase) {
                         restOverPulse = snapshot.phase == .restOver
                     }
@@ -40,9 +35,6 @@ struct ManualWorkoutFullscreen: View {
             // The parent arms this only for a user tap. A restored/minimized
             // workout stays silent because there is no fresh gesture to claim.
             Haptics.shared.sheetPresented()
-            if storedRestTarget != ManualWorkoutRest.validatedTarget(storedRestTarget) {
-                storedRestTarget = ManualWorkoutRest.defaultRestTarget
-            }
         }
     }
 
@@ -55,25 +47,40 @@ struct ManualWorkoutFullscreen: View {
                 .opacity(0.12)
                 .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                topBar(snapshot: snapshot)
-
-                Spacer(minLength: 18)
-
-                phasePanel(snapshot: snapshot)
-
-                Spacer(minLength: 22)
-
-                actionButton(snapshot: snapshot)
-
-                Spacer(minLength: 14)
+            GeometryReader { geometry in
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 16) {
+                        topBar(snapshot: snapshot)
+                        phasePanel(snapshot: snapshot)
+                        actionButton(
+                            snapshot: snapshot,
+                            diameter: actionDiameter(for: geometry.size)
+                        )
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+                    .frame(maxWidth: 540)
+                    .frame(
+                        minHeight: max(CGFloat.zero, geometry.size.height - 24),
+                        alignment: .top
+                    )
+                    .frame(maxWidth: .infinity)
+                }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 12)
-            .frame(maxWidth: 540)
         }
-        .animation(.easeInOut(duration: 0.3), value: snapshot.phase)
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.3),
+            value: snapshot.phase
+        )
+    }
+
+    private func actionDiameter(for size: CGSize) -> CGFloat {
+        let widthBound = min(184, max(120, size.width - 32))
+        let heightBound = size.height < 500
+            ? max(120, size.height * 0.42)
+            : widthBound
+        return min(widthBound, heightBound)
     }
 
     private func topBar(snapshot: ManualWorkoutSnapshot) -> some View {
@@ -150,23 +157,31 @@ struct ManualWorkoutFullscreen: View {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .stroke(snapshot.accent.opacity(0.32), lineWidth: 1)
         )
-        .scaleEffect(snapshot.phase == .restOver && restOverPulse ? 1.025 : 1)
+        .scaleEffect(
+            snapshot.phase == .restOver && restOverPulse && !reduceMotion ? 1.025 : 1
+        )
         .animation(
-            snapshot.phase == .restOver
-                ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
-                : .easeOut(duration: 0.15),
+            reduceMotion
+                ? nil
+                : (
+                    snapshot.phase == .restOver
+                        ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                        : .easeOut(duration: 0.15)
+                ),
             value: restOverPulse
         )
         .accessibilityElement(children: .contain)
     }
 
     private var restTargetPicker: some View {
-        HStack(spacing: 8) {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 72), spacing: 8)],
+            spacing: 8
+        ) {
             ForEach(ManualWorkoutRest.restTargets, id: \.self) { target in
                 let selected = restTarget == target
                 Button {
-                    storedRestTarget = target
-                    announcedRestKey = nil
+                    onRestTargetChange(target)
                     Haptics.shared.play(.selection)
                 } label: {
                     Text(formatDuration(TimeInterval(target)))
@@ -190,7 +205,10 @@ struct ManualWorkoutFullscreen: View {
         .accessibilityLabel("Rest target")
     }
 
-    private func actionButton(snapshot: ManualWorkoutSnapshot) -> some View {
+    private func actionButton(
+        snapshot: ManualWorkoutSnapshot,
+        diameter: CGFloat
+    ) -> some View {
         Button {
             toggleAttempt()
         } label: {
@@ -220,16 +238,12 @@ struct ManualWorkoutFullscreen: View {
                 }
                 .foregroundStyle(snapshot.accent)
             }
-            .frame(width: 184, height: 184)
+            .frame(width: diameter, height: diameter)
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(snapshot.phase == .climbing ? "Done boulder" : "Start boulder")
         .accessibilityHint(snapshot.phase == .climbing ? "Stops the current attempt" : "Starts a new attempt")
-    }
-
-    private var restTarget: Int {
-        ManualWorkoutRest.validatedTarget(storedRestTarget)
     }
 
     private func toggleAttempt() {
@@ -249,10 +263,6 @@ struct ManualWorkoutFullscreen: View {
     }
 
     private func makeSnapshot(engine: PhoneWorkoutEngine, now: Date) -> ManualWorkoutSnapshot {
-        let restStartedAt = ManualWorkoutRest.restStartedAt(
-            workoutStartedAt: engine.draft.startedAt,
-            attempts: engine.draft.attempts
-        )
         let remaining = ManualWorkoutRest.remainingSeconds(
             now: now,
             workoutStartedAt: engine.draft.startedAt,
@@ -280,14 +290,7 @@ struct ManualWorkoutFullscreen: View {
                 attempts: engine.draft.attempts,
                 targetSeconds: restTarget
             ),
-            restStartedAt: restStartedAt,
             attemptCount: engine.draft.attempts.count,
-            alertKey: phase == .restOver
-                ? ManualWorkoutRest.alertKey(
-                    restStartedAt: restStartedAt,
-                    targetSeconds: restTarget
-                )
-                : nil,
             accent: phase.accent
         )
     }
@@ -307,9 +310,7 @@ private struct ManualWorkoutSnapshot {
     let totalElapsed: TimeInterval
     let phaseSeconds: TimeInterval
     let restProgress: Double
-    let restStartedAt: Date
     let attemptCount: Int
-    let alertKey: String?
     let accent: Color
 }
 

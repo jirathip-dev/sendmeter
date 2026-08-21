@@ -100,4 +100,115 @@ final class ManualWorkoutRestTests: XCTestCase {
             ManualWorkoutRest.alertKey(restStartedAt: restStart, targetSeconds: 120)
         )
     }
+
+    func testScheduleOwnsDropOffDeadlineAndValidatesTarget() throws {
+        let start = Date(timeIntervalSince1970: 4_000)
+        var engine = PhoneWorkoutEngine(accountUserID: UUID(), phase: .power, startedAt: start)
+        try engine.startAttempt(at: start.addingTimeInterval(10))
+        _ = try engine.endAttempt(at: start.addingTimeInterval(25))
+
+        let schedule = ManualWorkoutRest.schedule(
+            workoutStartedAt: start,
+            attempts: engine.draft.attempts,
+            targetSeconds: 90
+        )
+
+        XCTAssertEqual(schedule.restStartedAt, start.addingTimeInterval(25))
+        XCTAssertEqual(schedule.targetSeconds, 180)
+        XCTAssertEqual(schedule.deadline, start.addingTimeInterval(205))
+        XCTAssertEqual(schedule.key, "4025.0-180")
+    }
+
+    func testNotificationDelayAvoidsTooShortAndExpiredRequests() {
+        let now = Date(timeIntervalSince1970: 5_000)
+        let deadline = now.addingTimeInterval(0.25)
+
+        XCTAssertEqual(
+            ManualWorkoutRest.notificationDelay(now: now, deadline: deadline),
+            1
+        )
+        XCTAssertNil(
+            ManualWorkoutRest.notificationDelay(now: deadline, deadline: deadline)
+        )
+        XCTAssertNil(
+            ManualWorkoutRest.notificationDelay(
+                now: now,
+                deadline: deadline,
+                minimumDelay: 0
+            )
+        )
+    }
+
+    func testFeedbackDecisionDeduplicatesAndSeparatesBackgroundDelivery() {
+        let start = Date(timeIntervalSince1970: 6_000)
+        let schedule = ManualWorkoutRest.Schedule(restStartedAt: start, targetSeconds: 60)
+        let due = schedule.deadline
+
+        XCTAssertEqual(
+            ManualWorkoutRest.feedbackDecision(
+                now: due.addingTimeInterval(-1),
+                schedule: schedule,
+                sceneIsActive: true,
+                deadlinePassedWhileBackground: false,
+                notificationWasScheduled: true,
+                lastFeedbackKey: nil
+            ),
+            .none
+        )
+        XCTAssertEqual(
+            ManualWorkoutRest.feedbackDecision(
+                now: due,
+                schedule: schedule,
+                sceneIsActive: true,
+                deadlinePassedWhileBackground: false,
+                notificationWasScheduled: false,
+                lastFeedbackKey: nil
+            ),
+            .playForeground
+        )
+        XCTAssertEqual(
+            ManualWorkoutRest.feedbackDecision(
+                now: due,
+                schedule: schedule,
+                sceneIsActive: true,
+                deadlinePassedWhileBackground: false,
+                notificationWasScheduled: false,
+                lastFeedbackKey: schedule.key
+            ),
+            .none
+        )
+        XCTAssertEqual(
+            ManualWorkoutRest.feedbackDecision(
+                now: due,
+                schedule: schedule,
+                sceneIsActive: true,
+                deadlinePassedWhileBackground: true,
+                notificationWasScheduled: true,
+                lastFeedbackKey: nil
+            ),
+            .suppressForBackgroundNotification
+        )
+        XCTAssertEqual(
+            ManualWorkoutRest.feedbackDecision(
+                now: due,
+                schedule: schedule,
+                sceneIsActive: true,
+                deadlinePassedWhileBackground: true,
+                notificationWasScheduled: false,
+                lastFeedbackKey: nil
+            ),
+            .playForeground
+        )
+        XCTAssertEqual(
+            ManualWorkoutRest.feedbackDecision(
+                now: due,
+                schedule: schedule,
+                sceneIsActive: false,
+                deadlinePassedWhileBackground: false,
+                notificationWasScheduled: true,
+                lastFeedbackKey: nil
+            ),
+            .none
+        )
+    }
 }

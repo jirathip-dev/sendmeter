@@ -10,6 +10,8 @@ struct WorkoutView: View {
     @State private var activeSaveID: UUID?
     @State private var showManualWorkout = false
     @State private var hasResolvedPersistedRun = false
+    @AppStorage(ManualWorkoutRest.restTargetKey)
+    private var storedRestTarget = ManualWorkoutRest.defaultRestTarget
 
     var body: some View {
         NavigationStack {
@@ -58,10 +60,23 @@ struct WorkoutView: View {
                 ManualWorkoutFullscreen(
                     engine: $engine,
                     isSaving: isSaving,
+                    restTarget: restTarget,
+                    onRestTargetChange: { target in
+                        storedRestTarget = ManualWorkoutRest.validatedTarget(target)
+                    },
                     onMinimize: { showManualWorkout = false },
                     onEnd: finishWorkout
                 )
                 .environmentObject(model)
+            }
+            .onAppear {
+                model.manualWorkoutRest.update(engine: engine, restTarget: restTarget)
+            }
+            .onChange(of: engine) { newEngine in
+                model.manualWorkoutRest.update(engine: newEngine, restTarget: restTarget)
+            }
+            .onChange(of: storedRestTarget) { _ in
+                model.manualWorkoutRest.update(engine: engine, restTarget: restTarget)
             }
             .task {
                 guard !hasResolvedPersistedRun else { return }
@@ -173,17 +188,21 @@ struct WorkoutView: View {
         guard !isSaving else { return }
         guard let userID = model.currentUserID else { return }
         Haptics.shared.tap()
-        engine = PhoneWorkoutEngine(
+        let newEngine = PhoneWorkoutEngine(
             accountUserID: userID,
             phase: model.settings.currentPhase,
             startedAt: Date()
         )
+        engine = newEngine
+        model.manualWorkoutRest.update(engine: newEngine, restTarget: restTarget)
         showManualWorkout = true
+        Task { await model.manualWorkoutRest.requestNotificationPermissionIfNeeded() }
     }
 
     private func resumeWorkout() {
         guard engine != nil, !isSaving else { return }
         Haptics.shared.tap()
+        model.manualWorkoutRest.update(engine: engine, restTarget: restTarget)
         showManualWorkout = true
     }
 
@@ -196,6 +215,7 @@ struct WorkoutView: View {
             // finish is real — an empty-workout refusal below must play the
             // warning pattern, never the accepted tick.
             Haptics.shared.play(.medium)
+            model.manualWorkoutRest.stop()
             showManualWorkout = false
             self.engine = nil
             let saveID = UUID()
@@ -208,13 +228,17 @@ struct WorkoutView: View {
                 isSaving = false
             }
         } catch WorkoutEngineError.emptyWorkout {
-            model.errorMessage = "Record at least one attempt before finishing the workout."
+            model.errorMessage = "Record at least one attempt before finishing the Manual workout."
             // #222: the Finish button is deliberately kept clickable so the
             // tap can say why — a refused finish must not feel accepted.
             Haptics.shared.play(RefusedActionHaptics.cue(tappableAndRefused: true))
         } catch {
             model.errorMessage = error.localizedDescription
         }
+    }
+
+    private var restTarget: Int {
+        ManualWorkoutRest.validatedTarget(storedRestTarget)
     }
 }
 
@@ -348,7 +372,7 @@ private struct ActiveWorkoutCard: View {
                         Button(role: .destructive, action: finish) {
                             HStack {
                                 if isSaving { ProgressView() }
-                                Text("Finish Workout")
+                                Text("Finish Manual workout")
                             }
                             .frame(maxWidth: .infinity, minHeight: 44)
                         }

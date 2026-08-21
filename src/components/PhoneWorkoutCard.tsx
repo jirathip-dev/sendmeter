@@ -53,7 +53,7 @@ export default function PhoneWorkoutCard({
             dispatch({ type: "start", at: new Date().toISOString() });
           }}
         >
-          Start Workout
+          Start Manual workout
         </button>
       </div>
     );
