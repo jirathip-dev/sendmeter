@@ -186,6 +186,120 @@ final class ForceProgressTests: XCTestCase {
         )
     }
 
+    func testProgressInputsChangedIncludesMovementMetricsAndCardKeyIgnoresDisplayFrames() {
+        let beforeMetrics = ReverseActionMetrics(
+            meanKilograms: 12,
+            coefficientOfVariationPercent: 3,
+            inTargetPercent: 95,
+            timeUnderTensionMilliseconds: 20_000,
+            driftPercent: -1,
+            cadenceAdherencePercent: 98
+        )
+        let afterMetrics = ReverseActionMetrics(
+            meanKilograms: 13,
+            coefficientOfVariationPercent: 4,
+            inTargetPercent: 96,
+            timeUnderTensionMilliseconds: 20_000,
+            driftPercent: -2,
+            cadenceAdherencePercent: 99
+        )
+        let before = recording(
+            index: 40,
+            id: stableID(401),
+            tag: "Crimp",
+            side: .left,
+            protocolMode: .reverseAction,
+            setMetrics: beforeMetrics
+        )
+        let after = recording(
+            index: 40,
+            id: stableID(401),
+            tag: "Crimp",
+            side: .left,
+            protocolMode: .reverseAction,
+            setMetrics: afterMetrics
+        )
+
+        // Static curve identity deliberately stays stable, while the broader
+        // progress identity must restart the Movement tile/detail surface.
+        XCTAssertFalse(
+            ForceProgress.staticCurveInputsChanged(before: [before], after: [after])
+        )
+        XCTAssertTrue(
+            ForceProgress.progressInputsChanged(before: [before], after: [after])
+        )
+
+        var revision = ForceProgressInputRevision()
+        let initialKey = ForceProgressCardKey(
+            progressRevision: revision.value,
+            selectedTag: "Crimp",
+            selectedSide: TindeqSide.left.rawValue,
+            hasLoadedRecordings: true,
+            curveRevision: 0
+        )
+        _ = revision.apply(.recordings)
+        let afterMovementKey = ForceProgressCardKey(
+            progressRevision: revision.value,
+            selectedTag: "Crimp",
+            selectedSide: TindeqSide.left.rawValue,
+            hasLoadedRecordings: true,
+            curveRevision: 0
+        )
+        XCTAssertNotEqual(initialKey, afterMovementKey)
+
+        XCTAssertNotEqual(
+            initialKey,
+            ForceProgressCardKey(
+                progressRevision: initialKey.progressRevision,
+                selectedTag: "Pinch",
+                selectedSide: initialKey.selectedSide,
+                hasLoadedRecordings: initialKey.hasLoadedRecordings,
+                curveRevision: initialKey.curveRevision
+            )
+        )
+        XCTAssertNotEqual(
+            initialKey,
+            ForceProgressCardKey(
+                progressRevision: initialKey.progressRevision,
+                selectedTag: initialKey.selectedTag,
+                selectedSide: TindeqSide.right.rawValue,
+                hasLoadedRecordings: initialKey.hasLoadedRecordings,
+                curveRevision: initialKey.curveRevision
+            )
+        )
+        XCTAssertNotEqual(
+            initialKey,
+            ForceProgressCardKey(
+                progressRevision: initialKey.progressRevision,
+                selectedTag: initialKey.selectedTag,
+                selectedSide: initialKey.selectedSide,
+                hasLoadedRecordings: false,
+                curveRevision: initialKey.curveRevision
+            )
+        )
+        XCTAssertNotEqual(
+            initialKey,
+            ForceProgressCardKey(
+                progressRevision: initialKey.progressRevision,
+                selectedTag: initialKey.selectedTag,
+                selectedSide: initialKey.selectedSide,
+                hasLoadedRecordings: initialKey.hasLoadedRecordings,
+                curveRevision: 1
+            )
+        )
+
+        // Display-only Tindeq samples are not represented by this key. With
+        // no model mutation/revision, a new frame leaves the boundary equal.
+        let afterDisplayFrame = ForceProgressCardKey(
+            progressRevision: revision.value,
+            selectedTag: "Crimp",
+            selectedSide: TindeqSide.left.rawValue,
+            hasLoadedRecordings: true,
+            curveRevision: 0
+        )
+        XCTAssertEqual(afterMovementKey, afterDisplayFrame)
+    }
+
     func testForceProgressRevisionRestartsCurveKeyAtUploadCompletionBoundary() {
         let account = stableID(100)
         var revision = ForceProgressInputRevision()

@@ -167,10 +167,10 @@ public final class AppModel: ObservableObject {
     /// use this to keep the Force consistency card's empty state honest.
     @Published public private(set) var hasLoadedRecordings = false
     @Published public private(set) var recordings: [TindeqRecording] = []
-    /// O(1) task identity for the selected Static progress curve. This is
-    /// published only by actual curve-input mutation boundaries; live Tindeq
-    /// display frames do not advance it.
-    @Published public private(set) var forceProgressCurveRevision: UInt64 = 0
+    /// O(1) progress-input identity for the tiles, detail sheets, and selected
+    /// Static curve. This is published only at actual progress mutation
+    /// boundaries; live Tindeq display frames do not advance it.
+    @Published public private(set) var forceProgressRevision: UInt64 = 0
     @Published public private(set) var presets: [TindeqPreset] = []
     @Published public private(set) var routines: [RoutinePreset] = []
     @Published public private(set) var workouts: [WorkoutListItem] = []
@@ -360,7 +360,7 @@ public final class AppModel: ObservableObject {
 
     private func publishForceProgressInputMutation(_ mutation: ForceProgressInputMutation) {
         let revision = forceProgressInputRevision.apply(mutation)
-        forceProgressCurveRevision = revision
+        forceProgressRevision = revision
     }
 
     private func storePendingCurveSamples(_ samples: [TindeqSample], for id: UUID) {
@@ -385,7 +385,7 @@ public final class AppModel: ObservableObject {
         pendingRecordings.insert(recording, accountUserID: accountUserID)
         let after = pendingRecordings.recordings(accountUserID: accountUserID)
         guard beforeIDs != pendingRecordings.ids(accountUserID: accountUserID)
-            || ForceProgress.staticCurveInputsChanged(before: before, after: after)
+            || ForceProgress.progressInputsChanged(before: before, after: after)
         else { return }
         publishForceProgressInputMutation(.pendingRecordings)
     }
@@ -1705,7 +1705,7 @@ public final class AppModel: ObservableObject {
         ForceProgressCurveInputKey(
             selectedTag: tag,
             selectedSide: side?.rawValue,
-            revision: forceProgressCurveRevision,
+            revision: forceProgressRevision,
             accountUserID: currentUserID,
             accountEpoch: accountEpoch
         )
@@ -1845,6 +1845,10 @@ public final class AppModel: ObservableObject {
         tagCurves = tagCurveCache.values.sorted {
             $0.tag < $1.tag || ($0.tag == $1.tag && $0.modality < $1.modality)
         }
+        // The fitted model is a progress-card input too. Use the same small
+        // published revision as recording metadata so an Equatable card can
+        // ignore display-rate Tindeq frames without hiding a new curve.
+        publishForceProgressInputMutation(.curveModel)
     }
 
     /// Rebuilds only the point estimate needed by the synchronous RPE lookup.
@@ -4720,7 +4724,7 @@ public final class AppModel: ObservableObject {
         ) else { return }
         let pendingAfterRestore = pendingRecordings.recordings(accountUserID: currentUserID)
         if pendingIDsBeforeRestore != pendingRecordings.ids(accountUserID: currentUserID)
-            || ForceProgress.staticCurveInputsChanged(
+            || ForceProgress.progressInputsChanged(
                 before: pendingBeforeRestore,
                 after: pendingAfterRestore
             ) {
@@ -5107,7 +5111,7 @@ public final class AppModel: ObservableObject {
         before: [TindeqRecording],
         after: [TindeqRecording]
     ) {
-        guard ForceProgress.staticCurveInputsChanged(before: before, after: after) else {
+        guard ForceProgress.progressInputsChanged(before: before, after: after) else {
             return
         }
         publishForceProgressInputMutation(.recordings)

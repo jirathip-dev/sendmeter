@@ -68,6 +68,25 @@ public enum ForceProgress {
         return beforeByID != afterByID
     }
 
+    /// Whether any metadata used by either progress tile, its detail sheet,
+    /// or the selected Static curve changed. This is deliberately broader
+    /// than `staticCurveInputsChanged`: Movement's `setMetrics` is a tile
+    /// input even though it must never invalidate Static evidence by itself.
+    /// The comparison happens at model mutation boundaries, not in a SwiftUI
+    /// render path, and Tindeq samples are not part of `TindeqRecording`.
+    public static func progressInputsChanged(
+        before: [TindeqRecording],
+        after: [TindeqRecording]
+    ) -> Bool {
+        let beforeByID = Dictionary(uniqueKeysWithValues: before.map {
+            ($0.id, ForceProgressRecordingIdentity($0))
+        })
+        let afterByID = Dictionary(uniqueKeysWithValues: after.map {
+            ($0.id, ForceProgressRecordingIdentity($0))
+        })
+        return beforeByID != afterByID
+    }
+
     public static func staticCapacityProgress(
         recordings: [TindeqRecording],
         tag: String? = nil,
@@ -163,6 +182,22 @@ public struct StaticCurveRecordingIdentity: Hashable, Sendable {
     }
 }
 
+/// The model-owned identity for all recording-backed progress surfaces. The
+/// Static portion is shared with the narrower curve identity; movement adds
+/// only the measured execution payload that the tile/detail sheet displays.
+public struct ForceProgressRecordingIdentity: Equatable, Sendable {
+    public let staticCurve: StaticCurveRecordingIdentity
+    public let movementMetrics: ReverseActionMetrics?
+
+    public init(_ recording: TindeqRecording) {
+        staticCurve = StaticCurveRecordingIdentity(recording)
+        movementMetrics = recording.protocolMode == .reverseAction
+            && recording.source != .manual
+            ? recording.setMetrics
+            : nil
+    }
+}
+
 /// Model-owned mutation contract for the Force progress curve task. The
 /// AppModel mirrors `value` into its `@Published` revision; keeping the
 /// counters here makes every invalidate boundary testable without compiling
@@ -171,6 +206,7 @@ public enum ForceProgressInputMutation: Equatable, Sendable {
     case recordings
     case pendingRecordings
     case localSamples
+    case curveModel
     case accountReset
 }
 
@@ -214,6 +250,31 @@ public struct ForceProgressCurveInputKey: Hashable, Sendable {
         self.revision = revision
         self.accountUserID = accountUserID
         self.accountEpoch = accountEpoch
+    }
+}
+
+/// O(1) render boundary for the two progress tiles. Raw recording arrays and
+/// fitted curve samples stay outside this key; model-owned revisions signal
+/// when the child is allowed to rebuild its derived progress values.
+public struct ForceProgressCardKey: Hashable, Sendable {
+    public let progressRevision: UInt64
+    public let selectedTag: String?
+    public let selectedSide: String?
+    public let hasLoadedRecordings: Bool
+    public let curveRevision: UInt64
+
+    public init(
+        progressRevision: UInt64,
+        selectedTag: String?,
+        selectedSide: String?,
+        hasLoadedRecordings: Bool,
+        curveRevision: UInt64
+    ) {
+        self.progressRevision = progressRevision
+        self.selectedTag = selectedTag
+        self.selectedSide = selectedSide
+        self.hasLoadedRecordings = hasLoadedRecordings
+        self.curveRevision = curveRevision
     }
 }
 

@@ -25,6 +25,9 @@ struct ForceView: View {
     /// The progress detail's curve must follow the selected side. The regular
     /// Force card keeps using the all-sides cache for RPE and Focus Next.
     @State private var sideScopedForceCurve: ForceCurveModel?
+    /// Small identity for the side-scoped fit. The fitted samples themselves
+    /// stay out of the progress render boundary's equality check.
+    @State private var sideScopedForceCurveRevision: UInt64 = 0
     /// #653: the recommended zone's preset + the quality it arms, kept in
     /// ForceView state rather than persisted with the user's own presets —
     /// arming Focus Next is a temporary guided-protocol selection, the same
@@ -213,13 +216,16 @@ struct ForceView: View {
                         knownTags: model.visibleTagNames
                     )
 
-                    ForceProgressCard(
+                    ForceProgressCardBoundary(
                         recordings: model.recordings,
                         selectedTag: progressTag,
                         selectedSide: progressSide,
                         forceCurve: progressForceCurve,
-                        hasLoadedRecordings: model.hasLoadedRecordings
+                        hasLoadedRecordings: model.hasLoadedRecordings,
+                        progressRevision: model.forceProgressRevision,
+                        curveRevision: sideScopedForceCurveRevision
                     )
+                    .equatable()
 
                     ForceConsistencyCard(
                         recordings: model.recordings,
@@ -461,10 +467,14 @@ struct ForceView: View {
     private func loadProgressCurve() async {
         let requestKey = progressCurveKey
         guard let tag = progressTag, let side = progressSide else {
-            sideScopedForceCurve = nil
+            if sideScopedForceCurve != nil {
+                sideScopedForceCurve = nil
+                sideScopedForceCurveRevision &+= 1
+            }
             return
         }
         sideScopedForceCurve = nil
+        sideScopedForceCurveRevision &+= 1
         let curve = await model.forceCurveModel(
             tag: tag,
             side: side,
@@ -472,6 +482,7 @@ struct ForceView: View {
         )
         guard !Task.isCancelled, progressCurveKey == requestKey else { return }
         sideScopedForceCurve = curve
+        sideScopedForceCurveRevision &+= 1
     }
 
     @MainActor

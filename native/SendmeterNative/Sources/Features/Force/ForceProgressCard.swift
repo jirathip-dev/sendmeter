@@ -1,6 +1,44 @@
 import SendmeterCore
 import SwiftUI
 
+/// O(1) render boundary around the progress card. The raw recordings are
+/// intentionally passed through only after a progress-input key changes; a
+/// display-rate Tindeq frame can rebuild `ForceView` without re-running the
+/// full Static/Movement filters or disturbing the sheet-owned state below.
+struct ForceProgressCardBoundary: View, Equatable {
+    let recordings: [TindeqRecording]
+    let selectedTag: String?
+    let selectedSide: TindeqSide?
+    let forceCurve: ForceCurveModel?
+    let hasLoadedRecordings: Bool
+    let progressRevision: UInt64
+    let curveRevision: UInt64
+
+    private var renderKey: ForceProgressCardKey {
+        ForceProgressCardKey(
+            progressRevision: progressRevision,
+            selectedTag: selectedTag,
+            selectedSide: selectedSide?.rawValue,
+            hasLoadedRecordings: hasLoadedRecordings,
+            curveRevision: curveRevision
+        )
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.renderKey == rhs.renderKey
+    }
+
+    var body: some View {
+        ForceProgressCard(
+            recordings: recordings,
+            selectedTag: selectedTag,
+            selectedSide: selectedSide,
+            forceCurve: forceCurve,
+            hasLoadedRecordings: hasLoadedRecordings
+        )
+    }
+}
+
 /// The Force tab's two compact progress surfaces (#655).
 ///
 /// Static capacity and resisted movement intentionally share a visual home but
