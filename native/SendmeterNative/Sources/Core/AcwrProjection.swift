@@ -36,6 +36,39 @@ public enum AcwrProjection {
     /// advice to do a token session).
     public static let durationStepMinutes = 5
 
+    /// Text lines for the sparse projection-chart x-axis ticks. The current
+    /// ratio is intentionally not repeated in the `Now` marker: the Dashboard
+    /// already shows it in Today's decision and the Training load card, and a
+    /// number there can collide with a weekday when the curve crosses the band
+    /// on day 1 or 2. A crossing on the horizon keeps both labels by placing
+    /// them on separate lines, as the web chart does.
+    public static func projectionXAxisLabelLines(
+        dayOffset: Int,
+        crossingDayOffset: Int?,
+        crossingWeekday: String?,
+        horizonDays: Int = projectionDays
+    ) -> [String] {
+        if dayOffset == 0 {
+            return ["Now"]
+        }
+        if dayOffset == horizonDays {
+            if crossingDayOffset == horizonDays,
+               let crossingWeekday,
+               !crossingWeekday.isEmpty
+            {
+                return [crossingWeekday, "+\(horizonDays)d"]
+            }
+            return ["+\(horizonDays)d"]
+        }
+        if crossingDayOffset == dayOffset,
+           let crossingWeekday,
+           !crossingWeekday.isEmpty
+        {
+            return [crossingWeekday]
+        }
+        return []
+    }
+
     public struct Band: Equatable, Sendable {
         public let low: Double
         public let high: Double

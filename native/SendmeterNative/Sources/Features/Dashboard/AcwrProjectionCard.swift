@@ -205,25 +205,20 @@ struct AcwrProjectionCard: View {
         return values.sorted()
     }
 
-    /// #652 F9: the web draws the "Now", the crossing weekday, and "+7d" on
-    /// separate axis rows so a day-7 crossing keeps BOTH its weekday and the
-    /// horizon label. Replicate by giving the crossing tick a two-line label
-    /// when it coincides with the horizon.
+    /// #652 F9 / #705: keep the current value out of the `Now` position marker
+    /// so an early crossing weekday has room beside it. The current ACWR is
+    /// still visible in Today's decision and the Training load card above.
+    /// A day-7 crossing keeps BOTH its weekday and the horizon label on
+    /// separate lines.
     private func axisLabel(_ value: Double?, projection: AcwrProjection.Result) -> Text {
         guard let value else { return Text("") }
-        if value == 0 {
-            return Text("Now \(projection.days[0].acwr.formatted(.number.precision(.fractionLength(2))))")
-        }
-        if value == Double(AcwrProjection.projectionDays) {
-            if let crossing = projection.fallsBelow, value == Double(crossing.dayOffset) {
-                return Text("\(weekdayLabel(for: crossing.date))\n+\(AcwrProjection.projectionDays)d")
-            }
-            return Text("+\(AcwrProjection.projectionDays)d")
-        }
-        if let crossing = projection.fallsBelow, value == Double(crossing.dayOffset) {
-            return Text(weekdayLabel(for: crossing.date))
-        }
-        return Text("")
+        let crossing = projection.fallsBelow
+        let lines = AcwrProjection.projectionXAxisLabelLines(
+            dayOffset: Int(value.rounded()),
+            crossingDayOffset: crossing?.dayOffset,
+            crossingWeekday: crossing.map { weekdayLabel(for: $0.date) }
+        )
+        return Text(lines.joined(separator: "\n"))
     }
 
     private func bandAxisValues(_ projection: AcwrProjection.Result) -> [Double] {
