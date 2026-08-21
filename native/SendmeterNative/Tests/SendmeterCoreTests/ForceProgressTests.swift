@@ -22,6 +22,22 @@ final class ForceProgressTests: XCTestCase {
             recording(index: 26, tag: "Crimp", side: .right)
         ]
 
+        let evidence = ForceProgress.staticCapacityEvidence(
+            recordings: Array((excluded + base).reversed()),
+            tag: "Crimp",
+            side: .left
+        )
+
+        // The full detail trend keeps every selected Static row; only the
+        // compact tile's recent window is limited to eight. Curve candidates
+        // use that same tag/side scope and never widen to the right side or a
+        // reverse-action row.
+        XCTAssertEqual(evidence.trendRecordings.count, 10)
+        XCTAssertEqual(evidence.recentRecordings.count, 8)
+        XCTAssertEqual(evidence.curveFitRecordings.count, 10)
+        XCTAssertTrue(evidence.curveFitRecordings.allSatisfy { $0.side == .left })
+        XCTAssertTrue(evidence.curveFitRecordings.allSatisfy { $0.protocolMode == .hold })
+
         let progress = ForceProgress.staticCapacityProgress(
             recordings: Array((excluded + base).reversed()),
             tag: "Crimp",

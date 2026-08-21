@@ -1638,6 +1638,65 @@ public final class AppModel: ObservableObject {
         )
     }
 
+    /// Computes the Static curve for the Force progress detail's selected
+    /// side. The published tag-curve cache intentionally remains all-sides
+    /// because RPE and Focus Next consume that identity; this one-shot detail
+    /// fit is scoped to the same measured Static evidence as the trend.
+    public func forceCurveModel(
+        tag: String,
+        side: TindeqSide
+    ) async -> ForceCurveModel? {
+        guard side != .unspecified,
+              let userID = currentUserID
+        else { return nil }
+
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let recordingsSnapshot = recordings
+        let pendingIDs = Set(
+            recordingsSnapshot.compactMap { recording in
+                pendingRecordings.contains(id: recording.id, accountUserID: currentUserID)
+                    ? recording.id
+                    : nil
+            }
+        )
+        let locallyAvailableSampleIDs = Set(
+            pendingCurveSamples.compactMap { id, samples in
+                samples.isEmpty ? nil : id
+            }
+        )
+        let evidence = ForceProgress.staticCapacityEvidence(
+            recordings: recordingsSnapshot,
+            tag: tag,
+            side: side
+        )
+        let candidates = ForceCurveEngine.pickCurveRecordings(
+            evidence.curveFitRecordings.filter {
+                TagCurveCachePolicy.includes(
+                    recordingID: $0.id,
+                    pendingIDs: pendingIDs,
+                    locallyAvailableSampleIDs: locallyAvailableSampleIDs
+                )
+            }
+        )
+        guard !candidates.isEmpty else { return nil }
+
+        let curveModel = await fetchForceCurveModel(
+            candidates: candidates,
+            localSamples: pendingCurveSamples,
+            purpose: .chartBand
+        )
+        guard !Task.isCancelled,
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              )
+        else { return nil }
+        return curveModel
+    }
+
     private func warmTagCurveIfMissing(
         tag: String,
         modality: String,
@@ -1807,8 +1866,39 @@ public final class AppModel: ObservableObject {
         guard !byTag.isEmpty else { return nil }
         let candidates = ForceCurveEngine.pickCurveRecordings(byTag)
         guard !candidates.isEmpty else { return nil }
+        let curveModel = await fetchForceCurveModel(
+            candidates: candidates,
+            localSamples: pendingCurveSamples,
+            purpose: purpose
+        )
+        guard let curveModel else { return nil }
+        guard !Task.isCancelled,
+              let cf = curveModel.criticalForceKilograms,
+              let wPrime = curveModel.impulseAboveCriticalForceKilogramSeconds
+        else { return nil }
+        let displayTag = recordingsSnapshot.first {
+            TagCurveKey(
+                tag: $0.tag,
+                modality: GaugeSessionRPE.modality(of: $0)
+            ) == key
+        }?.tag ?? key.tag
+        return TagForceCurve(
+            tag: displayTag,
+            modality: key.modality,
+            cf: cf,
+            wPrime: wPrime,
+            maxForceKilograms: curveModel.maximumForceKilograms,
+            forceCurveModel: curveModel
+        )
+    }
+
+    private func fetchForceCurveModel(
+        candidates: [TindeqRecording],
+        localSamples: [UUID: [TindeqSample]],
+        purpose: TagCurveFitPurpose
+    ) async -> ForceCurveModel? {
+        guard !candidates.isEmpty else { return nil }
         let repository = self.repository
-        let localSamples = pendingCurveSamples
         let sampleSets = await withTaskGroup(of: ForceCurveSampleFetch.self) { group in
             for (candidateIndex, candidate) in candidates.enumerated() {
                 group.addTask {
@@ -1835,31 +1925,12 @@ public final class AppModel: ObservableObject {
             )
         }
         guard !Task.isCancelled, !sampleSets.isEmpty else { return nil }
-        let curveModel = await Task.detached(priority: .utility) {
+        return await Task.detached(priority: .utility) {
             ForceCurveEngine.compute(
                 recordings: sampleSets,
                 bootstrapSamples: purpose.bootstrapSamples
             )
         }.value
-        guard !Task.isCancelled,
-              let curveModel,
-              let cf = curveModel.criticalForceKilograms,
-              let wPrime = curveModel.impulseAboveCriticalForceKilogramSeconds
-        else { return nil }
-        let displayTag = recordingsSnapshot.first {
-            TagCurveKey(
-                tag: $0.tag,
-                modality: GaugeSessionRPE.modality(of: $0)
-            ) == key
-        }?.tag ?? key.tag
-        return TagForceCurve(
-            tag: displayTag,
-            modality: key.modality,
-            cf: cf,
-            wPrime: wPrime,
-            maxForceKilograms: curveModel.maximumForceKilograms,
-            forceCurveModel: curveModel
-        )
     }
 
     private func modalityFilter(_ recording: TindeqRecording, modality: String) -> Bool {

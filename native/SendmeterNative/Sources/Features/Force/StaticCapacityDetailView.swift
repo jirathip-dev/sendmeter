@@ -15,16 +15,12 @@ struct StaticCapacityDetailView: View {
     let forceCurve: ForceCurveModel?
     let hasLoadedRecordings: Bool
 
-    private var staticRows: [TindeqRecording] {
-        ForceProgress.trendChartRecordings(
-            recordings,
+    private var staticEvidence: StaticCapacityEvidence {
+        ForceProgress.staticCapacityEvidence(
+            recordings: recordings,
             tag: selectedTag,
             side: selectedSide
         )
-    }
-
-    private var recentRows: [TindeqRecording] {
-        Array(staticRows.suffix(ForceProgress.recentLimit))
     }
 
     var body: some View {
@@ -34,14 +30,14 @@ struct StaticCapacityDetailView: View {
                     if !hasLoadedRecordings {
                         ProgressView("Loading force history…")
                             .frame(maxWidth: .infinity, minHeight: 120)
-                    } else if staticRows.count < 2 {
+                    } else if staticEvidence.trendRecordings.count < 2 {
                         SurfaceCard {
                             Text("Complete a couple of measured Static holds to unlock the trend and force-duration model.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        ForceTrendChart(recordings: recentRows)
+                        ForceTrendChart(recordings: staticEvidence.trendRecordings)
 
                         if let selectedTag {
                             NativeForceCurveCard(

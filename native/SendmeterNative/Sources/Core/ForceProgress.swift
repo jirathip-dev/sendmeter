@@ -30,18 +30,38 @@ public enum ForceProgress {
             .sorted { $0.recordedAt < $1.recordedAt }
     }
 
+    /// One Static evidence scope shared by the compact tile, the full trend,
+    /// and a side-scoped force-curve request. `recentRecordings` is the only
+    /// intentionally sliced view; `trendRecordings` remains complete for the
+    /// detail chart, while `curveFitRecordings` applies the stricter existing
+    /// fit-candidate rules without ever admitting movement evidence.
+    public static func staticCapacityEvidence(
+        recordings: [TindeqRecording],
+        tag: String? = nil,
+        side: TindeqSide? = nil
+    ) -> StaticCapacityEvidence {
+        let trendRecordings = trendChartRecordings(recordings, tag: tag, side: side)
+        let curveFitRecordings = trendRecordings.filter {
+            !$0.rejected && ZoneMix.isCurveFitCandidate($0)
+        }
+        return StaticCapacityEvidence(
+            trendRecordings: trendRecordings,
+            recentRecordings: Array(trendRecordings.suffix(recentLimit)),
+            curveFitRecordings: curveFitRecordings
+        )
+    }
+
     public static func staticCapacityProgress(
         recordings: [TindeqRecording],
         tag: String? = nil,
         side: TindeqSide? = nil
     ) -> StaticCapacityProgress {
-        let rows = trendChartRecordings(recordings, tag: tag, side: side)
-        let recent = Array(rows.suffix(recentLimit))
+        let evidence = staticCapacityEvidence(recordings: recordings, tag: tag, side: side)
         return StaticCapacityProgress(
-            recordings: recent,
-            totalCount: rows.count,
-            latestPeakKilograms: recent.last?.peakKilograms,
-            bestPeakKilograms: recent.compactMap(\.peakKilograms).max()
+            recordings: evidence.recentRecordings,
+            totalCount: evidence.trendRecordings.count,
+            latestPeakKilograms: evidence.recentRecordings.last?.peakKilograms,
+            bestPeakKilograms: evidence.recentRecordings.compactMap(\.peakKilograms).max()
         )
     }
 
@@ -84,6 +104,25 @@ public enum ForceProgress {
         guard let value, value.isFinite else { return 0.12 }
         let ratio = maximum > 0 && maximum.isFinite ? value / maximum : 0
         return max(0.12, min(1, ratio))
+    }
+}
+
+public struct StaticCapacityEvidence: Equatable, Sendable {
+    /// Complete selected Static rows for the full trend and the unsliced count.
+    public let trendRecordings: [TindeqRecording]
+    /// The compact tile's intentionally limited recent window.
+    public let recentRecordings: [TindeqRecording]
+    /// Selected Static rows safe to pass to the existing curve fitter.
+    public let curveFitRecordings: [TindeqRecording]
+
+    public init(
+        trendRecordings: [TindeqRecording],
+        recentRecordings: [TindeqRecording],
+        curveFitRecordings: [TindeqRecording]
+    ) {
+        self.trendRecordings = trendRecordings
+        self.recentRecordings = recentRecordings
+        self.curveFitRecordings = curveFitRecordings
     }
 }
 
