@@ -186,8 +186,8 @@ final class ForceProgressTests: XCTestCase {
         )
     }
 
-    func testProgressInputsChangedIncludesMovementMetricsAndCardKeyIgnoresDisplayFrames() {
-        let beforeMetrics = ReverseActionMetrics(
+    func testProgressInputsChangedTracksEachMovementMetricIndependently() {
+        let baseMetrics = ReverseActionMetrics(
             meanKilograms: 12,
             coefficientOfVariationPercent: 3,
             inTargetPercent: 95,
@@ -195,38 +195,136 @@ final class ForceProgressTests: XCTestCase {
             driftPercent: -1,
             cadenceAdherencePercent: 98
         )
-        let afterMetrics = ReverseActionMetrics(
-            meanKilograms: 13,
-            coefficientOfVariationPercent: 4,
-            inTargetPercent: 96,
-            timeUnderTensionMilliseconds: 20_000,
-            driftPercent: -2,
-            cadenceAdherencePercent: 99
-        )
         let before = recording(
             index: 40,
             id: stableID(401),
             tag: "Crimp",
             side: .left,
             protocolMode: .reverseAction,
-            setMetrics: beforeMetrics
+            setMetrics: baseMetrics
         )
-        let after = recording(
+
+        let mutations: [(String, (ReverseActionMetrics) -> ReverseActionMetrics)] = [
+            ("meanKilograms", { metrics in
+                ReverseActionMetrics(
+                    meanKilograms: 13,
+                    coefficientOfVariationPercent: metrics.coefficientOfVariationPercent,
+                    inTargetPercent: metrics.inTargetPercent,
+                    timeUnderTensionMilliseconds: metrics.timeUnderTensionMilliseconds,
+                    driftPercent: metrics.driftPercent,
+                    cadenceAdherencePercent: metrics.cadenceAdherencePercent
+                )
+            }),
+            ("coefficientOfVariationPercent", { metrics in
+                ReverseActionMetrics(
+                    meanKilograms: metrics.meanKilograms,
+                    coefficientOfVariationPercent: 4,
+                    inTargetPercent: metrics.inTargetPercent,
+                    timeUnderTensionMilliseconds: metrics.timeUnderTensionMilliseconds,
+                    driftPercent: metrics.driftPercent,
+                    cadenceAdherencePercent: metrics.cadenceAdherencePercent
+                )
+            }),
+            ("inTargetPercent", { metrics in
+                ReverseActionMetrics(
+                    meanKilograms: metrics.meanKilograms,
+                    coefficientOfVariationPercent: metrics.coefficientOfVariationPercent,
+                    inTargetPercent: 96,
+                    timeUnderTensionMilliseconds: metrics.timeUnderTensionMilliseconds,
+                    driftPercent: metrics.driftPercent,
+                    cadenceAdherencePercent: metrics.cadenceAdherencePercent
+                )
+            }),
+            ("timeUnderTensionMilliseconds", { metrics in
+                ReverseActionMetrics(
+                    meanKilograms: metrics.meanKilograms,
+                    coefficientOfVariationPercent: metrics.coefficientOfVariationPercent,
+                    inTargetPercent: metrics.inTargetPercent,
+                    timeUnderTensionMilliseconds: metrics.timeUnderTensionMilliseconds + 1,
+                    driftPercent: metrics.driftPercent,
+                    cadenceAdherencePercent: metrics.cadenceAdherencePercent
+                )
+            }),
+            ("driftPercent", { metrics in
+                ReverseActionMetrics(
+                    meanKilograms: metrics.meanKilograms,
+                    coefficientOfVariationPercent: metrics.coefficientOfVariationPercent,
+                    inTargetPercent: metrics.inTargetPercent,
+                    timeUnderTensionMilliseconds: metrics.timeUnderTensionMilliseconds,
+                    driftPercent: -2,
+                    cadenceAdherencePercent: metrics.cadenceAdherencePercent
+                )
+            }),
+            ("cadenceAdherencePercent", { metrics in
+                ReverseActionMetrics(
+                    meanKilograms: metrics.meanKilograms,
+                    coefficientOfVariationPercent: metrics.coefficientOfVariationPercent,
+                    inTargetPercent: metrics.inTargetPercent,
+                    timeUnderTensionMilliseconds: metrics.timeUnderTensionMilliseconds,
+                    driftPercent: metrics.driftPercent,
+                    cadenceAdherencePercent: 99
+                )
+            })
+        ]
+
+        for (field, mutate) in mutations {
+            let after = recording(
+                index: 40,
+                id: stableID(401),
+                tag: "Crimp",
+                side: .left,
+                protocolMode: .reverseAction,
+                setMetrics: mutate(baseMetrics)
+            )
+            XCTAssertFalse(
+                ForceProgress.staticCurveInputsChanged(before: [before], after: [after]),
+                "Static identity changed for Movement field \(field)"
+            )
+            XCTAssertTrue(
+                ForceProgress.progressInputsChanged(before: [before], after: [after]),
+                "Progress identity ignored Movement field \(field)"
+            )
+        }
+    }
+
+    func testProgressCardKeyChangesForMovementAndIgnoresDisplayFrames() {
+        let baseMetrics = ReverseActionMetrics(
+            meanKilograms: 12,
+            coefficientOfVariationPercent: 3,
+            inTargetPercent: 95,
+            timeUnderTensionMilliseconds: 20_000,
+            driftPercent: -1,
+            cadenceAdherencePercent: 98
+        )
+        let movementBefore = recording(
             index: 40,
             id: stableID(401),
             tag: "Crimp",
             side: .left,
             protocolMode: .reverseAction,
-            setMetrics: afterMetrics
+            setMetrics: baseMetrics
         )
-
-        // Static curve identity deliberately stays stable, while the broader
-        // progress identity must restart the Movement tile/detail surface.
-        XCTAssertFalse(
-            ForceProgress.staticCurveInputsChanged(before: [before], after: [after])
+        let changedMetrics = ReverseActionMetrics(
+            meanKilograms: baseMetrics.meanKilograms,
+            coefficientOfVariationPercent: baseMetrics.coefficientOfVariationPercent,
+            inTargetPercent: baseMetrics.inTargetPercent,
+            timeUnderTensionMilliseconds: baseMetrics.timeUnderTensionMilliseconds,
+            driftPercent: baseMetrics.driftPercent,
+            cadenceAdherencePercent: 99
+        )
+        let movementAfter = recording(
+            index: 40,
+            id: stableID(401),
+            tag: "Crimp",
+            side: .left,
+            protocolMode: .reverseAction,
+            setMetrics: changedMetrics
         )
         XCTAssertTrue(
-            ForceProgress.progressInputsChanged(before: [before], after: [after])
+            ForceProgress.progressInputsChanged(
+                before: [movementBefore],
+                after: [movementAfter]
+            )
         )
 
         var revision = ForceProgressInputRevision()
