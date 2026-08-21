@@ -22,6 +22,12 @@ struct ForceView: View {
     @State private var selectedTargetPlan = ForceTargetPlan.empty
     @State private var resolvingTargets = false
     @State private var savingSummary = false
+    /// The progress detail's curve must follow the selected side. The regular
+    /// Force card keeps using the all-sides cache for RPE and Focus Next.
+    @State private var sideScopedForceCurve: ForceCurveModel?
+    /// Small identity for the side-scoped fit. The fitted samples themselves
+    /// stay out of the progress render boundary's equality check.
+    @State private var sideScopedForceCurveRevision: UInt64 = 0
     /// #653: the recommended zone's preset + the quality it arms, kept in
     /// ForceView state rather than persisted with the user's own presets —
     /// arming Focus Next is a temporary guided-protocol selection, the same
@@ -106,6 +112,19 @@ struct ForceView: View {
             $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
                 && $0.modality == "static"
         })?.forceCurveModel
+    }
+
+    private var progressTag: String? {
+        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var progressSide: TindeqSide? {
+        side == .unspecified ? nil : side
+    }
+
+    private var progressForceCurve: ForceCurveModel? {
+        progressSide == nil ? forceCurve : sideScopedForceCurve
     }
 
     /// The zone stamped onto recordings saved under the current selection:
@@ -197,6 +216,17 @@ struct ForceView: View {
                         knownTags: model.visibleTagNames
                     )
 
+                    ForceProgressCardBoundary(
+                        recordings: model.recordings,
+                        selectedTag: progressTag,
+                        selectedSide: progressSide,
+                        forceCurve: progressForceCurve,
+                        hasLoadedRecordings: model.hasLoadedRecordings,
+                        progressRevision: model.forceProgressRevision,
+                        curveRevision: sideScopedForceCurveRevision
+                    )
+                    .equatable()
+
                     ForceConsistencyCard(
                         recordings: model.recordings,
                         hiddenTags: model.hiddenTagNames,
@@ -274,6 +304,9 @@ struct ForceView: View {
             .refreshable { await model.refreshAll(showSpinner: false) }
             .task(id: targetResolutionKey) {
                 await resolveSelectedTarget()
+            }
+            .task(id: progressCurveKey) {
+                await loadProgressCurve()
             }
             // #628: the hands-free save path snapshots the recording context
             // (tag/side/zone/preset/target) at arm time.
@@ -421,6 +454,35 @@ struct ForceView: View {
             ?? zoneArmedPreset.map { "zone:\($0.name)" }
             ?? "free"
         return "\(presetKey)|\(tag)|\(side.rawValue)|\(recordingFingerprint)"
+    }
+
+    private var progressCurveKey: ForceProgressCurveInputKey {
+        model.forceProgressCurveInputKey(
+            tag: progressTag,
+            side: progressSide
+        )
+    }
+
+    @MainActor
+    private func loadProgressCurve() async {
+        let requestKey = progressCurveKey
+        guard let tag = progressTag, let side = progressSide else {
+            if sideScopedForceCurve != nil {
+                sideScopedForceCurve = nil
+                sideScopedForceCurveRevision &+= 1
+            }
+            return
+        }
+        sideScopedForceCurve = nil
+        sideScopedForceCurveRevision &+= 1
+        let curve = await model.forceCurveModel(
+            tag: tag,
+            side: side,
+            inputKey: requestKey
+        )
+        guard !Task.isCancelled, progressCurveKey == requestKey else { return }
+        sideScopedForceCurve = curve
+        sideScopedForceCurveRevision &+= 1
     }
 
     @MainActor

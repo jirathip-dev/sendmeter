@@ -50,6 +50,23 @@ public struct PendingRecordingOverlay: Sendable {
         return entries[id]?.accountUserID == accountUserID
     }
 
+    public func ids(accountUserID: UUID?) -> Set<UUID> {
+        guard let accountUserID else { return [] }
+        return Set(
+            entries.compactMap { id, entry in
+                entry.accountUserID == accountUserID ? id : nil
+            }
+        )
+    }
+
+    public func recordings(accountUserID: UUID?) -> [TindeqRecording] {
+        guard let accountUserID else { return [] }
+        return entries.values
+            .filter { $0.accountUserID == accountUserID }
+            .map(\.recording)
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+    }
+
     public mutating func removeValue(for id: UUID, accountUserID: UUID) {
         guard entries[id]?.accountUserID == accountUserID else { return }
         entries.removeValue(forKey: id)
