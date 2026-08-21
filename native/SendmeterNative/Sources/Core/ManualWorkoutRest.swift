@@ -12,6 +12,55 @@ public enum ManualWorkoutPhase: Equatable, Sendable {
     case restOver
 }
 
+/// Synchronous UserDefaults ownership for local rest notifications. The
+/// scheduler keeps an ID here for the whole lifetime of a pending or
+/// delivered request so a fresh process can remove it before starting anew.
+public struct ManualWorkoutNotificationStore {
+    public static let defaultKey = "sendmeter.native.manual-workout.notification-ids"
+
+    private let defaults: UserDefaults
+    private let key: String
+
+    public init(
+        defaults: UserDefaults = .standard,
+        key: String = ManualWorkoutNotificationStore.defaultKey
+    ) {
+        self.defaults = defaults
+        self.key = key
+    }
+
+    public func persist(_ identifier: String) {
+        var identifiers = read()
+        identifiers.insert(identifier)
+        defaults.set(identifiers.sorted(), forKey: key)
+    }
+
+    public func remove(_ identifier: String) {
+        remove([identifier])
+    }
+
+    public func remove(_ identifiers: Set<String>) {
+        guard !identifiers.isEmpty else { return }
+        var remaining = read()
+        remaining.subtract(identifiers)
+        if remaining.isEmpty {
+            defaults.removeObject(forKey: key)
+        } else {
+            defaults.set(remaining.sorted(), forKey: key)
+        }
+    }
+
+    public func takeForRecovery() -> Set<String> {
+        let identifiers = read()
+        defaults.removeObject(forKey: key)
+        return identifiers
+    }
+
+    private func read() -> Set<String> {
+        Set(defaults.stringArray(forKey: key) ?? [])
+    }
+}
+
 /// Tracks notification requests independently from their asynchronous
 /// UserNotifications completions. A canceled request remains identifiable so
 /// a late completion can clean up only that request.

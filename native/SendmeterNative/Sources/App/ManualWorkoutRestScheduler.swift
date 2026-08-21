@@ -1,6 +1,36 @@
+import Foundation
 import SendmeterCore
 import SwiftUI
 import UserNotifications
+
+/// Exact-ID cleanup retained by the add completion. It must not depend on the
+/// scheduler still being alive: UserNotifications.add can finish after a
+/// workout ends or after the owning view model has been released.
+private final class ManualWorkoutNotificationCleanup: @unchecked Sendable {
+    private let notificationCenter: UNUserNotificationCenter
+    private let notificationStore: ManualWorkoutNotificationStore
+    private let identifier: String
+
+    init(
+        notificationCenter: UNUserNotificationCenter,
+        notificationStore: ManualWorkoutNotificationStore,
+        identifier: String
+    ) {
+        self.notificationCenter = notificationCenter
+        self.notificationStore = notificationStore
+        self.identifier = identifier
+    }
+
+    func remove() {
+        notificationStore.remove(identifier)
+        notificationCenter.removePendingNotificationRequests(
+            withIdentifiers: [identifier]
+        )
+        notificationCenter.removeDeliveredNotifications(
+            withIdentifiers: [identifier]
+        )
+    }
+}
 
 /// Owns the Manual workout rest deadline independently of the fullscreen
 /// presentation. The workout view can be minimized or recreated without
@@ -8,8 +38,10 @@ import UserNotifications
 @MainActor
 public final class ManualWorkoutRestScheduler {
     private static let notificationIdentifierPrefix = "sendmeter.native.manual-workout.rest-over"
+    private static let legacyNotificationIdentifier = notificationIdentifierPrefix
 
     private let notificationCenter = UNUserNotificationCenter.current()
+    private let notificationStore = ManualWorkoutNotificationStore()
     private var currentSchedule: ManualWorkoutRest.Schedule?
     private var deadlineTask: Task<Void, Never>?
     private var sceneIsActive = true
@@ -19,12 +51,19 @@ public final class ManualWorkoutRestScheduler {
     private var notificationAuthorization: UNAuthorizationStatus?
 
     public init() {
-        cancelNotification()
+        // Take and clear synchronously before removing anything. New requests
+        // are unique and are created only after this one-time recovery sweep,
+        // so an old async completion can never remove a new request.
+        let recoveredIdentifiers = notificationStore.takeForRecovery()
+        removeNotificationRequests(
+            recoveredIdentifiers.union([Self.legacyNotificationIdentifier])
+        )
     }
 
     deinit {
         let identifiers = notificationLedger.ownedIdentifiers
         guard !identifiers.isEmpty else { return }
+        notificationStore.remove(identifiers)
         notificationCenter.removePendingNotificationRequests(
             withIdentifiers: Array(identifiers)
         )
@@ -160,9 +199,19 @@ public final class ManualWorkoutRestScheduler {
             trigger: trigger
         )
         guard notificationLedger.submit(notificationIdentifier) else { return }
-        notificationCenter.add(request) { [weak self] error in
-            Task { @MainActor [weak self] in
+        // UserDefaults.set is synchronous. Persist before submitting to
+        // UserNotifications so a process kill at any later point leaves the
+        // exact request ID available for relaunch recovery.
+        notificationStore.persist(notificationIdentifier.identifier)
+        let cleanup = ManualWorkoutNotificationCleanup(
+            notificationCenter: notificationCenter,
+            notificationStore: notificationStore,
+            identifier: notificationIdentifier.identifier
+        )
+        notificationCenter.add(request) { [weak self, cleanup] error in
+            Task { @MainActor [weak self, cleanup] in
                 guard let self else {
+                    cleanup.remove()
                     return
                 }
                 switch self.notificationLedger.complete(
@@ -170,7 +219,7 @@ public final class ManualWorkoutRestScheduler {
                     succeeded: error == nil
                 ) {
                 case .stale:
-                    self.removeNotification(identifier: notificationIdentifier.identifier)
+                    cleanup.remove()
                 case .scheduled:
                     guard self.currentSchedule?.key == notificationIdentifier.scheduleKey else {
                         self.removeNotification(identifier: notificationIdentifier.identifier)
@@ -187,20 +236,22 @@ public final class ManualWorkoutRestScheduler {
     private func cancelNotification() {
         let identifiers = notificationLedger.cancelAll()
         guard !identifiers.isEmpty else { return }
-        notificationCenter.removePendingNotificationRequests(
-            withIdentifiers: Array(identifiers)
-        )
-        notificationCenter.removeDeliveredNotifications(
-            withIdentifiers: Array(identifiers)
-        )
+        notificationStore.remove(identifiers)
+        removeNotificationRequests(identifiers)
     }
 
     private func removeNotification(identifier: String) {
+        notificationStore.remove(identifier)
+        removeNotificationRequests([identifier])
+    }
+
+    private func removeNotificationRequests(_ identifiers: Set<String>) {
+        guard !identifiers.isEmpty else { return }
         notificationCenter.removePendingNotificationRequests(
-            withIdentifiers: [identifier]
+            withIdentifiers: Array(identifiers)
         )
         notificationCenter.removeDeliveredNotifications(
-            withIdentifiers: [identifier]
+            withIdentifiers: Array(identifiers)
         )
     }
 

@@ -262,4 +262,51 @@ final class ManualWorkoutRestTests: XCTestCase {
         XCTAssertNil(ledger.scheduledKey)
         XCTAssertTrue(ledger.ownedIdentifiers.isEmpty)
     }
+
+    func testNotificationStoreTakesPersistedIDsOnceForRelaunchRecovery() throws {
+        let suiteName = "ManualWorkoutNotificationStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let key = "manual-workout-notification-ids"
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let firstProcess = ManualWorkoutNotificationStore(
+            defaults: defaults,
+            key: key
+        )
+        firstProcess.persist("rest-a")
+        firstProcess.persist("rest-b")
+
+        let relaunchedProcess = ManualWorkoutNotificationStore(
+            defaults: defaults,
+            key: key
+        )
+        XCTAssertEqual(
+            relaunchedProcess.takeForRecovery(),
+            Set(["rest-a", "rest-b"])
+        )
+        XCTAssertTrue(relaunchedProcess.takeForRecovery().isEmpty)
+
+        // IDs created after recovery are not part of the old-process sweep.
+        relaunchedProcess.persist("rest-new")
+        XCTAssertEqual(
+            relaunchedProcess.takeForRecovery(),
+            Set(["rest-new"])
+        )
+    }
+
+    func testNotificationStoreRemovesOnlyCanceledIDs() throws {
+        let suiteName = "ManualWorkoutNotificationStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let store = ManualWorkoutNotificationStore(
+            defaults: defaults,
+            key: "manual-workout-notification-ids"
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        store.persist("rest-old")
+        store.persist("rest-current")
+        store.remove("rest-old")
+
+        XCTAssertEqual(store.takeForRecovery(), Set(["rest-current"]))
+    }
 }
