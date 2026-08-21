@@ -450,22 +450,27 @@ struct ForceView: View {
         return "\(presetKey)|\(tag)|\(side.rawValue)|\(recordingFingerprint)"
     }
 
-    private var progressCurveKey: String {
-        let recordingFingerprint = model.recordings.prefix(24).map {
-            "\($0.id.uuidString):\($0.sampleCount):\($0.recordedAt.timeIntervalSince1970)"
-        }.joined(separator: "|")
-        return "\(progressTag ?? "")|\(progressSide?.rawValue ?? "all")|\(recordingFingerprint)"
+    private var progressCurveKey: StaticCurveInputIdentity {
+        model.forceProgressCurveInputIdentity(
+            tag: progressTag,
+            side: progressSide
+        )
     }
 
     @MainActor
     private func loadProgressCurve() async {
+        let requestIdentity = progressCurveKey
         guard let tag = progressTag, let side = progressSide else {
             sideScopedForceCurve = nil
             return
         }
         sideScopedForceCurve = nil
-        let curve = await model.forceCurveModel(tag: tag, side: side)
-        guard !Task.isCancelled else { return }
+        let curve = await model.forceCurveModel(
+            tag: tag,
+            side: side,
+            inputIdentity: requestIdentity
+        )
+        guard !Task.isCancelled, progressCurveKey == requestIdentity else { return }
         sideScopedForceCurve = curve
     }
 

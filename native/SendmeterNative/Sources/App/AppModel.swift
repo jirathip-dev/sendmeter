@@ -352,6 +352,26 @@ public final class AppModel: ObservableObject {
     /// the point-estimate RPE fit include a just-saved rep before its network
     /// insert has reconciled.
     private var pendingCurveSamples: [UUID: [TindeqSample]] = [:]
+    /// Generation for the metadata-only identity of `pendingCurveSamples`.
+    /// The samples themselves stay out of the SwiftUI task key, but replacing
+    /// or removing a local sample set must still cancel/restart a fit.
+    private var pendingCurveSampleGeneration: UInt64 = 0
+
+    private func storePendingCurveSamples(_ samples: [TindeqSample], for id: UUID) {
+        pendingCurveSamples[id] = samples
+        pendingCurveSampleGeneration &+= 1
+    }
+
+    private func removePendingCurveSamples(for id: UUID) {
+        guard pendingCurveSamples.removeValue(forKey: id) != nil else { return }
+        pendingCurveSampleGeneration &+= 1
+    }
+
+    private func clearPendingCurveSamples() {
+        guard !pendingCurveSamples.isEmpty else { return }
+        pendingCurveSamples.removeAll()
+        pendingCurveSampleGeneration &+= 1
+    }
 
     public init(
         auth: AuthService? = nil,
@@ -1396,7 +1416,7 @@ public final class AppModel: ObservableObject {
         // row. This is the only local copy available before the queue upload
         // has reconciled, and it must participate in the point estimate used
         // by the session-end RPE lookup.
-        pendingCurveSamples[recording.id] = recording.samples
+        storePendingCurveSamples(recording.samples, for: recording.id)
         pendingRecordings.insert(optimistic, accountUserID: userID)
         invalidateTagCurveKeys([savedKey])
         mergeRecordings(
@@ -1427,7 +1447,7 @@ public final class AppModel: ObservableObject {
             // `surfaceLostRecordingNoticeIfAny` shows it on next foreground.
             LostRecordingStore.note(reason: "recording", in: .standard)
             pendingRecordings.removeValue(for: recording.id, accountUserID: userID)
-            pendingCurveSamples.removeValue(forKey: recording.id)
+            removePendingCurveSamples(for: recording.id)
             invalidateTagCurveKeys([savedKey])
             mergeRecordings(
                 remote: recordings.filter {
@@ -1642,31 +1662,49 @@ public final class AppModel: ObservableObject {
     /// side. The published tag-curve cache intentionally remains all-sides
     /// because RPE and Focus Next consume that identity; this one-shot detail
     /// fit is scoped to the same measured Static evidence as the trend.
+    public func forceProgressCurveInputIdentity(
+        tag: String?,
+        side: TindeqSide?
+    ) -> StaticCurveInputIdentity {
+        let locallyAvailableSampleIDs = Set(
+            pendingCurveSamples.compactMap { id, samples in
+                samples.isEmpty ? nil : id
+            }
+        )
+        return ForceProgress.staticCurveInputIdentity(
+            recordings: recordings,
+            tag: tag,
+            side: side,
+            pendingRecordingIDs: pendingRecordings.ids(accountUserID: currentUserID),
+            locallyAvailableSampleIDs: locallyAvailableSampleIDs,
+            localSampleGeneration: pendingCurveSampleGeneration,
+            accountUserID: currentUserID,
+            accountEpoch: accountEpoch
+        )
+    }
+
     public func forceCurveModel(
         tag: String,
-        side: TindeqSide
+        side: TindeqSide,
+        inputIdentity: StaticCurveInputIdentity? = nil
     ) async -> ForceCurveModel? {
-        guard side != .unspecified,
+        let requestIdentity = inputIdentity
+            ?? forceProgressCurveInputIdentity(tag: tag, side: side)
+        guard !Task.isCancelled,
+              side != .unspecified,
               let userID = currentUserID
         else { return nil }
+        guard forceProgressCurveInputIdentity(tag: tag, side: side) == requestIdentity else {
+            return nil
+        }
 
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
         let recordingsSnapshot = recordings
-        let pendingIDs = Set(
-            recordingsSnapshot.compactMap { recording in
-                pendingRecordings.contains(id: recording.id, accountUserID: currentUserID)
-                    ? recording.id
-                    : nil
-            }
-        )
-        let locallyAvailableSampleIDs = Set(
-            pendingCurveSamples.compactMap { id, samples in
-                samples.isEmpty ? nil : id
-            }
-        )
+        let pendingIDs = Set(requestIdentity.pendingRecordingIDs)
+        let locallyAvailableSampleIDs = Set(requestIdentity.locallyAvailableSampleIDs)
         let evidence = ForceProgress.staticCapacityEvidence(
             recordings: recordingsSnapshot,
             tag: tag,
@@ -1692,7 +1730,8 @@ public final class AppModel: ObservableObject {
               accountFetch.canApply(
                   to: currentUserID,
                   accountEpoch: accountEpoch
-              )
+              ),
+              forceProgressCurveInputIdentity(tag: tag, side: side) == requestIdentity
         else { return nil }
         return curveModel
     }
@@ -3467,7 +3506,7 @@ public final class AppModel: ObservableObject {
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) {
-                    pendingCurveSamples.removeValue(forKey: recording.id)
+                    removePendingCurveSamples(for: recording.id)
                 }
             case let .recordingEdit(edit):
                 let savedRecording = try await self.repository.updateRecordingMeta(
@@ -4247,7 +4286,7 @@ public final class AppModel: ObservableObject {
                 }()
                 pendingSessions.removeValue(forKey: id)
                 pendingRecordings.removeValue(for: id, accountUserID: userID)
-                pendingCurveSamples.removeValue(forKey: id)
+                removePendingCurveSamples(for: id)
                 sessions.removeAll { $0.id == id }
                 let beforeCount = recordings.count
                 recordings.removeAll { $0.id == id }
@@ -4617,7 +4656,7 @@ public final class AppModel: ObservableObject {
               )
         else { return }
         for id in remoteRecordingIDs {
-            pendingCurveSamples.removeValue(forKey: id)
+            removePendingCurveSamples(for: id)
         }
         let restoredRecordings = queued.compactMap { item -> PendingRecordingOverlay.Entry? in
             guard case let .recording(recording) = item.payload,
@@ -4644,7 +4683,7 @@ public final class AppModel: ObservableObject {
                   !remoteRecordingIDs.contains(recording.id),
                   !recording.samples.isEmpty
             else { continue }
-            pendingCurveSamples[recording.id] = recording.samples
+            storePendingCurveSamples(recording.samples, for: recording.id)
         }
         // Read delete intents first. A session insert and its Undo delete can
         // overlap in the queue; the delete must win before any optimistic row
@@ -5098,7 +5137,7 @@ public final class AppModel: ObservableObject {
         tagMetadata = []
         pendingSessions = [:]
         pendingRecordings = PendingRecordingOverlay()
-        pendingCurveSamples = [:]
+        clearPendingCurveSamples()
         pendingRecordingEdits = [:]
         pendingSessionRPEEdits = [:]
         pendingSessionRPEBases = [:]
