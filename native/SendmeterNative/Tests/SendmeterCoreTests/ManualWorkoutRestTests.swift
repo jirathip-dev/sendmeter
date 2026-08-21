@@ -211,4 +211,55 @@ final class ManualWorkoutRestTests: XCTestCase {
             .none
         )
     }
+
+    func testNotificationLedgerLeavesNewRequestSafeFromLateOldCompletion() {
+        var ledger = ManualWorkoutNotificationLedger()
+        let requestA = ManualWorkoutNotificationLedger.Request(
+            identifier: "rest-a",
+            scheduleKey: "schedule-a",
+            token: UUID()
+        )
+        let requestB = ManualWorkoutNotificationLedger.Request(
+            identifier: "rest-b",
+            scheduleKey: "schedule-b",
+            token: UUID()
+        )
+
+        XCTAssertTrue(ledger.submit(requestA))
+        XCTAssertEqual(ledger.cancelAll(), ["rest-a"])
+        XCTAssertTrue(ledger.submit(requestB))
+
+        XCTAssertEqual(
+            ledger.complete(requestA, succeeded: true),
+            .stale
+        )
+        XCTAssertNil(ledger.scheduledKey)
+        XCTAssertEqual(ledger.ownedIdentifiers, ["rest-b"])
+
+        XCTAssertEqual(
+            ledger.complete(requestB, succeeded: true),
+            .scheduled
+        )
+        XCTAssertEqual(ledger.scheduledKey, "schedule-b")
+        XCTAssertEqual(ledger.cancelAll(), ["rest-b"])
+        XCTAssertNil(ledger.scheduledKey)
+        XCTAssertTrue(ledger.ownedIdentifiers.isEmpty)
+    }
+
+    func testNotificationLedgerDropsFailedRequestForRetry() {
+        var ledger = ManualWorkoutNotificationLedger()
+        let request = ManualWorkoutNotificationLedger.Request(
+            identifier: "rest-failed",
+            scheduleKey: "schedule-failed",
+            token: UUID()
+        )
+
+        XCTAssertTrue(ledger.submit(request))
+        XCTAssertEqual(
+            ledger.complete(request, succeeded: false),
+            .failed
+        )
+        XCTAssertNil(ledger.scheduledKey)
+        XCTAssertTrue(ledger.ownedIdentifiers.isEmpty)
+    }
 }

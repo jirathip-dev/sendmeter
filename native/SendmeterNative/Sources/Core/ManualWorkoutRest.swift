@@ -12,6 +12,72 @@ public enum ManualWorkoutPhase: Equatable, Sendable {
     case restOver
 }
 
+/// Tracks notification requests independently from their asynchronous
+/// UserNotifications completions. A canceled request remains identifiable so
+/// a late completion can clean up only that request.
+public struct ManualWorkoutNotificationLedger: Equatable, Sendable {
+    public struct Request: Equatable, Sendable {
+        public let identifier: String
+        public let scheduleKey: String
+        public let token: UUID
+
+        public init(identifier: String, scheduleKey: String, token: UUID) {
+            self.identifier = identifier
+            self.scheduleKey = scheduleKey
+            self.token = token
+        }
+    }
+
+    public enum Completion: Equatable, Sendable {
+        case stale
+        case scheduled
+        case failed
+    }
+
+    private var inFlight: Request?
+    private var scheduled: Request?
+    private var owned: Set<String> = []
+
+    public init() {}
+
+    public var scheduledKey: String? {
+        scheduled?.scheduleKey
+    }
+
+    public var ownedIdentifiers: Set<String> {
+        owned
+    }
+
+    public mutating func submit(_ request: Request) -> Bool {
+        guard inFlight == nil, scheduled == nil else { return false }
+        inFlight = request
+        owned.insert(request.identifier)
+        return true
+    }
+
+    public mutating func complete(
+        _ request: Request,
+        succeeded: Bool
+    ) -> Completion {
+        guard inFlight == request else { return .stale }
+        inFlight = nil
+        guard succeeded else {
+            owned.remove(request.identifier)
+            return .failed
+        }
+        scheduled = request
+        return .scheduled
+    }
+
+    public mutating func cancelAll() -> Set<String> {
+        let identifiers = owned
+        inFlight = nil
+        scheduled = nil
+        owned.removeAll()
+        return identifiers
+    }
+}
+
 public enum ManualWorkoutRest {
     public static let restTargetKey = "sendmeter:rest-target-s"
     public static let restTargets = [60, 120, 180, 300]

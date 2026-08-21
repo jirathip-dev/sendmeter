@@ -7,20 +7,30 @@ import UserNotifications
 /// losing the alert timer or its once-per-rest feedback decision.
 @MainActor
 public final class ManualWorkoutRestScheduler {
-    private static let notificationIdentifier = "sendmeter.native.manual-workout.rest-over"
+    private static let notificationIdentifierPrefix = "sendmeter.native.manual-workout.rest-over"
 
     private let notificationCenter = UNUserNotificationCenter.current()
     private var currentSchedule: ManualWorkoutRest.Schedule?
     private var deadlineTask: Task<Void, Never>?
     private var sceneIsActive = true
     private var backgroundEnteredAt: Date?
-    private var notificationScheduledKey: String?
-    private var notificationRequestID: UUID?
+    private var notificationLedger = ManualWorkoutNotificationLedger()
     private var lastFeedbackKey: String?
     private var notificationAuthorization: UNAuthorizationStatus?
 
     public init() {
         cancelNotification()
+    }
+
+    deinit {
+        let identifiers = notificationLedger.ownedIdentifiers
+        guard !identifiers.isEmpty else { return }
+        notificationCenter.removePendingNotificationRequests(
+            withIdentifiers: Array(identifiers)
+        )
+        notificationCenter.removeDeliveredNotifications(
+            withIdentifiers: Array(identifiers)
+        )
     }
 
     public func update(engine: PhoneWorkoutEngine?, restTarget: Int) {
@@ -122,8 +132,7 @@ public final class ManualWorkoutRestScheduler {
     private func scheduleNotificationIfNeeded(for schedule: ManualWorkoutRest.Schedule?) {
         guard let schedule,
               notificationAuthorization != .denied,
-              notificationRequestID == nil,
-              notificationScheduledKey != schedule.key,
+              notificationLedger.scheduledKey != schedule.key,
               let delay = ManualWorkoutRest.notificationDelay(
                   now: Date(),
                   deadline: schedule.deadline
@@ -139,26 +148,36 @@ public final class ManualWorkoutRestScheduler {
         content.interruptionLevel = .timeSensitive
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)
+        let token = UUID()
+        let notificationIdentifier = ManualWorkoutNotificationLedger.Request(
+            identifier: "\(Self.notificationIdentifierPrefix).\(token.uuidString)",
+            scheduleKey: schedule.key,
+            token: token
+        )
         let request = UNNotificationRequest(
-            identifier: Self.notificationIdentifier,
+            identifier: notificationIdentifier.identifier,
             content: content,
             trigger: trigger
         )
-        let key = schedule.key
-        let requestID = UUID()
-        notificationRequestID = requestID
+        guard notificationLedger.submit(notificationIdentifier) else { return }
         notificationCenter.add(request) { [weak self] error in
             Task { @MainActor [weak self] in
-                guard let self,
-                      self.currentSchedule?.key == key,
-                      self.notificationRequestID == requestID
-                else {
+                guard let self else {
                     return
                 }
-                if error == nil {
-                    self.notificationScheduledKey = key
-                } else {
-                    self.notificationRequestID = nil
+                switch self.notificationLedger.complete(
+                    notificationIdentifier,
+                    succeeded: error == nil
+                ) {
+                case .stale:
+                    self.removeNotification(identifier: notificationIdentifier.identifier)
+                case .scheduled:
+                    guard self.currentSchedule?.key == notificationIdentifier.scheduleKey else {
+                        self.removeNotification(identifier: notificationIdentifier.identifier)
+                        return
+                    }
+                case .failed:
+                    self.removeNotification(identifier: notificationIdentifier.identifier)
                     self.scheduleNotificationIfNeeded(for: self.currentSchedule)
                 }
             }
@@ -166,14 +185,23 @@ public final class ManualWorkoutRestScheduler {
     }
 
     private func cancelNotification() {
-        notificationRequestID = nil
+        let identifiers = notificationLedger.cancelAll()
+        guard !identifiers.isEmpty else { return }
         notificationCenter.removePendingNotificationRequests(
-            withIdentifiers: [Self.notificationIdentifier]
+            withIdentifiers: Array(identifiers)
         )
         notificationCenter.removeDeliveredNotifications(
-            withIdentifiers: [Self.notificationIdentifier]
+            withIdentifiers: Array(identifiers)
         )
-        notificationScheduledKey = nil
+    }
+
+    private func removeNotification(identifier: String) {
+        notificationCenter.removePendingNotificationRequests(
+            withIdentifiers: [identifier]
+        )
+        notificationCenter.removeDeliveredNotifications(
+            withIdentifiers: [identifier]
+        )
     }
 
     private func armDeadline(for schedule: ManualWorkoutRest.Schedule) {
@@ -217,7 +245,7 @@ public final class ManualWorkoutRestScheduler {
             schedule: schedule,
             sceneIsActive: sceneIsActive,
             deadlinePassedWhileBackground: passedWhileBackground,
-            notificationWasScheduled: notificationScheduledKey == schedule.key,
+            notificationWasScheduled: notificationLedger.scheduledKey == schedule.key,
             lastFeedbackKey: lastFeedbackKey
         )
         switch decision {
