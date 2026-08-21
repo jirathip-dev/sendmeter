@@ -108,6 +108,15 @@ struct ForceView: View {
         })?.forceCurveModel
     }
 
+    private var progressTag: String? {
+        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var progressSide: TindeqSide? {
+        side == .unspecified ? nil : side
+    }
+
     /// The zone stamped onto recordings saved under the current selection:
     /// the armed Focus-Next quality wins (a guided run's holds carry the zone
     /// they were performed under as a fact — #653 review finding 1), otherwise
@@ -195,6 +204,14 @@ struct ForceView: View {
                         },
                         presets: model.presets,
                         knownTags: model.visibleTagNames
+                    )
+
+                    ForceProgressCard(
+                        recordings: model.recordings,
+                        selectedTag: progressTag,
+                        selectedSide: progressSide,
+                        forceCurve: forceCurve,
+                        hasLoadedRecordings: model.hasLoadedRecordings
                     )
 
                     ForceConsistencyCard(
