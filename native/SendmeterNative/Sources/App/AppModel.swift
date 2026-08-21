@@ -22,6 +22,16 @@ public enum AppTab: Hashable {
     case settings
 }
 
+public struct NativeAccountScope: Equatable, Sendable {
+    public let userID: UUID?
+    public let epoch: UInt64
+
+    public init(userID: UUID?, epoch: UInt64) {
+        self.userID = userID
+        self.epoch = epoch
+    }
+}
+
 private enum PendingWrite: Codable, Sendable {
     case session(SessionQueuePayload)
     case sessionDelete(SessionDeleteQueuePayload)
@@ -314,7 +324,7 @@ public final class AppModel: ObservableObject {
     private var didBootstrapUserID: UUID?
     /// Increments whenever the loaded account state is reset. User IDs alone
     /// cannot reject a stale A completion after an A→B→A transition.
-    private var accountEpoch: UInt64 = 0
+    @Published public private(set) var accountEpoch: UInt64 = 0
     private var refreshingOwner: AccountScopedCompletion?
     private var recomputeGate = ReadinessRecomputeGate()
     /// #661: silent foreground/appear health sync. The policy is pure Core
@@ -588,6 +598,9 @@ public final class AppModel: ObservableObject {
 
     public var currentUserID: UUID? { authSession?.user.id }
     public var currentUserEmail: String? { authSession?.user.email }
+    public var accountScope: NativeAccountScope {
+        NativeAccountScope(userID: currentUserID, epoch: accountEpoch)
+    }
     public var currentPhase: PhaseDefinition { PhaseCatalog.definition(for: settings.currentPhase) }
     public var acwr: ACWRData { TrainingMetrics.computeACWR(sessions: sessions) }
     public var readiness: HealthMetric? { healthMetrics.first }
@@ -1516,7 +1529,8 @@ public final class AppModel: ObservableObject {
     /// prediction reads the recorded group's reps against the cached
     /// per-tag curves — never a fresh fetch — so a missing curve falls back
     /// instead of stalling the log.
-    public func endGaugeSession() async {
+    public func endGaugeSession(ifCurrentAccountScope expectedScope: NativeAccountScope? = nil) async {
+        guard expectedScope == nil || accountScope == expectedScope else { return }
         // #613: wait for any in-flight rep save to become durable + locally
         // published BEFORE claiming the end — a disconnect's interrupted
         // save lands after the status change (the guided view's tick
@@ -1525,6 +1539,7 @@ public final class AppModel: ObservableObject {
         // network. The claim after the wait still precedes any await of the
         // insert, so concurrent end paths still log exactly once.
         await gaugeSessionSaveGate.waitForIdle()
+        guard expectedScope == nil || accountScope == expectedScope else { return }
         guard let ended = gaugeSessionTracker.endActive() else { return }
 
         let groupRecordings = recordings.filter { $0.groupID == ended.groupID }
@@ -1551,6 +1566,7 @@ public final class AppModel: ObservableObject {
             rpeConfirmed: false,
             groupID: ended.groupID
         )
+        guard expectedScope == nil || accountScope == expectedScope else { return }
         toastMessage = ok
             ? "Gauge session logged to history"
             : "Couldn't log gauge session"

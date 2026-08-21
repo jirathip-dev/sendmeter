@@ -92,4 +92,86 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
         XCTAssertLessThanOrEqual(largeText.actionDiameter, portrait.actionDiameter)
         XCTAssertGreaterThanOrEqual(largeText.chartMinimumHeight, 96)
     }
+
+    func testLayoutAggregateFitIdentifiesPinnedPrimaryActionCases() {
+        let compactPortrait = GuidedForceLayout.resolve(width: 320, height: 568)
+        XCTAssertFalse(compactPortrait.essentialContentFits)
+        XCTAssertGreaterThan(compactPortrait.essentialContentHeight, compactPortrait.viewportHeight)
+
+        let roomyPortrait = GuidedForceLayout.resolve(width: 430, height: 932)
+        XCTAssertTrue(roomyPortrait.essentialContentFits)
+
+        let compactLandscape = GuidedForceLayout.resolve(width: 667, height: 375, textScale: 1.5)
+        XCTAssertFalse(compactLandscape.essentialContentFits)
+    }
+
+    func testTerminalClaimPreventsAdvanceAndRepeatedTerminalClaims() {
+        var policy = GuidedForceSessionPolicy()
+
+        XCTAssertTrue(policy.claimAdvance())
+        XCTAssertFalse(policy.claimAdvance())
+        XCTAssertTrue(policy.canCommitAdvance)
+
+        XCTAssertTrue(policy.claimTerminal())
+        XCTAssertFalse(policy.canTick)
+        XCTAssertFalse(policy.canStartStage)
+        XCTAssertFalse(policy.canCommitAdvance)
+        XCTAssertFalse(policy.claimAdvance())
+        XCTAssertFalse(policy.claimTerminal())
+    }
+
+    func testAdvanceCanCommitOnlyBeforeTerminalClaim() {
+        var policy = GuidedForceSessionPolicy()
+        XCTAssertTrue(policy.claimAdvance())
+        policy.finishAdvance()
+        XCTAssertFalse(policy.canCommitAdvance)
+        XCTAssertTrue(policy.claimAdvance())
+        XCTAssertTrue(policy.claimTerminal())
+        XCTAssertFalse(policy.canCommitAdvance)
+    }
+
+    func testHandsFreeMeasurementReanchorsWorkStageForFullDuration() {
+        let protocolValue = preset(repetitions: 1)
+        var run = ForceProtocolRun(preset: protocolValue, startingSide: .left)
+        run.start(at: Date(timeIntervalSince1970: 0))
+        run.advance(at: Date(timeIntervalSince1970: 5))
+        XCTAssertEqual(run.currentStage.kind, ForceProtocolStageKind.work)
+
+        // The user was armed but did not pull until the old wall-clock stage
+        // would already have expired. Re-anchoring gives the real pull the
+        // complete work duration instead of an immediate stage advance.
+        run.restartCurrentStage(at: Date(timeIntervalSince1970: 20))
+        XCTAssertEqual(run.elapsedSeconds(at: Date(timeIntervalSince1970: 20.5)), 0.5, accuracy: 0.000_001)
+        XCTAssertEqual(run.remainingSeconds(at: Date(timeIntervalSince1970: 20.5)), 9.5, accuracy: 0.000_001)
+    }
+
+    func testHandsFreeTimingPolicyTransitionsFromWaitingToReanchorOnce() {
+        XCTAssertTrue(
+            GuidedForceHandsFreeTimingPolicy.isWaitingForPull(
+                handsFreeEnabled: true,
+                measurementObserved: false
+            )
+        )
+        XCTAssertFalse(
+            GuidedForceHandsFreeTimingPolicy.shouldReanchor(
+                handsFreeEnabled: true,
+                isMeasuring: false,
+                measurementObserved: false
+            )
+        )
+        XCTAssertTrue(
+            GuidedForceHandsFreeTimingPolicy.shouldReanchor(
+                handsFreeEnabled: true,
+                isMeasuring: true,
+                measurementObserved: false
+            )
+        )
+        XCTAssertFalse(
+            GuidedForceHandsFreeTimingPolicy.shouldReanchor(
+                handsFreeEnabled: true,
+                isMeasuring: true,
+                measurementObserved: true
+            )
+        )
+    }
 }

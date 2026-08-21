@@ -34,8 +34,12 @@ public struct GuidedActivityMirror: Sendable {
     /// run passed in. The anchor is built here from `run.currentStage` +
     /// `stageStartedAt`, so Skip Stage advances and the terminal complete
     /// stage are reflected immediately (#674 review F3/F5).
-    public func snapshot(run: ForceProtocolRun, at date: Date = Date()) -> GuidedProtocolActivityContent.Snapshot {
-        let anchor = GuidedProtocolActivityContent.RunAnchor(run: run, at: date)
+    public func snapshot(
+        run: ForceProtocolRun,
+        at date: Date = Date(),
+        isPaused: Bool? = nil
+    ) -> GuidedProtocolActivityContent.Snapshot {
+        let anchor = GuidedProtocolActivityContent.RunAnchor(run: run, at: date, isPaused: isPaused)
         return content.snapshot(runAnchor: anchor, peakKilograms: peakKilograms)
     }
 }

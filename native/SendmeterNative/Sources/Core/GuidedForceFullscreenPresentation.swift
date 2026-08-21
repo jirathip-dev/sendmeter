@@ -61,17 +61,27 @@ public struct GuidedForceLayout: Equatable, Sendable {
     public let chartMinimumHeight: Double
     public let sectionGap: Double
     public let horizontalPadding: Double
+    public let essentialContentHeight: Double
+    public let viewportHeight: Double
 
     public init(
         actionDiameter: Double,
         chartMinimumHeight: Double,
         sectionGap: Double,
-        horizontalPadding: Double
+        horizontalPadding: Double,
+        essentialContentHeight: Double = 0,
+        viewportHeight: Double = 0
     ) {
         self.actionDiameter = actionDiameter
         self.chartMinimumHeight = chartMinimumHeight
         self.sectionGap = sectionGap
         self.horizontalPadding = horizontalPadding
+        self.essentialContentHeight = essentialContentHeight
+        self.viewportHeight = viewportHeight
+    }
+
+    public var essentialContentFits: Bool {
+        essentialContentHeight <= viewportHeight
     }
 
     /// Resolves a compact layout from the actual available viewport. `textScale`
@@ -95,12 +105,80 @@ public struct GuidedForceLayout: Equatable, Sendable {
             96,
             min(156, safeHeight * (safeTextScale > 1.25 ? 0.15 : 0.18))
         )
+        let sectionGap = safeHeight < 520 ? 8.0 : 12.0
+        let bannerHeight = safeTextScale > 1.25
+            ? 176.0
+            : (safeHeight < 520 ? 132.0 : 160.0)
+        let essentialHeight = 52.0
+            + bannerHeight
+            + 44.0
+            + 84.0
+            + chartFloor
+            + 52.0
+            + action
+            + (sectionGap * 6)
+            + 24.0
         return GuidedForceLayout(
             actionDiameter: action,
             chartMinimumHeight: chartFloor,
-            sectionGap: safeHeight < 520 ? 8 : 12,
-            horizontalPadding: Double(padding)
+            sectionGap: sectionGap,
+            horizontalPadding: Double(padding),
+            essentialContentHeight: essentialHeight,
+            viewportHeight: safeHeight
         )
+    }
+}
+
+/// Synchronous ownership gate for the app-target guided runner.
+///
+/// The fullscreen is allowed to disappear while the runner continues, so
+/// terminal actions and stage advances can race on the main actor around an
+/// async durable save. Keeping this decision pure makes the important rule
+/// testable without importing SwiftUI or the App target: once terminal state
+/// is claimed, no new stage advance may begin or commit.
+public struct GuidedForceSessionPolicy: Equatable, Sendable {
+    public private(set) var isTerminal = false
+    public private(set) var isAdvancing = false
+
+    public init() {}
+
+    @discardableResult
+    public mutating func claimTerminal() -> Bool {
+        guard !isTerminal else { return false }
+        isTerminal = true
+        return true
+    }
+
+    @discardableResult
+    public mutating func claimAdvance() -> Bool {
+        guard !isTerminal, !isAdvancing else { return false }
+        isAdvancing = true
+        return true
+    }
+
+    public mutating func finishAdvance() {
+        isAdvancing = false
+    }
+
+    public var canTick: Bool { !isTerminal }
+    public var canStartStage: Bool { !isTerminal && !isAdvancing }
+    public var canCommitAdvance: Bool { !isTerminal && isAdvancing }
+}
+
+public enum GuidedForceHandsFreeTimingPolicy {
+    public static func isWaitingForPull(
+        handsFreeEnabled: Bool,
+        measurementObserved: Bool
+    ) -> Bool {
+        handsFreeEnabled && !measurementObserved
+    }
+
+    public static func shouldReanchor(
+        handsFreeEnabled: Bool,
+        isMeasuring: Bool,
+        measurementObserved: Bool
+    ) -> Bool {
+        handsFreeEnabled && isMeasuring && !measurementObserved
     }
 }
 

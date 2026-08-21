@@ -89,9 +89,9 @@ public final class GuidedProtocolActivityManager {
 
     /// Rebuild the snapshot at the current instant from the LIVE run — called
     /// on every stage transition, never on a tick.
-    public func refresh(run: ForceProtocolRun, at date: Date = Date()) {
+    public func refresh(run: ForceProtocolRun, at date: Date = Date(), paused: Bool = false) {
         guard activity != nil else { return }
-        pushSnapshot(run: run, at: date)
+        pushSnapshot(run: run, at: date, paused: paused)
     }
 
     /// Bank the hold's final peak on the card (called when a work stage
@@ -135,9 +135,9 @@ public final class GuidedProtocolActivityManager {
         }
     }
 
-    private func pushSnapshot(run: ForceProtocolRun, at date: Date) {
+    private func pushSnapshot(run: ForceProtocolRun, at date: Date, paused: Bool = false) {
         guard let activity, let mirror else { return }
-        let snapshot = mirror.snapshot(run: run, at: date)
+        let snapshot = mirror.snapshot(run: run, at: date, isPaused: paused ? true : nil)
         let state = makeContentState(snapshot)
         let updated = ActivityContent(state: state, staleDate: state.segmentEnd)
         Task {
@@ -154,7 +154,8 @@ public final class GuidedProtocolActivityManager {
             segmentStart: Date(timeIntervalSince1970: snapshot.segmentStartEpochMs / 1_000),
             segmentEnd: Date(timeIntervalSince1970: snapshot.segmentEndEpochMs / 1_000),
             peakKilograms: snapshot.peakKilograms,
-            targetKilograms: snapshot.targetKilograms
+            targetKilograms: snapshot.targetKilograms,
+            isPaused: snapshot.isPaused
         )
     }
 }

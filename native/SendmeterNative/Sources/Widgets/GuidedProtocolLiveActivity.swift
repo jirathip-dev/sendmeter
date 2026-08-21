@@ -130,6 +130,7 @@ private struct LockScreenGuidedProtocolView: View {
 }
 
 private func segLabel(_ s: GuidedProtocolActivityAttributes.ContentState) -> String {
+    if s.isPaused { return "PAUSED" }
     switch s.phase {
     case "prepare": return "GET READY"
     case "work": return "HOLD"
@@ -142,6 +143,7 @@ private func segLabel(_ s: GuidedProtocolActivityAttributes.ContentState) -> Str
 }
 
 private func segColor(_ s: GuidedProtocolActivityAttributes.ContentState) -> Color {
+    if s.isPaused { return .yellow }
     switch s.phase {
     case "work": return .green
     case "prepare", "switch": return .yellow
@@ -152,7 +154,9 @@ private func segColor(_ s: GuidedProtocolActivityAttributes.ContentState) -> Col
 
 @ViewBuilder
 private func segTimer(_ s: GuidedProtocolActivityAttributes.ContentState) -> some View {
-    if s.phase == "complete" {
+    if s.isPaused {
+        Text("PAUSED")
+    } else if s.phase == "complete" {
         Text("✓")
     } else {
         Text(timerInterval: s.segmentStart...s.segmentEnd, countsDown: true)
@@ -161,7 +165,9 @@ private func segTimer(_ s: GuidedProtocolActivityAttributes.ContentState) -> som
 
 @ViewBuilder
 private func segProgress(_ s: GuidedProtocolActivityAttributes.ContentState) -> some View {
-    if s.phase == "complete" {
+    if s.isPaused {
+        ProgressView(value: 0)
+    } else if s.phase == "complete" {
         // Zero-length window: a full bar reads as "done" rather than 0%.
         ProgressView(value: 1)
     } else {
