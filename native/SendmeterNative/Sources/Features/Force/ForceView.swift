@@ -1,10 +1,703 @@
+import Foundation
 import SendmeterCore
 import SwiftUI
 
-private struct GuidedProtocolLaunch: Identifiable {
+/// Owns a guided run outside the fullscreen presentation.  The cover is only
+/// a viewport: minimizing it must not stop BLE, reset the stage clock, or end
+/// the durable gauge session.  Keeping the runner here also means a stage can
+/// cross a minimize/background transition without relying on a view-owned
+/// TimelineView tick.
+@MainActor
+private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
+    let id: UUID
+    let model: AppModel
     let preset: TindeqPreset
     let targetPlan: ForceTargetPlan
-    var id: UUID { preset.id }
+    let tag: String
+    let fallbackSide: TindeqSide
+    let zone: RecordedZone?
+    let handsFreeEnabled: Bool
+
+    @Published private(set) var run: ForceProtocolRun
+    @Published private(set) var savedCount = 0
+    @Published private(set) var interrupted = false
+    @Published private(set) var isAdvancing = false
+    @Published private(set) var isEnded = false
+
+    private var ticker: Task<Void, Never>?
+    private var observedStageID: UUID?
+    private var hasObservedFirstStage = false
+    private var hasBegun = false
+    private var lastHandsFreeHaptic: HandsFreeHapticState?
+    private var claimedStageIDs = Set<UUID>()
+    private var sessionEndClaimed = false
+
+    init(
+        model: AppModel,
+        preset: TindeqPreset,
+        targetPlan: ForceTargetPlan,
+        tag: String,
+        startingSide: TindeqSide,
+        fallbackSide: TindeqSide,
+        zone: RecordedZone?,
+        handsFreeEnabled: Bool,
+        run: ForceProtocolRun? = nil
+    ) {
+        self.model = model
+        self.preset = preset
+        self.targetPlan = targetPlan
+        self.tag = tag
+        self.fallbackSide = fallbackSide
+        self.zone = zone
+        self.handsFreeEnabled = handsFreeEnabled
+        let initialRun = run ?? ForceProtocolRun(preset: preset, startingSide: startingSide)
+        self.run = initialRun
+        self.id = initialRun.runID
+    }
+
+    deinit {
+        ticker?.cancel()
+    }
+
+    @discardableResult
+    func begin() -> Bool {
+        guard !isEnded, !interrupted else { return false }
+        let isFirstPresentation = !hasBegun
+        if run.stageStartedAt == nil, !run.isComplete {
+            run.start()
+        }
+        model.setGuidedProtocolActive(true)
+        if handsFreeEnabled {
+            model.handsFree.stopPolicy = .callerOwned
+        }
+        if hasBegun {
+            model.guidedActivity.refresh(run: run, at: Date())
+        } else {
+            hasBegun = true
+            model.guidedActivity.start(
+                run: run,
+                preset: preset,
+                targetPlan: targetPlan,
+                fallbackSide: fallbackSide
+            )
+        }
+        startTickerIfNeeded()
+        return isFirstPresentation
+    }
+
+    /// Pause is intentionally limited to the same static guided work surface
+    /// as the Capacitor control. Hands-free/adaptive stages retain their own
+    /// arm/release state machine rather than gaining a second pause semantic.
+    func canPause(at _: Date) -> Bool {
+        !isEnded
+            && !interrupted
+            && preset.protocolMode == .hold
+            && run.currentStage.kind == .work
+            && (run.isPaused || model.tindeq.status == .measuring)
+    }
+
+    func togglePause(at date: Date) {
+        guard canPause(at: date) else { return }
+        if run.isPaused {
+            run.resume(at: date)
+        } else {
+            run.pause(at: date)
+        }
+        model.guidedActivity.refresh(run: run, at: date)
+    }
+
+    private func startTickerIfNeeded() {
+        guard ticker == nil else { return }
+        ticker = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.tick(at: Date())
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+    }
+
+    private func tick(at date: Date) async {
+        guard !isEnded, !interrupted else { return }
+
+        if case .interrupted = model.tindeq.status {
+            await preserveInterruption(at: date)
+            return
+        }
+
+        updateHandsFreeHaptic()
+        guard !run.isPaused, !run.isComplete else { return }
+        observeStage(at: date)
+        guard !isAdvancing, run.remainingSeconds(at: date) <= 0 else { return }
+        let stage = run.currentStage
+        let boundary = run.stageStartedAt?.addingTimeInterval(stage.durationSeconds) ?? date
+        await advanceCurrentStage(at: boundary)
+    }
+
+    private func updateHandsFreeHaptic() {
+        guard handsFreeEnabled else {
+            lastHandsFreeHaptic = nil
+            return
+        }
+        let next: HandsFreeHapticState?
+        if model.handsFree.isMeasuring {
+            next = .measuring
+        } else if model.handsFree.isArmed {
+            next = .armed
+        } else {
+            next = nil
+        }
+        guard next != lastHandsFreeHaptic else { return }
+        lastHandsFreeHaptic = next
+        if let next {
+            Haptics.shared.play(HandsFreeHaptics.cue(for: next))
+        }
+    }
+
+    private func observeStage(at date: Date) {
+        guard observedStageID != run.currentStage.id else { return }
+        observedStageID = run.currentStage.id
+        if hasObservedFirstStage {
+            Haptics.shared.play(GuidedTransitionHaptics.cue(entering: run.currentStage.kind))
+        } else {
+            hasObservedFirstStage = true
+        }
+
+        if run.currentStage.kind == .work {
+            if handsFreeEnabled {
+                model.handsFree.arm()
+            } else {
+                do {
+                    try model.tindeq.startMeasuring()
+                } catch {
+                    model.errorMessage = error.localizedDescription
+                    interrupted = true
+                    model.guidedActivity.end(immediate: true)
+                    return
+                }
+            }
+        }
+        model.guidedActivity.refresh(run: run, at: date)
+    }
+
+    private func advanceCurrentStage(at date: Date) async {
+        guard !isAdvancing, !isEnded, !interrupted, !run.isComplete else { return }
+        isAdvancing = true
+        let stage = run.currentStage
+        if stage.kind == .work, let summary = model.tindeq.stopMeasuring() {
+            model.guidedActivity.updatePeak(summary.peakKilograms, run: run, at: date)
+            let enqueued = await preserve(summary, stage: stage, partial: false)
+            guard enqueued else {
+                interrupted = true
+                model.guidedActivity.end(immediate: true)
+                isAdvancing = false
+                return
+            }
+            model.tindeq.clearCompletedRecording()
+        }
+
+        run.advance(at: date)
+        observedStageID = nil
+        if run.currentStage.kind == .complete {
+            Haptics.shared.play(GuidedTransitionHaptics.cue(entering: .complete))
+            model.guidedActivity.refresh(run: run, at: date)
+        }
+        if stage.kind == .work {
+            model.handsFree.disarm()
+        }
+        isAdvancing = false
+    }
+
+    func skip(at date: Date) async {
+        guard !run.isPaused else { return }
+        await advanceCurrentStage(at: date)
+    }
+
+    private func preserveInterruption(at _: Date) async {
+        guard !interrupted else { return }
+        interrupted = true
+        model.handsFree.disarm()
+        model.guidedActivity.end(immediate: true)
+        if let summary = model.tindeq.interruptedRecording {
+            let enqueued = await preserve(summary, stage: run.currentStage, partial: true)
+            if enqueued {
+                model.tindeq.clearInterruptedRecording()
+            }
+        }
+        await endSession()
+    }
+
+    func endAndSavePartial() async {
+        guard !isEnded, !sessionEndClaimed, !isAdvancing else { return }
+        isAdvancing = true
+        let stage = run.currentStage
+        if stage.kind == .work, let summary = model.tindeq.stopMeasuring() {
+            let enqueued = await preserve(summary, stage: stage, partial: true)
+            if enqueued {
+                model.tindeq.clearCompletedRecording()
+            } else {
+                model.errorMessage = "Could not save the partial pull."
+                interrupted = true
+                model.guidedActivity.end(immediate: true)
+                isAdvancing = false
+                return
+            }
+        }
+        model.handsFree.disarm()
+        isAdvancing = false
+        await endSession()
+    }
+
+    func finish() async {
+        await endSession()
+    }
+
+    func stopOrFinish() async {
+        if run.isComplete || interrupted {
+            await finish()
+        } else {
+            await endAndSavePartial()
+        }
+    }
+
+    private func endSession() async {
+        guard !sessionEndClaimed else { return }
+        sessionEndClaimed = true
+        model.guidedActivity.end(immediate: true)
+        await model.endGaugeSession()
+        ticker?.cancel()
+        ticker = nil
+        model.setGuidedProtocolActive(false)
+        model.handsFree.stopPolicy = .automatic
+        model.handsFree.disarm()
+        isEnded = true
+    }
+
+    private func preserve(
+        _ summary: ForceSummary,
+        stage: ForceProtocolStage,
+        partial: Bool
+    ) async -> Bool {
+        guard claimedStageIDs.insert(stage.id).inserted else { return true }
+        let savedSide = stage.side == .unspecified ? fallbackSide : stage.side
+        let savedTag: String
+        if partial {
+            savedTag = tag.isEmpty ? "\(preset.name) · Partial" : "\(tag) · Partial"
+        } else {
+            savedTag = tag.isEmpty ? preset.name : tag
+        }
+        let enqueued = await model.saveForceSummary(
+            summary,
+            tag: savedTag,
+            side: savedSide,
+            zone: zone,
+            preset: preset,
+            targetBand: targetPlan.band(forSet: stage.setNumber, side: savedSide),
+            protocolRunID: run.runID,
+            setNumber: stage.setNumber,
+            repetitionNumber: stage.repetitionNumber,
+            partial: partial
+        )
+        if enqueued {
+            savedCount += 1
+        } else {
+            claimedStageIDs.remove(stage.id)
+        }
+        return enqueued
+    }
+}
+
+private struct GuidedGlassButtonStyle: ButtonStyle {
+    let tint: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10)
+            .frame(minWidth: 44, minHeight: 44)
+            .background(
+                tint.opacity(configuration.isPressed ? 0.24 : 0.12),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+    }
+}
+
+private struct GuidedForceProtocolView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .body) private var textScale: CGFloat = 1
+
+    @ObservedObject var session: GuidedForceProtocolSession
+    let onMinimize: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.2)) { context in
+            GeometryReader { geometry in
+                let stage = session.run.currentStage
+                let elapsed = session.run.elapsedSeconds(at: context.date)
+                let presentation = GuidedForceFullscreenPresentation.stage(
+                    stage,
+                    preset: session.preset,
+                    elapsedSeconds: elapsed,
+                    isPaused: session.run.isPaused
+                )
+                let layout = GuidedForceLayout.resolve(
+                    width: geometry.size.width,
+                    height: geometry.size.height,
+                    textScale: Double(textScale)
+                )
+                let accent = color(for: presentation.accent)
+
+                ZStack {
+                    Color(uiColor: .systemGroupedBackground)
+                    accent.opacity(0.14)
+
+                    ScrollView(showsIndicators: false) {
+                        VStack(spacing: layout.sectionGap) {
+                            topBar(elapsed: elapsed)
+                            phaseBanner(
+                                presentation,
+                                remaining: session.run.remainingSeconds(at: context.date),
+                                accent: accent
+                            )
+                            statusRow(accent: accent)
+                            targetCoach
+                            liveChart(
+                                layout: layout,
+                                availableHeight: geometry.size.height
+                            )
+                            controls(
+                                date: context.date,
+                                layout: layout,
+                                accent: accent
+                            )
+                        }
+                        .padding(.horizontal, layout.horizontalPadding)
+                        .padding(.top, max(8, geometry.safeAreaInsets.top))
+                        .padding(.bottom, max(12, geometry.safeAreaInsets.bottom))
+                        .frame(maxWidth: 620)
+                        .frame(
+                            maxWidth: .infinity,
+                            minHeight: geometry.size.height,
+                            alignment: .top
+                        )
+                    }
+                }
+                .ignoresSafeArea()
+                .animation(
+                    reduceMotion ? nil : .easeInOut(duration: 0.25),
+                    value: presentation.phase
+                )
+            }
+        }
+        .onAppear {
+            // The library Run tap arms this presentation cue. Reopening the
+            // minimized session only refreshes the existing run and does not
+            // duplicate the presentation haptic.
+            if session.begin() {
+                Haptics.shared.sheetPresented()
+            }
+        }
+        .interactiveDismissDisabled(true)
+    }
+
+    private func topBar(elapsed: Double) -> some View {
+        HStack(spacing: 8) {
+            Button(action: onMinimize) {
+                Image(systemName: "chevron.down")
+                    .font(.headline.weight(.bold))
+            }
+            .buttonStyle(GuidedGlassButtonStyle(tint: .primary))
+            .accessibilityLabel("Minimize guided protocol")
+            .accessibilityHint("The protocol keeps running and can be resumed from the Force tab")
+
+            Spacer(minLength: 4)
+
+            VStack(spacing: 1) {
+                Text("GUIDED FORCE")
+                    .font(.caption2.weight(.bold))
+                    .tracking(1.2)
+                    .lineLimit(1)
+                Text(formatElapsed(elapsed))
+                    .font(.headline.monospacedDigit())
+                    .accessibilityLabel("Elapsed time \(formatElapsed(elapsed))")
+            }
+
+            Spacer(minLength: 4)
+
+            Button("End", action: endSession)
+                .buttonStyle(GuidedGlassButtonStyle(tint: SendmeterStyle.alert))
+                .accessibilityHint("Save the current pull if needed and end this protocol")
+                .disabled(session.isAdvancing)
+        }
+        .padding(6)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(.white.opacity(0.18), lineWidth: 1)
+        }
+    }
+
+    private func phaseBanner(
+        _ presentation: GuidedForceStagePresentation,
+        remaining: Double,
+        accent: Color
+    ) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: presentation.symbol)
+                    .font(.title3.weight(.bold))
+                Text(presentation.label)
+                    .font(.title2.weight(.black))
+                    .tracking(2.2)
+                    .minimumScaleFactor(0.72)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(accent)
+
+            Text(formatCountdown(remaining))
+                .font(.system(size: 68, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .minimumScaleFactor(0.55)
+                .lineLimit(1)
+                .accessibilityLabel("\(formatCountdown(remaining)) remaining")
+
+            Text(presentation.detail)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+
+            ProgressView(value: presentation.progress)
+                .tint(accent)
+                .accessibilityLabel("Phase progress")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 18)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(accent.opacity(0.72), lineWidth: 2)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(presentation.label). \(presentation.detail)")
+    }
+
+    private func statusRow(accent: Color) -> some View {
+        HStack(spacing: 8) {
+            StatusPill(
+                session.preset.protocolMode == .reverseAction
+                    ? (session.preset.capacityEvidence == true ? "Capacity evidence" : "Execution quality")
+                    : "Protocol quality",
+                color: accent
+            )
+            if session.handsFreeEnabled {
+                StatusPill(
+                    session.model.handsFree.isMeasuring ? "Hands-free active" : "Hands-free ready",
+                    color: session.model.handsFree.isMeasuring ? SendmeterStyle.optimal : SendmeterStyle.caution
+                )
+            }
+            Spacer(minLength: 4)
+            Text("\(session.savedCount) queued")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("\(session.savedCount) pulls durably queued")
+        }
+    }
+
+    @ViewBuilder
+    private var targetCoach: some View {
+        if let band = currentTargetBand {
+            let inTarget = band.range.contains(session.model.tindeq.currentKilograms)
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("TARGET COACH")
+                        .font(.caption2.weight(.bold))
+                        .tracking(1.1)
+                        .foregroundStyle(.secondary)
+                    Text("\(band.kilograms.formatted(.number.precision(.fractionLength(1))) ) kg")
+                        .font(.headline.monospacedDigit())
+                    Text("Range \(band.lowKilograms.formatted(.number.precision(.fractionLength(1))) )–\(band.highKilograms.formatted(.number.precision(.fractionLength(1))) ) kg")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 4) {
+                    Image(systemName: inTarget ? "checkmark.circle.fill" : "scope")
+                        .font(.title2)
+                        .foregroundStyle(inTarget ? SendmeterStyle.optimal : SendmeterStyle.caution)
+                    Text(inTarget ? "ON TARGET" : "MOVE TOWARD TARGET")
+                        .font(.caption2.weight(.bold))
+                        .multilineTextAlignment(.trailing)
+                        .foregroundStyle(inTarget ? SendmeterStyle.optimal : SendmeterStyle.caution)
+                }
+            }
+            .padding(14)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(
+                "Target \(band.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms. "
+                    + (inTarget ? "On target" : "Move toward target")
+            )
+        }
+    }
+
+    private func liveChart(layout: GuidedForceLayout, availableHeight: CGFloat) -> some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("LIVE FORCE")
+                            .font(.caption2.weight(.bold))
+                            .tracking(1.1)
+                            .foregroundStyle(.secondary)
+                        MetricValue(
+                            session.model.tindeq.currentKilograms.formatted(.number.precision(.fractionLength(1))),
+                            unit: "kg",
+                            color: currentTargetBand?.range.contains(session.model.tindeq.currentKilograms) == true
+                                ? SendmeterStyle.optimal
+                                : .primary
+                        )
+                    }
+                    Spacer(minLength: 12)
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("Peak \(session.model.tindeq.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                        Text("Avg \(session.model.tindeq.averageKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                    }
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+
+                ForceTraceChart(
+                    samples: session.model.tindeq.visibleSamples,
+                    targetRange: currentTargetBand?.range,
+                    target: currentTargetBand?.kilograms
+                )
+                .frame(
+                    minHeight: layout.chartMinimumHeight,
+                    maxHeight: max(layout.chartMinimumHeight, availableHeight * 0.42)
+                )
+                .layoutPriority(1)
+                .accessibilityLabel("Live force trace")
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func controls(
+        date: Date,
+        layout: GuidedForceLayout,
+        accent: Color
+    ) -> some View {
+        VStack(spacing: layout.sectionGap) {
+            HStack(spacing: 10) {
+                if session.canPause(at: date) || session.run.isPaused {
+                    Button {
+                        session.togglePause(at: date)
+                    } label: {
+                        Label(
+                            session.run.isPaused ? "Resume" : "Pause",
+                            systemImage: session.run.isPaused ? "play.fill" : "pause.fill"
+                        )
+                    }
+                    .buttonStyle(GuidedGlassButtonStyle(tint: SendmeterStyle.caution))
+                    .accessibilityHint(session.run.isPaused ? "Resume the hold timer" : "Pause the hold timer")
+                }
+
+                if !session.run.isComplete, !session.interrupted, !session.run.isPaused {
+                    Button {
+                        Task { await session.skip(at: date) }
+                    } label: {
+                        Label("Skip", systemImage: "forward.fill")
+                    }
+                    .buttonStyle(GuidedGlassButtonStyle(tint: .primary))
+                    .disabled(session.isAdvancing)
+                    .accessibilityHint("Skip this guided phase")
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            Button(action: primaryAction) {
+                ZStack {
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                    Circle()
+                        .fill(accent.opacity(0.22))
+                    Circle()
+                        .strokeBorder(accent, lineWidth: 3)
+                    VStack(spacing: 6) {
+                        Image(systemName: session.run.isComplete || session.interrupted ? "checkmark" : "stop.fill")
+                            .font(.title2.weight(.bold))
+                        Text(session.run.isComplete || session.interrupted ? "FINISH" : "STOP")
+                            .font(.caption.weight(.black))
+                            .tracking(1.2)
+                    }
+                    .foregroundStyle(accent)
+                }
+                .frame(
+                    width: layout.actionDiameter,
+                    height: layout.actionDiameter
+                )
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(session.isAdvancing)
+            .accessibilityLabel(session.run.isComplete || session.interrupted ? "Finish guided protocol" : "Stop guided protocol")
+            .accessibilityHint("Save the current pull if needed and return to Force")
+        }
+    }
+
+    private var currentTargetBand: ForceTargetBand? {
+        let side = session.run.currentStage.side == .unspecified
+            ? session.fallbackSide
+            : session.run.currentStage.side
+        return session.targetPlan.band(forSet: session.run.currentStage.setNumber, side: side)
+    }
+
+    private func primaryAction() {
+        Task {
+            await session.stopOrFinish()
+            if session.isEnded {
+                onClose()
+            }
+        }
+    }
+
+    private func endSession() {
+        Task {
+            await session.stopOrFinish()
+            if session.isEnded {
+                onClose()
+            }
+        }
+    }
+
+    private func color(for accent: GuidedForceAccent) -> Color {
+        switch accent {
+        case .primary: return SendmeterStyle.primary
+        case .optimal: return SendmeterStyle.optimal
+        case .caution: return SendmeterStyle.caution
+        case .alert: return SendmeterStyle.alert
+        case .execution: return SendmeterStyle.execution
+        }
+    }
+
+    private func formatCountdown(_ seconds: Double) -> String {
+        formatClock(max(0, Int(ceil(seconds))))
+    }
+
+    private func formatElapsed(_ seconds: Double) -> String {
+        formatClock(max(0, Int(floor(seconds))))
+    }
+
+    private func formatClock(_ seconds: Int) -> String {
+        let minutes = seconds / 60
+        let remainder = seconds % 60
+        return String(format: "%02d:%02d", minutes, remainder)
+    }
 }
 
 struct ForceView: View {
@@ -18,7 +711,8 @@ struct ForceView: View {
     @State private var selectedPresetID: UUID?
     @State private var editingPreset: TindeqPreset?
     @State private var creatingPreset = false
-    @State private var runningProtocol: GuidedProtocolLaunch?
+    @State private var guidedSession: GuidedForceProtocolSession?
+    @State private var guidedFullscreenPresented = false
     @State private var selectedTargetPlan = ForceTargetPlan.empty
     @State private var resolvingTargets = false
     @State private var savingSummary = false
@@ -156,6 +850,13 @@ struct ForceView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 16) {
+                    if let guidedSession, !guidedSession.isEnded {
+                        GuidedForceResumeCard(session: guidedSession) {
+                            Haptics.shared.tap()
+                            guidedFullscreenPresented = true
+                        }
+                    }
+
                     ForceDeviceCard(
                         device: model.tindeq,
                         handsFreeEnabled: $handsFreeEnabled,
@@ -328,16 +1029,19 @@ struct ForceView: View {
                 ForcePresetEditor(preset: Self.defaultPreset(), isNew: true)
                     .onAppear { Haptics.shared.sheetPresented() }
             }
-            .fullScreenCover(item: $runningProtocol) { launch in
-                GuidedForceProtocolView(
-                    preset: launch.preset,
-                    targetPlan: launch.targetPlan,
-                    tag: tag,
-                    startingSide: side == .right ? .right : .left,
-                    fallbackSide: side,
-                    zone: recordingZone,
-                    handsFreeEnabled: handsFreeEnabled
-                )
+            .fullScreenCover(isPresented: $guidedFullscreenPresented) {
+                if let guidedSession {
+                    GuidedForceProtocolView(
+                        session: guidedSession,
+                        onMinimize: { guidedFullscreenPresented = false },
+                        onClose: {
+                            guidedFullscreenPresented = false
+                            self.guidedSession = nil
+                        }
+                    )
+                } else {
+                    Color.clear
+                }
             }
         }
     }
@@ -523,18 +1227,32 @@ struct ForceView: View {
             armedZoneQuality = nil
             selectedPresetID = preset.id
         }
+        let launchTag = tag
+        let launchSide = side
+        let launchZone = recordingZone
+        let launchHandsFreeEnabled = handsFreeEnabled
+        let startSide: TindeqSide = launchSide == .right ? .right : .left
         resolvingTargets = true
         Task {
-            let startSide: TindeqSide = side == .right ? .right : .left
             let plan = await model.resolveForceTargetPlan(
                 preset: preset,
-                tag: tag,
+                tag: launchTag,
                 startingSide: startSide,
-                fallbackSide: side
+                fallbackSide: launchSide
             )
             selectedTargetPlan = plan
             resolvingTargets = false
-            runningProtocol = GuidedProtocolLaunch(preset: preset, targetPlan: plan)
+            guidedSession = GuidedForceProtocolSession(
+                model: model,
+                preset: preset,
+                targetPlan: plan,
+                tag: launchTag,
+                startingSide: startSide,
+                fallbackSide: launchSide,
+                zone: launchZone,
+                handsFreeEnabled: launchHandsFreeEnabled
+            )
+            guidedFullscreenPresented = true
         }
     }
 
@@ -548,6 +1266,38 @@ struct ForceView: View {
             restBetweenSetsSeconds: 180,
             prepareSeconds: 5
         )
+    }
+}
+
+private struct GuidedForceResumeCard: View {
+    @ObservedObject var session: GuidedForceProtocolSession
+    let onResume: () -> Void
+
+    var body: some View {
+        SurfaceCard {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform.path.ecg.rectangle.fill")
+                    .font(.title3)
+                    .foregroundStyle(SendmeterStyle.primary)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Guided protocol paused")
+                        .font(.headline)
+                    Text("\(session.preset.name) · \(session.run.currentStage.label)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text("\(session.savedCount) pull\(session.savedCount == 1 ? "" : "s") durably queued")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button("Resume", action: onResume)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    .accessibilityHint("Reopen the guided protocol without stopping it")
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -1462,370 +2212,5 @@ private struct ForcePresetEditor: View {
             isSaving = false
             dismiss()
         }
-    }
-}
-
-private struct GuidedForceProtocolView: View {
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var run: ForceProtocolRun
-    @State private var observedStageID: UUID?
-    @State private var isAdvancing = false
-    @State private var savedCount = 0
-    @State private var interrupted = false
-    @State private var claimedStageIDs = Set<UUID>()
-    /// #656: idempotence for the segment-transition cue — the FIRST observed
-    /// stage (prepare, or work on a no-prepare run) never re-cues (web
-    /// "Normal protocols do not re-cue their first visible segment"), and
-    /// every later stage cues exactly once per transition.
-    @State private var hasObservedFirstStage = false
-    /// #656: the last hands-free status a cue was fired for (armed → 80 ms,
-    /// measuring → 150 ms) — the web fires once per status CHANGE, not per
-    /// feed sample, so the guard is a change check against this.
-    @State private var lastHandsFreeHaptic: HandsFreeHapticState?
-
-    let preset: TindeqPreset
-    let targetPlan: ForceTargetPlan
-    let tag: String
-    let startingSide: TindeqSide
-    let fallbackSide: TindeqSide
-    let zone: RecordedZone?
-    /// #628: snapshot of the hands-free toggle at launch — mid-run changes
-    /// apply to the next run, never to the segments already walking.
-    let handsFreeEnabled: Bool
-
-    init(
-        preset: TindeqPreset,
-        targetPlan: ForceTargetPlan,
-        tag: String,
-        startingSide: TindeqSide,
-        fallbackSide: TindeqSide,
-        zone: RecordedZone?,
-        handsFreeEnabled: Bool = false
-    ) {
-        self.preset = preset
-        self.targetPlan = targetPlan
-        self.tag = tag
-        self.startingSide = startingSide
-        self.fallbackSide = fallbackSide
-        self.zone = zone
-        self.handsFreeEnabled = handsFreeEnabled
-        self._run = State(initialValue: ForceProtocolRun(preset: preset, startingSide: startingSide))
-    }
-
-    var body: some View {
-        NavigationStack {
-            TimelineView(.periodic(from: .now, by: 0.2)) { context in
-                VStack(spacing: 22) {
-                    Spacer(minLength: 12)
-                    VStack(spacing: 7) {
-                        Text(run.currentStage.label)
-                            .font(.largeTitle.bold())
-                        if run.currentStage.side != .unspecified {
-                            StatusPill(run.currentStage.side.label, color: SendmeterStyle.primary)
-                        }
-                        Text("Set \(run.currentStage.setNumber) · Rep \(run.currentStage.repetitionNumber)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if run.currentStage.kind == .work {
-                        MetricValue(
-                            model.tindeq.currentKilograms.formatted(.number.precision(.fractionLength(1))),
-                            unit: "kg",
-                            color: protocolInTarget ? SendmeterStyle.optimal : .primary
-                        )
-                        ForceTraceChart(
-                            samples: model.tindeq.visibleSamples,
-                            targetRange: currentTargetBand?.range,
-                            target: currentTargetBand?.kilograms
-                        )
-                        .frame(height: 220)
-                    } else {
-                        Image(systemName: stageSymbol)
-                            .font(.system(size: 56, weight: .semibold))
-                            .foregroundStyle(stageColor)
-                    }
-
-                    Text(Int(ceil(run.remainingSeconds(at: context.date))), format: .number)
-                        .font(.system(size: 72, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                    Text("seconds remaining")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    ProgressView(
-                        value: run.currentStage.durationSeconds == 0
-                            ? 1
-                            : min(1, run.elapsedSeconds(at: context.date) / run.currentStage.durationSeconds)
-                    )
-                    .tint(stageColor)
-
-                    Text("\(savedCount) pull\(savedCount == 1 ? "" : "s") durably queued")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if run.isComplete || interrupted {
-                        Button("Finish") {
-                            Task { await model.endGaugeSession() }
-                            model.guidedActivity.end(immediate: true)
-                            dismiss()
-                        }
-                        .buttonStyle(PrimaryActionButtonStyle())
-                    } else {
-                        Button("Skip Stage") {
-                            Task { await skipCurrentStage(at: context.date) }
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(isAdvancing)
-                    }
-                    Spacer(minLength: 12)
-                }
-                .padding()
-                .task(id: Int(context.date.timeIntervalSince1970 * 5)) {
-                    await tick(at: context.date)
-                }
-            }
-            .navigationTitle(preset.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .interactiveDismissDisabled(!run.isComplete && !interrupted)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", role: .destructive) {
-                        // #656 (review F14): cancelling a running protocol is
-                        // a confirm/destructive action — medium tick.
-                        Haptics.shared.play(.medium)
-                        Task { await cancelAndPreserve() }
-                    }
-                }
-            }
-            .onAppear {
-                run.start()
-                // #656: the Run tap armed this presentation — give the
-                // fullscreen the sheet tick, gated on that gesture.
-                Haptics.shared.sheetPresented()
-                // #628: hands-free arming + the lock-screen mirror own the
-                // run while this view is up; the device card's automatic
-                // stop/save loop must not intercept a stage's release.
-                if handsFreeEnabled {
-                    model.handsFree.stopPolicy = .callerOwned
-                }
-                model.setGuidedProtocolActive(true)
-                model.guidedActivity.start(
-                    run: run,
-                    preset: preset,
-                    targetPlan: targetPlan,
-                    fallbackSide: fallbackSide
-                )
-            }
-            .onDisappear {
-                model.setGuidedProtocolActive(false)
-                model.handsFree.stopPolicy = .automatic
-                model.handsFree.disarm()
-                model.guidedActivity.end(immediate: true)
-                hasObservedFirstStage = false
-                lastHandsFreeHaptic = nil
-            }
-        }
-    }
-
-    private var stageSymbol: String {
-        switch run.currentStage.kind {
-        case .prepare: return "hourglass"
-        case .switchSide: return "arrow.left.arrow.right"
-        case .restBetweenRepetitions, .restBetweenSets: return "pause.fill"
-        case .complete: return "checkmark.circle.fill"
-        case .work: return "waveform.path.ecg"
-        }
-    }
-
-    private var stageColor: Color {
-        switch run.currentStage.kind {
-        case .work: return SendmeterStyle.primary
-        case .complete: return SendmeterStyle.optimal
-        case .prepare, .switchSide: return SendmeterStyle.caution
-        case .restBetweenRepetitions, .restBetweenSets: return SendmeterStyle.optimal
-        }
-    }
-
-    private var currentStageSide: TindeqSide {
-        run.currentStage.side == .unspecified ? fallbackSide : run.currentStage.side
-    }
-
-    private var currentTargetBand: ForceTargetBand? {
-        targetPlan.band(forSet: run.currentStage.setNumber, side: currentStageSide)
-    }
-
-    private var protocolInTarget: Bool {
-        currentTargetBand?.range.contains(model.tindeq.currentKilograms) ?? false
-    }
-
-    @MainActor
-    private func tick(at date: Date) async {
-        guard !run.isComplete, !interrupted, !isAdvancing else { return }
-
-        if case .interrupted = model.tindeq.status {
-            interrupted = true
-            model.handsFree.disarm()
-            model.guidedActivity.end(immediate: true)
-            if let summary = model.tindeq.interruptedRecording {
-                let enqueued = await preserve(summary, stage: run.currentStage, partial: true)
-                if enqueued { model.tindeq.clearInterruptedRecording() }
-            }
-            // The run owns the session end on disconnect: preserve the final
-            // rep first, THEN end the session, so the partial rep joins THIS
-            // group instead of a fresh one minted by a racing end.
-            await model.endGaugeSession()
-            return
-        }
-
-        // #656: hands-free armed → single 80 ms, measuring → single 150 ms,
-        // once per status CHANGE (the web's lastHandsFreeStatusRef effect).
-        // Gated on this fullscreen being hands-free; free pulls on the Force
-        // tab keep the transport's own haptics (none here).
-        if handsFreeEnabled {
-            let next: HandsFreeHapticState?
-            if model.handsFree.isMeasuring {
-                next = .measuring
-            } else if model.handsFree.isArmed {
-                next = .armed
-            } else {
-                next = nil
-            }
-            if next != lastHandsFreeHaptic {
-                lastHandsFreeHaptic = next
-                if let next {
-                    Haptics.shared.play(HandsFreeHaptics.cue(for: next))
-                }
-            }
-        }
-
-        if observedStageID != run.currentStage.id {
-            observedStageID = run.currentStage.id
-            // #656: the web cues segment transitions in rhythm
-            // (`ForceFullscreen.tsx`); native plays the same pattern once per
-            // transition. The first observed stage is skipped, matching the
-            // web's no-re-cue rule for the opening segment.
-            if hasObservedFirstStage {
-                Haptics.shared.play(GuidedTransitionHaptics.cue(entering: run.currentStage.kind))
-            } else {
-                hasObservedFirstStage = true
-            }
-            // #628: hands-free arming gates the START of a work stage on the
-            // load actually being applied; the stage timer still owns every
-            // stop/save, so save-per-hold stays intact.
-            if run.currentStage.kind == .work {
-                if handsFreeEnabled {
-                    model.handsFree.arm()
-                } else {
-                    do {
-                        try model.tindeq.startMeasuring()
-                    } catch {
-                        model.errorMessage = error.localizedDescription
-                        interrupted = true
-                        model.guidedActivity.end(immediate: true)
-                        return
-                    }
-                }
-            }
-            model.guidedActivity.refresh(run: run, at: date)
-        }
-
-        guard run.remainingSeconds(at: date) <= 0 else { return }
-        await advanceCurrentStage(at: date)
-    }
-
-    @MainActor
-    private func advanceCurrentStage(at date: Date) async {
-        guard !isAdvancing else { return }
-        isAdvancing = true
-        let stage = run.currentStage
-        if stage.kind == .work, let summary = model.tindeq.stopMeasuring() {
-            model.guidedActivity.updatePeak(summary.peakKilograms, run: run, at: date)
-            let enqueued = await preserve(summary, stage: stage, partial: false)
-            guard enqueued else {
-                isAdvancing = false
-                interrupted = true
-                model.guidedActivity.end(immediate: true)
-                return
-            }
-            model.tindeq.clearCompletedRecording()
-        }
-        run.advance(at: date)
-        observedStageID = nil
-        // #656 (review F3): the moment the run steps into the `.complete`
-        // stage, every later `tick` returns early at `guard !run.isComplete`,
-        // so the transition block never reaches the `.complete` case — this
-        // is the one cue the user is waiting for while looking away from the
-        // phone, and the web fires it ("done" → `[80,60,80]` + 3 beeps).
-        // #674 review F5: same terminal-entry reason — the Live Activity DONE
-        // card must be pushed here explicitly or it sits on the last rest.
-        if run.currentStage.kind == .complete {
-            Haptics.shared.play(GuidedTransitionHaptics.cue(entering: .complete))
-            model.guidedActivity.refresh(run: run, at: date)
-        }
-        // #628: disarm the stage's arming so rest/switch stages cannot start
-        // a phantom recording on leftover load; the next work stage re-arms.
-        if stage.kind == .work {
-            model.handsFree.disarm()
-        }
-        isAdvancing = false
-    }
-
-    @MainActor
-    private func skipCurrentStage(at date: Date) async {
-        await advanceCurrentStage(at: date)
-    }
-
-    @MainActor
-    private func cancelAndPreserve() async {
-        let stage = run.currentStage
-        if stage.kind == .work, let summary = model.tindeq.stopMeasuring() {
-            let enqueued = await preserve(summary, stage: stage, partial: true)
-            if enqueued {
-                model.tindeq.clearCompletedRecording()
-            } else {
-                interrupted = true
-                model.guidedActivity.end(immediate: true)
-                return
-            }
-        }
-        model.handsFree.disarm()
-        model.guidedActivity.end(immediate: true)
-        dismiss()
-    }
-
-    @MainActor
-    private func preserve(
-        _ summary: ForceSummary,
-        stage: ForceProtocolStage,
-        partial: Bool
-    ) async -> Bool {
-        guard claimedStageIDs.insert(stage.id).inserted else { return true }
-        let side = stage.side == .unspecified ? fallbackSide : stage.side
-        let savedTag: String
-        if partial {
-            savedTag = tag.isEmpty ? "\(preset.name) · Partial" : "\(tag) · Partial"
-        } else {
-            savedTag = tag.isEmpty ? preset.name : tag
-        }
-        let enqueued = await model.saveForceSummary(
-            summary,
-            tag: savedTag,
-            side: side,
-            zone: zone,
-            preset: preset,
-            targetBand: targetPlan.band(forSet: stage.setNumber, side: side),
-            protocolRunID: run.runID,
-            setNumber: stage.setNumber,
-            repetitionNumber: stage.repetitionNumber,
-            partial: partial
-        )
-        if enqueued {
-            savedCount += 1
-        } else {
-            claimedStageIDs.remove(stage.id)
-        }
-        return enqueued
     }
 }

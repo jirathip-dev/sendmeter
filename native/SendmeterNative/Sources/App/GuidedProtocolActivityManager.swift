@@ -18,10 +18,11 @@ import SendmeterCore
 /// #674 review N1: this manager NEVER stores a `ForceProtocolRun`. A run is a
 /// struct, so a copy cached here would freeze the card on the stage captured
 /// at `start()` — the exact defect that shipped in the previous round. The
-/// authoritative run lives as `@State` in `GuidedForceProtocolView`; every
-/// push takes the LIVE run value (`refresh(run:at:)` / `updatePeak(_:run:at:)`),
-/// and the mirror in Core derives the snapshot from it at call time. Nothing
-/// derived from the run may be cached across a transition.
+/// authoritative run lives in the parent-owned
+/// `GuidedForceProtocolSession`; every push takes the LIVE run value
+/// (`refresh(run:at:)` / `updatePeak(_:run:at:)`), and the mirror in Core
+/// derives the snapshot from it at call time. Nothing derived from the run
+/// may be cached across a transition.
 ///
 /// KEEP-IN-SYNC note: the widget extension (a SEPARATE process, no Core
 /// dependency) never compiles this manager or `GuidedActivityContent` — it
