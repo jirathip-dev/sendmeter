@@ -180,6 +180,54 @@ final class AcwrProjectionTests: XCTestCase {
         XCTAssertEqual(p.days.last?.date, "2026-08-22")
     }
 
+    // MARK: - Projection chart axis labels
+
+    func testNowLabelDoesNotRepeatTheCurrentRatioBesideAnEarlyCrossing() {
+        XCTAssertEqual(
+            AcwrProjection.projectionXAxisLabelLines(
+                dayOffset: 0,
+                crossingDayOffset: 1,
+                crossingWeekday: "Sat"
+            ),
+            ["Now"]
+        )
+        XCTAssertEqual(
+            AcwrProjection.projectionXAxisLabelLines(
+                dayOffset: 1,
+                crossingDayOffset: 1,
+                crossingWeekday: "Sat"
+            ),
+            ["Sat"]
+        )
+        XCTAssertEqual(
+            AcwrProjection.projectionXAxisLabelLines(
+                dayOffset: 2,
+                crossingDayOffset: 2,
+                crossingWeekday: "Sun"
+            ),
+            ["Sun"]
+        )
+    }
+
+    func testDaySevenCrossingKeepsWeekdayAndHorizonOnSeparateLines() {
+        XCTAssertEqual(
+            AcwrProjection.projectionXAxisLabelLines(
+                dayOffset: 7,
+                crossingDayOffset: 7,
+                crossingWeekday: "Sat"
+            ),
+            ["Sat", "+7d"]
+        )
+        XCTAssertEqual(
+            AcwrProjection.projectionXAxisLabelLines(
+                dayOffset: 7,
+                crossingDayOffset: nil,
+                crossingWeekday: nil
+            ),
+            ["+7d"]
+        )
+    }
+
     func testReturnsNilWithNoStateOrZeroChronicTerm() {
         XCTAssertNil(
             AcwrProjection.project(state: nil, band: capacityBand, referenceDate: reference, timeZone: bangkok)
