@@ -42,7 +42,7 @@ export default function EditSessionSheet({ session, onSave, onClose }: Props) {
   return (
     <Sheet
       title="Edit session"
-      subtitle={`${session.date}${session.workoutSource ? ` · ${session.workoutSource === "watch" ? "auto-tracked" : "phone"} workout — stays flagged after editing` : ""}`}
+      subtitle={`${session.date}${session.workoutSource ? ` · ${session.workoutSource === "watch" ? "auto-tracked" : "manual"} workout — stays flagged after editing` : ""}`}
       onClose={onClose}
     >
       <span className="field-label">Session Type</span>
