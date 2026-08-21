@@ -13,6 +13,9 @@ struct DashboardView: View {
                 LazyVStack(spacing: 16) {
                     TodayDecisionCard()
                     ReadinessTrendCard()
+                    // #704: keep the paired context cards on one stable
+                    // baseline while Send Conditions moves from Check to a
+                    // populated or failed reading.
                     HStack(alignment: .top, spacing: 16) {
                         PhaseCard(showPhases: $showPhases)
                         SendConditionsCard()
@@ -160,7 +163,7 @@ private struct PhaseCard: View {
             Haptics.shared.tap()
             showPhases = true
         } label: {
-            SurfaceCard {
+            SurfaceCard(minHeight: DashboardCardLayout.contextRowCardHeight) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         SectionLabel("Training Block", systemImage: "calendar.badge.clock")
@@ -447,7 +450,7 @@ private struct SendConditionsCard: View {
     }
 
     var body: some View {
-        SurfaceCard {
+        SurfaceCard(minHeight: DashboardCardLayout.contextRowCardHeight) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     SectionLabel("Send Conditions", systemImage: "cloud.sun")

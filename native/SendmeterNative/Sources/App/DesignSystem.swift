@@ -77,15 +77,17 @@ public extension Color {
 
 public struct SurfaceCard<Content: View>: View {
     private let content: Content
+    private let minHeight: CGFloat?
 
-    public init(@ViewBuilder content: () -> Content) {
+    public init(minHeight: CGFloat? = nil, @ViewBuilder content: () -> Content) {
         self.content = content()
+        self.minHeight = minHeight
     }
 
     public var body: some View {
         content
             .padding(SendmeterStyle.spacing)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .leading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: SendmeterStyle.radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: SendmeterStyle.radius, style: .continuous)
