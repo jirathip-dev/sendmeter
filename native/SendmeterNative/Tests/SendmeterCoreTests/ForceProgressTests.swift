@@ -108,52 +108,35 @@ final class ForceProgressTests: XCTestCase {
         XCTAssertEqual(ForceProgress.barFraction(value: nil, maximum: 100), 0.12, accuracy: 0.0001)
     }
 
-    func testStaticCurveInputIdentityTracksTagAndSideEditsAcrossAllRows() {
+    func testStaticCurveInputsChangedTracksTagAndSideEditsAcrossAllRows() {
         let rows = [
             recording(index: 0, id: stableID(1), tag: "Crimp", side: .left),
             recording(index: 1, id: stableID(2), tag: "Crimp", side: .left)
         ]
-        let baseline = ForceProgress.staticCurveInputIdentity(
-            recordings: rows,
-            tag: "Crimp",
-            side: .left
-        )
 
         var tagEdited = rows
         tagEdited[0].tag = "Pinch"
-        XCTAssertNotEqual(
-            baseline,
-            ForceProgress.staticCurveInputIdentity(
-                recordings: tagEdited,
-                tag: "Crimp",
-                side: .left
-            )
+        XCTAssertTrue(
+            ForceProgress.staticCurveInputsChanged(before: rows, after: tagEdited)
         )
 
         var sideEdited = rows
         sideEdited[0].side = .right
-        XCTAssertNotEqual(
-            baseline,
-            ForceProgress.staticCurveInputIdentity(
-                recordings: sideEdited,
-                tag: "Crimp",
-                side: .left
-            )
+        XCTAssertTrue(
+            ForceProgress.staticCurveInputsChanged(before: rows, after: sideEdited)
         )
 
-        // The identity is order-independent, so a refresh sort change does
-        // not create a spurious fit while every metadata input is unchanged.
-        XCTAssertEqual(
-            baseline,
-            ForceProgress.staticCurveInputIdentity(
-                recordings: Array(rows.reversed()),
-                tag: "Crimp",
-                side: .left
+        // A refresh sort change does not create a spurious fit while every
+        // metadata input is unchanged.
+        XCTAssertFalse(
+            ForceProgress.staticCurveInputsChanged(
+                before: rows,
+                after: Array(rows.reversed())
             )
         )
     }
 
-    func testStaticCurveInputIdentityTracksCurveChangePastCompactWindow() {
+    func testStaticCurveInputsChangedTracksCurveChangePastCompactWindow() {
         let rows = (0..<30).map { index in
             recording(
                 index: index,
@@ -163,11 +146,6 @@ final class ForceProgressTests: XCTestCase {
                 average: 15
             )
         }
-        let baseline = ForceProgress.staticCurveInputIdentity(
-            recordings: rows,
-            tag: "Crimp",
-            side: .left
-        )
 
         // Index 29 is deliberately outside the old first-24 fingerprint.
         var changed = rows
@@ -178,13 +156,8 @@ final class ForceProgressTests: XCTestCase {
             side: .left,
             average: 18
         )
-        XCTAssertNotEqual(
-            baseline,
-            ForceProgress.staticCurveInputIdentity(
-                recordings: changed,
-                tag: "Crimp",
-                side: .left
-            )
+        XCTAssertTrue(
+            ForceProgress.staticCurveInputsChanged(before: rows, after: changed)
         )
 
         // Set execution metrics do not participate in Static evidence or its
@@ -197,10 +170,10 @@ final class ForceProgressTests: XCTestCase {
             driftPercent: -1,
             cadenceAdherencePercent: 98
         )
-        XCTAssertEqual(
-            baseline,
-            ForceProgress.staticCurveInputIdentity(
-                recordings: rows.map { row in
+        XCTAssertFalse(
+            ForceProgress.staticCurveInputsChanged(
+                before: rows,
+                after: rows.map { row in
                     recording(
                         index: Int(row.recordedAt.timeIntervalSince1970 / 86_400),
                         id: row.id,
@@ -208,62 +181,62 @@ final class ForceProgressTests: XCTestCase {
                         side: row.side,
                         setMetrics: metrics
                     )
-                },
-                tag: "Crimp",
-                side: .left
+                }
             )
         )
     }
 
-    func testStaticCurveInputIdentityIncludesPendingSamplesAndAccountGeneration() {
-        let row = recording(index: 1, id: stableID(1), tag: "Crimp", side: .left)
-        let pendingID = stableID(2)
-        let accountA = stableID(100)
-        let baseline = ForceProgress.staticCurveInputIdentity(
-            recordings: [row],
-            tag: "Crimp",
-            side: .left,
-            pendingRecordingIDs: [],
-            locallyAvailableSampleIDs: [],
-            localSampleGeneration: 1,
-            accountUserID: accountA,
+    func testForceProgressRevisionRestartsCurveKeyAtUploadCompletionBoundary() {
+        let account = stableID(100)
+        var revision = ForceProgressInputRevision()
+        let initial = ForceProgressCurveInputKey(
+            selectedTag: "Crimp",
+            selectedSide: TindeqSide.left.rawValue,
+            revision: revision.value,
+            accountUserID: account,
             accountEpoch: 4
         )
 
+        _ = revision.apply(.recordings)
+        let afterRecordingMutation = ForceProgressCurveInputKey(
+            selectedTag: "Crimp",
+            selectedSide: TindeqSide.left.rawValue,
+            revision: revision.value,
+            accountUserID: account,
+            accountEpoch: 4
+        )
+        XCTAssertNotEqual(initial, afterRecordingMutation)
+
+        // Upload success removes the local sample set after awaited work. It
+        // must publish a second revision so a rejected in-flight fit is
+        // followed by a fresh SwiftUI task rather than a blank detail.
+        let revisionBeforeLocalRemoval = revision.value
+        _ = revision.apply(.localSamples)
+        XCTAssertGreaterThan(revision.value, revisionBeforeLocalRemoval)
+        XCTAssertEqual(revision.localSampleGeneration, 1)
+        let afterLocalRemoval = ForceProgressCurveInputKey(
+            selectedTag: "Crimp",
+            selectedSide: TindeqSide.left.rawValue,
+            revision: revision.value,
+            accountUserID: account,
+            accountEpoch: 4
+        )
+        XCTAssertNotEqual(afterRecordingMutation, afterLocalRemoval)
+
+        _ = revision.apply(.pendingRecordings)
         XCTAssertNotEqual(
-            baseline,
-            ForceProgress.staticCurveInputIdentity(
-                recordings: [row],
-                tag: "Crimp",
-                side: .left,
-                pendingRecordingIDs: [pendingID],
-                locallyAvailableSampleIDs: [pendingID],
-                localSampleGeneration: 1,
-                accountUserID: accountA,
+            afterLocalRemoval,
+            ForceProgressCurveInputKey(
+                selectedTag: "Crimp",
+                selectedSide: TindeqSide.left.rawValue,
+                revision: revision.value,
+                accountUserID: account,
                 accountEpoch: 4
             )
         )
-        XCTAssertNotEqual(
-            baseline,
-            ForceProgress.staticCurveInputIdentity(
-                recordings: [row],
-                tag: "Crimp",
-                side: .left,
-                localSampleGeneration: 2,
-                accountUserID: accountA,
-                accountEpoch: 4
-            )
-        )
-        XCTAssertNotEqual(
-            baseline,
-            ForceProgress.staticCurveInputIdentity(
-                recordings: [row],
-                tag: "Crimp",
-                side: .left,
-                accountUserID: stableID(101),
-                accountEpoch: 5
-            )
-        )
+
+        _ = revision.apply(.accountReset)
+        XCTAssertNotEqual(revision.value, 0)
     }
 
     private func recording(

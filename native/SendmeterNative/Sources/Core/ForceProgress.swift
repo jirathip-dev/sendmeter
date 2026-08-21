@@ -51,41 +51,21 @@ public enum ForceProgress {
         )
     }
 
-    /// A stable, metadata-only identity for the input to a selected Static
-    /// curve. The full recording list is retained here rather than a view
-    /// window: an old row can enter/leave `pickCurveRecordings` when its tag,
-    /// side, duration, date, or force metadata changes. Raw samples are not
-    /// part of the identity; `localSampleGeneration` is the AppModel-owned
-    /// invalidation boundary for the separate in-memory sample store.
-    public static func staticCurveInputIdentity(
-        recordings: [TindeqRecording],
-        tag: String?,
-        side: TindeqSide?,
-        pendingRecordingIDs: Set<UUID> = Set<UUID>(),
-        locallyAvailableSampleIDs: Set<UUID> = Set<UUID>(),
-        localSampleGeneration: UInt64 = 0,
-        accountUserID: UUID? = nil,
-        accountEpoch: UInt64 = 0
-    ) -> StaticCurveInputIdentity {
-        let recordingIdentities = recordings
-            .map(StaticCurveRecordingIdentity.init)
-            .sorted { lhs, rhs in
-                lhs.id.uuidString < rhs.id.uuidString
-            }
-        return StaticCurveInputIdentity(
-            selectedTag: tag,
-            selectedSide: side?.rawValue,
-            recordings: recordingIdentities,
-            pendingRecordingIDs: pendingRecordingIDs.sorted {
-                $0.uuidString < $1.uuidString
-            },
-            locallyAvailableSampleIDs: locallyAvailableSampleIDs.sorted {
-                $0.uuidString < $1.uuidString
-            },
-            localSampleGeneration: localSampleGeneration,
-            accountUserID: accountUserID,
-            accountEpoch: accountEpoch
-        )
+    /// Whether the visible recording metadata changed in a way that can alter
+    /// Static trend evidence or the existing curve candidate/picking rules.
+    /// This is intentionally evaluated at model mutation boundaries, never
+    /// while SwiftUI is rendering the Force tab.
+    public static func staticCurveInputsChanged(
+        before: [TindeqRecording],
+        after: [TindeqRecording]
+    ) -> Bool {
+        let beforeByID = Dictionary(uniqueKeysWithValues: before.map {
+            ($0.id, StaticCurveRecordingIdentity($0))
+        })
+        let afterByID = Dictionary(uniqueKeysWithValues: after.map {
+            ($0.id, StaticCurveRecordingIdentity($0))
+        })
+        return beforeByID != afterByID
     }
 
     public static func staticCapacityProgress(
@@ -183,36 +163,55 @@ public struct StaticCurveRecordingIdentity: Hashable, Sendable {
     }
 }
 
-/// Complete task identity for the side/tag-scoped Static curve request.
-/// Account and optimistic/local-sample generations are included because the
-/// same visible recording IDs can otherwise be reused across an account
-/// switch or a pending-sample replacement.
-public struct StaticCurveInputIdentity: Hashable, Sendable {
+/// Model-owned mutation contract for the Force progress curve task. The
+/// AppModel mirrors `value` into its `@Published` revision; keeping the
+/// counters here makes every invalidate boundary testable without compiling
+/// the UIKit/SwiftUI target.
+public enum ForceProgressInputMutation: Equatable, Sendable {
+    case recordings
+    case pendingRecordings
+    case localSamples
+    case accountReset
+}
+
+public struct ForceProgressInputRevision: Equatable, Sendable {
+    public private(set) var value: UInt64
+    public private(set) var localSampleGeneration: UInt64
+
+    public init(value: UInt64 = 0, localSampleGeneration: UInt64 = 0) {
+        self.value = value
+        self.localSampleGeneration = localSampleGeneration
+    }
+
+    @discardableResult
+    public mutating func apply(_ mutation: ForceProgressInputMutation) -> UInt64 {
+        if mutation == .localSamples {
+            localSampleGeneration &+= 1
+        }
+        value &+= 1
+        return value
+    }
+}
+
+/// O(1) SwiftUI task identity for the selected Static curve. The recording
+/// metadata is represented by the AppModel revision, not rebuilt in `body`.
+public struct ForceProgressCurveInputKey: Hashable, Sendable {
     public let selectedTag: String?
     public let selectedSide: String?
-    public let recordings: [StaticCurveRecordingIdentity]
-    public let pendingRecordingIDs: [UUID]
-    public let locallyAvailableSampleIDs: [UUID]
-    public let localSampleGeneration: UInt64
+    public let revision: UInt64
     public let accountUserID: UUID?
     public let accountEpoch: UInt64
 
     public init(
         selectedTag: String?,
         selectedSide: String?,
-        recordings: [StaticCurveRecordingIdentity],
-        pendingRecordingIDs: [UUID],
-        locallyAvailableSampleIDs: [UUID],
-        localSampleGeneration: UInt64,
+        revision: UInt64,
         accountUserID: UUID?,
         accountEpoch: UInt64
     ) {
         self.selectedTag = selectedTag
         self.selectedSide = selectedSide
-        self.recordings = recordings
-        self.pendingRecordingIDs = pendingRecordingIDs
-        self.locallyAvailableSampleIDs = locallyAvailableSampleIDs
-        self.localSampleGeneration = localSampleGeneration
+        self.revision = revision
         self.accountUserID = accountUserID
         self.accountEpoch = accountEpoch
     }

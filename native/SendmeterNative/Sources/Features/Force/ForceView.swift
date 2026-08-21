@@ -450,8 +450,8 @@ struct ForceView: View {
         return "\(presetKey)|\(tag)|\(side.rawValue)|\(recordingFingerprint)"
     }
 
-    private var progressCurveKey: StaticCurveInputIdentity {
-        model.forceProgressCurveInputIdentity(
+    private var progressCurveKey: ForceProgressCurveInputKey {
+        model.forceProgressCurveInputKey(
             tag: progressTag,
             side: progressSide
         )
@@ -459,7 +459,7 @@ struct ForceView: View {
 
     @MainActor
     private func loadProgressCurve() async {
-        let requestIdentity = progressCurveKey
+        let requestKey = progressCurveKey
         guard let tag = progressTag, let side = progressSide else {
             sideScopedForceCurve = nil
             return
@@ -468,9 +468,9 @@ struct ForceView: View {
         let curve = await model.forceCurveModel(
             tag: tag,
             side: side,
-            inputIdentity: requestIdentity
+            inputKey: requestKey
         )
-        guard !Task.isCancelled, progressCurveKey == requestIdentity else { return }
+        guard !Task.isCancelled, progressCurveKey == requestKey else { return }
         sideScopedForceCurve = curve
     }
 

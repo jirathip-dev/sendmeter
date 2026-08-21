@@ -167,6 +167,10 @@ public final class AppModel: ObservableObject {
     /// use this to keep the Force consistency card's empty state honest.
     @Published public private(set) var hasLoadedRecordings = false
     @Published public private(set) var recordings: [TindeqRecording] = []
+    /// O(1) task identity for the selected Static progress curve. This is
+    /// published only by actual curve-input mutation boundaries; live Tindeq
+    /// display frames do not advance it.
+    @Published public private(set) var forceProgressCurveRevision: UInt64 = 0
     @Published public private(set) var presets: [TindeqPreset] = []
     @Published public private(set) var routines: [RoutinePreset] = []
     @Published public private(set) var workouts: [WorkoutListItem] = []
@@ -352,25 +356,51 @@ public final class AppModel: ObservableObject {
     /// the point-estimate RPE fit include a just-saved rep before its network
     /// insert has reconciled.
     private var pendingCurveSamples: [UUID: [TindeqSample]] = [:]
-    /// Generation for the metadata-only identity of `pendingCurveSamples`.
-    /// The samples themselves stay out of the SwiftUI task key, but replacing
-    /// or removing a local sample set must still cancel/restart a fit.
-    private var pendingCurveSampleGeneration: UInt64 = 0
+    private var forceProgressInputRevision = ForceProgressInputRevision()
+
+    private func publishForceProgressInputMutation(_ mutation: ForceProgressInputMutation) {
+        let revision = forceProgressInputRevision.apply(mutation)
+        forceProgressCurveRevision = revision
+    }
 
     private func storePendingCurveSamples(_ samples: [TindeqSample], for id: UUID) {
         pendingCurveSamples[id] = samples
-        pendingCurveSampleGeneration &+= 1
+        publishForceProgressInputMutation(.localSamples)
     }
 
     private func removePendingCurveSamples(for id: UUID) {
         guard pendingCurveSamples.removeValue(forKey: id) != nil else { return }
-        pendingCurveSampleGeneration &+= 1
+        publishForceProgressInputMutation(.localSamples)
     }
 
     private func clearPendingCurveSamples() {
         guard !pendingCurveSamples.isEmpty else { return }
         pendingCurveSamples.removeAll()
-        pendingCurveSampleGeneration &+= 1
+        publishForceProgressInputMutation(.localSamples)
+    }
+
+    private func insertPendingRecording(_ recording: TindeqRecording, accountUserID: UUID) {
+        let before = pendingRecordings.recordings(accountUserID: accountUserID)
+        let beforeIDs = pendingRecordings.ids(accountUserID: accountUserID)
+        pendingRecordings.insert(recording, accountUserID: accountUserID)
+        let after = pendingRecordings.recordings(accountUserID: accountUserID)
+        guard beforeIDs != pendingRecordings.ids(accountUserID: accountUserID)
+            || ForceProgress.staticCurveInputsChanged(before: before, after: after)
+        else { return }
+        publishForceProgressInputMutation(.pendingRecordings)
+    }
+
+    private func removePendingRecording(for id: UUID, accountUserID: UUID) {
+        guard pendingRecordings.contains(id: id, accountUserID: accountUserID) else { return }
+        pendingRecordings.removeValue(for: id, accountUserID: accountUserID)
+        publishForceProgressInputMutation(.pendingRecordings)
+    }
+
+    private func removePendingRecordings(withIDs ids: Set<UUID>, accountUserID: UUID) {
+        let before = pendingRecordings.ids(accountUserID: accountUserID)
+        pendingRecordings.removeValues(withIDs: ids, accountUserID: accountUserID)
+        guard before != pendingRecordings.ids(accountUserID: accountUserID) else { return }
+        publishForceProgressInputMutation(.pendingRecordings)
     }
 
     public init(
@@ -944,6 +974,12 @@ public final class AppModel: ObservableObject {
                 // rep reconciliation below stays key-scoped.
                 invalidateTagCurveCache()
                 mergeRecordings(remote: fetchedRecordings)
+                // The sample rows are fetched later by the curve request and
+                // may have changed without any recording metadata change.
+                // Publish this authoritative refresh boundary so a scoped
+                // progress task restarts even when the metadata snapshot is
+                // equal.
+                publishForceProgressInputMutation(.recordings)
                 hasLoadedRecordings = true
             }
             guard publishedLists else { return }
@@ -1417,7 +1453,7 @@ public final class AppModel: ObservableObject {
         // has reconciled, and it must participate in the point estimate used
         // by the session-end RPE lookup.
         storePendingCurveSamples(recording.samples, for: recording.id)
-        pendingRecordings.insert(optimistic, accountUserID: userID)
+        insertPendingRecording(optimistic, accountUserID: userID)
         invalidateTagCurveKeys([savedKey])
         mergeRecordings(
             remote: recordings.filter {
@@ -1446,7 +1482,7 @@ public final class AppModel: ObservableObject {
             // notice IS the out-loud reporting (no Sentry in this target);
             // `surfaceLostRecordingNoticeIfAny` shows it on next foreground.
             LostRecordingStore.note(reason: "recording", in: .standard)
-            pendingRecordings.removeValue(for: recording.id, accountUserID: userID)
+            removePendingRecording(for: recording.id, accountUserID: userID)
             removePendingCurveSamples(for: recording.id)
             invalidateTagCurveKeys([savedKey])
             mergeRecordings(
@@ -1662,22 +1698,14 @@ public final class AppModel: ObservableObject {
     /// side. The published tag-curve cache intentionally remains all-sides
     /// because RPE and Focus Next consume that identity; this one-shot detail
     /// fit is scoped to the same measured Static evidence as the trend.
-    public func forceProgressCurveInputIdentity(
+    public func forceProgressCurveInputKey(
         tag: String?,
         side: TindeqSide?
-    ) -> StaticCurveInputIdentity {
-        let locallyAvailableSampleIDs = Set(
-            pendingCurveSamples.compactMap { id, samples in
-                samples.isEmpty ? nil : id
-            }
-        )
-        return ForceProgress.staticCurveInputIdentity(
-            recordings: recordings,
-            tag: tag,
-            side: side,
-            pendingRecordingIDs: pendingRecordings.ids(accountUserID: currentUserID),
-            locallyAvailableSampleIDs: locallyAvailableSampleIDs,
-            localSampleGeneration: pendingCurveSampleGeneration,
+    ) -> ForceProgressCurveInputKey {
+        ForceProgressCurveInputKey(
+            selectedTag: tag,
+            selectedSide: side?.rawValue,
+            revision: forceProgressCurveRevision,
             accountUserID: currentUserID,
             accountEpoch: accountEpoch
         )
@@ -1686,15 +1714,15 @@ public final class AppModel: ObservableObject {
     public func forceCurveModel(
         tag: String,
         side: TindeqSide,
-        inputIdentity: StaticCurveInputIdentity? = nil
+        inputKey: ForceProgressCurveInputKey? = nil
     ) async -> ForceCurveModel? {
-        let requestIdentity = inputIdentity
-            ?? forceProgressCurveInputIdentity(tag: tag, side: side)
+        let requestKey = inputKey
+            ?? forceProgressCurveInputKey(tag: tag, side: side)
         guard !Task.isCancelled,
               side != .unspecified,
               let userID = currentUserID
         else { return nil }
-        guard forceProgressCurveInputIdentity(tag: tag, side: side) == requestIdentity else {
+        guard forceProgressCurveInputKey(tag: tag, side: side) == requestKey else {
             return nil
         }
 
@@ -1703,8 +1731,12 @@ public final class AppModel: ObservableObject {
             accountEpoch: accountEpoch
         )
         let recordingsSnapshot = recordings
-        let pendingIDs = Set(requestIdentity.pendingRecordingIDs)
-        let locallyAvailableSampleIDs = Set(requestIdentity.locallyAvailableSampleIDs)
+        let pendingIDs = pendingRecordings.ids(accountUserID: userID)
+        let locallyAvailableSampleIDs = Set(
+            pendingCurveSamples.compactMap { id, samples in
+                samples.isEmpty ? nil : id
+            }
+        )
         let evidence = ForceProgress.staticCapacityEvidence(
             recordings: recordingsSnapshot,
             tag: tag,
@@ -1731,7 +1763,7 @@ public final class AppModel: ObservableObject {
                   to: currentUserID,
                   accountEpoch: accountEpoch
               ),
-              forceProgressCurveInputIdentity(tag: tag, side: side) == requestIdentity
+              forceProgressCurveInputKey(tag: tag, side: side) == requestKey
         else { return nil }
         return curveModel
     }
@@ -2337,7 +2369,9 @@ public final class AppModel: ObservableObject {
                     replaceSession(previousSessionBase)
                 }
             }
+            let before = recordings
             recordings.removeAll { $0.id == recording.id }
+            publishForceProgressRecordingMutationIfNeeded(before: before, after: recordings)
             invalidateTagCurveKeys([key])
 
             let deleteCreatedAt = Date()
@@ -3478,7 +3512,7 @@ public final class AppModel: ObservableObject {
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) {
-                    pendingRecordings.removeValue(
+                    removePendingRecording(
                         for: recording.id,
                         accountUserID: item.accountUserID
                     )
@@ -4285,11 +4319,16 @@ public final class AppModel: ObservableObject {
                     return nil
                 }()
                 pendingSessions.removeValue(forKey: id)
-                pendingRecordings.removeValue(for: id, accountUserID: userID)
+                removePendingRecording(for: id, accountUserID: userID)
                 removePendingCurveSamples(for: id)
                 sessions.removeAll { $0.id == id }
+                let beforeRecordings = recordings
                 let beforeCount = recordings.count
                 recordings.removeAll { $0.id == id }
+                publishForceProgressRecordingMutationIfNeeded(
+                    before: beforeRecordings,
+                    after: recordings
+                )
                 let keys = affectedKey.map { Set([$0]) } ?? Set<TagCurveKey>()
                 if recordings.count != beforeCount || !keys.isEmpty {
                     invalidateTagCurveKeys(keys)
@@ -4671,12 +4710,22 @@ public final class AppModel: ObservableObject {
                 )
             )
         }
+        let pendingBeforeRestore = pendingRecordings.recordings(accountUserID: currentUserID)
+        let pendingIDsBeforeRestore = pendingRecordings.ids(accountUserID: currentUserID)
         guard pendingRecordings.applyRestored(
             restoredRecordings,
             capturedBy: accountFetch,
             currentUserID: currentUserID,
             accountEpoch: self.accountEpoch
         ) else { return }
+        let pendingAfterRestore = pendingRecordings.recordings(accountUserID: currentUserID)
+        if pendingIDsBeforeRestore != pendingRecordings.ids(accountUserID: currentUserID)
+            || ForceProgress.staticCurveInputsChanged(
+                before: pendingBeforeRestore,
+                after: pendingAfterRestore
+            ) {
+            publishForceProgressInputMutation(.pendingRecordings)
+        }
         for item in queued {
             guard case let .recording(recording) = item.payload,
                   item.quarantined == nil,
@@ -4883,7 +4932,9 @@ public final class AppModel: ObservableObject {
         }
 
         if let index = recordings.firstIndex(where: { $0.id == edit.recordingID }) {
+            let before = recordings
             recordings[index] = RecordingEditReducer.apply(edit, to: recordings[index])
+            publishForceProgressRecordingMutationIfNeeded(before: before, after: recordings)
         }
         if let sessionID = edit.sessionID,
            let index = sessions.firstIndex(where: { $0.id == sessionID }) {
@@ -4955,9 +5006,9 @@ public final class AppModel: ObservableObject {
         }
         let remoteIDs = Set(visibleRemote.map(\.id))
         if let currentUserID {
-            pendingRecordings.removeValues(withIDs: remoteIDs, accountUserID: currentUserID)
+            removePendingRecordings(withIDs: remoteIDs, accountUserID: currentUserID)
         }
-        recordings = pendingRecordings
+        let merged = pendingRecordings
             .merged(remote: visibleRemote, accountUserID: currentUserID)
             .filter { !recordingEditCoordinator.isDeleted($0.id) }
             .map { recording in
@@ -4966,6 +5017,8 @@ public final class AppModel: ObservableObject {
                 } ?? recording
             }
             .sorted { $0.recordedAt > $1.recordedAt }
+        recordings = merged
+        publishForceProgressRecordingMutationIfNeeded(before: previous, after: merged)
         let affectedKeys = changedTagCurveKeys(before: previous, after: recordings)
         invalidateTagCurveKeys(affectedKeys)
     }
@@ -5016,7 +5069,9 @@ public final class AppModel: ObservableObject {
 
     private func replaceRecording(_ recording: TindeqRecording) {
         guard !recordingEditCoordinator.isDeleted(recording.id) else {
+            let previous = recordings
             recordings.removeAll { $0.id == recording.id }
+            publishForceProgressRecordingMutationIfNeeded(before: previous, after: recordings)
             return
         }
         let previousRecording = recordings.first(where: { $0.id == recording.id })
@@ -5041,10 +5096,21 @@ public final class AppModel: ObservableObject {
         // optimistic row. Its samples are a new fit input boundary, and the
         // old cache may have been built before this recording existed.
         if recordings != previous || previousRecording != nil {
+            publishForceProgressRecordingMutationIfNeeded(before: previous, after: recordings)
             invalidateTagCurveKeys(
                 TagCurveCachePolicy.affectedKeys(old: oldKey, new: newKey)
             )
         }
+    }
+
+    private func publishForceProgressRecordingMutationIfNeeded(
+        before: [TindeqRecording],
+        after: [TindeqRecording]
+    ) {
+        guard ForceProgress.staticCurveInputsChanged(before: before, after: after) else {
+            return
+        }
+        publishForceProgressInputMutation(.recordings)
     }
 
     private func changedTagCurveKeys(
@@ -5121,6 +5187,7 @@ public final class AppModel: ObservableObject {
 
     private func resetAccountState() {
         accountEpoch &+= 1
+        publishForceProgressInputMutation(.accountReset)
         refreshingOwner = nil
         isRefreshing = false
         sessions = []
