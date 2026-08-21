@@ -154,40 +154,184 @@ struct TrainingLoadSheet: View {
 private struct WeeklyBarsView: View {
     let weeks: [WeeklyLoad]
 
+    @State private var selectedIndex: Int?
+    /// Haptic dedupe guard: a drag can deliver many frames for the same bar,
+    /// so this must track the last tick independently of the rendered state.
+    @State private var tickedIndex: Int?
+
+    private let barSpacing = CGFloat(TrainingLoadInteraction.weeklyBarSpacing)
+    /// Reserve the tooltip slot even when nothing is selected. This keeps the
+    /// chart's origin fixed while a drag changes the selected bar.
+    private let tooltipHeight: CGFloat = 60
+
     private var maxW: Double { max(weeks.map(\.total).max() ?? 0, 1) }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            ForEach(Array(weeks.enumerated()), id: \.offset) { index, week in
-                VStack(spacing: 4) {
-                    Text(TrainingLoad.formatAU(week.total))
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: index == weeks.count - 1
-                                    ? [ChartToken.optimal.color(scheme).opacity(0.58), ChartToken.optimal.color(scheme)]
-                                    : [ChartToken.load.color(scheme).opacity(0.58), ChartToken.load.color(scheme)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(height: max((week.total / maxW) * 64, 2))
-                    Text(week.label)
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .topLeading) {
+                if let selectedIndex, let week = week(at: selectedIndex) {
+                    TrainingLoadTooltip {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(week.label)
+                                .font(.subheadline.weight(.semibold))
+                            Text("\(TrainingLoad.formatAU(week.total)) AU")
+                                .font(.caption2.monospacedDigit())
+                            if let delta = delta(for: selectedIndex) {
+                                Text(deltaLabel(delta))
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(deltaColor(delta))
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(week.label): \(TrainingLoad.formatAU(week.total)) AU")
             }
+            .frame(height: tooltipHeight, alignment: .topLeading)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .bottomLeading) {
+                    HStack(alignment: .bottom, spacing: barSpacing) {
+                        ForEach(Array(weeks.enumerated()), id: \.offset) { index, week in
+                            VStack(spacing: 4) {
+                                Text(TrainingLoad.formatAU(week.total))
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: index == weeks.count - 1
+                                                ? [ChartToken.optimal.color(scheme).opacity(0.58), ChartToken.optimal.color(scheme)]
+                                                : [ChartToken.load.color(scheme).opacity(0.58), ChartToken.load.color(scheme)],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .frame(height: max((week.total / maxW) * 64, 2))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                            .stroke(selectedIndex == index ? Color.primary : .clear, lineWidth: 1.5)
+                                    )
+                                Text(week.label)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .opacity(selectedIndex == nil || selectedIndex == index ? 1 : 0.5)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(accessibilityLabel(for: week, index: index))
+                            .accessibilityValue(selectedIndex == index ? "Selected" : "")
+                            .accessibilityHint(selectedIndex == index ? "Double-tap to hide details." : "Double-tap to show details.")
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityAddTraits(selectedIndex == index ? .isSelected : [])
+                            .accessibilityAction {
+                                toggleSelection(index)
+                            }
+                        }
+                    }
+
+                    // One chart-level hit surface keeps the bars usable on a
+                    // phone even when the bar itself is only a few points
+                    // wide. The surface is hidden from VoiceOver; each bar
+                    // above remains the accessible element.
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(
+                            SpatialTapGesture()
+                                .onEnded { value in
+                                    guard let index = index(at: value.location.x, width: proxy.size.width) else { return }
+                                    toggleSelection(index)
+                                }
+                        )
+                        .simultaneousGesture(
+                            // A deliberate drag scrubs between bars without
+                            // hijacking a vertical ScrollView gesture.
+                            DragGesture(minimumDistance: 12)
+                                .onChanged { value in
+                                    if let index = index(at: value.location.x, width: proxy.size.width) {
+                                        select(index)
+                                    }
+                                }
+                        )
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(height: 108)
         }
-        .frame(height: 108)
+        .onChange(of: weeks) { _ in
+            // Data replacement is passive; never buzz merely because the
+            // sheet rebuilt while a sync was in flight.
+            selectedIndex = nil
+            tickedIndex = nil
+        }
+        .onDisappear {
+            selectedIndex = nil
+            tickedIndex = nil
+        }
     }
 
     @Environment(\.colorScheme) private var scheme
+
+    private func week(at index: Int) -> WeeklyLoad? {
+        guard weeks.indices.contains(index) else { return nil }
+        return weeks[index]
+    }
+
+    private func delta(for index: Int) -> WeekDelta? {
+        guard index > 0, index < weeks.count else { return nil }
+        return TrainingLoad.weekDelta(
+            current: weeks[index].total,
+            previous: weeks[index - 1].total
+        )
+    }
+
+    private func deltaLabel(_ delta: WeekDelta) -> String {
+        "\(delta.arrow) \(Int(abs(delta.pct).rounded()))% vs prior wk"
+    }
+
+    private func deltaColor(_ delta: WeekDelta) -> Color {
+        if delta.isFlat { return .secondary }
+        return delta.isUp
+            ? ChartToken.optimal.color(scheme)
+            : ChartToken.alert.color(scheme)
+    }
+
+    private func accessibilityLabel(for week: WeeklyLoad, index: Int) -> String {
+        var label = "\(week.label): \(TrainingLoad.formatAU(week.total)) AU"
+        if let delta = delta(for: index) {
+            label += ", \(deltaLabel(delta))"
+        }
+        return label
+    }
+
+    private func index(at x: CGFloat, width: CGFloat) -> Int? {
+        TrainingLoadInteraction.weeklyBarIndex(
+            x: Double(x),
+            width: Double(width),
+            count: weeks.count,
+            spacing: Double(barSpacing)
+        )
+    }
+
+    private func select(_ index: Int) {
+        guard weeks.indices.contains(index) else { return }
+        setSelection(index)
+    }
+
+    private func toggleSelection(_ index: Int) {
+        guard weeks.indices.contains(index) else { return }
+        setSelection(
+            TrainingLoadInteraction.toggledSelection(current: tickedIndex, candidate: index)
+        )
+    }
+
+    private func setSelection(_ index: Int?) {
+        if SelectionHaptics.valueChanged(tickedIndex, index) {
+            tickedIndex = index
+            Haptics.shared.play(.selection)
+        }
+        selectedIndex = index
+    }
 }

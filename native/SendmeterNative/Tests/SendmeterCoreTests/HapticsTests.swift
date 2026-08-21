@@ -94,6 +94,19 @@ final class HapticsTests: XCTestCase {
         XCTAssertFalse(SelectionHaptics.valueChanged(day, day))
     }
 
+    func testTrainingLoadScrubTicksOnSelectionAndDismissal() {
+        let day = "2026-08-02"
+
+        // Weekly bars, activity segments and the heatmap all call this guard
+        // from their gesture handlers. Dismissal is a deliberate value change
+        // and therefore gets the same crisp selection cue; rebuilding data is
+        // handled separately and never calls the guard.
+        XCTAssertTrue(SelectionHaptics.valueChanged(nil as String?, day))
+        XCTAssertFalse(SelectionHaptics.valueChanged(day, day))
+        XCTAssertTrue(SelectionHaptics.valueChanged(day, nil))
+        XCTAssertTrue(SelectionHaptics.valueChanged(nil, day))
+    }
+
     // MARK: Vocabulary pins (#656 spec table)
 
     func testSelectionCueIsDistinctFromLight() {

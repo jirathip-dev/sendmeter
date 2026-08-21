@@ -41,6 +41,9 @@ struct ContributionHeatmapView: View {
     @State private var grid: HeatmapGrid?
     @State private var containerWidth: CGFloat = 0
     @State private var selectedDate: String?
+    /// Haptic dedupe guard: a scrub can deliver many frames for one cell, so
+    /// it tracks the last tick independently of the rendered selection.
+    @State private var tickedDate: String?
 
     private static let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     private static let weekdayRows = [1, 3, 5] // Mon / Wed / Fri (0-indexed)
@@ -91,6 +94,10 @@ struct ContributionHeatmapView: View {
 
     private func rebuild() {
         grid = TrainingLoad.heatmapGrid(daily: daily, today: today, weeks: weeks)
+        // Rebuilding is passive (sync/day rollover), so it must not emit a
+        // haptic. A stale selection also cannot survive into a new window.
+        selectedDate = nil
+        tickedDate = nil
     }
 
     // MARK: - Geometry
@@ -174,6 +181,17 @@ struct ContributionHeatmapView: View {
             .opacity(cell.future ? 0.35 : 1)
             .accessibilityElement()
             .accessibilityLabel(accessibilityLabel(for: cell))
+            .accessibilityValue(isSelected(cell) ? "Selected" : "")
+            .accessibilityAddTraits(cell.future ? [] : .isButton)
+            .accessibilityAction {
+                guard !cell.future else { return }
+                select(
+                    TrainingLoadInteraction.toggledSelection(
+                        current: tickedDate,
+                        candidate: cell.date
+                    )
+                )
+            }
             .accessibilityHidden(cell.future)
     }
 
@@ -208,7 +226,12 @@ struct ContributionHeatmapView: View {
                         if let cell = cell(at: value.location, cellSize: cellSize, grid: grid) {
                             // Tap-again on the selected day dismisses the
                             // tooltip (F7); a first tap selects.
-                            selectedDate = selectedDate == cell.date ? nil : cell.date
+                            select(
+                                TrainingLoadInteraction.toggledSelection(
+                                    current: tickedDate,
+                                    candidate: cell.date
+                                )
+                            )
                         }
                     }
             )
@@ -220,7 +243,7 @@ struct ContributionHeatmapView: View {
                 DragGesture(minimumDistance: 12)
                     .onChanged { value in
                         if let cell = cell(at: value.location, cellSize: cellSize, grid: grid) {
-                            selectedDate = cell.date
+                            select(cell.date)
                         }
                     }
             )
@@ -281,6 +304,17 @@ struct ContributionHeatmapView: View {
     }
 
     // MARK: - Selection / metadata
+
+    /// All three Training Load charts use the same selection cue: one crisp
+    /// `.selection` tick for each value change, including the deliberate
+    /// tap-again dismissal. Re-reading the same cell during a drag is silent.
+    private func select(_ date: String?) {
+        if SelectionHaptics.valueChanged(tickedDate, date) {
+            tickedDate = date
+            Haptics.shared.play(.selection)
+        }
+        selectedDate = date
+    }
 
     private func isSelected(_ cell: HeatmapCell) -> Bool {
         !cell.future && selectedDate == cell.date
