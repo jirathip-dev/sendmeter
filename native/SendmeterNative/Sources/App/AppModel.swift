@@ -56,7 +56,7 @@ private extension DurableQueueItem where Payload == PendingWrite {
         case .recordingEdit: kind = "Force recording edit"
         case .sessionRPEEdit: kind = "Session RPE edit"
         case .recordingDelete: kind = "Force recording deletion"
-        case .workout: kind = "Phone workout"
+        case .workout: kind = "Manual workout"
         }
         return QuarantinedWrite(
             id: id,

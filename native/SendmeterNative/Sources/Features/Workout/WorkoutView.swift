@@ -7,6 +7,8 @@ struct WorkoutView: View {
     @State private var showRoutineEditor = false
     @State private var runningRoutine: RoutineRunPresentation?
     @State private var isSaving = false
+    @State private var activeSaveID: UUID?
+    @State private var showManualWorkout = false
     @State private var hasResolvedPersistedRun = false
 
     var body: some View {
@@ -35,7 +37,8 @@ struct WorkoutView: View {
                         ActiveWorkoutCard(
                             engine: $engine,
                             isSaving: isSaving,
-                            finish: finishWorkout
+                            finish: finishWorkout,
+                            openFullscreen: resumeWorkout
                         )
                     }
                 }
@@ -50,6 +53,15 @@ struct WorkoutView: View {
             .sheet(item: $runningRoutine) { presentation in
                 RoutineRunnerSheet(presentation: presentation)
                     .onAppear { Haptics.shared.sheetPresented() }
+            }
+            .fullScreenCover(isPresented: $showManualWorkout) {
+                ManualWorkoutFullscreen(
+                    engine: $engine,
+                    isSaving: isSaving,
+                    onMinimize: { showManualWorkout = false },
+                    onEnd: finishWorkout
+                )
+                .environmentObject(model)
             }
             .task {
                 guard !hasResolvedPersistedRun else { return }
@@ -158,15 +170,25 @@ struct WorkoutView: View {
     }
 
     private func startWorkout() {
+        guard !isSaving else { return }
         guard let userID = model.currentUserID else { return }
+        Haptics.shared.tap()
         engine = PhoneWorkoutEngine(
             accountUserID: userID,
             phase: model.settings.currentPhase,
             startedAt: Date()
         )
+        showManualWorkout = true
+    }
+
+    private func resumeWorkout() {
+        guard engine != nil, !isSaving else { return }
+        Haptics.shared.tap()
+        showManualWorkout = true
     }
 
     private func finishWorkout() {
+        guard !isSaving else { return }
         guard var engine else { return }
         do {
             let draft = try engine.finish()
@@ -174,10 +196,15 @@ struct WorkoutView: View {
             // finish is real — an empty-workout refusal below must play the
             // warning pattern, never the accepted tick.
             Haptics.shared.play(.medium)
+            showManualWorkout = false
             self.engine = nil
+            let saveID = UUID()
+            activeSaveID = saveID
             isSaving = true
-            Task {
+            Task { @MainActor in
                 await model.saveWorkout(draft)
+                guard activeSaveID == saveID else { return }
+                activeSaveID = nil
                 isSaving = false
             }
         } catch WorkoutEngineError.emptyWorkout {
@@ -231,14 +258,14 @@ private struct StartWorkoutCard: View {
                     .font(.system(size: 52))
                     .foregroundStyle(SendmeterStyle.primary)
                 VStack(spacing: 6) {
-                    Text("Phone Workout")
+                    Text("Manual workout")
                         .font(.title2.bold())
                     Text("Start once, tap for each attempt, then finish. The complete workout is written atomically and appears in History immediately.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
-                Button("Start Workout", action: start)
+                Button("Start Manual workout", action: start)
                     .buttonStyle(PrimaryActionButtonStyle())
             }
         }
@@ -250,6 +277,7 @@ private struct ActiveWorkoutCard: View {
     @Binding var engine: PhoneWorkoutEngine?
     let isSaving: Bool
     let finish: () -> Void
+    let openFullscreen: () -> Void
 
     private var isAttempting: Bool { engine?.attemptStartedAt != nil }
 
@@ -258,7 +286,7 @@ private struct ActiveWorkoutCard: View {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 VStack(spacing: 18) {
                     HStack {
-                        SectionLabel("Active workout", systemImage: "timer")
+                        SectionLabel("Manual workout", systemImage: "timer")
                         Spacer()
                         StatusPill(isAttempting ? "Climbing" : "Resting", color: isAttempting ? SendmeterStyle.power : SendmeterStyle.optimal)
                     }
@@ -272,6 +300,13 @@ private struct ActiveWorkoutCard: View {
                             metric("RPE", engine.draft.rpe.formatted(.number.precision(.fractionLength(0...1))))
                             metric("Block", PhaseCatalog.definition(for: engine.draft.phase).name)
                         }
+
+                        Button(action: openFullscreen) {
+                            Label("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                                .frame(maxWidth: .infinity, minHeight: 40)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityHint("Resume the immersive Manual workout timer")
 
                         Button {
                             var copy = engine

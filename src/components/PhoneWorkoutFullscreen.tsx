@@ -137,7 +137,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
           </svg>
         </button>
         <div style={{ textAlign: "center" }}>
-          <div className="label-eyebrow">Workout</div>
+          <div className="label-eyebrow">Manual workout</div>
           <div style={{ fontWeight: 800, fontSize: "var(--t-lg)", letterSpacing: "-0.02em" }}>
             {fmt(totalElapsed)}
           </div>

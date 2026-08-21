@@ -31,7 +31,7 @@ export default function PhoneWorkoutCard({
     return (
       <div className="card surface-workout" style={{ marginBottom: 12 }}>
         <div className="card-title" style={{ marginBottom: 8 }}>
-          Phone workout
+          Manual workout
         </div>
         <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
           No watch? Track a session here — tap when you get on the wall and
@@ -81,7 +81,7 @@ export default function PhoneWorkoutCard({
       >
         <div>
           <div className="card-title" style={{ marginBottom: 4 }}>
-            Workout in progress
+            Manual workout in progress
           </div>
           <div className="phone-workout-resume-meta">
             {state.attempts.length} boulder{state.attempts.length === 1 ? "" : "s"} ·{" "}
@@ -100,7 +100,7 @@ export default function PhoneWorkoutCard({
   return (
     <div className="card surface-workout" style={{ marginBottom: 12 }}>
       <div className="card-title" style={{ marginBottom: 6 }}>
-        Saving workout…
+        Saving manual workout…
       </div>
       <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)" }}>
         <span style={{ color: "var(--primary)", fontWeight: 700 }}>
