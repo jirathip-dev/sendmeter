@@ -240,6 +240,7 @@ public final class AppModel: ObservableObject {
     /// revoking the old bearer token so an active pull can be preserved under
     /// the old account scope.
     private var guidedProtocolTeardown: (@MainActor () async -> Void)?
+    private var guidedProtocolTeardownOwnerID: UUID?
     /// #632: true while a user-initiated sign-out is in flight (drain + any
     /// remainder prompt + auth.signOut) — used to disable the Sign Out button
     /// so a double-tap can't run two drains against one queue.
@@ -868,6 +869,12 @@ public final class AppModel: ObservableObject {
                 restartLiveMirrorTickerIfNeeded()
             }
         case .passwordRecovery:
+            if GuidedForceAuthTransitionPolicy.passwordRecoveryNeedsTeardown(
+                currentUserID: authSession?.user.id,
+                nextUserID: session?.user.id
+            ) {
+                await teardownGuidedProtocolBeforeAuthRevocation()
+            }
             authSession = session
             passwordRecovery = true
             bootState = session == nil ? .signedOut : .signedIn
@@ -1597,17 +1604,32 @@ public final class AppModel: ObservableObject {
     /// the revocation boundary. Keep the callback explicit so sign-out and
     /// auth-driven account reset can tear down before the old scope changes.
     public func setGuidedProtocolTeardown(
+        ownerID: UUID,
         _ teardown: (@MainActor () async -> Void)?
     ) {
+        guidedProtocolTeardownOwnerID = ownerID
         guidedProtocolTeardown = teardown
     }
 
+    public func clearGuidedProtocolTeardown(ownerID: UUID) {
+        guard guidedProtocolTeardownOwnerID == ownerID else { return }
+        guidedProtocolTeardownOwnerID = nil
+        guidedProtocolTeardown = nil
+    }
+
     private func teardownGuidedProtocolBeforeAuthRevocation() async {
+        guard guidedProtocolTeardownOwnerID != nil else { return }
         guard GuidedForceAuthTransitionPolicy.steps(
             hasActiveProtocol: guidedProtocolTeardown != nil
-        ).first == .some(.teardownGuidedProtocol) else { return }
+        ).first == .some(.teardownGuidedProtocol),
+              let ownerID = guidedProtocolTeardownOwnerID
+        else { return }
         let teardown = guidedProtocolTeardown
         await teardown?()
+        // The callback normally clears itself after its terminal settlement.
+        // Keep this matching owner guard as the auth-side backstop: a newer
+        // guided session must never lose its callback to an older teardown.
+        clearGuidedProtocolTeardown(ownerID: ownerID)
     }
 
     /// The keep-awake hold follows the transport + arming state (#628): the
@@ -5282,6 +5304,7 @@ public final class AppModel: ObservableObject {
         gaugeSessionTracker.reset()
         guidedProtocolActive = false
         guidedProtocolTeardown = nil
+        guidedProtocolTeardownOwnerID = nil
         invalidateTagCurveCache()
         handsFree.handleDisconnected()
         manualWorkoutRest.stop()

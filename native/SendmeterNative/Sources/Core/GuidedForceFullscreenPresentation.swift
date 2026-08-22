@@ -191,6 +191,38 @@ public struct GuidedForceSessionPolicy: Equatable, Sendable {
     }
 }
 
+/// Single-flight waiter for a terminal guided-run settlement. The caller must
+/// make the synchronous terminal claim before calling `start`: that keeps the
+/// ticker and Live Activity from producing another event while the first
+/// caller's durable preserve and gauge-session end are suspended.
+@MainActor
+public final class GuidedForceTerminalSettlement {
+    private var task: Task<Void, Never>?
+
+    public init() {}
+
+    public var isClaimed: Bool { task != nil }
+
+    /// Start the durable terminal operation once, or return the existing task
+    /// so Stop, End, disconnect teardown, and auth teardown all await exactly
+    /// the same settlement.
+    @discardableResult
+    public func start(
+        _ operation: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never> {
+        if let task { return task }
+        let task = Task { @MainActor in
+            await operation()
+        }
+        self.task = task
+        return task
+    }
+
+    public func wait() async {
+        await task?.value
+    }
+}
+
 public enum GuidedForceAdvanceIntent: Equatable, Sendable {
     case scheduled
     case skip
@@ -211,6 +243,28 @@ public enum GuidedForceAuthTransitionPolicy {
         hasActiveProtocol
             ? [.teardownGuidedProtocol, .drainQueue, .revokeAuth]
             : [.drainQueue, .revokeAuth]
+    }
+
+    /// Password recovery may hand the app a replacement account (or no
+    /// session while the recovery URL is being resolved). Preserve an old
+    /// account's active pull before that scope is replaced. A recovery event
+    /// for the same account is only a mode change and must keep the run alive.
+    public static func passwordRecoveryNeedsTeardown(
+        currentUserID: UUID?,
+        nextUserID: UUID?
+    ) -> Bool {
+        guard currentUserID != nil else { return false }
+        return currentUserID != nextUserID
+    }
+
+    /// An async old-owner cleanup may finish after a new guided session has
+    /// been installed. Only the owner that is still current may clear the
+    /// presentation and its auth callback.
+    public static func canClearGuidedOwner(
+        currentOwnerID: UUID?,
+        settledOwnerID: UUID
+    ) -> Bool {
+        currentOwnerID == settledOwnerID
     }
 }
 

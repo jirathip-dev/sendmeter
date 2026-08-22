@@ -159,6 +159,47 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
             GuidedForceAuthTransitionPolicy.steps(hasActiveProtocol: false),
             [.drainQueue, .revokeAuth]
         )
+
+        let accountA = UUID()
+        let accountB = UUID()
+        XCTAssertTrue(
+            GuidedForceAuthTransitionPolicy.passwordRecoveryNeedsTeardown(
+                currentUserID: accountA,
+                nextUserID: accountB
+            )
+        )
+        XCTAssertTrue(
+            GuidedForceAuthTransitionPolicy.passwordRecoveryNeedsTeardown(
+                currentUserID: accountA,
+                nextUserID: nil
+            )
+        )
+        XCTAssertFalse(
+            GuidedForceAuthTransitionPolicy.passwordRecoveryNeedsTeardown(
+                currentUserID: accountA,
+                nextUserID: accountA
+            )
+        )
+        XCTAssertFalse(
+            GuidedForceAuthTransitionPolicy.passwordRecoveryNeedsTeardown(
+                currentUserID: nil,
+                nextUserID: accountB
+            )
+        )
+
+        XCTAssertTrue(
+            GuidedForceAuthTransitionPolicy.canClearGuidedOwner(
+                currentOwnerID: accountA,
+                settledOwnerID: accountA
+            )
+        )
+        XCTAssertFalse(
+            GuidedForceAuthTransitionPolicy.canClearGuidedOwner(
+                currentOwnerID: accountB,
+                settledOwnerID: accountA
+            ),
+            "an old terminal callback must not clear a newer guided owner"
+        )
     }
 
     func testAdvanceCanCommitOnlyBeforeTerminalClaim() {
@@ -257,5 +298,52 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
             )
         )
         XCTAssertEqual(run.remainingSeconds(at: Date(timeIntervalSince1970: 13)), 7, accuracy: 0.000_001)
+    }
+}
+
+@MainActor
+final class GuidedForceTerminalSettlementTests: XCTestCase {
+    private final class Gate {
+        private var isOpen = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func wait() async {
+            guard !isOpen else { return }
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+        }
+
+        func open() {
+            isOpen = true
+            let pending = waiters
+            waiters.removeAll()
+            for waiter in pending { waiter.resume() }
+        }
+    }
+
+    /// The first caller owns the durable work; a concurrent teardown/Stop
+    /// caller receives the same task and cannot run a second preserve or end.
+    func testConcurrentTerminalCallersJoinOneSettlement() async {
+        let settlement = GuidedForceTerminalSettlement()
+        let gate = Gate()
+        var operationCalls = 0
+
+        let first = settlement.start {
+            operationCalls += 1
+            await gate.wait()
+        }
+        await Task.yield()
+
+        let joined = settlement.start {
+            operationCalls += 100
+        }
+        XCTAssertTrue(settlement.isClaimed)
+        XCTAssertEqual(operationCalls, 1)
+
+        gate.open()
+        await first.value
+        await joined.value
+        XCTAssertEqual(operationCalls, 1)
     }
 }

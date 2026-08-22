@@ -43,6 +43,7 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
     private var handsFreeMeasurementObserved = false
     private var sessionEndClaimed = false
     private var policy = GuidedForceSessionPolicy()
+    private let terminalSettlement = GuidedForceTerminalSettlement()
     private var pauseClaim: UUID?
 
     private var ownsAccount: Bool {
@@ -201,11 +202,18 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
             model.tindeq.clearCompletedRecording()
         }
 
-        guard pauseClaim == claim else { return }
-        guard ownsAccount, !sessionEndClaimed, !isEnded,
-              run.isPaused, run.currentStage.id == stage.id
+        guard pauseClaim == claim else {
+            if terminalSettlement.isClaimed {
+                await terminalSettlement.wait()
+            }
+            return
+        }
+        guard ownsAccount, run.isPaused, run.currentStage.id == stage.id
         else {
             finishPauseClaim(claim)
+            if terminalSettlement.isClaimed {
+                await terminalSettlement.wait()
+            }
             return
         }
         guard enqueued else {
@@ -214,11 +222,15 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
             // The save failure is terminal. Claim that state before the
             // cleanup await so a ticker continuation cannot advance the work
             // stage while this pause path is ending the gauge session.
-            _ = claimTerminal()
             finishPauseClaim(claim)
-            await model.endGaugeSession(ifCurrentAccountScope: accountScope)
-            guard model.accountScope == accountScope else { return }
-            model.setGuidedProtocolActive(false)
+            guard claimTerminal() else {
+                await terminalSettlement.wait()
+                return
+            }
+            let settlement = terminalSettlement.start { [self] in
+                await finishGaugeSession()
+            }
+            await settlement.value
             return
         }
         finishPauseClaim(claim)
@@ -421,59 +433,90 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
     }
 
     private func preserveInterruption(at _: Date) async {
-        guard !interrupted else { return }
-        interrupted = true
-        model.handsFree.disarm()
-        model.guidedActivity.end(immediate: true)
-        if let summary = model.tindeq.interruptedRecording {
-            let enqueued = await preserve(summary, stage: run.currentStage, partial: true)
-            if enqueued {
-                model.tindeq.clearInterruptedRecording()
-            }
+        if terminalSettlement.isClaimed {
+            await terminalSettlement.wait()
+            return
         }
-        await endSession()
+        guard !interrupted else {
+            await terminalSettlement.wait()
+            return
+        }
+        interrupted = true
+        guard claimTerminal(disarmMeasurement: false) else {
+            await terminalSettlement.wait()
+            return
+        }
+        let stage = run.currentStage
+        let summary = model.tindeq.interruptedRecording
+        model.handsFree.stopPolicy = .automatic
+        model.handsFree.disarm()
+        let settlement = terminalSettlement.start { [self] in
+            if let summary {
+                let enqueued = await preserve(summary, stage: stage, partial: true)
+                if enqueued {
+                    model.tindeq.clearInterruptedRecording()
+                }
+            }
+            await finishGaugeSession()
+        }
+        await settlement.value
     }
 
     func endAndSavePartial() async {
-        guard ownsAccount, !isEnded, !sessionEndClaimed, !isAdvancing, !isPausing else { return }
-        guard claimTerminal(disarmMeasurement: false) else { return }
+        if terminalSettlement.isClaimed {
+            await terminalSettlement.wait()
+            return
+        }
+        guard ownsAccount, !isAdvancing, !isPausing else { return }
+        guard !isEnded, !sessionEndClaimed else {
+            await terminalSettlement.wait()
+            return
+        }
+        guard claimTerminal(disarmMeasurement: false) else {
+            await terminalSettlement.wait()
+            return
+        }
         isAdvancing = true
         let stage = run.currentStage
         let hasActiveRecording = model.tindeq.status == .measuring || model.handsFree.isMeasuring
-        if stage.kind == .work, hasActiveRecording, let summary = model.tindeq.stopMeasuring() {
-            model.handsFree.stopPolicy = .automatic
-            model.handsFree.disarm()
-            let enqueued = await preserve(summary, stage: stage, partial: true)
-            if enqueued {
-                model.tindeq.clearCompletedRecording()
-            } else {
-                model.errorMessage = "Could not save the partial pull."
-                interrupted = true
-                model.guidedActivity.end(immediate: true)
-                await model.endGaugeSession(ifCurrentAccountScope: accountScope)
-                guard model.accountScope == accountScope else {
-                    isAdvancing = false
-                    return
+        let summary = stage.kind == .work && hasActiveRecording
+            ? model.tindeq.stopMeasuring()
+            : nil
+        model.handsFree.stopPolicy = .automatic
+        model.handsFree.disarm()
+        let settlement = terminalSettlement.start { [self] in
+            if let summary {
+                let enqueued = await preserve(summary, stage: stage, partial: true)
+                if enqueued {
+                    model.tindeq.clearCompletedRecording()
+                } else {
+                    model.errorMessage = "Could not save the partial pull."
+                    interrupted = true
                 }
-                model.setGuidedProtocolActive(false)
-                isAdvancing = false
-                return
             }
-        } else {
-            model.handsFree.stopPolicy = .automatic
-            model.handsFree.disarm()
+            isAdvancing = false
+            await finishGaugeSession()
         }
-        isAdvancing = false
-        await model.endGaugeSession(ifCurrentAccountScope: accountScope)
-        guard model.accountScope == accountScope else { return }
-        model.setGuidedProtocolActive(false)
+        await settlement.value
     }
 
     func finish() async {
+        if terminalSettlement.isClaimed {
+            await terminalSettlement.wait()
+            return
+        }
         await endSession()
     }
 
     func stopOrFinish() async {
+        // A terminal claim wins over the caller's current run snapshot. Join
+        // its durable preserve/session-end flight before looking at
+        // `isComplete` or `interrupted`; those flags are set synchronously by
+        // the first claimant and would otherwise make a later Stop return.
+        if terminalSettlement.isClaimed {
+            await terminalSettlement.wait()
+            return
+        }
         if run.isComplete || interrupted {
             await finish()
         } else {
@@ -483,10 +526,17 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
 
     /// Explicit owner-lifecycle teardown. This is intentionally separate from
     /// `deinit`: a Force tab can disappear while the app model remains alive.
-    /// The terminal claim/cancel happens synchronously, then the active pull is
-    /// salvaged against this account when it is still safe to do so.
+    /// The terminal claim/cancel happens synchronously, then the active pull
+    /// is salvaged against this account when it is still safe to do so.
     func teardown() async {
-        guard claimTerminal(disarmMeasurement: false) else { return }
+        if terminalSettlement.isClaimed {
+            await terminalSettlement.wait()
+            return
+        }
+        guard claimTerminal(disarmMeasurement: false) else {
+            await terminalSettlement.wait()
+            return
+        }
         let stage = run.currentStage
         let hasActiveRecording = model.tindeq.status == .measuring || model.handsFree.isMeasuring
         let summary = stage.kind == .work && hasActiveRecording
@@ -495,29 +545,44 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         workMeasurementReady = false
         model.handsFree.stopPolicy = .automatic
         model.handsFree.disarm()
-        if let summary {
-            let enqueued = await preserve(
-                summary,
-                stage: stage,
-                partial: true,
-                segment: workSegment
-            )
-            if enqueued {
-                model.tindeq.clearCompletedRecording()
-            } else {
-                // An account transition invalidates the old save scope. Do
-                // not leave that account's completed pull available to the
-                // next account's Force surface.
-                model.tindeq.clearCompletedRecording()
+        let settlement = terminalSettlement.start { [self] in
+            if let summary {
+                let enqueued = await preserve(
+                    summary,
+                    stage: stage,
+                    partial: true,
+                    segment: workSegment
+                )
+                if enqueued {
+                    model.tindeq.clearCompletedRecording()
+                } else {
+                    // An account transition invalidates the old save scope.
+                    // Do not leave that account's completed pull available to
+                    // the next account's Force surface.
+                    model.tindeq.clearCompletedRecording()
+                }
             }
+            await finishGaugeSession()
         }
-        await model.endGaugeSession(ifCurrentAccountScope: accountScope)
-        guard model.accountScope == accountScope else { return }
-        model.setGuidedProtocolActive(false)
+        await settlement.value
     }
 
     private func endSession() async {
-        guard claimTerminal() else { return }
+        if terminalSettlement.isClaimed {
+            await terminalSettlement.wait()
+            return
+        }
+        guard claimTerminal() else {
+            await terminalSettlement.wait()
+            return
+        }
+        let settlement = terminalSettlement.start { [self] in
+            await finishGaugeSession()
+        }
+        await settlement.value
+    }
+
+    private func finishGaugeSession() async {
         await model.endGaugeSession(ifCurrentAccountScope: accountScope)
         guard model.accountScope == accountScope else { return }
         model.setGuidedProtocolActive(false)
@@ -1455,16 +1520,24 @@ struct ForceView: View {
     }
 
     private func registerGuidedTeardown(for session: GuidedForceProtocolSession) {
-        model.setGuidedProtocolTeardown { [weak session] in
+        model.setGuidedProtocolTeardown(ownerID: session.id) { [weak session] in
             await session?.teardown()
+            guard let session else { return }
+            // Auth teardown must release the same presentation owner after
+            // the durable terminal flight, but an old callback may finish
+            // after a replacement session has already been installed.
+            self.clearGuidedSession(session)
         }
     }
 
     private func clearGuidedSession(_ session: GuidedForceProtocolSession?) {
-        if let session, guidedSession?.id != session.id {
-            return
-        }
-        model.setGuidedProtocolTeardown(nil)
+        guard let session,
+              GuidedForceAuthTransitionPolicy.canClearGuidedOwner(
+                  currentOwnerID: guidedSession?.id,
+                  settledOwnerID: session.id
+              )
+        else { return }
+        model.clearGuidedProtocolTeardown(ownerID: session.id)
         guidedMinimizeRequested = false
         guidedFullscreenPresented = false
         guidedSession = nil
@@ -1473,12 +1546,12 @@ struct ForceView: View {
     private func teardownGuidedSessionIfNeeded() {
         guard let session = guidedSession else { return }
         if session.isEnded {
-            // A terminal claim cancels the ticker/activity synchronously. If
-            // an account reset races the final gauge-session await, the
-            // account-scoped end path will intentionally refuse to publish
-            // into the replacement account; release this old owner now so it
-            // cannot lock the new Force surface forever.
-            if session.accountScope != model.accountScope {
+            // A terminal claim cancels the ticker/activity synchronously, but
+            // the owner callback must remain registered until its durable
+            // flight settles so an auth reset can still join that flight.
+            Task {
+                await session.teardown()
+                guard session.isEnded, guidedSession?.id == session.id else { return }
                 clearGuidedSession(session)
             }
             return
