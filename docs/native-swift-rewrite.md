@@ -129,3 +129,30 @@ group (queue, never cancel — parallel runs would race the same build number),
 and a cheap Ubuntu gate that refuses refs without
 `native/SendmeterNative/project.yml` (the native target is not on `main`
 yet). No node/npm steps — the native app is pure Swift.
+
+### Sign in with Apple / AASA retest rule (learned the hard way)
+
+**A TestFlight retest after any auth/Associated-Domains (`apple-app-site-association`)
+change MUST be uninstall → install, never an update over the previous install.**
+
+- Apple **caches** the AASA ("this app may sign in for sendmeter.app") **on the
+  device** between builds — it re-fetches the association on *delete + fresh
+  install*, not on a normal update. An update keeps the device's cached
+  association.
+- If the installed build predates a server-side AASA / Supabase
+  `external_apple_client_id` / `uri_allow_list` fix, the device keeps checking
+  the **old** association and the newer correct build fails at the
+  Sign-in-with-Apple / passkey sheet with a JWT / "not associated with domain"
+  error — even though the server fix is live. This is an **install-state /
+  device-cache false positive, not a code bug** (verified 2026-08-22: live AASA
+  serves both `com.jirathip.sendlog` and `com.jirathip.sendlog.native` in both
+  `applinks` and `webcredentials`; clean install passes sign-in).
+- **Deleting the app** is what throws the stale cached association away; the
+  decisive retest is: delete Sendmeter Native → reinstall the same build → first
+  open cold → try Sign in with Apple. If it passes, close the issue as
+  resolved-on-device (install state); only if it *still* fails on a clean
+  install is it a genuine regression to investigate (capture the exact GoTrue
+  error — `aud`/`nonce`/`rp`/`audience` — from the device console, don't guess).
+- The server-side AASA fix is permanent; once the device cache is refreshed it
+  will not recur on normal TestFlight updates. It only recurs if a future auth
+  change ships without clearing/re-fetching the device association.
