@@ -183,14 +183,21 @@ public enum TrainingLoad {
                 let key = LocalDateSupport.string(from: cursor, timeZone: timeZone)
                 let entry = daily[key]
                 let value = entry?.total ?? 0
-                if value > maximum { maximum = value }
+                let isFuture = cursor > day
+                // Future cells render as unavailable (gray) in the sheet, so
+                // they must not participate in the load scale. A session can
+                // be dated up to +7 days ahead (DB `sessions_date_sane`), and
+                // if that row carried the largest load it would otherwise
+                // inflate `max` and compress every real past data day to level
+                // 1, reading as "all cells gray despite data" (#706).
+                if value > maximum && !isFuture { maximum = value }
                 column.append(
                     HeatmapCell(
                         date: key,
                         month: calendar.component(.month, from: cursor),
                         value: value,
                         type: entry?.type ?? "",
-                        future: cursor > day
+                        future: isFuture
                     )
                 )
                 cursor = calendar.date(byAdding: .day, value: 1, to: cursor) ?? cursor
