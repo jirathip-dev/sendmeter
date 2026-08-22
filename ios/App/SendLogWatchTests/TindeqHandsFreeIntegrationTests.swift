@@ -1117,6 +1117,70 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
     }
 #endif
 
+    /// #683 review blocker (AC #4): a guided run ending while the gauge is
+    /// still connected must NOT re-arm straight to `.armed`. A guided static
+    /// hold ends by planned duration, not release, so if the user is still
+    /// gripping, `armHandsFree()` would turn the same continuous load into a
+    /// phantom second rep once `startStableMs` elapses. `setFreeHoldSuspended(false)`
+    /// must instead re-arm through `.waitingForSlack` (observe an at/below
+    /// `stopKg` sample first). This asserts the manager wiring: a continued
+    /// 25 kg hold after guided exit stays in `.waitingForSlack` and produces
+    /// no rep, and only an observed slack sample lets the next pull start.
+    func testGuidedExitRearmWaitsForSlackBeforeNextFreeHoldPull() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        var commands: [Tindeq.Cmd] = []
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            armTimeoutSeconds: 600,
+            commandWriter: { commands.append($0) }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        // Guided run owns the gauge: free hold is suspended entirely.
+        manager.setFreeHoldSuspended(true)
+        XCTAssertFalse(manager.handsFreeRequested)
+        XCTAssertEqual(manager.handsFreeState, .idle)
+
+        // Guided run ends while the gauge is still connected and loaded.
+        manager.setFreeHoldSuspended(false)
+        XCTAssertTrue(manager.handsFreeRequested)
+        XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
+        XCTAssertEqual(manager.status, .connected)
+        XCTAssertEqual(commands, [.startWeight])
+
+        // Still gripping: 25 kg held for well past startStableMs. The slack
+        // gate must keep the machine in `.waitingForSlack` — no phantom rep.
+        feed(manager, [(25, 0), (25, 700_000)])
+        XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
+        XCTAssertEqual(manager.status, .connected)
+        let beforeSlack = await recordings.count()
+        XCTAssertEqual(beforeSlack, 0)
+        XCTAssertEqual(commands, [.startWeight])
+
+        // Slack arrives: the machine may now observe the next pull.
+        feed(manager, [(0.5, 1_400_000)])
+        XCTAssertEqual(manager.handsFreeState, .armed(aboveSinceMs: nil))
+
+        // A fresh pull after real slack starts a normal rep.
+        feed(manager, [(25, 2_000_000), (25, 2_700_000)])
+        XCTAssertEqual(manager.status, .measuring)
+        XCTAssertEqual(
+            manager.handsFreeState,
+            .recording(
+                belowSinceMs: nil,
+                // `beginArmedRecording` re-bases the flat-watch start to 0 on
+                // the recording clock (the rep's first sample), so the
+                // pre-rebase 2_000 ms armed-clock anchor is not preserved.
+                flatWatch: HandsFreeForceFlatWatch(sinceMs: 0, minKg: 25, maxKg: 25)
+            )
+        )
+        let afterPull = await recordings.count()
+        XCTAssertEqual(afterPull, 0)
+    }
+
     private func feed(_ manager: TindeqManager, _ samples: [(Float, UInt32)]) {
         var data = Data([0x01, UInt8(samples.count * 8)])
         for (kg, us) in samples {

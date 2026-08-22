@@ -661,8 +661,36 @@ final class TindeqManager: NSObject {
         if suspended {
             cancelHandsFree()
         } else if status == .connected {
-            armHandsFree()
+            // #683 review blocker (AC #4): returning from a guided protocol is
+            // NOT a free-hold release — a guided static hold ends by planned
+            // duration with no proof of slack, so re-arming straight to
+            // `.armed(aboveSinceMs: nil)` (via `armHandsFree()`) would let the
+            // resumed stream read ~25 kg, start the `startStableMs` window and
+            // begin a phantom second rep from the same continuous load. Go
+            // through `.waitingForSlack` instead (observe ≤ stopKg first),
+            // mirroring the `.userTapped`/`.staticLoad` branch of
+            // `rearmHandsFreeAfterSave` rather than calling `armHandsFree()`.
+            rearmHandsFreeAfterGuidedExit()
         }
+    }
+
+    /// #683 review blocker (AC #4): the slack-aware re-arm used when a guided
+    /// protocol ends while the gauge is still connected. The stream was
+    /// stopped at the guided save (`stopTransport` wrote `.stop`), so restart
+    /// it live, set the machine to `.waitingForSlack` (the Core state that
+    /// demands an observed ≤ stopKg sample before the next pull is
+    /// recognized), and clear the guided samples so they cannot leak into the
+    /// next free-hold rep. The disconnect / account-change paths land here
+    /// with `status == .idle` and are correctly inert (the caller's guard).
+    private func rearmHandsFreeAfterGuidedExit() {
+        handsFreeRequested = true
+        handsFreeState = rearmedHandsFreeForce() // .waitingForSlack: needs slack proof
+        armedStreamIdleBudget = ArmedStreamIdleBudget()
+        repClaims.discard()
+        resetRecordingBuffer()
+        write(.startWeight)
+        scheduleArmTimeout()
+        pushForceBeat()
     }
 
     /// Cancels an armed wait or prevents a post-save re-arm. It never discards
