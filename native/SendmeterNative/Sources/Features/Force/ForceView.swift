@@ -1420,10 +1420,10 @@ struct ForceView: View {
             recordings: contextRecordings,
             exercise: tag,
             curveInput: zoneCurve,
-            measurementMode: measurementMode,
             showsBalance: showBalanceHint,
             balanceLocked: balanceIsLocked,
-            onPickFocusNext: armRecommendedZone
+            onPickFocusNext: armRecommendedZone,
+            measurementMode: measurementMode
         )
         .disabled(guidedControlsLocked)
     }
