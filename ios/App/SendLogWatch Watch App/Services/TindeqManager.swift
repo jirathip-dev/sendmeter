@@ -1472,7 +1472,16 @@ final class TindeqManager: NSObject {
                 }
                 if rememberSelection {
                     UserDefaults.standard.set(row.tag, forKey: "lastTindeqTag")
+                    // The legacy global last-side key stays for a free hold's
+                    // restore; per-exercise memory (#543) keeps the actual
+                    // recorded side fresh per tag so the next selection
+                    // restores a valid, non-leaking value.
                     UserDefaults.standard.set(row.side, forKey: "lastTindeqSide")
+                    // Guard the empty-tag free hold: there is no per-exercise
+                    // memory for an exercise that isn't one.
+                    if !row.tag.isEmpty {
+                        ForceSideMemory.store(side: row.side, for: row.tag)
+                    }
                 }
             }
             saveOperationsInFlight -= 1
