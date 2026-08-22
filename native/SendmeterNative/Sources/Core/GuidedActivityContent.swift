@@ -149,6 +149,7 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
         public let segmentEndEpochMs: Double
         public let peakKilograms: Double?
         public let targetKilograms: Double?
+        public let isPaused: Bool
 
         public init(
             title: String,
@@ -158,7 +159,8 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
             segmentStartEpochMs: Double,
             segmentEndEpochMs: Double,
             peakKilograms: Double?,
-            targetKilograms: Double?
+            targetKilograms: Double?,
+            isPaused: Bool = false
         ) {
             self.title = title
             self.phaseToken = phaseToken
@@ -168,6 +170,7 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
             self.segmentEndEpochMs = segmentEndEpochMs
             self.peakKilograms = peakKilograms
             self.targetKilograms = targetKilograms
+            self.isPaused = isPaused
         }
     }
 
@@ -191,19 +194,27 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
         public let stage: ForceProtocolStage
         public let remainingSeconds: Double
         public let anchoredAtEpochMs: Double
+        public let isPaused: Bool
 
-        public init(stage: ForceProtocolStage, remainingSeconds: Double, anchoredAtEpochMs: Double) {
+        public init(
+            stage: ForceProtocolStage,
+            remainingSeconds: Double,
+            anchoredAtEpochMs: Double,
+            isPaused: Bool = false
+        ) {
             self.stage = stage
             self.remainingSeconds = remainingSeconds
             self.anchoredAtEpochMs = anchoredAtEpochMs
+            self.isPaused = isPaused
         }
 
         /// Capture the anchor from a run at an instant.
-        public init(run: ForceProtocolRun, at date: Date = Date()) {
+        public init(run: ForceProtocolRun, at date: Date = Date(), isPaused: Bool? = nil) {
             self.init(
                 stage: run.currentStage,
                 remainingSeconds: run.remainingSeconds(at: date),
-                anchoredAtEpochMs: date.timeIntervalSince1970 * 1_000
+                anchoredAtEpochMs: date.timeIntervalSince1970 * 1_000,
+                isPaused: isPaused ?? run.isPaused
             )
         }
     }
@@ -221,7 +232,7 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
         let stage = runAnchor.stage
         let nowEpochMs = runAnchor.anchoredAtEpochMs
         let remaining = max(0, runAnchor.remainingSeconds)
-        let endEpochMs = nowEpochMs + remaining * 1_000
+        let endEpochMs = runAnchor.isPaused ? nowEpochMs : nowEpochMs + remaining * 1_000
         var detail = "Set \(stage.setNumber) · Rep \(stage.repetitionNumber)"
         if stage.side != .unspecified {
             detail += " · \(stage.side.label)"
@@ -235,7 +246,8 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
             segmentStartEpochMs: nowEpochMs,
             segmentEndEpochMs: endEpochMs,
             peakKilograms: peakKilograms,
-            targetKilograms: targetKilograms
+            targetKilograms: targetKilograms,
+            isPaused: runAnchor.isPaused
         )
     }
 

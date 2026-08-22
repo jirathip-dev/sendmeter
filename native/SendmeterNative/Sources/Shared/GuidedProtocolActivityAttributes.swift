@@ -35,6 +35,7 @@ public struct GuidedProtocolActivityAttributes: ActivityAttributes {
         public var segmentEnd: Date
         public var peakKilograms: Double?
         public var targetKilograms: Double?
+        public var isPaused: Bool
     }
 
     public var presetID: UUID

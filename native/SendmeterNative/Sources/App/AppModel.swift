@@ -22,6 +22,16 @@ public enum AppTab: Hashable {
     case settings
 }
 
+public struct NativeAccountScope: Equatable, Sendable {
+    public let userID: UUID?
+    public let epoch: UInt64
+
+    public init(userID: UUID?, epoch: UInt64) {
+        self.userID = userID
+        self.epoch = epoch
+    }
+}
+
 private enum PendingWrite: Codable, Sendable {
     case session(SessionQueuePayload)
     case sessionDelete(SessionDeleteQueuePayload)
@@ -225,6 +235,12 @@ public final class AppModel: ObservableObject {
     /// interrupted path preserves the final rep and THEN ends the session),
     /// so the generic disconnect trigger defers to it.
     @Published public private(set) var guidedProtocolActive = false
+    /// The Force owner registers this while a guided run exists, including
+    /// while its fullscreen is minimized. Auth teardown calls it before
+    /// revoking the old bearer token so an active pull can be preserved under
+    /// the old account scope.
+    private var guidedProtocolTeardown: (@MainActor () async -> Void)?
+    private var guidedProtocolTeardownOwnerID: UUID?
     /// #632: true while a user-initiated sign-out is in flight (drain + any
     /// remainder prompt + auth.signOut) — used to disable the Sign Out button
     /// so a double-tap can't run two drains against one queue.
@@ -314,7 +330,7 @@ public final class AppModel: ObservableObject {
     private var didBootstrapUserID: UUID?
     /// Increments whenever the loaded account state is reset. User IDs alone
     /// cannot reject a stale A completion after an A→B→A transition.
-    private var accountEpoch: UInt64 = 0
+    @Published public private(set) var accountEpoch: UInt64 = 0
     private var refreshingOwner: AccountScopedCompletion?
     private var recomputeGate = ReadinessRecomputeGate()
     /// #661: silent foreground/appear health sync. The policy is pure Core
@@ -588,6 +604,9 @@ public final class AppModel: ObservableObject {
 
     public var currentUserID: UUID? { authSession?.user.id }
     public var currentUserEmail: String? { authSession?.user.email }
+    public var accountScope: NativeAccountScope {
+        NativeAccountScope(userID: currentUserID, epoch: accountEpoch)
+    }
     public var currentPhase: PhaseDefinition { PhaseCatalog.definition(for: settings.currentPhase) }
     public var acwr: ACWRData { TrainingMetrics.computeACWR(sessions: sessions) }
     public var readiness: HealthMetric? { healthMetrics.first }
@@ -690,6 +709,10 @@ public final class AppModel: ObservableObject {
         isSigningOut = true
         defer { isSigningOut = false }
         await perform {
+            // End the guided owner while the old account scope and bearer
+            // token are still live. Its durable recording/session writes must
+            // participate in the bounded drain and remainder decision below.
+            await self.teardownGuidedProtocolBeforeAuthRevocation()
             guard let userID = self.currentUserID, let queue = self.queue else {
                 try await self.auth.signOut()
                 self.watch.relaySession(nil)
@@ -815,12 +838,16 @@ public final class AppModel: ObservableObject {
         switch event {
         case .initialSession, .signedIn, .tokenRefreshed, .userUpdated, .mfaChallengeVerified:
             guard let session else {
+                await teardownGuidedProtocolBeforeAuthRevocation()
                 authSession = nil
                 bootState = .signedOut
                 await tearDownRealtime()
                 return
             }
             let changedUser = authSession?.user.id != session.user.id
+            if changedUser {
+                await teardownGuidedProtocolBeforeAuthRevocation()
+            }
             authSession = session
             bootState = .signedIn
             watch.relaySession(session)
@@ -842,10 +869,17 @@ public final class AppModel: ObservableObject {
                 restartLiveMirrorTickerIfNeeded()
             }
         case .passwordRecovery:
+            if GuidedForceAuthTransitionPolicy.passwordRecoveryNeedsTeardown(
+                currentUserID: authSession?.user.id,
+                nextUserID: session?.user.id
+            ) {
+                await teardownGuidedProtocolBeforeAuthRevocation()
+            }
             authSession = session
             passwordRecovery = true
             bootState = session == nil ? .signedOut : .signedIn
         case .signedOut, .userDeleted:
+            await teardownGuidedProtocolBeforeAuthRevocation()
             watch.relaySession(nil)
             authSession = nil
             didBootstrapUserID = nil
@@ -1516,7 +1550,8 @@ public final class AppModel: ObservableObject {
     /// prediction reads the recorded group's reps against the cached
     /// per-tag curves — never a fresh fetch — so a missing curve falls back
     /// instead of stalling the log.
-    public func endGaugeSession() async {
+    public func endGaugeSession(ifCurrentAccountScope expectedScope: NativeAccountScope? = nil) async {
+        guard expectedScope == nil || accountScope == expectedScope else { return }
         // #613: wait for any in-flight rep save to become durable + locally
         // published BEFORE claiming the end — a disconnect's interrupted
         // save lands after the status change (the guided view's tick
@@ -1525,6 +1560,7 @@ public final class AppModel: ObservableObject {
         // network. The claim after the wait still precedes any await of the
         // insert, so concurrent end paths still log exactly once.
         await gaugeSessionSaveGate.waitForIdle()
+        guard expectedScope == nil || accountScope == expectedScope else { return }
         guard let ended = gaugeSessionTracker.endActive() else { return }
 
         let groupRecordings = recordings.filter { $0.groupID == ended.groupID }
@@ -1551,6 +1587,7 @@ public final class AppModel: ObservableObject {
             rpeConfirmed: false,
             groupID: ended.groupID
         )
+        guard expectedScope == nil || accountScope == expectedScope else { return }
         toastMessage = ok
             ? "Gauge session logged to history"
             : "Couldn't log gauge session"
@@ -1561,6 +1598,38 @@ public final class AppModel: ObservableObject {
     /// disconnect trigger defers while this is set.
     public func setGuidedProtocolActive(_ active: Bool) {
         guidedProtocolActive = active
+    }
+
+    /// The Force view owns the guided runner, but auth/account lifecycle owns
+    /// the revocation boundary. Keep the callback explicit so sign-out and
+    /// auth-driven account reset can tear down before the old scope changes.
+    public func setGuidedProtocolTeardown(
+        ownerID: UUID,
+        _ teardown: (@MainActor () async -> Void)?
+    ) {
+        guidedProtocolTeardownOwnerID = ownerID
+        guidedProtocolTeardown = teardown
+    }
+
+    public func clearGuidedProtocolTeardown(ownerID: UUID) {
+        guard guidedProtocolTeardownOwnerID == ownerID else { return }
+        guidedProtocolTeardownOwnerID = nil
+        guidedProtocolTeardown = nil
+    }
+
+    private func teardownGuidedProtocolBeforeAuthRevocation() async {
+        guard guidedProtocolTeardownOwnerID != nil else { return }
+        guard GuidedForceAuthTransitionPolicy.steps(
+            hasActiveProtocol: guidedProtocolTeardown != nil
+        ).first == .some(.teardownGuidedProtocol),
+              let ownerID = guidedProtocolTeardownOwnerID
+        else { return }
+        let teardown = guidedProtocolTeardown
+        await teardown?()
+        // The callback normally clears itself after its terminal settlement.
+        // Keep this matching owner guard as the auth-side backstop: a newer
+        // guided session must never lose its callback to an older teardown.
+        clearGuidedProtocolTeardown(ownerID: ownerID)
     }
 
     /// The keep-awake hold follows the transport + arming state (#628): the
@@ -5234,6 +5303,8 @@ public final class AppModel: ObservableObject {
         quarantinedWrites = nil
         gaugeSessionTracker.reset()
         guidedProtocolActive = false
+        guidedProtocolTeardown = nil
+        guidedProtocolTeardownOwnerID = nil
         invalidateTagCurveCache()
         handsFree.handleDisconnected()
         manualWorkoutRest.stop()

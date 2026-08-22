@@ -540,6 +540,16 @@ public struct ForceProtocolRun: Codable, Equatable, Sendable {
         isPaused = false
     }
 
+    /// Re-anchor the current stage at a load-triggered hands-free start.
+    /// Arming intentionally happens before a real pull, so the stage clock
+    /// must not spend its duration while the user is still waiting to pull.
+    public mutating func restartCurrentStage(at date: Date = Date()) {
+        guard !isComplete else { return }
+        stageStartedAt = date
+        pausedElapsedSeconds = 0
+        isPaused = false
+    }
+
     public func elapsedSeconds(at date: Date = Date()) -> Double {
         pausedElapsedSeconds + (stageStartedAt.map { max(0, date.timeIntervalSince($0)) } ?? 0)
     }

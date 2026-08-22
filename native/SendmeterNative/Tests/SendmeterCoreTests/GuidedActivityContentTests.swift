@@ -189,6 +189,46 @@ final class GuidedActivityContentTests: XCTestCase {
         XCTAssertEqual(snapshot.segmentEndEpochMs, 5_000)
     }
 
+    func testPausedRunAnchorDoesNotPublishFutureRunningWindow() {
+        let preset = preset(holdSeconds: 10)
+        let content = content(preset: preset, startEpochMs: 1_000_000)
+        var run = ForceProtocolRun(preset: preset, startingSide: .left)
+        run.start(at: Date(timeIntervalSince1970: 0))
+        run.pause(at: Date(timeIntervalSince1970: 2))
+
+        let snapshot = content.snapshot(
+            runAnchor: GuidedProtocolActivityContent.RunAnchor(
+                run: run,
+                at: Date(timeIntervalSince1970: 100)
+            )
+        )
+
+        XCTAssertTrue(snapshot.isPaused)
+        XCTAssertEqual(snapshot.segmentStartEpochMs, 100_000)
+        XCTAssertEqual(snapshot.segmentEndEpochMs, 100_000)
+    }
+
+    func testWaitingHandsFreeOverrideFreezesLockScreenUntilMeasurement() {
+        let preset = preset(holdSeconds: 10)
+        let content = content(preset: preset, startEpochMs: 1_000_000)
+        var run = ForceProtocolRun(preset: preset, startingSide: .left)
+        run.start(at: Date(timeIntervalSince1970: 0))
+        run.advance(at: Date(timeIntervalSince1970: 5))
+
+        let snapshot = content.snapshot(
+            runAnchor: GuidedProtocolActivityContent.RunAnchor(
+                run: run,
+                at: Date(timeIntervalSince1970: 100),
+                isPaused: true
+            )
+        )
+
+        XCTAssertTrue(snapshot.isPaused)
+        XCTAssertEqual(snapshot.segmentStartEpochMs, 100_000)
+        XCTAssertEqual(snapshot.segmentEndEpochMs, 100_000)
+        XCTAssertEqual(snapshot.detailLabel, "Set 1 · Rep 1 · Left")
+    }
+
     // MARK: #674 review N1 — the mirror derives from the LIVE run, never a copy
 
     func testMirrorTracksRunAcrossStageTransitions() {

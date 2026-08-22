@@ -18,10 +18,11 @@ import SendmeterCore
 /// #674 review N1: this manager NEVER stores a `ForceProtocolRun`. A run is a
 /// struct, so a copy cached here would freeze the card on the stage captured
 /// at `start()` — the exact defect that shipped in the previous round. The
-/// authoritative run lives as `@State` in `GuidedForceProtocolView`; every
-/// push takes the LIVE run value (`refresh(run:at:)` / `updatePeak(_:run:at:)`),
-/// and the mirror in Core derives the snapshot from it at call time. Nothing
-/// derived from the run may be cached across a transition.
+/// authoritative run lives in the parent-owned
+/// `GuidedForceProtocolSession`; every push takes the LIVE run value
+/// (`refresh(run:at:)` / `updatePeak(_:run:at:)`), and the mirror in Core
+/// derives the snapshot from it at call time. Nothing derived from the run
+/// may be cached across a transition.
 ///
 /// KEEP-IN-SYNC note: the widget extension (a SEPARATE process, no Core
 /// dependency) never compiles this manager or `GuidedActivityContent` — it
@@ -88,9 +89,9 @@ public final class GuidedProtocolActivityManager {
 
     /// Rebuild the snapshot at the current instant from the LIVE run — called
     /// on every stage transition, never on a tick.
-    public func refresh(run: ForceProtocolRun, at date: Date = Date()) {
+    public func refresh(run: ForceProtocolRun, at date: Date = Date(), paused: Bool = false) {
         guard activity != nil else { return }
-        pushSnapshot(run: run, at: date)
+        pushSnapshot(run: run, at: date, paused: paused)
     }
 
     /// Bank the hold's final peak on the card (called when a work stage
@@ -134,9 +135,9 @@ public final class GuidedProtocolActivityManager {
         }
     }
 
-    private func pushSnapshot(run: ForceProtocolRun, at date: Date) {
+    private func pushSnapshot(run: ForceProtocolRun, at date: Date, paused: Bool = false) {
         guard let activity, let mirror else { return }
-        let snapshot = mirror.snapshot(run: run, at: date)
+        let snapshot = mirror.snapshot(run: run, at: date, isPaused: paused ? true : nil)
         let state = makeContentState(snapshot)
         let updated = ActivityContent(state: state, staleDate: state.segmentEnd)
         Task {
@@ -153,7 +154,8 @@ public final class GuidedProtocolActivityManager {
             segmentStart: Date(timeIntervalSince1970: snapshot.segmentStartEpochMs / 1_000),
             segmentEnd: Date(timeIntervalSince1970: snapshot.segmentEndEpochMs / 1_000),
             peakKilograms: snapshot.peakKilograms,
-            targetKilograms: snapshot.targetKilograms
+            targetKilograms: snapshot.targetKilograms,
+            isPaused: snapshot.isPaused
         )
     }
 }
