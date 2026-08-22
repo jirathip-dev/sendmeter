@@ -1,3 +1,4 @@
+@_spi(Experimental) import Auth
 import SendmeterCore
 import SwiftUI
 
@@ -12,6 +13,13 @@ struct SettingsView: View {
     @State private var retryingQueue = false
     @State private var retryingQuarantined = false
     @State private var discardConfirmation: QuarantinedWrite?
+    /// #712: the passkey awaiting removal confirmation (server-side delete).
+    @State private var pendingPasskeyRemoval: PasskeyListItem?
+    /// #712: the passkey ids whose remove requests are in flight, so each row
+    /// shows a spinner instead of a second tap target while it completes.
+    /// A set (not a single `UUID?`) so finishing one removal can't clear
+    /// another row's in-flight state (review F-blocking race on #712).
+    @State private var removingPasskeyIDs: Set<UUID> = []
 
     var body: some View {
         NavigationStack {
@@ -29,6 +37,13 @@ struct SettingsView: View {
             .refreshable {
                 model.watch.refreshPairingState()
                 await model.refreshAll(showSpinner: false)
+                // #712: a pull-to-refresh on Settings also re-lists passkeys.
+                await model.loadPasskeys()
+            }
+            .task {
+                // #712: load the passkey list when Settings opens, so the
+                // count/rows are fresh without waiting for a manual refresh.
+                await model.loadPasskeys()
             }
             .sheet(isPresented: $showingBlocks) {
                 PhasesView()
@@ -74,7 +89,39 @@ struct SettingsView: View {
             } message: {
                 Text("This permanently deletes the unsynced \(discardConfirmation?.kind.lowercased() ?? "item") from this device. The server never received it, so it cannot be recovered after this.")
             }
+            .confirmationDialog(
+                "Remove passkey?",
+                isPresented: pendingPasskeyRemovalBinding,
+                titleVisibility: .visible
+            ) {
+                Button("Remove", role: .destructive) {
+                    if let passkey = pendingPasskeyRemoval {
+                        // #656: a confirmed destructive action carries the
+                        // medium tick — once per gesture (the dialog's
+                        // confirm tap).
+                        Haptics.shared.play(.medium)
+                        removingPasskeyIDs.insert(passkey.id)
+                        Task {
+                            await model.removePasskey(passkey.id)
+                            removingPasskeyIDs.remove(passkey.id)
+                        }
+                    }
+                    pendingPasskeyRemoval = nil
+                }
+                Button("Cancel", role: .cancel) { pendingPasskeyRemoval = nil }
+            } message: {
+                Text("This deletes the passkey from your account. You'll need to register it again to use it as a sign-in method.")
+            }
         }
+    }
+
+    /// #712: the removal prompt is per-passkey, mirroring the quarantine
+    /// discard — never an unconditional confirm on the whole list.
+    private var pendingPasskeyRemovalBinding: Binding<Bool> {
+        Binding(
+            get: { pendingPasskeyRemoval != nil },
+            set: { if !$0 { pendingPasskeyRemoval = nil } }
+        )
     }
 
     /// #675: the quarantine discard is a per-item confirmation — a quarantined
@@ -132,6 +179,47 @@ struct SettingsView: View {
                 }
             }
             .disabled(registeringPasskey)
+            // #712: the registered passkeys for the signed-in user — a live
+            // count plus per-passkey removal, so a registration shows up as a
+            // persistent entry (not just a transient toast).
+            LabeledContent("Passkeys", value: "\(model.passkeys.count)")
+            if model.passkeys.isEmpty {
+                Text("No passkeys registered. Use “Register Passkey” to add one.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(model.passkeys) { passkey in
+                    passkeyRow(passkey)
+                }
+            }
+        }
+    }
+
+    /// #712: one registered passkey — friendly name, registration date, and a
+    /// server-side remove (with confirmation). The remove button is
+    /// `.borderless` so tapping it doesn't select the whole row.
+    private func passkeyRow(_ passkey: PasskeyListItem) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(passkey.friendlyName ?? "Passkey")
+                    .foregroundStyle(.primary)
+                Text(passkey.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if removingPasskeyIDs.contains(passkey.id) {
+                ProgressView()
+            } else {
+                Button(role: .destructive) {
+                    // #656: arming a confirmation dialog ticks once per tap.
+                    Haptics.shared.tap()
+                    pendingPasskeyRemoval = passkey
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+            }
         }
     }
 

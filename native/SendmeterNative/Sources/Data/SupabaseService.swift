@@ -68,6 +68,19 @@ public final class AuthService {
         )
     }
 
+    /// Lists the passkeys registered for the signed-in user (#712). Reads the
+    /// same server-side source as the web's `supabase.auth.passkey.list()`.
+    @_spi(Experimental)
+    public func listPasskeys() async throws -> [PasskeyListItem] {
+        try await client.auth.listPasskeys()
+    }
+
+    /// Removes a passkey server-side (#712). Deleting the credential is what
+    /// actually unregisters it — hiding it locally would leave it usable.
+    public func deletePasskey(id: UUID) async throws {
+        try await client.auth.deletePasskey(id: id)
+    }
+
     /// Exchange an Apple identity token for a Supabase session (#631). The
     /// RAW nonce is passed — Supabase re-hashes it and compares against the
     /// (already-hashed) nonce Apple echoed into the token, mirroring the
