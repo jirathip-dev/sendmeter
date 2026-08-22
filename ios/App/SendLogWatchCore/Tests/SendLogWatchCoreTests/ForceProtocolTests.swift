@@ -55,12 +55,14 @@ final class ForceProtocolTests: XCTestCase {
 
         let decoded = try JSONDecoder().decode(WatchForceProtocol.self, from: json)
 
-        XCTAssertEqual(decoded.reps, 29)
+        // #682: the recording cap is now 10 min (maxMovementSetS = 599), so a
+        // 30/30 cadence preset normalizes to floor(599 / 60) = 9 reps.
+        XCTAssertEqual(decoded.reps, 9)
         XCTAssertEqual(decoded.cadenceOutS, 30)
         XCTAssertEqual(decoded.cadenceReturnS, 30)
-        XCTAssertEqual(decoded.movementSetDurationS, 1_740)
+        XCTAssertEqual(decoded.movementSetDurationS, 540)
         XCTAssertTrue(decoded.movementSetWithinTindeqCap)
-        XCTAssertLessThan(decoded.movementSetDurationS, 1_800)
+        XCTAssertLessThan(decoded.movementSetDurationS, 600)
     }
 
     func testMovementTimelineHasExactDirectionsAndCounts() {

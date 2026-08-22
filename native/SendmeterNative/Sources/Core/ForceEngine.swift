@@ -97,7 +97,11 @@ public struct ForceSummary: Codable, Equatable, Sendable {
 }
 
 public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
-    public static let maximumRecordingMilliseconds = 1_800_000
+    /// Cut 30 min -> 10 min (#682): always-armed hands-free makes a sustained
+    /// non-human load accidentally reachable, so a tighter safety ceiling is
+    /// the backstop behind the static-load watchdog. Mirrors
+    /// `TindeqRecordingLimit.maxRecordingMs` on the watch.
+    public static let maximumRecordingMilliseconds = 600_000
 
     private var startMicroseconds: UInt32?
     private var runningSumKilograms: Double
@@ -126,7 +130,7 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
             guard let startMicroseconds else { continue }
             // The Progressor timestamp is a UInt32 device clock. Wrapping
             // subtraction keeps the result correct across one wrap; a normal
-            // Sendmeter recording is capped at 30 minutes, far below a second
+            // Sendmeter recording is capped at 10 minutes, far below a second
             // wrap of the microsecond clock.
             let elapsedMicroseconds = sample.microseconds &- startMicroseconds
             let elapsedMilliseconds = Double(elapsedMicroseconds) / 1_000.0

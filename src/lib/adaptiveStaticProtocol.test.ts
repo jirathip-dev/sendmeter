@@ -6,9 +6,16 @@ import {
   stepAdaptiveStatic,
   type AdaptiveStaticState,
 } from "./adaptiveStaticProtocol";
+import { DEFAULT_HANDS_FREE_FORCE_CONFIG } from "./handsFreeForce";
 import type { ProtocolSegment } from "./protocol";
 
-const cfg = { startKg: 2, stopKg: 1, startStableMs: 100, stopGraceMs: 200 };
+const cfg = {
+  ...DEFAULT_HANDS_FREE_FORCE_CONFIG,
+  startKg: 2,
+  stopKg: 1,
+  startStableMs: 100,
+  stopGraceMs: 200,
+};
 const timeline: ProtocolSegment[] = [
   { phase: "hold", side: "left", rep: 1, set: 1, startS: 0, durS: 1 },
   { phase: "rest", side: null, rep: 1, set: 1, startS: 1, durS: 2 },

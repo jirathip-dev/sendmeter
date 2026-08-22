@@ -371,7 +371,7 @@ function toPreset(r: PresetRow): TindeqPreset {
 }
 
 function presetToRow(p: Omit<TindeqPreset, "id">) {
-  // Keep direct callers and schema-fallback writes on the same <=30m/set
+  // Keep direct callers and schema-fallback writes on the same <=10m/set
   // contract as the editor. Historical rows are normalized on read; a stale
   // in-memory draft is normalized here before it can be written back.
   const normalized = normalizeMovementPreset({ id: "draft", ...p });

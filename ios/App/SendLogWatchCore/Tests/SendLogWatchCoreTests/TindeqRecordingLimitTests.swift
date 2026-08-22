@@ -6,8 +6,9 @@ final class TindeqRecordingLimitTests: XCTestCase {
         XCTAssertFalse(TindeqRecordingLimit.shouldStop(elapsedMs: 120_000))
     }
 
-    func testStopsAtThirtyMinuteLimit() {
-        XCTAssertEqual(TindeqRecordingLimit.maxRecordingMs, 30 * 60 * 1_000)
+    func testStopsAtTenMinuteLimitNotThirty() {
+        // #682: the always-armed recording cap is 10 minutes, not 30.
+        XCTAssertEqual(TindeqRecordingLimit.maxRecordingMs, 10 * 60 * 1_000)
         XCTAssertFalse(
             TindeqRecordingLimit.shouldStop(
                 elapsedMs: TindeqRecordingLimit.maxRecordingMs - 1
@@ -21,13 +22,13 @@ final class TindeqRecordingLimitTests: XCTestCase {
     }
 
     func testMovementNormalizationLeavesBoundaryHeadroom() {
-        XCTAssertEqual(TindeqRecordingLimit.maxMovementSetS, 1_799)
+        XCTAssertEqual(TindeqRecordingLimit.maxMovementSetS, 599)
         XCTAssertEqual(
             TindeqRecordingLimit.maxMovementReps(
                 cadenceOutS: 30,
                 cadenceReturnS: 30
             ),
-            29
+            9
         )
         XCTAssertLessThan(
             Double(

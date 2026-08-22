@@ -124,6 +124,39 @@ final class HandsFreeForceControllerTests: XCTestCase {
         XCTAssertNil(manual.consumeTrimEndMilliseconds())
     }
 
+    func testStaticLoadTerminationSetsReasonAndTrimToFlatWindowStart() {
+        let controller = HandsFreeForceController(config: config)
+        let hooks = Hooks()
+        hooks.attach(to: controller)
+
+        controller.arm()
+        // Load applied at 0; the recording begins at 600 (startStableMs).
+        // A 4 kg spike at 1_000 breaks the 0.25 kg flat band, resetting the
+        // flat window to that sample; the subsequent flat 4 kg load then runs
+        // for 30 s (flatlineWindowMs), so the machine terminates as
+        // `.staticLoad` with the trim at the flat-window start (1_000 on the
+        // feed clock).
+        controller.feed(atMs: 0, kg: 3)
+        for step in 1...9 {
+            controller.feed(atMs: Double(step) * 100, kg: 3)
+        }
+        for step in 10...310 {
+            controller.feed(atMs: Double(step) * 100, kg: 4)
+        }
+        XCTAssertEqual(hooks.beginRecordingCalls, 1)
+        XCTAssertEqual(hooks.stopAndSaveCalls, 1)
+
+        // The trim is the flat-window start on the RECORDING clock:
+        // 1_000 (flat-window start) - 600 (recording began) = 400 ms.
+        XCTAssertEqual(controller.consumeTrimEndMilliseconds() ?? -1, 400, accuracy: 100)
+
+        // A `.staticLoad` re-arms through waiting-for-slack, never straight to
+        // armed — it has no proof of slack (the sustained load may still hang).
+        controller.rearmAfterSave()
+        XCTAssertEqual(controller.state, HandsFreeForceState.waitingForSlack)
+        XCTAssertEqual(hooks.autoReArmCalls, 1)
+    }
+
     func testManualStopRequiresSlackBeforeNextPull() {
         let controller = HandsFreeForceController(config: config)
         let hooks = Hooks()

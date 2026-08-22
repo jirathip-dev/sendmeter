@@ -2,6 +2,7 @@
 import Combine
 import Foundation
 import SendLogHealthCore
+import SendLogWatchCore
 import SendmeterCore
 import SendmeterWeather
 import SwiftUI
@@ -1778,8 +1779,24 @@ public final class AppModel: ObservableObject {
         }
         let context = freePullContext
         let trimEndMilliseconds = handsFree.consumeTrimEndMilliseconds()
+        // #682 Guard 1: the verdict runs LAST, at the persist boundary, on the
+        // trimmed evidence (a `.staticLoad` termination trims to the flat-window
+        // start; release trims to the release edge). A trivial rep — peak below
+        // `minPeakKg` or duration below `minDurationMs` — is discarded silently
+        // here, BEFORE `saveForceSummaryOutcome`, so it never enters the
+        // recording queue and is never reported as queued. Only hands-free reps
+        // reach this function; manual recordings (which go through
+        // `saveForceSummary`) are unchanged while hands-free is opt-in.
+        let trimmed = trimSummary(summary, endMilliseconds: trimEndMilliseconds)
+        if recordingVerdict(
+            peakKg: trimmed.peakKilograms,
+            durationMs: Double(trimmed.durationMilliseconds)
+        ) != .persist {
+            tindeq.clearCompletedRecording()
+            handsFree.rearmAfterSave()
+            return
+        }
         Task {
-            let trimmed = trimSummary(summary, endMilliseconds: trimEndMilliseconds)
             let outcome = await saveForceSummaryOutcome(
                 trimmed,
                 tag: context.tag,

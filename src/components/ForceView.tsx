@@ -90,6 +90,7 @@ import {
   armedHandsFreeForce,
   handsFreeForceAtInactiveStatus,
   idleHandsFreeForce,
+  recordingVerdict,
   stepHandsFreeForce,
   type HandsFreeForceState,
 } from "../lib/handsFreeForce";
@@ -365,6 +366,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // animation frame. Each emitted action advances the ref to its claimed
   // phase before any callback can await, preventing duplicate Start/Stop.
   const handsFreeControlRef = useRef<HandsFreeForceState>(idleHandsFreeForce());
+  // True while the CURRENT recording was started by the hands-free machine
+  // (#682). Set on the machine's `.start` claim (after `beginArmedRecording`
+  // succeeds), reset in `runStop`. Read as a ref because `runStop` is async:
+  // the persist-boundary verdict must know whether this rep was a hands-free
+  // hold without capture-state races, and it must be claimed before the
+  // first `await`. Only hands-free-started reps are gated by Guard 1, so a
+  // manual (hands-free opted-out) free hold is never silently discarded.
+  const handsFreeActiveRef = useRef(false);
   const adaptiveStaticRef = useRef<AdaptiveStaticState | null>(null);
   const adaptiveHoldsRef = useRef<AdaptiveStaticHold[]>([]);
   const adaptiveRunSnapshotRef = useRef<{
@@ -1103,6 +1112,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   }
 
   async function runStop(note: string, endMs?: number) {
+    // Claim the hands-free rep identity into a local before any await (#682 &
+    // the repo closure-race rule): `runStop` is async, and the persist-boundary
+    // verdict below must read a ref/snapshot, not captured state. Reset once
+    // claimed so a later path cannot re-discard a hold the machine did not
+    // start. A remount RECOVERY (a BLE drop that fired while this view was
+    // unmounted) runs on a FRESH mount whose `handsFreeActiveRef` is false, so
+    // the drop-time `wasHandsFree` snapshot (`tindeq.interruptionContext`) is
+    // the authority there — read BEFORE `tindeq.stop()` clears the claim.
+    const handsFreeActive =
+      handsFreeActiveRef.current || (tindeq.interruptionContext?.wasHandsFree === true);
+    handsFreeActiveRef.current = false;
     const adaptive = adaptiveStaticRef.current;
     if (adaptive) {
       // Claim the whole adaptive stop before any save/transport await. A
@@ -1233,6 +1253,21 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     const summary = await tindeq.stop(endMs);
     void endTindeqLiveActivity();
     if (!summary) return;
+    // Guard 1 (#682): the persist-boundary verdict runs LAST, on the trimmed
+    // full evidence (a `.staticLoad` termination trims to the flat-window
+    // start; release trims to the release edge). A trivial hands-free rep —
+    // peak below `minPeakKg` or duration below `minDurationMs` — is discarded
+    // silently here, BEFORE `saveRecording`, so it never enters the recording
+    // queue and is never reported as queued. Manual (hands-free opted-out)
+    // free holds are unchanged while hands-free is opt-in. App-layer wiring;
+    // the pure predicate + deterministic `handsFreeForce.test.ts` cases are
+    // the proof.
+    if (
+      handsFreeActive &&
+      recordingVerdict(summary.peakKg, summary.durationMs) !== "persist"
+    ) {
+      return;
+    }
     setSaving(true);
     // Minted up front — see the comment on the equivalent line in
     // saveHoldSlice (retry idempotency via 23505, #106).
@@ -2233,6 +2268,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // reads the ref, and it's a stable-on-purpose function value for this
       // effect's identity.
       resolveLabel: resolveBoundaryLabel,
+      // #682: expose whether the in-flight rep was hands-free-started so the
+      // unmount-salvage cleanup can apply Guard 1. Read `handsFreeActiveRef`
+      // at salvage time (a stable ref), not a captured value.
+      wasHandsFree: handsFreeActiveRef.current,
       buildSalvageRecordings: (samples) =>
         buildAdaptiveStaticSalvage(samples) ?? buildReverseSalvageRecordings(samples),
     }));
@@ -2289,9 +2328,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         handsFreeControlRef.current = idleHandsFreeForce();
         return;
       }
+      handsFreeActiveRef.current = true;
       return;
     }
-    if (stepped.action === "stop") void handleStop("", releaseStartedMs ?? undefined);
+    if (stepped.action === "stop") {
+      // Guard 2 (#682): a static-load stop carries the START of the flat
+      // window on the recording clock — pass it as the trim end so the saved
+      // rep ends at the first flat sample, not at termination. `releaseStartedMs`
+      // is the release-edge trim for a normal hands-free release.
+      void handleStop("", stepped.staticLoadEndMs ?? releaseStartedMs ?? undefined);
+    }
     // `handleStop` owns current refs and its own pre-await re-entrancy claim.
     // The hook callbacks are stable; force/elapsed/status are the sample clock.
     // eslint-disable-next-line react-hooks/exhaustive-deps

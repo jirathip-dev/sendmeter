@@ -85,10 +85,10 @@ describe("movement protocol", () => {
     expect(movementSetExceedsTindeqCap(overCap)).toBe(true);
 
     const normalized = normalizeMovementPreset(overCap);
-    expect(normalized.reps).toBe(29);
+    expect(normalized.reps).toBe(9);
     expect(normalized.cadenceOutS).toBe(30);
     expect(normalized.cadenceReturnS).toBe(30);
-    expect(movementSetDurationS(normalized)).toBe(1_740);
+    expect(movementSetDurationS(normalized)).toBe(540);
     expect(movementSetDurationS(normalized)).toBeLessThan(TINDEQ_MAX_MOVEMENT_SET_S);
     expect(movementSetExceedsTindeqCap(normalized)).toBe(false);
   });

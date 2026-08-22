@@ -212,7 +212,7 @@ public struct WatchForceProtocol: Sendable, Codable, Equatable, Identifiable {
     }
 
     public var movementSetWithinTindeqCap: Bool {
-        mode != .reverseAction || movementSetDurationS <= 1_800
+        mode != .reverseAction || movementSetDurationS <= TindeqRecordingLimit.maxRecordingMs / 1_000
     }
 
     /// Pure expansion used by countdown UIs. Movement sets are continuous and

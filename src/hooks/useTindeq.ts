@@ -4,6 +4,7 @@ import {
   DynamometerCancelledError,
 } from "../lib/dynamometer";
 import type { DynamometerConnection, ForceSample } from "../lib/dynamometer";
+import { recordingVerdict } from "../lib/handsFreeForce";
 import { reportPersistFailure } from "../lib/lostRecordings";
 import { persistRecording } from "../lib/recordingQueue";
 import type {
@@ -30,7 +31,7 @@ export interface StoppedRecording {
 // Safety cap on a single continuous recording. High enough that long holds
 // (up to 240s smart-CF targets) and full guided endurance protocols never get
 // cut off — it's only a runaway guard, not a normal stop.
-const MAX_RECORDING_MS = 1_800_000; // 30 min
+const MAX_RECORDING_MS = 600_000; // 10 min
 /// #173: the one device-layer lookup. Everything below talks to the
 /// `DynamometerDriver` interface — service UUIDs, packet parsing and command
 /// bytes all live behind it. Resolved (and probed) at module load because the
@@ -107,6 +108,12 @@ export interface SalvageContext {
     tag: string;
     side: TindeqSide;
   }) => { tag: string; side: TindeqSide };
+  /// #682: true while the in-flight recording was started by the hands-free
+  /// machine. Guard 1 (`recordingVerdict`) applies at the persist boundary
+  /// only to hands-free-started reps, so the unmount-salvage cleanup can drop a
+  /// trivial rep instead of persisting it. Manual (opted-out) interrupted reps
+  /// are unchanged. Read from the owner's ref at drop time (synchronous).
+  wasHandsFree: boolean;
 }
 
 /// Pure gate for the unmount-salvage cleanup — pulled out so the exact
@@ -128,6 +135,23 @@ export function shouldSalvageOnUnmount(params: {
   );
 }
 
+/// #682 Guard 1: whether a hands-free-started rep being salvaged at unmount
+/// should be DROPPED at the persist boundary instead of entering the recording
+/// queue. Only hands-free free-hold rows (the generic shape; `isSpecialized`
+/// false) are gated — guided/protocol salvage keeps its existing behavior, and
+/// manual (hands-free opted-out) interrupted reps are unchanged. Pure so the
+/// verdict is deterministic in tests: `recordingVerdict` is the one shared
+/// persist predicate, and this helper is the salvage site's call into it.
+export function shouldDiscardHandsFreeSalvage(params: {
+  wasHandsFree: boolean;
+  isSpecialized: boolean;
+  peakKg: number | null;
+  durationMs: number;
+}): boolean {
+  if (!params.wasHandsFree || params.isSpecialized) return false;
+  return recordingVerdict(params.peakKg ?? 0, params.durationMs) !== "persist";
+}
+
 /// #117: note for a stop triggered by a BLE interruption. When THIS mounted
 /// ForceView instance never observed measuring, the drop happened while it
 /// was unmounted (tab switched) and the recovered save is a raw whole-buffer
@@ -143,6 +167,12 @@ export function interruptionNote(everMeasuredThisMount: boolean): string {
 export interface InterruptionContext {
   tag: string;
   side: TindeqSide;
+  /// #682 follow-up: whether the interrupted rep was started by the hands-free
+  /// machine, captured at DROP TIME. This survives the drop (the provider-owned
+  /// hook outlives a tab switch) so a remount-recovery `runStop` can still
+  /// apply Guard 1 even though a fresh mount's `handsFreeActiveRef` is false.
+  /// Manual (hands-free opted-out) reps are false.
+  wasHandsFree: boolean;
 }
 
 /// #119: narrow a registered SalvageContext down to just the label fields, at
@@ -150,11 +180,14 @@ export interface InterruptionContext {
 /// remounts to recover the buffer (the drop fired while the user was on
 /// another tab) runs its own setSalvageContext effect first, re-registering a
 /// fresh context whose pendingTag/pendingSide are still empty — so a late read
-/// of salvageContextRef is deterministically "" again.
+/// of salvageContextRef is deterministically "" again. The hands-free flag is
+/// snapshotted here for the same reason: the recovery `runStop` cannot read a
+/// fresh mount's `handsFreeActiveRef` (it is false), so the drop-time value is
+/// the only truth.
 export function snapshotInterruption(
   ctx: SalvageContext | null | undefined,
 ): InterruptionContext | null {
-  return ctx ? { tag: ctx.tag, side: ctx.side } : null;
+  return ctx ? { tag: ctx.tag, side: ctx.side, wasHandsFree: ctx.wasHandsFree } : null;
 }
 
 /// #119: tag/side for an interruption-recovery save. On a remount recovery the
@@ -165,12 +198,13 @@ export function snapshotInterruption(
 /// something: a mount that did seed first is at least as current as the
 /// snapshot, so this is a fallback, never an override.
 export function recoveredTagSide(
-  live: InterruptionContext,
+  live: { tag: string; side: TindeqSide },
   snapshot: InterruptionContext | null,
 ): InterruptionContext {
   return {
     tag: live.tag || (snapshot?.tag ?? ""),
     side: live.side || (snapshot?.side ?? ""),
+    wasHandsFree: snapshot?.wasHandsFree ?? false,
   };
 }
 
@@ -250,10 +284,11 @@ export function useTindeq() {
     [],
   );
 
-  // #119: claim a mid-measurement drop's buffer AND snapshot the tag/side that
-  // were registered at that instant. Shared by the real disconnect callback
-  // and the dev fake-drop helper below so the two can't drift — the snapshot
-  // has to happen in BOTH or the recovery flow isn't browser-verifiable.
+  // #119: claim a mid-measurement drop's buffer AND snapshot the tag/side (and,
+  // #682 follow-up, the hands-free flag) that were registered at that instant.
+  // Shared by the real disconnect callback and the dev fake-drop helper below
+  // so the two can't drift — the snapshot has to happen in BOTH or the
+  // recovery flow isn't browser-verifiable.
   const claimInterruption = useCallback(() => {
     setInterruptionContext(snapshotInterruption(salvageContextRef.current?.()));
     pendingInterruptionRef.current = true;
@@ -361,6 +396,7 @@ export function useTindeq() {
         stopInFlight: false,
         buildSalvageRecordings: undefined,
         resolveLabel: undefined,
+        wasHandsFree: false,
       };
       const userId: string | null = registered?.userId ?? null;
       if (
@@ -438,7 +474,24 @@ export function useTindeq() {
           zone: null,
           samples: summary.samples,
         }];
+      // #682 Guard 1: the unmount-salvage cleanup is also a persist boundary.
+      // A hands-free-started rep is evaluated on its full evidence here; a
+      // trivial rep (peak < `minPeakKg` or duration < `minDurationMs`) is
+      // dropped so it never enters the recording queue and is never reported
+      // as queued. Hands-free reps are always generic free-hold rows
+      // (`specialized === null`), so the verdict only gates that shape; manual
+      // (opted-out) interrupted reps keep their existing behavior.
       for (const row of salvageRows) {
+        if (
+          shouldDiscardHandsFreeSalvage({
+            wasHandsFree: ctx.wasHandsFree,
+            isSpecialized: specialized !== null,
+            peakKg: row.peakKg,
+            durationMs: row.durationMs,
+          })
+        ) {
+          continue;
+        }
         const result = persistRecording(
           row,
           // null only via the no-context fallback above — a REGISTERED

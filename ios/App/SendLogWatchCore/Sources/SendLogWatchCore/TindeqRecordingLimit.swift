@@ -2,7 +2,10 @@ import Foundation
 
 /// Safety limit for a single Tindeq recording on the watch.
 public enum TindeqRecordingLimit: Sendable {
-    public static let maxRecordingMs: Double = 1_800_000
+    /// Cut 30 min -> 10 min (#682): always-armed hands-free makes a sustained
+    /// non-human load accidentally reachable, so a tighter safety ceiling is
+    /// the backstop behind the static-load watchdog.
+    public static let maxRecordingMs: Double = 600_000
     /// Movement sets are one continuous recording. Keep one second of
     /// headroom when normalizing legacy presets so a sample arriving exactly
     /// at the BLE cap cannot race the guided boundary handler.
