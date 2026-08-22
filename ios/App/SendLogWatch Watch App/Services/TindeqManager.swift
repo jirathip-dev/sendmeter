@@ -853,10 +853,16 @@ final class TindeqManager: NSObject {
         // synchronous event list (especially with zero rest). The first row
         // is already claimed and has its own durable id/group; blocking the
         // next BLE start here would leave Core's next boundary unsaved.
-        guard status == .connected, !handsFreeRequested,
+        guard status == .connected,
               repClaims.active == nil, !context.tag.isEmpty,
               guidedClaims.begin(context: context) != nil
         else { return false }
+        // #683 review blocker: connecting always arms the resting hands-free
+        // wait now, so the guided entry must preempt it rather than require it
+        // already off. `cancelHandsFree()` is idempotent and never touches
+        // `freeHoldSuspended`, so the guided runner still owns the suspend flag
+        // and the guided-exit re-arm contract is unchanged.
+        cancelHandsFree()
         savedMsgGeneration += 1
         savedMsg = nil
         resetRecordingBuffer()
