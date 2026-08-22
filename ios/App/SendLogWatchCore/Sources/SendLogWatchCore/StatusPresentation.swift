@@ -1,8 +1,13 @@
 import Foundation
 
-/// Universal ACWR risk bands used by the web app, watch app and watch widgets.
+/// ACWR risk bands used by the watch app and watch widgets.
 /// The inclusive upper bounds intentionally mirror `getACWRStatus` in
-/// `src/lib/metrics.ts`: 0.8 is Low, 1.3 is Optimal and 1.5 is Caution.
+/// `src/lib/metrics.ts` (0.8 is Low, 1.3 is Optimal, 1.5 is Caution) but are
+/// a deliberate 4-band presentation: there is no separate sub-0.8
+/// "under-training" band (sub-0.8 collapses to Low) and >1.5 is High, not
+/// Danger. This divergence is pinned by the shared readiness/ACWR parity
+/// fixture (see `readiness-acwr-parity.json`) so it cannot silently drift
+/// back to the web/native 5-zone model.
 public enum ACWRRiskBand: String, Sendable, Equatable, CaseIterable {
     case low
     case optimal

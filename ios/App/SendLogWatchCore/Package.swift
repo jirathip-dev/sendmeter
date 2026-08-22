@@ -18,7 +18,10 @@ let package = Package(
             name: "SendLogWatchCoreTests",
             dependencies: ["SendLogWatchCore"],
             path: "Tests/SendLogWatchCoreTests",
-            resources: [.copy("Fixtures/rpe-depletion-parity.json")]
+            resources: [
+                .copy("Fixtures/rpe-depletion-parity.json"),
+                .copy("Fixtures/readiness-acwr-parity.json")
+            ]
         )
     ]
 )

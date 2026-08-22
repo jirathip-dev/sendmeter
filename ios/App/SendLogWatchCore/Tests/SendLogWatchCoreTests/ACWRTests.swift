@@ -121,3 +121,112 @@ final class StatusPresentationTests: XCTestCase {
         XCTAssertNil(StatusPresentation.readinessZoneLabel("unknown"))
     }
 }
+
+/// Cross-pinning fixture for the readiness/ACWR math shared with the web
+/// (src/lib/metrics.ts), the health core (native-plugins/sendlog-health-core)
+/// and the native app (native/SendmeterNative). Same bytes as
+/// src/lib/readinessAcwrParity.test.ts and the other two Swift suites; a
+/// drift in any implementation's numbers fails the suite that owns it.
+///
+/// The watch's `ACWRRiskBand` is a deliberately compact 4-band presentation
+/// (no separate sub-0.8 "under-training" band, and >1.5 labelled `.high`),
+/// so `testStatusVectorsMatchWatchBands` maps fixture statuses onto the bands
+/// the watch distinguishes — the 0.8/1.3/1.5 inclusive-upper boundaries all
+/// agree with the universal model, and the collapse below 0.8 is documented
+/// in the fixture's `_comment`. The EWMA ratio itself is asserted verbatim.
+final class ReadinessAcwrParityTests: XCTestCase {
+    private struct Spans: Decodable {
+        let acuteDays: Int
+        let chronicDays: Int
+        let lookbackDays: Int
+        let readinessRecoverBelow: Int
+        let readinessPushAbove: Int
+    }
+    private struct AcwrStatusVector: Decodable {
+        let id: String
+        let ratio: Double?
+        let status: String
+    }
+    private struct AcwrRatioVector: Decodable {
+        let id: String
+        let dailyLoads: [Double]
+        let expected: Double?
+    }
+    private struct ReadinessVector: Decodable {
+        let id: String
+        let acwr: Double?
+        let expectedScore: Int?
+        let expectedZone: String?
+    }
+    private struct Fixture: Decodable {
+        let spans: Spans
+        let acwrStatus: [AcwrStatusVector]
+        let acwrRatio: [AcwrRatioVector]
+        let readiness: [ReadinessVector]
+    }
+
+    private static let fixture: Fixture = {
+        #if SWIFT_PACKAGE
+        let resourceURL = Bundle.module.url(forResource: "readiness-acwr-parity", withExtension: "json")
+        #else
+        let resourceURL: URL? = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/readiness-acwr-parity.json")
+        #endif
+        guard let resourceURL else {
+            fatalError("Missing readiness-acwr-parity.json test resource")
+        }
+        do {
+            return try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: resourceURL))
+        } catch {
+            fatalError("Invalid readiness/ACWR parity fixture: \(error)")
+        }
+    }()
+
+    private static let ratioTolerance = 1e-9
+
+    // Watch ACWRRiskBand uses a compact 4-band model: nil for no-data, `.low`
+    // collapses the universal sub-0.8 range (including under-training), and
+    // >1.5 is `.high` (the universal model calls it danger).
+    private func expectedWatchBand(status: String) -> ACWRRiskBand? {
+        switch status {
+        case "noData": return nil
+        case "underTraining", "low": return .low
+        case "optimal": return .optimal
+        case "caution": return .caution
+        case "danger": return .high
+        default: XCTFail("Unknown fixture status \(status)"); return nil
+        }
+    }
+
+    func testAcwrRatioMatchesSharedVectors() {
+        for vector in Self.fixture.acwrRatio {
+            let ratio = ewmaAcwr(dailyLoads: vector.dailyLoads)
+            if let expected = vector.expected {
+                guard let ratio else {
+                    XCTFail("\(vector.id): expected \(expected), got nil")
+                    continue
+                }
+                XCTAssertEqual(ratio, expected, accuracy: Self.ratioTolerance, vector.id)
+            } else {
+                XCTAssertNil(ratio, "\(vector.id): expected nil, got \(String(describing: ratio))")
+            }
+        }
+    }
+
+    func testStatusVectorsMatchWatchBands() {
+        for vector in Self.fixture.acwrStatus {
+            let band = StatusPresentation.acwrRiskBand(vector.ratio)
+            XCTAssertEqual(band, expectedWatchBand(status: vector.status), vector.id)
+        }
+    }
+
+    func testReadinessVectorsMapToWatchLabels() {
+        for vector in Self.fixture.readiness {
+            let label = StatusPresentation.readinessZoneLabel(vector.expectedZone)
+            // Recover/Maintain/Push are the only zones the watch distinguishes.
+            let expected = vector.expectedZone.map { $0.capitalized }
+            XCTAssertEqual(label, expected, vector.id)
+        }
+    }
+}
