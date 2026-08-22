@@ -1522,6 +1522,9 @@ struct ForceView: View {
                 // #720: a persisted side can be stale for the active exercise's
                 // mode even on a fresh launch (not just on a tag switch).
                 normalizeSideForMode()
+                // #720: re-stamp the armed hands-free context from the current
+                // (normalized) recorded side — normalize must run before this.
+                publishFreePullContext()
                 if let guidedSession {
                     registerGuidedTeardown(for: guidedSession)
                 }
@@ -1535,6 +1538,12 @@ struct ForceView: View {
                 publishFreePullContext()
             }
             .onChange(of: sideMode) { _ in normalizeSideForMode() }
+            // #720 review (blocker): the free-pull context stamps `recordedSide`,
+            // which can change when the exercise's side MODE changes without the
+            // raw `side` changing (e.g. bilateral_only→not_applicable with an
+            // unspecified side). Re-publish on the EFFECTIVE side so the armed
+            // hands-free loop can never persist a stale/forbidden side.
+            .onChange(of: recordedSide) { _ in publishFreePullContext() }
             .onChange(of: side) { _ in publishFreePullContext() }
             .onChange(of: zone) { _ in publishFreePullContext() }
             .onChange(of: selectedPresetID) { _ in publishFreePullContext() }

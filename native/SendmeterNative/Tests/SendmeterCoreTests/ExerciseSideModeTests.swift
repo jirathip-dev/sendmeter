@@ -136,6 +136,16 @@ final class ExerciseSideModeTests: XCTestCase {
         XCTAssertEqual(ExerciseSidePolicy.recordedSide(.unilateralOrBilateral, .both), .both)
     }
 
+    /// Regression for the hands-free blocker (#720 review): the *effective*
+    /// side (`recordedSide`) changes when the exercise's side mode changes even
+    /// while the raw `side` stays `.unspecified` — so the free-pull context must
+    /// be re-published on `recordedSide`, never just on `side`.
+    func testRecordedSideChangesWithModeWhileSideStaysUnspecified() {
+        let side = TindeqSide.unspecified
+        XCTAssertEqual(ExerciseSidePolicy.recordedSide(.bilateralOnly, side), .both)
+        XCTAssertEqual(ExerciseSidePolicy.recordedSide(.notApplicable, side), .unspecified)
+    }
+
     // MARK: TagSideModeStore (device-local persistence)
 
     private let suiteName = "ExerciseSideModeTests.\(UUID().uuidString)"
