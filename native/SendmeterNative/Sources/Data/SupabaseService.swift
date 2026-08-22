@@ -170,6 +170,19 @@ public final class AuthService {
         }
     }
 
+    /// #722 (parity with web #542): send a password reset email for the
+    /// signed-in user's address. The link returns via the app's custom scheme
+    /// (`SupabaseConfiguration.redirectURL`) so it reopens the app into the
+    /// `PasswordRecoveryView` flow.
+    public func resetPassword(email: String) async throws {
+        try await guardedAuthCall {
+            try await client.auth.resetPasswordForEmail(
+                email,
+                redirectTo: SupabaseConfiguration.redirectURL
+            )
+        }
+    }
+
     public func signInWithPasskey() async throws {
         try await guardedAuthCall {
             try await client.auth.signInWithPasskey(

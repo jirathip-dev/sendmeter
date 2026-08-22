@@ -10,6 +10,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Native Settings is now grouped into General (Metric/Imperial units + appearance), Training, Health & Devices (Apple Health, Apple Watch, Progressor connection), Account & Security (identity, password reset email, passkeys, sign out), and About & Support (version, data sync, diagnostics), with account deletion kept in a separate Danger zone. Adds a Metric/Imperial presentation preference and a Progressor device-status card, and fixes the ability to send a password reset email.
 - Native Settings now lists and removes the passkeys registered for your account, with a live count, a confirmation before each removal, and a registration that shows up in the list right away.
 - Native Settings → Troubleshooting now lists recent on-device auth events (sign-in, refresh, sign-out, and failure reasons), and token-bearing requests refresh an expired session before use instead of trusting a stale bearer token.
 - Native Manual workouts now open in an adaptive, phase-tinted full-page timer with BOULDER/DONE controls, persisted 1/2/3/5-minute rest targets, rest-over haptic/audio feedback (including a sound notification when backgrounded), and a minimize action that keeps the workout running.

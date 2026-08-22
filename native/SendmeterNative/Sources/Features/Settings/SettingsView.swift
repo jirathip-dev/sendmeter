@@ -5,11 +5,17 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var theme: AppThemeController
+    /// #722: the Metric/Imperial presentation preference, persisted via
+    /// `AppUnits` (Core). Presentation-only for now — the shared conversion
+    /// layer that applies it across Force/readiness/weight display lives in a
+    /// separate change.
+    @AppStorage(AppUnits.storageKey) private var unitsRaw = UnitsPreference.metric.rawValue
     @State private var showingBlocks = false
     @State private var showingExercises = false
     @State private var showingDeleteAccount = false
     @State private var syncingHealth = false
     @State private var registeringPasskey = false
+    @State private var sendingReset = false
     @State private var retryingQueue = false
     @State private var retryingQuarantined = false
     @State private var discardConfirmation: QuarantinedWrite?
@@ -24,15 +30,12 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                accountSection
+                generalSection
                 trainingSection
-                healthSection
-                watchSection
-                queueSection
-                troubleshootingSection
-                appearanceSection
-                appSection
-                destructiveSection
+                healthDevicesSection
+                accountSecuritySection
+                aboutSupportSection
+                dangerZoneSection
             }
             .navigationTitle("Settings")
             .refreshable {
@@ -160,69 +163,43 @@ struct SettingsView: View {
             : "They're still waiting to reach the server — usually that means no connection. Signing out keeps them on this device; they upload the next time this account signs in."
     }
 
-    private var accountSection: some View {
-        Section("Account") {
-            LabeledContent("Email", value: model.currentUserEmail ?? "Signed in")
-            LabeledContent("User ID", value: model.currentUserID?.uuidString.lowercased() ?? "—")
+    // MARK: General
+
+    private var generalSection: some View {
+        Section("General") {
+            Picker("Units", selection: unitsBinding) {
+                ForEach(UnitsPreference.allCases) { preference in
+                    Text(preference.displayName).tag(preference)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text("Metric (kg) or Imperial (lb). Applied across the app; the shared conversion layer lands separately.")
                 .font(.caption)
-                .textSelection(.enabled)
-            Button {
-                registeringPasskey = true
-                Task {
-                    await model.registerPasskey()
-                    registeringPasskey = false
-                }
-            } label: {
-                HStack {
-                    Label("Register Passkey", systemImage: "person.badge.key.fill")
-                    Spacer()
-                    if registeringPasskey { ProgressView() }
+                .foregroundStyle(.secondary)
+
+            Picker("Appearance", selection: Binding(
+                get: { theme.choice },
+                set: { theme.setChoice($0) }
+            )) {
+                ForEach(AppThemeChoice.allCases) { choice in
+                    Text(choice.displayName).tag(choice)
                 }
             }
-            .disabled(registeringPasskey)
-            // #712: the registered passkeys for the signed-in user — a live
-            // count plus per-passkey removal, so a registration shows up as a
-            // persistent entry (not just a transient toast).
-            LabeledContent("Passkeys", value: "\(model.passkeys.count)")
-            if model.passkeys.isEmpty {
-                Text("No passkeys registered. Use “Register Passkey” to add one.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(model.passkeys) { passkey in
-                    passkeyRow(passkey)
-                }
-            }
+            .pickerStyle(.segmented)
+            Text("System follows the device appearance. The choice is applied on launch.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
-    /// #712: one registered passkey — friendly name, registration date, and a
-    /// server-side remove (with confirmation). The remove button is
-    /// `.borderless` so tapping it doesn't select the whole row.
-    private func passkeyRow(_ passkey: PasskeyListItem) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(passkey.friendlyName ?? "Passkey")
-                    .foregroundStyle(.primary)
-                Text(passkey.createdAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if removingPasskeyIDs.contains(passkey.id) {
-                ProgressView()
-            } else {
-                Button(role: .destructive) {
-                    // #656: arming a confirmation dialog ticks once per tap.
-                    Haptics.shared.tap()
-                    pendingPasskeyRemoval = passkey
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.borderless)
-            }
-        }
+    private var unitsBinding: Binding<UnitsPreference> {
+        Binding(
+            get: { UnitsPreference(rawValue: unitsRaw) ?? .metric },
+            set: { unitsRaw = $0.rawValue }
+        )
     }
+
+    // MARK: Training
 
     private var trainingSection: some View {
         Section("Training") {
@@ -268,8 +245,11 @@ struct SettingsView: View {
         }
     }
 
-    private var healthSection: some View {
-        Section("Apple Health") {
+    // MARK: Health & Devices
+
+    private var healthDevicesSection: some View {
+        Section("Health & Devices") {
+            healthSubheader("Apple Health", systemImage: "heart.fill")
             if let metric = model.readiness {
                 HStack {
                     Label("Readiness", systemImage: "heart.text.square.fill")
@@ -303,11 +283,8 @@ struct SettingsView: View {
                 }
             }
             .disabled(syncingHealth)
-        }
-    }
 
-    private var watchSection: some View {
-        Section("Apple Watch") {
+            healthSubheader("Apple Watch", systemImage: "applewatch")
             HStack {
                 Label("Connection", systemImage: "applewatch")
                 Spacer()
@@ -341,11 +318,159 @@ struct SettingsView: View {
             Text("The phone relays access tokens only. Refresh tokens remain owned by the phone and are never copied to the Watch.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            healthSubheader("Progressor", systemImage: "gauge.medium")
+            HStack {
+                Label("Device", systemImage: "bolt.horizontal.fill")
+                Spacer()
+                StatusPill(progressorStatus.text, color: progressorStatus.color)
+            }
+            if model.tindeq.lowBattery {
+                HStack {
+                    Label("Low battery", systemImage: "battery.25")
+                        .foregroundStyle(SendmeterStyle.alert)
+                    Spacer()
+                    Text("Charge the Progressor").font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
-    private var queueSection: some View {
-        Section("On-device saves") {
+    private func healthSubheader(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+    }
+
+    private var progressorStatus: (text: String, color: Color) {
+        switch model.tindeq.status {
+        case .connected: return ("Ready", SendmeterStyle.optimal)
+        case .measuring: return ("Live", SendmeterStyle.primary)
+        case .scanning, .connecting: return ("Working", SendmeterStyle.caution)
+        case .interrupted: return ("Interrupted", SendmeterStyle.alert)
+        case .unavailable: return ("Unavailable", SendmeterStyle.alert)
+        case .idle: return ("Offline", .secondary)
+        }
+    }
+
+    // MARK: Account & Security
+
+    private var accountSecuritySection: some View {
+        Section("Account & Security") {
+            LabeledContent("Email", value: model.currentUserEmail ?? "Signed in")
+            LabeledContent("User ID", value: model.currentUserID?.uuidString.lowercased() ?? "—")
+                .font(.caption)
+                .textSelection(.enabled)
+            Button {
+                // #656: a tap arming a password reset ticks once.
+                Haptics.shared.tap()
+                sendingReset = true
+                Task {
+                    await model.sendPasswordResetEmail()
+                    sendingReset = false
+                }
+            } label: {
+                HStack {
+                    Label("Send Password Reset Email", systemImage: "key.fill")
+                    Spacer()
+                    if sendingReset { ProgressView() }
+                }
+            }
+            .disabled(sendingReset)
+            Text("We'll email a secure link that lets you set a new password.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            healthSubheader("Passkeys", systemImage: "person.badge.key.fill")
+            Button {
+                registeringPasskey = true
+                Task {
+                    await model.registerPasskey()
+                    registeringPasskey = false
+                }
+            } label: {
+                HStack {
+                    Label("Register Passkey", systemImage: "person.badge.key.fill")
+                    Spacer()
+                    if registeringPasskey { ProgressView() }
+                }
+            }
+            .disabled(registeringPasskey)
+            // #712: the registered passkeys for the signed-in user — a live
+            // count plus per-passkey removal, so a registration shows up as a
+            // persistent entry (not just a transient toast).
+            LabeledContent("Passkeys", value: "\(model.passkeys.count)")
+            if model.passkeys.isEmpty {
+                Text("No passkeys registered. Use “Register Passkey” to add one.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(model.passkeys) { passkey in
+                    passkeyRow(passkey)
+                }
+            }
+
+            // #722: sign-out is a destructive session action and sits at the
+            // bottom of this group, spatially apart from routine preferences
+            // (Delete Account lives in its own Danger zone below).
+            healthSubheader("Session", systemImage: "rectangle.portrait.and.arrow.right")
+            Button(role: .destructive) {
+                // #656 (review F6): the issue names sign-out as a
+                // confirm/destructive `.medium` action. The button is fully
+                // enabled at the moment of the tap (it only disables while
+                // `signOut()` is in flight), so the #222 "disabled fires
+                // nothing" rule does not apply; the remainder dialog's tick
+                // is an additional confirm only when the queue left writes.
+                Haptics.shared.play(.medium)
+                Task { await model.signOut() }
+            } label: {
+                Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+            }
+            .disabled(model.isSigningOut)
+        }
+    }
+
+    /// #712: one registered passkey — friendly name, registration date, and a
+    /// server-side remove (with confirmation). The remove button is
+    /// `.borderless` so tapping it doesn't select the whole row.
+    private func passkeyRow(_ passkey: PasskeyListItem) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(passkey.friendlyName ?? "Passkey")
+                    .foregroundStyle(.primary)
+                Text(passkey.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if removingPasskeyIDs.contains(passkey.id) {
+                ProgressView()
+            } else {
+                Button(role: .destructive) {
+                    // #656: arming a confirmation dialog ticks once per tap.
+                    Haptics.shared.tap()
+                    pendingPasskeyRemoval = passkey
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    // MARK: About & Support
+
+    private var aboutSupportSection: some View {
+        Section("About & Support") {
+            healthSubheader("Version", systemImage: "info.circle")
+            LabeledContent("Client", value: "Native SwiftUI")
+            LabeledContent("Version", value: appVersion)
+            LabeledContent("Database", value: "Supabase · shared production schema")
+            Text("This target is independent from the Capacitor target, allowing side-by-side validation before any replacement decision.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            healthSubheader("Data sync", systemImage: "externaldrive.badge.icloud")
             HStack {
                 Label("Pending uploads", systemImage: "externaldrive.badge.icloud")
                 Spacer()
@@ -422,6 +547,18 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            healthSubheader("Diagnostics", systemImage: "wrench.and.screwdriver")
+            if model.authEventLog.isEmpty {
+                Text("No auth events on this device.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                // Most-recent-first for readability; the ring stores oldest first.
+                ForEach(model.authEventLog.reversed()) { entry in
+                    authEventRow(entry)
+                }
+            }
         }
     }
 
@@ -478,25 +615,6 @@ struct SettingsView: View {
         .padding(.vertical, 4)
     }
 
-    /// #679: recent on-device auth events (sign-in / refresh / sign-out /
-    /// failure). The ring is bounded + best-effort persistent and is never
-    /// uploaded — it exists to diagnose an auth problem on THIS device. Read
-    /// fresh on open (the List recomputes when auth state publishes).
-    private var troubleshootingSection: some View {
-        Section("Troubleshooting") {
-            if model.authEventLog.isEmpty {
-                Text("No auth events on this device.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                // Most-recent-first for readability; the ring stores oldest first.
-                ForEach(model.authEventLog.reversed()) { entry in
-                    authEventRow(entry)
-                }
-            }
-        }
-    }
-
     /// #679: one auth event — a category icon/label, its timestamp, and the
     /// short reason (an error message for `.failure`).
     private func authEventRow(_ entry: AuthEventEntry) -> some View {
@@ -547,49 +665,12 @@ struct SettingsView: View {
         }
     }
 
-    private var appearanceSection: some View {
-        Section("Appearance") {
-            Picker("Theme", selection: Binding(
-                get: { theme.choice },
-                set: { theme.setChoice($0) }
-            )) {
-                ForEach(AppThemeChoice.allCases) { choice in
-                    Text(choice.displayName).tag(choice)
-                }
-            }
-            .pickerStyle(.segmented)
-            Text("System follows the device appearance. The choice is applied on launch.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
+    // MARK: Danger zone
 
-    private var appSection: some View {
-        Section("App") {
-            LabeledContent("Client", value: "Native SwiftUI")
-            LabeledContent("Version", value: appVersion)
-            LabeledContent("Database", value: "Supabase · shared production schema")
-            Text("This target is independent from the Capacitor target, allowing side-by-side validation before any replacement decision.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var destructiveSection: some View {
-        Section {
-            Button(role: .destructive) {
-                // #656 (review F6): the issue names sign-out as a
-                // confirm/destructive `.medium` action. The button is fully
-                // enabled at the moment of the tap (it only disables while
-                // `signOut()` is in flight), so the #222 "disabled fires
-                // nothing" rule does not apply; the remainder dialog's tick
-                // is an additional confirm only when the queue left writes.
-                Haptics.shared.play(.medium)
-                Task { await model.signOut() }
-            } label: {
-                Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
-            }
-            .disabled(model.isSigningOut)
+    /// #586 review F3 (web parity): destructive actions stay spatially apart
+    /// from every routine preference above, at the very bottom of the surface.
+    private var dangerZoneSection: some View {
+        Section("Danger Zone") {
             Button(role: .destructive) {
                 // #656: a tap opening a sheet arms the presentation tick.
                 Haptics.shared.tap()
