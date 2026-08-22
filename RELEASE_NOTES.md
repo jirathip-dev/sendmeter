@@ -10,6 +10,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Native Force recordings now carry the measurement mode: the recording context shows a STATIC / MOVEMENT badge and a Resisted movement protocol choice, which arms a movement (reverse-action) run and surfaces movement-specific setup guidance (mark both movement endpoints, keep the path clear, move smoothly through the range).
 - Native Settings now lists and removes the passkeys registered for your account, with a live count, a confirmation before each removal, and a registration that shows up in the list right away.
 - Native Settings → Troubleshooting now lists recent on-device auth events (sign-in, refresh, sign-out, and failure reasons), and token-bearing requests refresh an expired session before use instead of trusting a stale bearer token.
 - Native Manual workouts now open in an adaptive, phase-tinted full-page timer with BOULDER/DONE controls, persisted 1/2/3/5-minute rest targets, rest-over haptic/audio feedback (including a sound notification when backgrounded), and a minimize action that keeps the workout running.
