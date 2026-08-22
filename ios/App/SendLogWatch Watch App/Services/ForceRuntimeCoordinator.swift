@@ -41,7 +41,7 @@ final class ForceRuntimeCoordinator: NSObject, WKExtendedRuntimeSessionDelegate 
     /// synchronously here (no captured copies) so a foreground refresh or an
     /// `onChange` observer always sees the latest values.
     func sync(tindeq: TindeqManager, runner: GuidedForceRunner) {
-        update(state: activityState(tindeq: tindeq, runner: runner),
+        update(activityState(tindeq: tindeq, runner: runner),
                mode: activityMode(tindeq: tindeq, runner: runner))
     }
 
@@ -111,7 +111,7 @@ final class ForceRuntimeCoordinator: NSObject, WKExtendedRuntimeSessionDelegate 
         // session is best-effort, never a correctness gate.
         guard !activelyHolding else { return }
 
-        let session = runtimeSession ?? WKExtendedRuntimeSession.session()
+        let session = runtimeSession ?? WKExtendedRuntimeSession()
         runtimeSession = session
         session.delegate = self
         // Mark intent BEFORE `start()`: if watchOS synchronously reports a
@@ -151,7 +151,7 @@ final class ForceRuntimeCoordinator: NSObject, WKExtendedRuntimeSessionDelegate 
 
     nonisolated func extendedRuntimeSession(
         _ extendedRuntimeSession: WKExtendedRuntimeSession,
-        didInvalidateWithReason reason: WKExtendedRuntimeSessionInvalidationReason,
+        didInvalidateWith reason: WKExtendedRuntimeSessionInvalidationReason,
         error: Error?
     ) {
         Task { @MainActor in

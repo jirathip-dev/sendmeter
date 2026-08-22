@@ -1219,7 +1219,6 @@ struct ForceGaugeView: View {
     private func measuringContent(availableSize: CGSize) -> some View {
         if isLuminanceReduced {
             reducedLuminanceMeasuringContent()
-            return
         }
         let currentKg = fixtureVisual?.currentKg ?? tindeq.currentKg
         let peakKg = fixtureVisual?.peakKg ?? tindeq.peakKg
