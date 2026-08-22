@@ -457,7 +457,7 @@ private struct ActionsView: View {
                 WatchCard(accent: WatchPalette.force) {
                     NavigationLink(value: WatchDest.force) {
                         HStack(spacing: 10) {
-                            Image(systemName: "scalemass")
+                            Image(systemName: WatchIconSymbol.force)
                                 .font(.system(size: 18, weight: .bold))
                                 .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
                                 .frame(width: 24)
@@ -485,7 +485,7 @@ private struct ActionsView: View {
                 WatchCard(accent: WatchPalette.secondary) {
                     NavigationLink(value: WatchDest.workout) {
                         HStack(spacing: 10) {
-                            Image(systemName: "figure.climbing")
+                            Image(systemName: WatchIconSymbol.workout)
                                 .font(.system(size: 18, weight: .bold))
                                 .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.secondary))
                                 .frame(width: 24)

@@ -689,21 +689,66 @@ private struct WatchFinishConfirmationCard: View {
 }
 
 /// Shared icon glyph for a compact `NavigationLink` label. `WatchIconButton`
-/// above is the single interactive primitive for icon actions and navigation;
-/// this lighter glyph is only the label content for a caller-owned link (for
-/// example Force's context chooser). The containing link owns the required
+/// above is the single interactive primitive for icon *actions*; a
+/// `NavigationLink` (for example Force's context chooser) cannot use a
+/// `Button`-based primitive, so this provides the same compact circular label
+/// content for a caller-owned link. The containing link owns the required
 /// accessibility label/hint and the glyph is hidden from VoiceOver so it does
 /// not announce its SF Symbol name a second time.
+///
+/// The visible circle and the 44pt hit frame reuse `WatchIconButtonVisuals` —
+/// the exact math `WatchIconButton` renders with — so a nav-link icon stays
+/// visually identical to the interactive icon primitive's resting state
+/// instead of a per-screen circle/stroke copy (#541). `size`/`weight`/
+/// `foreground` default to the single current call site (Force's context
+/// chooser) and are overridable for future links.
 struct WatchIconGlyph: View {
     let systemImage: String
-    var size: CGFloat = 15
+    var size: CGFloat = 14
+    var weight: Font.Weight = .bold
+    var foreground: Color = WatchPalette.textSecondary
+    var tint: PhaseRGB = WatchDesignTokens.primary
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
     var body: some View {
+        let resolvedTint = WatchPalette.accent(tint, reducedLuminance: isLuminanceReduced)
         Image(systemName: systemImage)
-            .font(.system(size: size, weight: .semibold))
+            .font(.system(size: size, weight: weight))
+            .foregroundStyle(foreground)
             .frame(
-                width: CGFloat(WatchDesignTokens.minimumHitTarget),
-                height: CGFloat(WatchDesignTokens.minimumHitTarget)
+                width: WatchIconButtonVisuals.visibleDiameter,
+                height: WatchIconButtonVisuals.visibleDiameter
+            )
+            .background {
+                Circle()
+                    .fill(
+                        WatchIconButtonVisuals.fill(
+                            isSelected: false,
+                            tint: resolvedTint,
+                            isPressed: false,
+                            isEnabled: true
+                        )
+                    )
+                    .overlay {
+                        Circle().stroke(
+                            WatchIconButtonVisuals.stroke(
+                                isSelected: false,
+                                isPressed: false,
+                                isEnabled: true
+                            ),
+                            lineWidth: WatchIconButtonVisuals.strokeWidth(
+                                isPressed: false,
+                                isEnabled: true
+                            )
+                        )
+                    }
+            }
+            // Inside the link's label, matching the shared primitives'
+            // hit-target contract (a frame after the link only grows its
+            // layout box, not the tappable region).
+            .frame(
+                minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
+                minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
             )
             .contentShape(Rectangle())
             .accessibilityHidden(true)
