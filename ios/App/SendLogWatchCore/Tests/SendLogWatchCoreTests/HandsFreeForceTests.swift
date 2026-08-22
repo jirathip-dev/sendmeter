@@ -361,8 +361,15 @@ final class HandsFreeForceTests: XCTestCase {
     /// The persist funnel gates on the pure `recordingVerdict` (#682). A
     /// below-min-peak rep is a discard, so the funnel must not enqueue it nor
     /// report it as saved; the complement (a qualifying rep) persists. The
-    /// queue-level gate is exercised by the native controller test
-    /// (`testDiscardedRepNeverCallsStopAndSave`) — this pins the pure predicate.
+    /// pure predicate is pinned here; the app-layer save-funnel gating — where
+    /// a discard short-circuits before the queue — is wired in
+    /// `AppModel.completeHandsFreeRep` (phone), and in
+    /// `TindeqManager.stopAndSave`/`salvageInterruptedRecording` (watch), and
+    /// exercised by the watch integration test
+    /// `testHandsFreeTrivialRepDisconnectSalvageIsDiscarded`.
+    /// `testStaticLoadTerminationSetsReasonAndTrimToFlatWindowStart` in
+    /// `SendmeterCoreTests/HandsFreeForceControllerTests.swift` pins the
+    /// `.staticLoad` stop-reason/trim wiring.
     func testDiscardedRepNeverReportedAsQueued() {
         XCTAssertEqual(
             recordingVerdict(peakKg: 2.9, durationMs: 10_000, config: config),

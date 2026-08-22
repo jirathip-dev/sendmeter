@@ -23,6 +23,15 @@ public struct HandsFreeForceConfig: Equatable, Sendable {
     /// Guard 2 (#682): a sustained load that stays inside a flatline band for
     /// this long is a non-human load (rope/ hang bag, sensor drift) and is
     /// terminated as `.staticLoad` rather than left recording.
+    /// The guard keys on load SHAPE, not on "how long a human might hold":
+    /// `ForceProtocol` holds can legitimately run up to 240 s (default 40 s),
+    /// so this window is deliberately NOT "longer than any legitimate free
+    /// hold". It is the COMBINATION of a tight 0.25 kg peak-to-peak band held
+    /// continuously for 30 s that marks a dead/static load; a human hold's
+    /// tremor/re-grip micro-adjustments normally break that band well before
+    /// 30 s. Residual device-only risk: a genuinely motionless hand could in
+    /// principle stay inside the band past the window, which the load-shape
+    /// guard cannot distinguish from a dead load without an IMU signal.
     public let flatlineWindowMs: Double
     /// Guard 2 (#682): peak-to-peak band used to decide the load is flat.
     public let flatlineBandKg: Double

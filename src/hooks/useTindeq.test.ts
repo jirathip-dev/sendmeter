@@ -3,6 +3,7 @@ import {
   interruptionNote,
   recoveredTagSide,
   samplesThrough,
+  shouldDiscardHandsFreeSalvage,
   shouldSalvageOnUnmount,
   snapshotInterruption,
   summarize,
@@ -141,6 +142,66 @@ describe("shouldSalvageOnUnmount", () => {
   });
 });
 
+describe("shouldDiscardHandsFreeSalvage", () => {
+  // #682 follow-up (reviewer blocking finding): the unmount-salvage cleanup is
+  // a persist boundary, so a trivial hands-free-started rep must be dropped
+  // there — it never enters the recording queue and is never reported queued.
+  it("discards a below-min-peak hands-free salvage rep", () => {
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: true,
+        isSpecialized: false,
+        peakKg: 2.9,
+        durationMs: 10_000,
+      }),
+    ).toBe(true);
+  });
+
+  it("discards a below-min-duration hands-free salvage rep", () => {
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: true,
+        isSpecialized: false,
+        peakKg: 4,
+        durationMs: 1_400,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not discard a qualifying hands-free salvage rep", () => {
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: true,
+        isSpecialized: false,
+        peakKg: 3.1,
+        durationMs: 1_600,
+      }),
+    ).toBe(false);
+  });
+
+  it("never gates a manual (hands-free opted-out) salvage rep", () => {
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: false,
+        isSpecialized: false,
+        peakKg: 0.5,
+        durationMs: 200,
+      }),
+    ).toBe(false);
+  });
+
+  it("never gates a specialized (guided/protocol) salvage rep", () => {
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: true,
+        isSpecialized: true,
+        peakKg: 0.5,
+        durationMs: 200,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("interruptionNote", () => {
   // #117: a drop that fired while ForceView was unmounted is recovered on
   // remount as a raw whole-buffer save that may overlap per-rep rows — it
@@ -157,7 +218,14 @@ describe("interruptionNote", () => {
 
 describe("#119 remount-recovery label", () => {
   function ctx(tag: string, side: TindeqSide): SalvageContext {
-    return { tag, side, groupId: null, userId: "u1", stopInFlight: false };
+    return {
+      tag,
+      side,
+      groupId: null,
+      userId: "u1",
+      stopInFlight: false,
+      wasHandsFree: false,
+    };
   }
   const EMPTY = { tag: "", side: "" as TindeqSide };
 

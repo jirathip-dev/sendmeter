@@ -2263,6 +2263,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // reads the ref, and it's a stable-on-purpose function value for this
       // effect's identity.
       resolveLabel: resolveBoundaryLabel,
+      // #682: expose whether the in-flight rep was hands-free-started so the
+      // unmount-salvage cleanup can apply Guard 1. Read `handsFreeActiveRef`
+      // at salvage time (a stable ref), not a captured value.
+      wasHandsFree: handsFreeActiveRef.current,
       buildSalvageRecordings: (samples) =>
         buildAdaptiveStaticSalvage(samples) ?? buildReverseSalvageRecordings(samples),
     }));

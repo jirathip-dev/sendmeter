@@ -1631,6 +1631,11 @@ extension TindeqManager: CBCentralManagerDelegate {
         stopUITimer()
         let wasMeasuring = measuring
         measuring = false
+        // #682: capture whether the interrupted rep was a hands-free pull
+        // BEFORE `clearHandsFreeAfterTransportLoss()` clears the flag. Guard 1
+        // applies only to hands-free-started reps at the persist boundary; a
+        // manual interrupted rep keeps its existing behavior.
+        let wasHandsFree = handsFreeRequested
         clearHandsFreeAfterTransportLoss()
         self.peripheral = nil
         fakeTransportConnected = false
@@ -1665,7 +1670,7 @@ extension TindeqManager: CBCentralManagerDelegate {
         } else if guidedClaims.active == nil, TindeqSalvagePolicy.shouldSalvage(
             wasIntentional: wasIntentional, wasMeasuring: wasMeasuring, sampleCount: samples.count
         ), let summary = makeSummary() {
-            salvageInterruptedRecording(summary)
+            salvageInterruptedRecording(summary, wasHandsFree: wasHandsFree)
         } else if !wasIntentional, sessionId != nil, sessionCount > 0 {
             repClaims.discard()
             guidedClaims.discardActive()
@@ -1743,7 +1748,7 @@ extension TindeqManager: CBCentralManagerDelegate {
     /// NOT show any discard/save prompt — since #280 the salvaged rep is
     /// folded into the session's depletion and the session logs itself,
     /// exactly as a manual Finish would.
-    func salvageInterruptedRecording(_ summary: StoppedRecording) {
+    func salvageInterruptedRecording(_ summary: StoppedRecording, wasHandsFree: Bool) {
         guard let claim = repClaims.claimStop() else {
             // This invariant currently follows from `measuring`: every real
             // recording begins a claim first. If later cleanup breaks it, a
@@ -1754,6 +1759,26 @@ extension TindeqManager: CBCentralManagerDelegate {
             // `logSessionNow()` may disarm an armed stream, whose buffer reset
             // clears errorMsg. Set this after cleanup so the loud report stays.
             errorMsg = "Interrupted force rep was not saved — recovery state was missing."
+            return
+        }
+        // #682 Guard 1: the persist-boundary verdict applies to a hands-free
+        // rep even when it ends by a BLE drop instead of an Arm/Stop edge. A
+        // trivial rep (peak < `minPeakKg` or duration < `minDurationMs`) is
+        // dropped here — it never enters the queue and is never reported as
+        // queued. The stream is already back to idle (the transport is gone;
+        // `clearHandsFreeAfterTransportLoss` reset it), so a discard re-arms
+        // cleanly on the next connect with nothing further to do. Manual
+        // interrupted reps (a manual Stop & Save drop) keep their existing
+        // behavior and are never gated.
+        if wasHandsFree,
+           recordingVerdict(
+               peakKg: summary.peakKg,
+               durationMs: Double(summary.durationMs)
+           ) != .persist {
+            samples.removeAll()
+            // A closed session with prior saved reps must still be logged; a
+            // session with only this trivial rep logs nothing (sessionCount 0).
+            logSessionNow()
             return
         }
         currentKg = 0

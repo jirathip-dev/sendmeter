@@ -507,7 +507,8 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
                 peakKg: 35,
                 avgKg: 30,
                 samples: [(t: 0, kg: 35), (t: 40_000, kg: 25)]
-            )
+            ),
+            wasHandsFree: false
         )
 
         try await waitUntil { await sessions.count() == 1 }
@@ -543,6 +544,91 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertFalse(manager.savedMsg?.localizedCaseInsensitiveContains("pull") ?? true)
         XCTAssertEqual(manager.errorMsg, "Rep not saved — couldn't write to the watch.")
         XCTAssertTrue(RecordingLossNotice.consume())
+    }
+
+    /// #682 follow-up (reviewer blocking finding): the disconnect-salvage
+    /// funnel is ALSO a persist boundary for a hands-free rep. A trivial rep
+    /// (peak < `minPeakKg` or duration < `minDurationMs`) interrupted by a BLE
+    /// drop must be discarded — it never enters the recording queue and is
+    /// never reported as queued. Manual interrupted reps are unchanged.
+    func testHandsFreeTrivialRepDisconnectSalvageIsDiscarded() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        var commands: [Tindeq.Cmd] = []
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            armTimeoutSeconds: 600,
+            commandWriter: { commands.append($0) }
+        )
+        manager.liveTag = "Open hand"
+
+        manager.armHandsFree()
+        // 2.9 kg crosses startKg (2) at t=0; at t=600 the 600 ms stable window
+        // elapses and the rep begins. The 2.9 kg samples (t=0 and t=100 on the
+        // recording clock) keep the machine recording but the peak (2.9 kg)
+        // stays below `minPeakKg` (3) and the duration (100 ms) is below
+        // `minDurationMs` (1 500), so Guard 1 discards it at the salvage
+        // persist boundary.
+        feed(manager, [(2.9, 0), (2.9, 600_000), (2.9, 700_000)])
+        XCTAssertEqual(manager.status, .measuring)
+
+        manager.handleTransportDisconnect(
+            error: NSError(domain: "BLE", code: -1),
+            wasIntentionalOverride: false
+        )
+
+        try await waitUntil { !manager.saving }
+        let recordingCount = await recordings.count()
+        XCTAssertEqual(recordingCount, 0, "a discarded hands-free rep must never enter the queue")
+        let sessionCount = await sessions.count()
+        XCTAssertEqual(sessionCount, 0, "a discarded rep must never be reported as a queued session")
+        XCTAssertFalse(manager.handsFreeRequested, "transport loss must clear the hands-free arm")
+        XCTAssertEqual(manager.handsFreeState, .idle)
+        XCTAssertEqual(manager.status, .idle)
+        XCTAssertFalse(manager.savedMsg?.localizedCaseInsensitiveContains("Recovered") ?? false)
+        // No stop command was written: the transport loss is the terminator and
+        // the stream is already idle, so the next connect re-arms cleanly.
+        XCTAssertEqual(commands, [.startWeight])
+    }
+
+    /// #682 follow-up: the complement to the discard gate — a qualifying
+    /// hands-free rep interrupted by a BLE drop (peak ≥ `minPeakKg` and
+    /// duration ≥ `minDurationMs`) is still salvaged and persisted through the
+    /// same funnel, so Guard 1 does not over-discard real reps.
+    func testHandsFreeQualifyingRepDisconnectSalvageIsPersisted() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            armTimeoutSeconds: 600,
+            commandWriter: { _ in }
+        )
+        manager.liveTag = "Open hand"
+
+        manager.armHandsFree()
+        // 3.1 kg crosses startKg (2) at t=0; the rep begins at t=600. The
+        // second sample lands at t=1 600 on the recording clock (2.2 s device
+        // time), so peak (3.1 kg) ≥ `minPeakKg` (3) and duration (1 600 ms) ≥
+        // `minDurationMs` (1 500) — Guard 1 must PERSIST it.
+        feed(manager, [(3.1, 0), (3.1, 600_000), (3.1, 2_200_000)])
+        XCTAssertEqual(manager.status, .measuring)
+
+        manager.handleTransportDisconnect(
+            error: NSError(domain: "BLE", code: -1),
+            wasIntentionalOverride: false
+        )
+
+        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
+        let recordingCount = await recordings.count()
+        XCTAssertEqual(recordingCount, 1)
+        let snapshot = await recordings.snapshot()
+        let row = try XCTUnwrap(snapshot.first?.row)
+        XCTAssertEqual(row.tag, "Open hand")
+        XCTAssertEqual(try XCTUnwrap(row.peakKg), 3.1, accuracy: 0.01)
+        XCTAssertEqual(row.durationMs, 1_600)
+        XCTAssertTrue(row.note.localizedCaseInsensitiveContains("Recovered"))
     }
 
     func testGuidedMovementDisconnectKeepsSessionOpenForLaterCadenceSets() async throws {
