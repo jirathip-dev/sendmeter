@@ -162,6 +162,22 @@ final class DateSupportTests: XCTestCase {
         )
     }
 
+    func testMonthDayLabelIsGregorianAndLocaleAware() throws {
+        let locale = Locale(identifier: "en_GB")
+        // Day-first (en_GB) short date. The Gregorian calendar is pinned inside
+        // the helper, so a Thai-region device (Buddhist Calendar.current) must
+        // still render the 2026 year, not 2569.
+        XCTAssertEqual(
+            LocalDateSupport.monthDayLabel(for: "2026-07-25", timeZone: bangkok, locale: locale),
+            "25 Jul"
+        )
+        // Unparseable input fails safely by echoing the input.
+        XCTAssertEqual(
+            LocalDateSupport.monthDayLabel(for: "not-a-date", timeZone: bangkok, locale: locale),
+            "not-a-date"
+        )
+    }
+
     func testDayDistance() {
         XCTAssertEqual(
             LocalDateSupport.dayDistance(from: "2026-08-01", to: "2026-08-15", timeZone: bangkok),

@@ -223,6 +223,37 @@ private struct PhaseCard: View {
         )
     }
 
+    private var canonicalStart: String {
+        TrainingMetrics.canonicalPhaseStart(
+            periods: model.phasePeriods,
+            currentPhase: model.settings.currentPhase,
+            fallbackStartDate: model.settings.phaseStartDate
+        )
+    }
+
+    private var guidance: BlockGuidance {
+        TrainingBlockGuidance.blockGuidance(
+            phase: model.currentPhase,
+            age: age,
+            acwr: model.acwr.ratio,
+            readinessHistory: model.healthMetrics
+        )
+    }
+
+    private var guidanceLine: String {
+        switch guidance.state {
+        case .continueCurrent:
+            return "On track — keep building"
+        case .reviewDuration:
+            return "Near the end of a typical block — review timing"
+        case .considerNext:
+            let next = guidance.nextPhase.map { PhaseCatalog.definition(for: $0).name } ?? model.currentPhase.name
+            return "Consider \(next) next"
+        case .considerRecovery:
+            return "Readiness low or falling — consider recovery"
+        }
+    }
+
     var body: some View {
         Button {
             // #656: a tap opening a sheet arms the presentation tick.
@@ -232,7 +263,7 @@ private struct PhaseCard: View {
             SurfaceCard(fillsHeight: true) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        SectionLabel("Training Block", systemImage: "calendar.badge.clock")
+                        SectionLabel("Your current block", systemImage: "calendar.badge.clock")
                         Spacer()
                         Image(systemName: "chevron.right")
                             .foregroundStyle(.tertiary)
@@ -246,9 +277,12 @@ private struct PhaseCard: View {
                                 .font(.title2.bold())
                             Text(age.map { "Week \($0.week) · Day \($0.totalDays)" } ?? model.currentPhase.weeks)
                                 .foregroundStyle(.secondary)
-                            Text(model.currentPhase.summary)
+                            Text("You selected this block on \(LocalDateSupport.monthDayLabel(for: canonicalStart))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            Text(guidanceLine)
+                                .font(.caption)
+                                .foregroundStyle(SendmeterStyle.phaseColor(model.settings.currentPhase))
                                 .lineLimit(2)
                         }
                     }

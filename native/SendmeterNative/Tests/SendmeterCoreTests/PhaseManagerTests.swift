@@ -51,4 +51,28 @@ final class PhaseManagerTests: XCTestCase {
             ]
         )
     }
+
+    func testSameDayChangeKeepsOpenPeriodStartedOn() {
+        let current = PhasePeriod(
+            id: UUID(),
+            phase: .capacity,
+            startedOn: "2026-08-15",
+            endedOn: nil
+        )
+        // A same-day change to a different phase keeps the open period's
+        // startedOn (no one-day sliver), so the block's start date is owned
+        // by the period the user actually opened today (#545).
+        let plan = PhaseTransitionPlanner.plan(
+            periods: [current],
+            newPhase: .strength,
+            today: "2026-08-15"
+        )
+        XCTAssertEqual(
+            plan.mutations,
+            [
+                .updatePhase(periodID: current.id, phase: .strength),
+                .updateSettings(phase: .strength, startedOn: current.startedOn)
+            ]
+        )
+    }
 }

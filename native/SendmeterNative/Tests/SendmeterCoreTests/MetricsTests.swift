@@ -70,6 +70,44 @@ final class MetricsTests: XCTestCase {
         XCTAssertEqual(age, BlockAge(totalDays: 15, week: 3, dayInWeek: 1))
     }
 
+    func testCanonicalPhaseStartPrefersMatchingOpenPeriodOverFallback() {
+        let periods = [
+            PhasePeriod(
+                id: UUID(),
+                phase: .strength,
+                startedOn: "2026-08-01",
+                endedOn: nil
+            )
+        ]
+        let start = TrainingMetrics.canonicalPhaseStart(
+            periods: periods,
+            currentPhase: .strength,
+            fallbackStartDate: "2026-08-10"
+        )
+        XCTAssertEqual(start, "2026-08-01", "the open period owns the block start date")
+    }
+
+    func testCanonicalPhaseStartIgnoresStaleOpenPeriodForDifferentPhase() {
+        // During the async gap of a phase switch, phasePeriods can still hold
+        // the OLD phase's open period while currentPhase has flipped to the
+        // new one. The canonical start must fall back in that case rather than
+        // showing the old phase's date under the new phase's card (#545).
+        let periods = [
+            PhasePeriod(
+                id: UUID(),
+                phase: .strength,
+                startedOn: "2026-08-01",
+                endedOn: nil
+            )
+        ]
+        let start = TrainingMetrics.canonicalPhaseStart(
+            periods: periods,
+            currentPhase: .power,
+            fallbackStartDate: "2026-08-10"
+        )
+        XCTAssertEqual(start, "2026-08-10", "a wrong-phase open period is ignored")
+    }
+
     func testThreeLowReadinessDaysSuggestStepBackOnlyInLoadingPhases() throws {
         let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
         let history = (0..<3).map { offset in
