@@ -432,7 +432,7 @@ public final class AppModel: ObservableObject {
 
     public init(
         auth: AuthService? = nil,
-        repository: SendmeterRepository = SendmeterRepository(),
+        repository: SendmeterRepository? = nil,
         tindeq: TindeqBluetooth? = nil,
         health: HealthKitService? = nil,
         watch: WatchConnectivityService? = nil,
@@ -443,7 +443,21 @@ public final class AppModel: ObservableObject {
         // expressions are nonisolated, so they must be constructed here in
         // the (MainActor) body instead of in the parameter list.
         self.auth = auth ?? AuthService()
-        self.repository = repository
+        // #679: wire the repository's PostgREST transport through the single
+        // session-freshness guard so EVERY token-bearing call goes through
+        // `ensureFreshSession()` before it reads a bearer token. A caller that
+        // injects a repository (tests / previews) keeps its own transport.
+        if let repository {
+            self.repository = repository
+        } else {
+            let authRef = self.auth
+            self.repository = SendmeterRepository(
+                transport: PostgRESTClient(
+                    authClient: authRef.client.auth,
+                    sessionProvider: { try await authRef.ensureFreshSession() }
+                )
+            )
+        }
         self.tindeq = tindeq ?? TindeqBluetooth()
         self.health = health ?? HealthKitService()
         self.watch = watch ?? WatchConnectivityService()
@@ -612,6 +626,10 @@ public final class AppModel: ObservableObject {
 
     public var currentUserID: UUID? { authSession?.user.id }
     public var currentUserEmail: String? { authSession?.user.email }
+    /// #679: recent on-device auth events (sign-in / refresh / sign-out /
+    /// failure), oldest first, for Settings → troubleshooting. The ring is
+    /// bounded and best-effort persistent (see `AuthDiagnosticsStore`).
+    public var authEventLog: [AuthEventEntry] { auth.diagnostics.history() }
     public var accountScope: NativeAccountScope {
         NativeAccountScope(userID: currentUserID, epoch: accountEpoch)
     }
@@ -888,6 +906,19 @@ public final class AppModel: ObservableObject {
                 await tearDownRealtime()
                 return
             }
+            // #679: capture the transition at the real authStateChanges
+            // boundary. Recorded here (not in AuthService) so a single
+            // sign-in/refresh is never counted twice.
+            switch event {
+            case .signedIn:
+                auth.recordAuthEvent(.signIn, "Session established")
+            case .initialSession:
+                auth.recordAuthEvent(.signIn, "Session restored at launch")
+            case .tokenRefreshed:
+                auth.recordAuthEvent(.refresh, "Access token refreshed")
+            default:
+                break
+            }
             let changedUser = authSession?.user.id != session.user.id
             if changedUser {
                 await teardownGuidedProtocolBeforeAuthRevocation()
@@ -926,6 +957,11 @@ public final class AppModel: ObservableObject {
             bootState = session == nil ? .signedOut : .signedIn
         case .signedOut, .userDeleted:
             await teardownGuidedProtocolBeforeAuthRevocation()
+            // #679: sign-out boundary.
+            auth.recordAuthEvent(
+                .signOut,
+                event == .signedOut ? "Signed out" : "Account deleted"
+            )
             watch.relaySession(nil)
             authSession = nil
             didBootstrapUserID = nil
@@ -936,8 +972,10 @@ public final class AppModel: ObservableObject {
     }
 
     private func relayValidSessionToWatch(guaranteed: Bool) async {
+        // #679: route the watch relay through the single session-freshness
+        // guard so a stale relayed token is never handed to the companion.
         do {
-            let valid = try await self.auth.client.auth.session
+            let valid = try await self.auth.ensureFreshSession()
             authSession = valid
             watch.relaySession(valid, guaranteed: guaranteed)
         } catch {

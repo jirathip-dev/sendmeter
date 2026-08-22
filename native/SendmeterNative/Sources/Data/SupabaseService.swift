@@ -34,51 +34,173 @@ public enum PasskeyPresentation {
 @MainActor
 public final class AuthService {
     public let client: SupabaseClient
+    /// Bounded, best-effort-persisted ring of auth events for Settings →
+    /// troubleshooting (#679). Mirrors the quarantine breadcrumb store.
+    public let diagnostics: AuthDiagnosticsStore
+    /// Dedupe for `ensureFreshSession`: while a refresh is in flight, concurrent
+    /// callers share that one refresh instead of racing one each (repo rule: a
+    /// dedupe guard is set BEFORE the first await). Because `AuthService` is
+    /// `@MainActor`, accessing the field is serialized with the guard body.
+    private var sessionRefreshTask: Task<Auth.Session, Error>?
 
-    public init(client: SupabaseClient = SupabaseEnvironment.client) {
+    public init(
+        client: SupabaseClient = SupabaseEnvironment.client,
+        diagnostics: AuthDiagnosticsStore? = nil
+    ) {
         self.client = client
+        self.diagnostics = diagnostics
+            ?? AuthDiagnosticsStore(fileURL: Self.defaultDiagnosticsFileURL())
+    }
+
+    /// The on-device path the ring persists to. `nil` if there is no writable
+    /// Application Support directory (the ring then stays in-memory only).
+    public static func defaultDiagnosticsFileURL() -> URL? {
+        guard let support = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else { return nil }
+        let dir = support.appendingPathComponent("SendmeterNative", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("auth-events.json")
+    }
+
+    // MARK: Session-freshness guard (#679)
+
+    /// The ONE token-bearing seam. Repository calls obtaining a bearer token
+    /// route through here (see `PostgRESTClient.sessionProvider`) so the access
+    /// token is never read off a possibly-expired session.
+    ///
+    /// - Reads the stored session synchronously (no await) and returns it
+    ///   unchanged when fresh — the common path costs no network and touches no
+    ///   captured state.
+    /// - When stale or missing, asks the EXISTING `SupabaseClient` auth for the
+    ///   session; that getter refreshes via the main client's own refresh token
+    ///   (the only such holder — #265). This method never stores or relays a
+    ///   refresh token; nothing here is a second holder.
+    /// - A dedupe guard is set before the first `await` so concurrent callers
+    ///   share one refresh rather than racing one each.
+    @discardableResult
+    public func ensureFreshSession() async throws -> Auth.Session {
+        if let current = client.auth.currentSession,
+           !SessionFreshness.needsRefresh(expiresAt: current.expiresAt) {
+            return current
+        }
+        if let inFlight = sessionRefreshTask {
+            return try await inFlight.value
+        }
+        let task = Task { try await client.auth.session }
+        sessionRefreshTask = task
+        defer {
+            // `Task` is a struct, so it has no `===` identity; and clearing is
+            // safe unconditionally because `AuthService` is `@MainActor` and
+            // the check-and-set above runs with no `await` between the nil
+            // check and the assignment. A new task is only created when
+            // `sessionRefreshTask` is nil (after this defer), so no other
+            // caller can observe a replacement between here and the clear.
+            sessionRefreshTask = nil
+        }
+        do {
+            let session = try await task.value
+            // The refresh boundary (supabase-swift's `.tokenRefreshed`) is
+            // recorded by `AppModel.handleAuthEvent`; this guard records only
+            // failures so a single refresh is never counted twice.
+            return session
+        } catch {
+            record(.failure, "Session refresh failed: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    /// Whether the stored session is fresh enough to use without going back to
+    /// the client. Reads `currentSession` (non-refreshing) — never touches the
+    /// network. Mirrors the `SessionFreshness` pure decision.
+    public func sessionIsFresh(now: Date = Date()) -> Bool {
+        guard let current = client.auth.currentSession else { return false }
+        return !SessionFreshness.needsRefresh(expiresAt: current.expiresAt, now: now)
+    }
+
+    /// Records an auth event into the diagnostics ring. Called by AppModel for
+    /// the authStateChanges categories (sign-in/refresh/sign-out) and by this
+    /// service for failures, so the ring is driven by real boundaries.
+    public func recordAuthEvent(_ category: AuthEventCategory, detail: String? = nil) {
+        diagnostics.record(
+            AuthEventEntry(category: category, detail: detail, occurredAt: Date())
+        )
+    }
+
+    private func record(_ category: AuthEventCategory, _ detail: String? = nil) {
+        recordAuthEvent(category, detail: detail)
+    }
+
+    /// Wraps an auth call so any thrown error lands in the ring as a `.failure`
+    /// (with the reason) before re-throwing to the caller.
+    private func guardedAuthCall<T>(
+        _ operation: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await operation()
+        } catch {
+            record(.failure, error.localizedDescription)
+            throw error
+        }
     }
 
     @discardableResult
     public func signIn(email: String, password: String) async throws -> Auth.Session {
-        try await client.auth.signIn(email: email, password: password)
+        // Success is recorded at the authStateChanges boundary (`.signedIn`)
+        // by `AppModel.handleAuthEvent`; here we only record the failure path.
+        try await guardedAuthCall {
+            try await client.auth.signIn(email: email, password: password)
+        }
     }
 
     @discardableResult
     public func signUp(email: String, password: String) async throws -> Auth.Session? {
-        try await client.auth.signUp(email: email, password: password).session
+        try await guardedAuthCall {
+            try await client.auth.signUp(email: email, password: password).session
+        }
     }
 
     public func sendMagicLink(email: String) async throws {
-        try await client.auth.signInWithOTP(
-            email: email,
-            redirectTo: SupabaseConfiguration.redirectURL
-        )
+        try await guardedAuthCall {
+            try await client.auth.signInWithOTP(
+                email: email,
+                redirectTo: SupabaseConfiguration.redirectURL
+            )
+        }
     }
 
     public func signInWithPasskey() async throws {
-        try await client.auth.signInWithPasskey(
-            presentationAnchor: PasskeyPresentation.anchor()
-        )
+        try await guardedAuthCall {
+            try await client.auth.signInWithPasskey(
+                presentationAnchor: PasskeyPresentation.anchor()
+            )
+        }
     }
 
     public func registerPasskey() async throws {
-        _ = try await client.auth.registerPasskey(
-            presentationAnchor: PasskeyPresentation.anchor()
-        )
+        try await guardedAuthCall {
+            _ = try await client.auth.registerPasskey(
+                presentationAnchor: PasskeyPresentation.anchor()
+            )
+        }
     }
 
     /// Lists the passkeys registered for the signed-in user (#712). Reads the
     /// same server-side source as the web's `supabase.auth.passkey.list()`.
     @_spi(Experimental)
     public func listPasskeys() async throws -> [PasskeyListItem] {
-        try await client.auth.listPasskeys()
+        try await guardedAuthCall {
+            try await client.auth.listPasskeys()
+        }
     }
 
     /// Removes a passkey server-side (#712). Deleting the credential is what
     /// actually unregisters it — hiding it locally would leave it usable.
     public func deletePasskey(id: UUID) async throws {
-        try await client.auth.deletePasskey(id: id)
+        try await guardedAuthCall {
+            try await client.auth.deletePasskey(id: id)
+        }
     }
 
     /// Exchange an Apple identity token for a Supabase session (#631). The
@@ -86,25 +208,35 @@ public final class AuthService {
     /// (already-hashed) nonce Apple echoed into the token, mirroring the
     /// web's `src/lib/appleAuth.ts` exchange.
     public func signInWithApple(idToken: String, rawNonce: String) async throws {
-        _ = try await client.auth.signInWithIdToken(
-            credentials: OpenIDConnectCredentials(
-                provider: .apple,
-                idToken: idToken,
-                nonce: rawNonce
+        try await guardedAuthCall {
+            _ = try await client.auth.signInWithIdToken(
+                credentials: OpenIDConnectCredentials(
+                    provider: .apple,
+                    idToken: idToken,
+                    nonce: rawNonce
+                )
             )
-        )
+        }
     }
 
     public func handleDeepLink(_ url: URL) async throws {
-        _ = try await client.auth.session(from: url)
+        try await guardedAuthCall {
+            _ = try await client.auth.session(from: url)
+        }
     }
 
     public func updatePassword(_ password: String) async throws {
-        _ = try await client.auth.update(user: UserAttributes(password: password))
+        try await guardedAuthCall {
+            _ = try await client.auth.update(user: UserAttributes(password: password))
+        }
     }
 
     public func signOut() async throws {
-        try await client.auth.signOut()
+        // Success is recorded at the authStateChanges boundary (`.signedOut`)
+        // by `AppModel.handleAuthEvent`; here we only record the failure path.
+        try await guardedAuthCall {
+            try await client.auth.signOut()
+        }
     }
 }
 
@@ -178,6 +310,11 @@ public actor PostgRESTClient {
     private let projectURL: URL
     private let apiKey: String
     private let authClient: AuthClient
+    /// The seam every token-bearing call uses to obtain the bearer token. It
+    /// defaults to the (auto-refreshing) `authClient.session`, but the app
+    /// wires it to `AuthService.ensureFreshSession()` so repository calls go
+    /// through the single session-freshness guard (#679).
+    private let sessionProvider: @Sendable () async throws -> Auth.Session
     private let session: URLSession
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -186,11 +323,13 @@ public actor PostgRESTClient {
         projectURL: URL = SupabaseConfiguration.projectURL,
         apiKey: String = SupabaseConfiguration.publishableKey,
         authClient: AuthClient = SupabaseEnvironment.client.auth,
+        sessionProvider: (@Sendable () async throws -> Auth.Session)? = nil,
         session: URLSession = .shared
     ) {
         self.projectURL = projectURL
         self.apiKey = apiKey
         self.authClient = authClient
+        self.sessionProvider = sessionProvider ?? { try await authClient.session }
         self.session = session
 
         let encoder = JSONEncoder()
@@ -223,7 +362,7 @@ public actor PostgRESTClient {
         body: Data? = nil,
         prefer: String? = nil
     ) async throws -> Response {
-        let accessToken = try await authClient.session.accessToken
+        let accessToken = try await sessionProvider().accessToken
         guard var components = URLComponents(
             url: projectURL.appendingPathComponent(path),
             resolvingAgainstBaseURL: false
@@ -300,7 +439,7 @@ public actor PostgRESTClient {
         body: Data? = nil,
         prefer: String? = nil
     ) async throws {
-        let accessToken = try await authClient.session.accessToken
+        let accessToken = try await sessionProvider().accessToken
         guard var components = URLComponents(
             url: projectURL.appendingPathComponent(path),
             resolvingAgainstBaseURL: false
