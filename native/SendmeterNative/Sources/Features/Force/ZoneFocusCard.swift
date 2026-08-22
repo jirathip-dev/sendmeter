@@ -52,44 +52,46 @@ struct ZoneFocusCard: View {
         // data (`if (!rec) return null` in ZoneFocusCard.tsx).
         let snapshot = self.snapshot
         if let recommendation = snapshot.recommendation {
-            SurfaceCard {
-                VStack(alignment: .leading, spacing: 12) {
-                    // The chart region — tapping it opens the detail sheet. Kept
-                    // as its own tap surface so the Focus Next button below can't
-                    // double-fire (web `stopPropagation` on the button).
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            SectionLabel("Training balance · \(exercise)")
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        Text("Last 4 weeks · this exercise only · sets, not sessions")
-                            .font(.caption)
+            // #710: the card renders inline (no nested SurfaceCard — it sits
+            // inside the Recording-context card) and draws its own divider, so
+            // an empty recommendation leaves no bare Divider behind.
+            VStack(alignment: .leading, spacing: 12) {
+                Divider()
+                // The chart region — tapping it opens the detail sheet. Kept
+                // as its own tap surface so the Focus Next button below can't
+                // double-fire (web `stopPropagation` on the button).
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        SectionLabel("Training balance · \(exercise)")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
-
-                        bars(snapshot)
                     }
-                    .contentShape(Rectangle())
-                    // #653 review finding 6: `.accessibilityElement(children:
-                    // .contain)` makes this an inactive container; VoiceOver
-                    // must be able to activate the sheet it describes. The
-                    // button trait + explicit action expose the double-tap.
-                    .accessibilityElement(children: .contain)
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityLabel("Training balance for \(exercise), last four weeks")
-                    .accessibilityHint("Opens the training balance detail")
-                    .accessibilityAction { detailOpen = true }
-                    .onTapGesture { detailOpen = true }
+                    Text("Last 4 weeks · this exercise only · sets, not sessions")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                    FocusNextButton(
-                        recommendation: recommendation,
-                        exercise: exercise,
-                        disabled: locked,
-                        arm: { onPick(recommendation.zone) }
-                    )
+                    bars(snapshot)
                 }
+                .contentShape(Rectangle())
+                // #653 review finding 6: `.accessibilityElement(children:
+                // .contain)` makes this an inactive container; VoiceOver
+                // must be able to activate the sheet it describes. The
+                // button trait + explicit action expose the double-tap.
+                .accessibilityElement(children: .contain)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Training balance for \(exercise), last four weeks")
+                .accessibilityHint("Opens the training balance detail")
+                .accessibilityAction { detailOpen = true }
+                .onTapGesture { detailOpen = true }
+
+                FocusNextButton(
+                    recommendation: recommendation,
+                    exercise: exercise,
+                    disabled: locked,
+                    arm: { onPick(recommendation.zone) }
+                )
             }
             .sheet(isPresented: $detailOpen) {
                 TrainingBalanceDetailView(

@@ -231,7 +231,8 @@ final class ZoneMixTests: XCTestCase {
     // MARK: maintenancePreset(for:) — Warm-up / Prehab guided presets (#710)
 
     func testMaintenancePresetWarmupMatchesWebProtocol() {
-        let preset = ZoneMix.maintenancePreset(for: .warmup)
+        // Web `buildWarmupSelection` needs a usable PR (maxF) to build; pass one.
+        let preset = ZoneMix.maintenancePreset(for: .warmup, personalRecord: 50)
         XCTAssertEqual(preset?.name, "Warm-up")
         XCTAssertEqual(preset?.holdSeconds, 20)
         XCTAssertEqual(preset?.holdSecondsBySet, [20, 15, 10, 10])
@@ -239,14 +240,23 @@ final class ZoneMixTests: XCTestCase {
         XCTAssertEqual(preset?.sets, 4)
         XCTAssertEqual(preset?.restBetweenRepetitionsSeconds, 0)
         XCTAssertEqual(preset?.restBetweenSetsSeconds, 60)
+        // Web: targetPct 30, pctBasis "pr", pctStep 10.
         XCTAssertEqual(preset?.targetPercentage, 30)
         XCTAssertEqual(preset?.percentageBasis, .personalRecord)
         XCTAssertEqual(preset?.percentageStep, 10)
         XCTAssertEqual(preset?.alternateSides, true)
     }
 
+    func testMaintenancePresetWarmupGatesOnUsablePR() {
+        XCTAssertNil(ZoneMix.maintenancePreset(for: .warmup))
+        XCTAssertNil(ZoneMix.maintenancePreset(for: .warmup, personalRecord: 0))
+    }
+
     func testMaintenancePresetPrehabMatchesWebProtocol() {
-        let preset = ZoneMix.maintenancePreset(for: .prehab)
+        // Web `buildPrehabSelection` stores a FIXED targetKg (targetPct null,
+        // pctBasis "pr") — 0.70 × CF when fitted. Give a CF fit.
+        let model = ZoneCurveInput(cf: 10, maxForce: 20, wPrime: 3)
+        let preset = ZoneMix.maintenancePreset(for: .prehab, model: model)
         XCTAssertEqual(preset?.name, "Prehab")
         XCTAssertEqual(preset?.holdSeconds, 90)
         XCTAssertEqual(preset?.holdSecondsBySet, [90, 60, 30, 30])
@@ -254,10 +264,27 @@ final class ZoneMixTests: XCTestCase {
         XCTAssertEqual(preset?.sets, 4)
         XCTAssertEqual(preset?.restBetweenRepetitionsSeconds, 0)
         XCTAssertEqual(preset?.restBetweenSetsSeconds, 20)
-        // Prehab anchors to critical force (0.70 × CF), not PR.
-        XCTAssertEqual(preset?.targetPercentage, 70)
-        XCTAssertEqual(preset?.percentageBasis, .criticalForce)
+        // Web parity: fixed kg, no percentage, pctBasis "pr".
+        XCTAssertEqual(preset?.targetKilograms, 7.0)
+        XCTAssertNil(preset?.targetPercentage)
+        XCTAssertEqual(preset?.percentageBasis, .personalRecord)
         XCTAssertEqual(preset?.alternateSides, true)
+    }
+
+    func testMaintenancePresetPrehabFallsBackToMaxFWhenNoCF() {
+        // No CF fit but a PR/peak exists — web prehabTarget falls back to
+        // 0.30 × maxF. Assert that fallback gave a real target (no targetless run).
+        let preset = ZoneMix.maintenancePreset(for: .prehab, personalRecord: 20)
+        XCTAssertEqual(preset?.targetKilograms, 6.0)
+        XCTAssertEqual(preset?.targetPercentage, nil)
+        XCTAssertEqual(preset?.percentageBasis, .personalRecord)
+    }
+
+    func testMaintenancePresetPrehabGatesOnUsableReference() {
+        // Neither CF nor a PR/peak: the web buildPrehabSelection returns null
+        // (the chip is disabled), not a targetless preset.
+        XCTAssertNil(ZoneMix.maintenancePreset(for: .prehab))
+        XCTAssertNil(ZoneMix.maintenancePreset(for: .prehab, model: ZoneCurveInput(cf: nil, maxForce: nil, wPrime: nil)))
     }
 
     func testMaintenancePresetOnlyForMaintenanceZones() {
@@ -268,5 +295,14 @@ final class ZoneMixTests: XCTestCase {
         XCTAssertNil(ZoneMix.maintenancePreset(for: .powerEndurance))
         XCTAssertNil(ZoneMix.maintenancePreset(for: .endurance))
         XCTAssertNil(ZoneMix.maintenancePreset(for: .capacity))
+    }
+
+    func testPrehabTargetKilogramsWebFallback() {
+        // 0.70 × CF (round 1dp); then 0.30 × maxF fallback; nil when neither.
+        XCTAssertEqual(ZoneMix.prehabTargetKilograms(cf: 10, maxForce: 20), 7.0)
+        XCTAssertEqual(ZoneMix.prehabTargetKilograms(cf: nil, maxForce: 20), 6.0)
+        XCTAssertEqual(ZoneMix.prehabTargetKilograms(cf: 0, maxForce: 20), 6.0)
+        XCTAssertNil(ZoneMix.prehabTargetKilograms(cf: nil, maxForce: 0))
+        XCTAssertNil(ZoneMix.prehabTargetKilograms(cf: nil, maxForce: nil))
     }
 }

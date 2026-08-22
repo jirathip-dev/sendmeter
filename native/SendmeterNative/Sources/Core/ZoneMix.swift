@@ -482,18 +482,67 @@ extension ZoneMix {
         )
     }
 
+    /// The web's `prehabTarget` (#325): 0.70 × critical force, falling back
+    /// to 0.30 × best short-window force (`maxF`) when CF isn't fitted —
+    /// `force-curve.ts:prehabTarget`. Rounded to 1 dp like the web. Returns
+    /// nil when neither reference is usable, which is the web's "no usable
+    /// force-curve target" gate (the Prehab chip is disabled).
+    public static func prehabTargetKilograms(cf: Double?, maxForce: Double?) -> Double? {
+        if let cf, cf > 0 {
+            return ((cf * 0.70) * 10).rounded() / 10
+        }
+        if let maxForce, maxForce > 0 {
+            return ((maxForce * 0.30) * 10).rounded() / 10
+        }
+        return nil
+    }
+
+    /// The best single-pull peak for a tag/side (web `maxF`), mirroring the
+    /// `forceReferences` metadata filter: effort recordings only, side-resolved
+    /// (unspecified reads both, else the exact side and then a side-less
+    /// fallback). Used to resolve the maintenance fallback and gate the
+    /// maintenance chips at pick time.
+    public static func personalRecordKilograms(
+        recordings: [TindeqRecording],
+        tag: String,
+        side: TindeqSide
+    ) -> Double? {
+        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return nil }
+        let byTag = recordings.filter {
+            $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
+                && isEffortRecording($0)
+        }
+        let exactSide = byTag.filter { side == .unspecified || $0.side == side }
+        let metadata = exactSide.isEmpty && side != .unspecified
+            ? byTag.filter { $0.side == .unspecified }
+            : exactSide
+        return metadata.compactMap(\.peakKilograms).filter { $0 > 0 }.max()
+    }
+
     /// Builds the guided-protocol preset a MAINTENANCE zone arms — the native
     /// sibling of the web's `buildWarmupSelection(...).protocol` /
     /// `buildPrehabSelection(...).protocol` (#710). Warm-up ramps
     /// 30% → 40% → 50% → 60% of PR (20s → 15s → 10s → 10s holds) and Prehab
-    /// sits at 70% of critical force (90s → 60s → 30s → 30s holds), both
-    /// mirroring `WARMUP_PROTOCOL` / `PREHAB_PROTOCOL` in `force-curve.ts`.
+    /// holds at a FIXED `0.70 × CF`, falling back to `0.30 × maxF` when CF
+    /// isn't fitted — `buildPrehabSelection` stores `targetPct: null`,
+    /// `pctBasis: "pr"` and a concrete `targetKg`, so the native preset uses
+    /// `targetKilograms` rather than a `.criticalForce` percentage.
     /// Maintenance is deliberately NOT a `ZoneQuality`: it always records and
     /// never feeds training balance (web `zoneSets` drops it). Returns nil for
-    /// any non-maintenance zone.
-    public static func maintenancePreset(for zone: RecordedZone) -> TindeqPreset? {
+    /// a non-maintenance zone, and nil for a maintenance zone whose reference
+    /// (PR for warm-up, CF-or-maxF for prehab) isn't usable — the caller gates
+    /// the chip on that.
+    public static func maintenancePreset(
+        for zone: RecordedZone,
+        model: ZoneCurveInput? = nil,
+        personalRecord: Double? = nil
+    ) -> TindeqPreset? {
         switch zone {
         case .warmup:
+            // Warm-up is %-of-PR, resolved at launch from `forceReferences`;
+            // gate the chip on a usable PR (web `warmupTarget` needs prKg>0).
+            guard (personalRecord ?? model?.maxForce) ?? 0 > 0 else { return nil }
             return TindeqPreset(
                 name: "Warm-up",
                 holdSeconds: 20,
@@ -508,6 +557,10 @@ extension ZoneMix {
                 alternateSides: true
             )
         case .prehab:
+            guard let kg = prehabTargetKilograms(
+                cf: model?.cf,
+                maxForce: personalRecord ?? model?.maxForce
+            ) else { return nil }
             return TindeqPreset(
                 name: "Prehab",
                 holdSeconds: 90,
@@ -516,8 +569,8 @@ extension ZoneMix {
                 sets: 4,
                 restBetweenRepetitionsSeconds: 0,
                 restBetweenSetsSeconds: 20,
-                targetPercentage: 70,
-                percentageBasis: .criticalForce,
+                targetKilograms: kg,
+                percentageBasis: .personalRecord,
                 alternateSides: true
             )
         default:
