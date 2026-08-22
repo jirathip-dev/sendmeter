@@ -6,10 +6,16 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var theme: AppThemeController
     /// #722: the Metric/Imperial presentation preference, persisted via
-    /// `AppUnits` (Core). Presentation-only for now — the shared conversion
-    /// layer that applies it across Force/readiness/weight display lives in a
-    /// separate change.
+    /// `AppUnits` (Core). This stores the preference only — the shared
+    /// conversion layer (#721) that applies it across Force/readiness/weight
+    /// display is future work, so no UI value reads it yet.
     @AppStorage(AppUnits.storageKey) private var unitsRaw = UnitsPreference.metric.rawValue
+    /// #722 review: `model.tindeq` is a nested ObservableObject, so this view
+    /// cannot observe it through `@EnvironmentObject` alone. Track its status
+    /// in local state refreshed in `.onAppear` / `.onReceive` so the Progressor
+    /// card stays live while Settings is open.
+    @State private var tindeqStatus: TindeqBluetooth.Status?
+    @State private var tindeqLowBattery = false
     @State private var showingBlocks = false
     @State private var showingExercises = false
     @State private var showingDeleteAccount = false
@@ -48,6 +54,17 @@ struct SettingsView: View {
                 // #712: load the passkey list when Settings opens, so the
                 // count/rows are fresh without waiting for a manual refresh.
                 await model.loadPasskeys()
+            }
+            .onAppear { refreshTindeqStatus() }
+            .onReceive(model.tindeq.objectWillChange) { _ in
+                // `objectWillChange` fires before the mutation is applied; read
+                // on the next main-queue turn so the card observes the new
+                // connect/measure/battery state.
+                let model = self.model
+                DispatchQueue.main.async {
+                    self.tindeqStatus = model.tindeq.status
+                    self.tindeqLowBattery = model.tindeq.lowBattery
+                }
             }
             .sheet(isPresented: $showingBlocks) {
                 PhasesView()
@@ -173,7 +190,7 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-            Text("Metric (kg) or Imperial (lb). Applied across the app; the shared conversion layer lands separately.")
+            Text("Metric (kg) or Imperial (lb). Coming soon — not yet applied.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -325,7 +342,7 @@ struct SettingsView: View {
                 Spacer()
                 StatusPill(progressorStatus.text, color: progressorStatus.color)
             }
-            if model.tindeq.lowBattery {
+            if tindeqLowBattery {
                 HStack {
                     Label("Low battery", systemImage: "battery.25")
                         .foregroundStyle(SendmeterStyle.alert)
@@ -340,10 +357,11 @@ struct SettingsView: View {
         Label(title, systemImage: systemImage)
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var progressorStatus: (text: String, color: Color) {
-        switch model.tindeq.status {
+        switch tindeqStatus ?? .idle {
         case .connected: return ("Ready", SendmeterStyle.optimal)
         case .measuring: return ("Live", SendmeterStyle.primary)
         case .scanning, .connecting: return ("Working", SendmeterStyle.caution)
@@ -351,6 +369,13 @@ struct SettingsView: View {
         case .unavailable: return ("Unavailable", SendmeterStyle.alert)
         case .idle: return ("Offline", .secondary)
         }
+    }
+
+    /// #722 review: re-read the nested `model.tindeq` status/battery into local
+    /// state so the Progressor card stays current while Settings is open.
+    private func refreshTindeqStatus() {
+        tindeqStatus = model.tindeq.status
+        tindeqLowBattery = model.tindeq.lowBattery
     }
 
     // MARK: Account & Security
