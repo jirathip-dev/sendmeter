@@ -33,6 +33,38 @@ new equivalents:
 7. Build the complete iOS target in CI, not only the platform-independent package.
 8. Require real-device verification before promotion.
 
+## Data refresh & convergence (#673)
+
+The app's authoritative list state (sessions, recordings, workouts, health
+metrics, settings, phase periods, presets, routine presets, tag metadata) is
+fetched by `refreshAll()`, which fans out 9 parallel full-table PostgREST
+requests. It used to run on **every** scenePhase → `.active` transition — a
+radio + battery + latency cost on each app switch.
+
+**Chosen cursor scheme: a monotonic time cursor.** `refreshAll` records the
+`systemUptime` at which the last **successful, still-current-account** sweep
+published (`lastListRefreshAt`). A foreground refreshes fully only when
+`ForegroundRefreshPolicy` (pure, unit-tested in `SendmeterCore`) says the data
+is stale:
+
+- The account has never loaded its lists (cold launch / account switch) — no
+  baseline to trust.
+- Realtime is **not** connected — a dropped socket degrades to foreground
+  refetch (the documented convergence fallback).
+- The last full refresh is older than the staleness window (60s) — the safety
+  net for the tables realtime does **not** watch (settings, phase periods,
+  presets, routine presets, tags) and for a long background gap.
+
+Otherwise a "no-change" foreground issues **0** full-table fetches. The
+realtime-watched tables (sessions, recordings, workouts, health metrics)
+converge through the per-slice `RealtimeListReconciler`; `refreshAll` is
+reserved for the explicit pull-to-refresh and the stale/fallback cases above.
+
+An `updated_at`-per-row cursor (fetch only rows changed since last sync) is the
+heavier alternative from the audit and is intentionally **not** what ships
+here: while realtime already converges the watched tables with targeted
+refetches, a 60s bounded window is sufficient and far less invasive.
+
 ## Promotion gates
 
 A native target should replace the Capacitor phone target only after all of the
