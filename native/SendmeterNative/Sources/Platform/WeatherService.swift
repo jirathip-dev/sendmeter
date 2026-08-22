@@ -23,6 +23,9 @@ public final class CoreLocationWeatherLocationProvider: NSObject, WeatherLocatio
 
     public override init() {
         super.init()
+        // Coarse by design — the coordinates are rounded to ~1 km before the
+        // Open-Meteo call, and the privacy manifest declares Coarse Location.
+        manager.desiredAccuracy = kCLLocationAccuracyKilometer
         manager.delegate = self
     }
 

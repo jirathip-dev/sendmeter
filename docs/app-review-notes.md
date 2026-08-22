@@ -8,10 +8,15 @@ submission (Apple explicitly asked for it to be present up front).
 This doc now serves the **native** Sendmeter build (#617 / #474 are re-scoped
 native-only; the Capacitor-era answers are superseded). The native target
 currently ships to TestFlight under the distinct bundle id
-`com.jirathip.sendlog.native` (`fastlane native_beta`, #637); the notes below
-describe the product surfaces that the promoted native submission covers.
-Promotion (switching to `com.jirathip.sendlog` and re-pairing the watch
-companion) is a separate decision and is not part of this doc.
+`com.jirathip.sendlog.native` (`fastlane native_beta`, #637). The notes below
+describe the **native iPhone app + its Live Activity widget extension** — the
+actual binary this submission ships. The Apple Watch companion is a **separate
+target** (`ios/App/SendLogWatch Watch App`) that is **not embedded in this
+binary**, and the native iPhone app does not pair with it (WCSession pairing is
+bundle-ID-prefix-based, so the `.native` id never matches the watch app); the
+live-workout mirror falls back to the realtime server path. Promotion (switching
+to `com.jirathip.sendlog` and re-pairing the watch) is a separate decision and
+is not part of this doc.
 
 Two fields must be refreshed each submission before pasting:
 
@@ -55,17 +60,17 @@ Core features:
   weight), plus training-load charts (acute:chronic workload ratio, weekly and
   daily load).
 - **Workout** — logging a climbing session: session type, duration, perceived
-  exertion, boulder attempts. Includes a guided routine timer and a live mirror
-  of a workout being tracked on the Apple Watch companion.
+  exertion, boulder attempts. Includes a guided routine timer and a phone
+  full-screen workout timer.
 - **Force** — finger-strength measurement. Connects over Bluetooth to a
   **Tindeq Progressor** hand dynamometer (a commercial strain gauge sold to
   climbers) and records force-vs-time curves, max strength, critical force, and
   guided test/training protocols.
 - **History** — a timeline of all past sessions and force recordings, editable
   after the fact.
-- **Apple Watch companion app** — tracks a climbing session on the wrist, shows
-  heart rate, detects boulder attempts from wrist motion, and can drive the
-  Tindeq gauge directly.
+- **Apple Watch companion** — a separate target that is **not part of this
+  submission**; the native iPhone build does not pair with it and no watch app
+  is embedded in the binary.
 
 Target audience: recreational and competitive rock climbers who train
 deliberately, and coaches working with them. General audience, age rating 4+.
@@ -82,17 +87,16 @@ fully usable if every one is declined.
   iPhone only reads; it never writes to Health. Requested automatically the
   first time the user signs in on the iPhone — the prompt appears immediately
   after sign-in, not behind a settings toggle.
-- **Apple Health (read/write)** — on the Apple Watch only, to record the
-  climbing workout as a Health workout and to read live heart rate during it.
 - **Bluetooth** — to connect to the user's own Tindeq Progressor force gauge.
   Requested on the Force tab when the user taps Connect.
-- **Motion & Fitness** — on the Apple Watch only, to detect boulder attempts
-  from wrist motion and altitude during a tracked session.
 - **Location (when in use only)** — used *only* by the optional "Send
   Conditions" card, which shows local temperature and humidity (climbing
   friction conditions). Coordinates are rounded to ~1 km before being sent to
   the weather provider, are never stored, and are never linked to the account.
   There is no background location use.
+
+(The separate **Apple Watch** companion — not part of this binary — requests
+Health read/write and Motion & Fitness; this iPhone build does not.)
 
 There is **no App Tracking Transparency prompt**, because the app does no
 tracking: it contains no advertising SDK, no analytics SDK, and no cross-app or
@@ -173,15 +177,13 @@ protected third-party material**.
 `[FILL IN before each submission — for example:]`
 
 - iPhone `[model]`, iOS `[version]` — physical device
-- Apple Watch `[model]`, watchOS `[version]` — physical device, paired to the
-  above
 - Additional simulators used during development: iPhone 17 Pro Max, iPhone 13
   Pro Max, iPad Pro 13-inch (M5), Apple Watch SE 3 (40 mm), Apple Watch Ultra 3
   (49 mm)
 
 Minimum supported versions: **iOS 16.2** (the native deployment target; the
-in-app Live Activity extension is non-interactive and also min 16.2), and
-**watchOS 10.0** for the companion app.
+in-app Live Activity extension is non-interactive and also min 16.2). The watch
+companion is a separate target/app that is not part of this binary.
 
 ---
 
@@ -223,9 +225,10 @@ Location, or delete and reinstall) so the prompts actually appear on camera.
    curve and the saved recording. (Do this with the real device if you have it —
    this is the feature reviewers most often cannot evaluate, and showing it
    working is the point of the recording.)
-8. **Apple Watch companion**: show the watch app on the wrist — a tracked
-   session, heart rate, and the force gauge screen. Point the camera at the
-   watch or use watch screen mirroring.
+8. **Not in this build**: the Apple Watch companion is a separate target/app in
+   this repo but is **not embedded in or paired with this binary**, so there is
+   no watch app to demonstrate. The lock-screen Live Activity card for guided
+   Force protocols (iOS 16.2+) is in this build if you want to show it.
 9. **History tab**: show the timeline of sessions and recordings, open one, and
    edit it.
 10. **Account deletion**: Account → Danger zone → **Delete account** → confirm →

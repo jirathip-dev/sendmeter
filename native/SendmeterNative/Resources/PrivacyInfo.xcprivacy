@@ -63,6 +63,15 @@
             <key>NSPrivacyAccessedAPITypeReasons</key>
             <array><string>CA92.1</string></array>
         </dict>
+        <!-- ProcessInfo.processInfo.systemUptime (AppModel health-refresh
+             coalescing window, TindeqBluetooth flush timing) — elapsed-time
+             measurement only, never persisted as an absolute timeline event. -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array><string>35F9.1</string></array>
+        </dict>
     </array>
 </dict>
 </plist>
