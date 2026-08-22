@@ -1114,9 +1114,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   async function runStop(note: string, endMs?: number) {
     // Claim the hands-free rep identity into a local before any await (#682 &
     // the repo closure-race rule): `runStop` is async, and the persist-boundary
-    // verdict below must read a ref, not captured state. Reset once claimed so
-    // a later path cannot re-discard a hold the machine did not start.
-    const handsFreeActive = handsFreeActiveRef.current;
+    // verdict below must read a ref/snapshot, not captured state. Reset once
+    // claimed so a later path cannot re-discard a hold the machine did not
+    // start. A remount RECOVERY (a BLE drop that fired while this view was
+    // unmounted) runs on a FRESH mount whose `handsFreeActiveRef` is false, so
+    // the drop-time `wasHandsFree` snapshot (`tindeq.interruptionContext`) is
+    // the authority there — read BEFORE `tindeq.stop()` clears the claim.
+    const handsFreeActive =
+      handsFreeActiveRef.current || (tindeq.interruptionContext?.wasHandsFree === true);
     handsFreeActiveRef.current = false;
     const adaptive = adaptiveStaticRef.current;
     if (adaptive) {

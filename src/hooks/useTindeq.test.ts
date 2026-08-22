@@ -217,17 +217,17 @@ describe("interruptionNote", () => {
 });
 
 describe("#119 remount-recovery label", () => {
-  function ctx(tag: string, side: TindeqSide): SalvageContext {
+  function ctx(tag: string, side: TindeqSide, wasHandsFree = false): SalvageContext {
     return {
       tag,
       side,
       groupId: null,
       userId: "u1",
       stopInFlight: false,
-      wasHandsFree: false,
+      wasHandsFree,
     };
   }
-  const EMPTY = { tag: "", side: "" as TindeqSide };
+  const EMPTY = { tag: "", side: "" as TindeqSide, wasHandsFree: false };
 
   // The whole bug is an ordering problem, so this replays the real lifecycle:
   // TindeqProvider (salvageContextRef + the sample buffer) outlives ForceView,
@@ -253,6 +253,7 @@ describe("#119 remount-recovery label", () => {
     expect(recoveredTagSide(EMPTY, snapshot)).toEqual({
       tag: "Half crimp",
       side: "left",
+      wasHandsFree: false,
     });
     // The note is unchanged by the relabel — a recovered pull must still be
     // distinguishable from a clean one.
@@ -270,7 +271,7 @@ describe("#119 remount-recovery label", () => {
     const snapshot = snapshotInterruption(ctx("Half crimp", "left"));
     expect(
       recoveredTagSide({ tag: "Open hand", side: "right" }, snapshot),
-    ).toEqual({ tag: "Open hand", side: "right" });
+    ).toEqual({ tag: "Open hand", side: "right", wasHandsFree: false });
   });
 
   it("falls back per field, so a half-seeded remount keeps what it has", () => {
@@ -278,10 +279,12 @@ describe("#119 remount-recovery label", () => {
     expect(recoveredTagSide({ tag: "Open hand", side: "" }, snapshot)).toEqual({
       tag: "Open hand",
       side: "left",
+      wasHandsFree: false,
     });
     expect(recoveredTagSide({ tag: "", side: "right" }, snapshot)).toEqual({
       tag: "Half crimp",
       side: "right",
+      wasHandsFree: false,
     });
   });
 
@@ -295,7 +298,65 @@ describe("#119 remount-recovery label", () => {
     expect(snapshotInterruption(ctx("Half crimp", "left"))).toEqual({
       tag: "Half crimp",
       side: "left",
+      wasHandsFree: false,
     });
+  });
+
+  it("snapshots and carries the hands-free flag through a remount recovery", () => {
+    // The hands-free machine started this rep; the drop fires while ForceView
+    // is unmounted. The drop-time snapshot must retain wasHandsFree: true.
+    const snapshot = snapshotInterruption(ctx("Half crimp", "left", true));
+    expect(snapshot).toEqual({
+      tag: "Half crimp",
+      side: "left",
+      wasHandsFree: true,
+    });
+    // The remount recovery resolves the label AND keeps the hands-free flag so
+    // `runStop` below can still apply Guard 1 even though the fresh mount's
+    // `handsFreeActiveRef` is false.
+    const recovered = recoveredTagSide(EMPTY, snapshot);
+    expect(recovered).toEqual({
+      tag: "Half crimp",
+      side: "left",
+      wasHandsFree: true,
+    });
+  });
+
+  it("discards a trivial hands-free rep recovered from the snapshot, but keeps a manual rep", () => {
+    // Drop-time snapshot survives the removal of the provider context.
+    const handsFreeSnapshot = snapshotInterruption(ctx("Half crimp", "left", true));
+    const manualSnapshot = snapshotInterruption(ctx("Half crimp", "left", false));
+    const handsFree = recoveredTagSide(EMPTY, handsFreeSnapshot);
+    const manual = recoveredTagSide(EMPTY, manualSnapshot);
+
+    // A 2.9 kg / 10 s rep is below minPeakKg (3): discarded for hands-free,
+    // kept for manual.
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: handsFree.wasHandsFree,
+        isSpecialized: false,
+        peakKg: 2.9,
+        durationMs: 10_000,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: manual.wasHandsFree,
+        isSpecialized: false,
+        peakKg: 2.9,
+        durationMs: 10_000,
+      }),
+    ).toBe(false);
+
+    // A qualifying 3.1 kg / 10 s rep persists for hands-free too.
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: handsFree.wasHandsFree,
+        isSpecialized: false,
+        peakKg: 3.1,
+        durationMs: 10_000,
+      }),
+    ).toBe(false);
   });
 });
 

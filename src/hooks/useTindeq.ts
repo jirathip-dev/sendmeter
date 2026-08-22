@@ -167,6 +167,12 @@ export function interruptionNote(everMeasuredThisMount: boolean): string {
 export interface InterruptionContext {
   tag: string;
   side: TindeqSide;
+  /// #682 follow-up: whether the interrupted rep was started by the hands-free
+  /// machine, captured at DROP TIME. This survives the drop (the provider-owned
+  /// hook outlives a tab switch) so a remount-recovery `runStop` can still
+  /// apply Guard 1 even though a fresh mount's `handsFreeActiveRef` is false.
+  /// Manual (hands-free opted-out) reps are false.
+  wasHandsFree: boolean;
 }
 
 /// #119: narrow a registered SalvageContext down to just the label fields, at
@@ -174,11 +180,14 @@ export interface InterruptionContext {
 /// remounts to recover the buffer (the drop fired while the user was on
 /// another tab) runs its own setSalvageContext effect first, re-registering a
 /// fresh context whose pendingTag/pendingSide are still empty — so a late read
-/// of salvageContextRef is deterministically "" again.
+/// of salvageContextRef is deterministically "" again. The hands-free flag is
+/// snapshotted here for the same reason: the recovery `runStop` cannot read a
+/// fresh mount's `handsFreeActiveRef` (it is false), so the drop-time value is
+/// the only truth.
 export function snapshotInterruption(
   ctx: SalvageContext | null | undefined,
 ): InterruptionContext | null {
-  return ctx ? { tag: ctx.tag, side: ctx.side } : null;
+  return ctx ? { tag: ctx.tag, side: ctx.side, wasHandsFree: ctx.wasHandsFree } : null;
 }
 
 /// #119: tag/side for an interruption-recovery save. On a remount recovery the
@@ -189,12 +198,13 @@ export function snapshotInterruption(
 /// something: a mount that did seed first is at least as current as the
 /// snapshot, so this is a fallback, never an override.
 export function recoveredTagSide(
-  live: InterruptionContext,
+  live: { tag: string; side: TindeqSide },
   snapshot: InterruptionContext | null,
 ): InterruptionContext {
   return {
     tag: live.tag || (snapshot?.tag ?? ""),
     side: live.side || (snapshot?.side ?? ""),
+    wasHandsFree: snapshot?.wasHandsFree ?? false,
   };
 }
 
@@ -274,10 +284,11 @@ export function useTindeq() {
     [],
   );
 
-  // #119: claim a mid-measurement drop's buffer AND snapshot the tag/side that
-  // were registered at that instant. Shared by the real disconnect callback
-  // and the dev fake-drop helper below so the two can't drift — the snapshot
-  // has to happen in BOTH or the recovery flow isn't browser-verifiable.
+  // #119: claim a mid-measurement drop's buffer AND snapshot the tag/side (and,
+  // #682 follow-up, the hands-free flag) that were registered at that instant.
+  // Shared by the real disconnect callback and the dev fake-drop helper below
+  // so the two can't drift — the snapshot has to happen in BOTH or the
+  // recovery flow isn't browser-verifiable.
   const claimInterruption = useCallback(() => {
     setInterruptionContext(snapshotInterruption(salvageContextRef.current?.()));
     pendingInterruptionRef.current = true;
