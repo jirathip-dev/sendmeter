@@ -1445,31 +1445,45 @@ struct ForceView: View {
                         discardRecovered: { model.tindeq.clearInterruptedRecording() }
                     )
 
+                    // #711: hoist the recording-context init's closure/ternary/
+                    // filter/`&&`/`||` sub-expressions into distinct `let`s so
+                    // the constraint solver type-checks each in isolation (CI
+                    // "unable to type-check this expression in reasonable time").
+                    let sideBinding: Binding<TindeqSide> =
+                        Binding(get: { side }, set: { side = $0 })
+                    let zoneBinding: Binding<RecordedZone?> =
+                        Binding(get: { zone }, set: { zone = $0 })
+                    let movementSummary: String? = measurementMode == .movement
+                        ? selectedPreset.map { protocolSummary($0) }
+                        : nil
+                    let contextRecordings: [TindeqRecording] =
+                        model.recordings.filter { $0.tag == tag }
+                    let showBalanceHint: Bool =
+                        !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        && !isReverseActionTarget
+                    let balanceIsLocked: Bool =
+                        model.tindeq.status == .measuring
+                        || model.handsFree.isArmed
+                        || model.handsFree.isMeasuring
+                        || guidedControlsLocked
+
                     ForceMetadataCard(
                         tag: $tag,
-                        side: Binding(get: { side }, set: { side = $0 }),
-                        zone: Binding(get: { zone }, set: { zone = $0 }),
+                        side: sideBinding,
+                        zone: zoneBinding,
                         selectedTarget: selectedSelection,
-                        // #711: single-armed target tap — `handleSelectTarget`
-                        // applies the pure reducer then republishes the context
-                        // (extracted for type-checking, see the method).
                         onSelectTarget: handleSelectTarget,
                         presets: model.presets,
                         knownTags: model.visibleTagNames,
                         selectedName: selectedPreset?.name,
-                        selectedSummary: measurementMode == .movement
-                            ? selectedPreset.map { protocolSummary($0) }
-                            : nil,
+                        selectedSummary: movementSummary,
                         maintenanceAvailable: armableMaintenanceZones,
-                        recordings: model.recordings.filter { $0.tag == tag },
+                        recordings: contextRecordings,
                         exercise: tag,
                         curveInput: zoneCurve,
                         measurementMode: measurementMode,
-                        showsBalance: !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isReverseActionTarget,
-                        balanceLocked: model.tindeq.status == .measuring
-                            || model.handsFree.isArmed
-                            || model.handsFree.isMeasuring
-                            || guidedControlsLocked,
+                        showsBalance: showBalanceHint,
+                        balanceLocked: balanceIsLocked,
                         onPickFocusNext: armRecommendedZone
                     )
                     .disabled(guidedControlsLocked)
