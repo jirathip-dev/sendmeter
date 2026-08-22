@@ -289,6 +289,11 @@ simulators. A physical-device build cannot reach the laptop's local Supabase
 stack and currently uses production; use a throwaway production account for
 device-only Bluetooth, HealthKit, and signing checks.
 
+- **Password reset email** (Settings → Account & Security → Send Password Reset
+  Email): device-only — verify the reset email's link reopens the app into the
+  password-recovery flow via `com.jirathip.sendlog://login-callback`. No unit
+  test covers this (email/deep-link dependent).
+
 ## App Store screenshot automation
 
 Preserve and reuse the current App Store screenshots by default. Run the

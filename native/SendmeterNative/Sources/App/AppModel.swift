@@ -833,6 +833,19 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// #722 (parity with web #542): send a password reset email for the
+    /// signed-in user's address. The reset link reopens the app via the
+    /// custom scheme; `handleDeepLink` routes it to `PasswordRecoveryView`.
+    public func sendPasswordResetEmail() async {
+        // Read the address before the await (repo closure-capture rule); the
+        // signing-in account is the only one a reset should target.
+        guard let email = currentUserEmail else { return }
+        await perform {
+            try await self.auth.resetPassword(email: email)
+            self.toastMessage = "Password reset email sent to \(email)."
+        }
+    }
+
     /// Route an incoming URL. `sendmeter://<host>` is the navigation scheme
     /// the Live Activity / Dynamic Island taps (sendmeter://force) and any
     /// future widgets/complications use — it must be intercepted BEFORE the
