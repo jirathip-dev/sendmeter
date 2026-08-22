@@ -8,14 +8,13 @@ require "xcodeproj"
 default_platform(:ios)
 
 APP_IDENTIFIER = "com.jirathip.sendlog".freeze
-# The native SwiftUI target ships to TestFlight under a DISTINCT bundle ID
-# (one bundle ID = one app slot on TestFlight; uploading the native build
-# under the shipped ID would REPLACE the Capacitor app's builds — #637).
-# The `.native` suffix means WCSession no longer pairs with the watch app
-# (the companion relationship is bundle-ID-prefix-based, so the watch app
-# com.jirathip.sendlog.watchkitapp only pairs with an iOS app whose ID is a
-# prefix of it); the mirror falls back to the realtime server path. This is
-# the accepted pre-promotion tradeoff — see docs/native-swift-rewrite.md.
+# #743: the native Release/App Store archive uses the shipped ID — the same
+# App Store record and a WCSession bundle-ID prefix that pairs with the watch.
+# The `.native` IDs are retained only by project.yml's Debug config so local
+# dev builds can install side-by-side with the shipped app. See
+# docs/native-swift-rewrite.md.
+SHIPPED_APP_IDENTIFIER = APP_IDENTIFIER.freeze
+SHIPPED_WIDGETS_IDENTIFIER = "#{SHIPPED_APP_IDENTIFIER}.widgets".freeze
 NATIVE_APP_IDENTIFIER = "com.jirathip.sendlog.native".freeze
 NATIVE_WIDGETS_IDENTIFIER = "#{NATIVE_APP_IDENTIFIER}.widgets".freeze
 NATIVE_PROJECT_DIR = "native/SendmeterNative".freeze
@@ -426,7 +425,7 @@ platform :ios do
                "Internal Testing once App Store Connect finishes processing.")
   end
 
-  desc "Build the native SwiftUI app (#{NATIVE_APP_IDENTIFIER}) and ship a build to TestFlight"
+  desc "Build the native SwiftUI app (#{SHIPPED_APP_IDENTIFIER}) and ship a build to TestFlight"
   lane :native_beta do
     # Same headless API-key signing as `beta` — no Apple ID password / 2FA.
     # Env contract (CI job uses the `testflight` GitHub environment):
@@ -476,14 +475,14 @@ platform :ios do
     #
     #    a) The App IDs. sigh does NOT create App IDs; the beta lane uses
     #       the same Spaceship call for the widget extensions. The archive
-    #       embeds the widget appex (com.jirathip.sendlog.native.widgets),
+    #       embeds the widget appex too,
     #       so it is every bit as signable as the app itself — an unregistered
     #       App ID makes its profile fetch fail and the whole lane die (#674).
-    native_id = NATIVE_APP_IDENTIFIER
-    widgets_id = NATIVE_WIDGETS_IDENTIFIER
+    native_id = SHIPPED_APP_IDENTIFIER
+    widgets_id = SHIPPED_WIDGETS_IDENTIFIER
     [
-      [native_id, "Sendmeter Native"],
-      [widgets_id, "Sendmeter Native Widgets"],
+      [native_id, "Sendmeter"],
+      [widgets_id, "Sendmeter Widgets"],
     ].each do |id, name|
       existing = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: id })
       unless existing.any? { |b| b.identifier == id }
@@ -532,15 +531,15 @@ platform :ios do
       UI.message("Enabled #{label} on #{native_id}")
     end
 
-    #    c) The App Store Connect app record. latest_testflight_build_number
-    #       and upload_to_testflight both fail on a missing app, so create it
-    #       (SKU must be unique within the team).
+    #    c) The App Store Connect app record. For the shipped ID this exists
+    #       already; the fallback create keeps the lane self-contained without
+    #       making this task register anything.
     unless Spaceship::ConnectAPI::App.find(native_id)
       Spaceship::ConnectAPI::App.create(
-        name: "Sendmeter Native",
+        name: "Sendmeter",
         bundle_id: native_id,
         primary_locale: "en-US",
-        sku: "SENDMETER-NATIVE",
+        sku: "SENDMETER",
         platforms: ["IOS"],
         version_string: "1.0.0"
       )
@@ -564,8 +563,9 @@ platform :ios do
       profiles[bundle_id] = lane_context[SharedValues::SIGH_NAME]
     end
 
-    # 5. Next build number = latest on TestFlight (of THIS app — the native
-    #    app has its own build-number train, so it can never race `beta`) + 1.
+    # 5. Next build number = latest on TestFlight of the shipped app + 1.
+    #    `beta` and `native_beta` now target the same record, so their build
+    #    numbers share one train; only one lane should run per release.
     #    Applied at archive time via xcargs; NEVER hand-bump
     #    CURRENT_PROJECT_VERSION in project.yml.
     build = latest_testflight_build_number(
@@ -630,10 +630,8 @@ platform :ios do
       }
     )
 
-    # 7. Upload. Guy needs to be an internal tester of the NEW app record
-    #    ("Sendmeter Native", com.jirathip.sendlog.native) once in App Store
-    #    Connect — internal testers are per-app, so the shipped app's tester
-    #    list does not carry over.
+    # 7. Upload. This uses the existing shipped App Store record, so internal
+    #    tester membership already applies to the upload.
     upload_to_testflight(
       api_key: api_key,
       app_identifier: native_id,
