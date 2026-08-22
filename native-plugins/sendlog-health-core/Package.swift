@@ -16,7 +16,8 @@ let package = Package(
         .testTarget(
             name: "SendLogHealthCoreTests",
             dependencies: ["SendLogHealthCore"],
-            path: "Tests/SendLogHealthCoreTests"
+            path: "Tests/SendLogHealthCoreTests",
+            resources: [.copy("Fixtures/readiness-acwr-parity.json")]
         )
     ]
 )
