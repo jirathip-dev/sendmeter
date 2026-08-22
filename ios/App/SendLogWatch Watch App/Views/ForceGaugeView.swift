@@ -767,22 +767,10 @@ struct ForceGaugeView: View {
                 onRetryTags: loadTags
             )
         } label: {
-            Image(systemName: WatchIconSymbol.forceContext)
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(WatchPalette.textSecondary)
-                .frame(width: 30, height: 30)
-                .background {
-                    Circle()
-                        .fill(Color.white.opacity(0.08))
-                        .overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 0.7))
-                }
-                // Inside the link's label, matching the shared primitives'
-                // hit-target contract.
-                .frame(
-                    minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
-                    minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
-                )
-                .contentShape(Rectangle())
+            // Reuses the shared compact circular glyph so this settings entry
+            // stays in lockstep with `WatchIconButton` (circle + 44pt target),
+            // not a one-off styling copy (#541).
+            WatchIconGlyph(systemImage: WatchIconSymbol.forceContext)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Exercise and protocol")
