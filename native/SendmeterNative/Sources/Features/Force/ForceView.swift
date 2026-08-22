@@ -1364,6 +1364,22 @@ struct ForceView: View {
         applySelection(.suggestedZone(zone))
     }
 
+    /// #711: the RECORDING CONTEXT target-tap. Extracted out of the SwiftUI
+    /// `onSelectTarget` closure — the combined type-check of that modifier
+    /// chain was too expensive to compile in reasonable time on CI. Applies
+    /// the pure single-armed reducer (`ForceProtocolPicker.next`) then
+    /// republishes the free-pull context, exactly as the previous inline
+    /// closure did.
+    private func handleSelectTarget(_ tapped: ForceProtocolSelection) {
+        applySelection(
+            ForceProtocolPicker.next(
+                current: selectedSelection,
+                tapped: tapped
+            )
+        )
+        publishFreePullContext()
+    }
+
     /// #711: the armed preset's concise summary (web `protocolSummary`).
     /// Reverse Action is presented in movement terms (concentric / eccentric)
     /// rather than the internal out/return direction names.
@@ -1434,21 +1450,10 @@ struct ForceView: View {
                         side: Binding(get: { side }, set: { side = $0 }),
                         zone: Binding(get: { zone }, set: { zone = $0 }),
                         selectedTarget: selectedSelection,
-                        onSelectTarget: { tapped in
-                            // #710/#711: Free hold / suggested zone / suggested
-                            // maintenance / movement / saved preset are mutually
-                            // exclusive (web `withZoneSelected` /
-                            // `withPresetSelected`, #296). The pure reducer
-                            // decides the single-armed result; `applySelection`
-                            // writes it to the selection `@State`s.
-                            applySelection(
-                                ForceProtocolPicker.next(
-                                    current: selectedSelection,
-                                    tapped: tapped
-                                )
-                            )
-                            publishFreePullContext()
-                        },
+                        // #711: single-armed target tap — `handleSelectTarget`
+                        // applies the pure reducer then republishes the context
+                        // (extracted for type-checking, see the method).
+                        onSelectTarget: handleSelectTarget,
                         presets: model.presets,
                         knownTags: model.visibleTagNames,
                         selectedName: selectedPreset?.name,
@@ -1765,7 +1770,7 @@ struct ForceView: View {
         // the zone's target as soon as it is picked, not after Start.
         let presetKey = selectedPresetID?.uuidString
             ?? zoneArmedPreset.map { "zone:\($0.name)" }
-            ?? movementArmedPreset.map { "movement" }
+            ?? (movementArmedPreset != nil ? "movement" : nil)
             ?? "free"
         return "\(presetKey)|\(tag)|\(side.rawValue)|\(recordingFingerprint)"
     }
