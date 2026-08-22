@@ -15,9 +15,11 @@ struct SettingsView: View {
     @State private var discardConfirmation: QuarantinedWrite?
     /// #712: the passkey awaiting removal confirmation (server-side delete).
     @State private var pendingPasskeyRemoval: PasskeyListItem?
-    /// #712: the passkey id whose remove request is in flight, so that row
+    /// #712: the passkey ids whose remove requests are in flight, so each row
     /// shows a spinner instead of a second tap target while it completes.
-    @State private var removingPasskeyID: UUID?
+    /// A set (not a single `UUID?`) so finishing one removal can't clear
+    /// another row's in-flight state (review F-blocking race on #712).
+    @State private var removingPasskeyIDs: Set<UUID> = []
 
     var body: some View {
         NavigationStack {
@@ -98,10 +100,10 @@ struct SettingsView: View {
                         // medium tick — once per gesture (the dialog's
                         // confirm tap).
                         Haptics.shared.play(.medium)
-                        removingPasskeyID = passkey.id
+                        removingPasskeyIDs.insert(passkey.id)
                         Task {
                             await model.removePasskey(passkey.id)
-                            removingPasskeyID = nil
+                            removingPasskeyIDs.remove(passkey.id)
                         }
                     }
                     pendingPasskeyRemoval = nil
@@ -206,7 +208,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if removingPasskeyID == passkey.id {
+            if removingPasskeyIDs.contains(passkey.id) {
                 ProgressView()
             } else {
                 Button(role: .destructive) {
