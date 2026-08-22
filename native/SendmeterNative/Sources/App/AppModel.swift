@@ -189,6 +189,11 @@ public final class AppModel: ObservableObject {
     /// #631: the per-user tag registry (SL-92) — rename/hide metadata. Tags
     /// themselves stay denormalized on recordings.
     @Published public private(set) var tagMetadata: [TagMetadata] = []
+    /// #712: the passkeys registered for the signed-in user. Loaded on
+    /// auth-ready and whenever Settings opens, and refreshed after a register
+    /// or remove — so a registration shows up as a persistent list entry and
+    /// count, not just a transient toast.
+    @Published public private(set) var passkeys: [PasskeyListItem] = []
     @Published public private(set) var isRefreshing = false
     @Published public private(set) var queuedWriteCount = 0
     @Published public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
@@ -694,6 +699,42 @@ public final class AppModel: ObservableObject {
         await perform {
             try await self.auth.registerPasskey()
             self.toastMessage = "Passkey registered."
+            // #712: a registration must be visible as a persistent list entry
+            // and count in Settings, not just a transient toast.
+            await self.loadPasskeys()
+        }
+    }
+
+    /// #712: fetch the passkey list for the current account. Account-scoped
+    /// like every other fetch, so a completion that resumes after an account
+    /// switch cannot publish into the wrong account.
+    public func loadPasskeys() async {
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        do {
+            let fetched = try await auth.listPasskeys()
+            guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+                return
+            }
+            passkeys = fetched
+        } catch {
+            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
+                surface(error)
+            }
+        }
+    }
+
+    /// #712: remove a passkey server-side (not just hide it locally). The UI
+    /// confirms before calling this; failures surface through the shared
+    /// error path, and a successful delete reloads the list.
+    public func removePasskey(_ id: UUID) async {
+        await perform {
+            try await self.auth.deletePasskey(id: id)
+            self.toastMessage = "Passkey removed."
+            await self.loadPasskeys()
         }
     }
 
@@ -854,6 +895,8 @@ public final class AppModel: ObservableObject {
             if changedUser || didBootstrapUserID != session.user.id {
                 resetAccountState()
                 await refreshAll(showSpinner: true)
+                // #712: load the passkey list for the (newly) signed-in user.
+                await loadPasskeys()
                 didBootstrapUserID = session.user.id
                 await acceptStoredWatchCompletions()
                 await drainQueue()
@@ -5280,6 +5323,7 @@ public final class AppModel: ObservableObject {
         routines = []
         workouts = []
         tagMetadata = []
+        passkeys = []
         pendingSessions = [:]
         pendingRecordings = PendingRecordingOverlay()
         clearPendingCurveSamples()
