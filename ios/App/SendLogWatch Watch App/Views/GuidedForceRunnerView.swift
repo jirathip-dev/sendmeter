@@ -14,6 +14,7 @@ struct GuidedForceRunnerView: View {
     @Environment(TindeqManager.self) private var tindeq
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(ForceRuntimeCoordinator.self) private var forceRuntimeCoordinator
 
     /// #611: the movement mode's live trace, refreshed at the same 10 Hz
     /// cadence ForceGaugeView uses for its sparkline. The timer is gated on
@@ -62,7 +63,9 @@ struct GuidedForceRunnerView: View {
     var body: some View {
         GeometryReader { geometry in
             Group {
-                if geometry.size.height < 205 || geometry.size.width < 170 {
+                if isLuminanceReduced {
+                    reducedLuminanceLayout
+                } else if geometry.size.height < 205 || geometry.size.width < 170 {
                     microLayout
                 } else if geometry.size.height < 220 {
                     compactLayout
@@ -117,6 +120,51 @@ struct GuidedForceRunnerView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+    }
+
+    /// #540: the minimal reduced-luminance guided Force frame.  When watchOS
+    /// dims (Always On / wrist-down) we render only the essential live info —
+    /// terse state word, phase/countdown, current force when measured, and the
+    /// side — and drop the header, progress bar, sparkline and Stop control,
+    /// which are nonessential for reading a dim pull.
+    private var reducedLuminanceLayout: some View {
+        let spec = forceRuntimeCoordinator.reducedLuminanceSpec
+        return VStack(spacing: 4) {
+            Text(spec.stateWord.uppercased())
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(WatchPalette.textSecondary)
+            if spec.showsPhaseCountdown {
+                Text(display.countdownText)
+                    .font(.system(size: 44, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(WatchPalette.textPrimary)
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+                    .accessibilityLabel("Phase countdown")
+                    .accessibilityValue("\(display.countdownText) seconds")
+            }
+            if spec.showsCurrentForce, let kg = display.currentKg {
+                (Text(String(format: "%.1f", kg))
+                    .font(.system(size: 34, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                + Text(" kg").font(.caption).foregroundStyle(WatchPalette.textSecondary))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .accessibilityLabel("Current force")
+                    .accessibilityValue(String(format: "%.1f kilograms", kg))
+            }
+            if spec.showsSide, !display.side.isEmpty {
+                Text(sideLabel(display.side))
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(WatchPalette.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.horizontal, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("force-guided-reduced-luminance")
     }
 
     /// The smallest 40mm content area can be shorter than the nominal screen

@@ -36,6 +36,8 @@ CI, dependency updates, and refactors unless users experience a change.
 - The native Dashboard now shows an ACWR next-7-days projection card: where your load ratio drifts over the coming week if you train nothing, drawn against your current training block's target band, plus what a single session would take to keep the ratio in band.
 - Force: the native app now shows a training-balance card for the selected exercise — four bars (Power / Strength / Pow End / Endurance) with how many duration-normalised sets you've done over the last 4 weeks, plus a "FOCUS NEXT" recommendation for the least-trained zone that arms its guided protocol with one tap. Tapping the card opens a detail sheet that explains exactly what the numbers count (one exercise, one window, both sides, sets-not-sessions) and traces each bar to the holds behind it, matching the web's Training balance card.
 
+- Apple Watch Force now keeps measurement running through wrist-down / inactive transitions, holds a supported extended-runtime session only while real measured work is active, renders a legible reduced-luminance frame (current/peak force, countdown, side, terse state) in Always On, and confirms start/save/finish with haptics so a dim pull can be trusted.
+
 ### Improved
 
 - Native app: returning to the app now refreshes your training data only when it's stale or when the live sync channel is down, instead of re-fetching every table on each foreground — so switching apps costs less radio and battery, while a pull-to-refresh still reloads everything.

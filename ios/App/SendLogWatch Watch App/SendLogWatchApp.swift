@@ -24,6 +24,11 @@ struct SendLogWatchApp: App {
     // request/state here lets RootView switch to the runner without retaining
     // a closure captured by a view that may have disappeared.
     @State private var guidedForceRunner = GuidedForceRunner()
+    // #540: one app-scoped Force runtime/session coordinator.  Force is a short,
+    // therapy-style measured activity (not a HealthKit workout), so a single
+    // extended-runtime session is keyed to the Force activity state and survives
+    // view refreshes and navigation.
+    @State private var forceRuntimeCoordinator = ForceRuntimeCoordinator()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -35,6 +40,7 @@ struct SendLogWatchApp: App {
                 .environment(workout)
                 .environment(forceProtocolCatalog)
                 .environment(guidedForceRunner)
+                .environment(forceRuntimeCoordinator)
                 .task { @MainActor in
                     readiness.request(reason: .launch)
                 }
@@ -59,6 +65,9 @@ struct SendLogWatchApp: App {
                     readiness.request(reason: .foreground)
                 }
                 guidedForceRunner.refresh()
+                // #540: a state change that landed while inactive (e.g. a hands-free
+                // pull began wrist-down) is reconciled on foreground.
+                forceRuntimeCoordinator.sync(tindeq: tindeq, runner: guidedForceRunner)
             }
         }
         // AuthManager stores the relay before publishing this state. Rebind
