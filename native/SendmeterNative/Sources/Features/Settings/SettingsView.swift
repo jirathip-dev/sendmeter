@@ -29,6 +29,7 @@ struct SettingsView: View {
                 healthSection
                 watchSection
                 queueSection
+                troubleshootingSection
                 appearanceSection
                 appSection
                 destructiveSection
@@ -475,6 +476,75 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 4)
+    }
+
+    /// #679: recent on-device auth events (sign-in / refresh / sign-out /
+    /// failure). The ring is bounded + best-effort persistent and is never
+    /// uploaded — it exists to diagnose an auth problem on THIS device. Read
+    /// fresh on open (the List recomputes when auth state publishes).
+    private var troubleshootingSection: some View {
+        Section("Troubleshooting") {
+            if model.authEventLog.isEmpty {
+                Text("No auth events on this device.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                // Most-recent-first for readability; the ring stores oldest first.
+                ForEach(model.authEventLog.reversed()) { entry in
+                    authEventRow(entry)
+                }
+            }
+        }
+    }
+
+    /// #679: one auth event — a category icon/label, its timestamp, and the
+    /// short reason (an error message for `.failure`).
+    private func authEventRow(_ entry: AuthEventEntry) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Image(systemName: authCategoryIcon(entry.category))
+                    .foregroundStyle(authCategoryColor(entry.category))
+                Text(authCategoryTitle(entry.category))
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Text(entry.occurredAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let detail = entry.detail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func authCategoryIcon(_ category: AuthEventCategory) -> String {
+        switch category {
+        case .signIn: return "person.badge.key.fill"
+        case .refresh: return "arrow.clockwise"
+        case .signOut: return "rectangle.portrait.and.arrow.right"
+        case .failure: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func authCategoryTitle(_ category: AuthEventCategory) -> String {
+        switch category {
+        case .signIn: return "Sign in"
+        case .refresh: return "Refresh"
+        case .signOut: return "Sign out"
+        case .failure: return "Failure"
+        }
+    }
+
+    private func authCategoryColor(_ category: AuthEventCategory) -> Color {
+        switch category {
+        case .signIn: return SendmeterStyle.primary
+        case .refresh: return SendmeterStyle.optimal
+        case .signOut: return .secondary
+        case .failure: return SendmeterStyle.alert
+        }
     }
 
     private var appearanceSection: some View {
