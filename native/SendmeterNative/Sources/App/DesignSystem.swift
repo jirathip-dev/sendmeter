@@ -161,6 +161,109 @@ public struct PrimaryActionButtonStyle: ButtonStyle {
     }
 }
 
+/// Shared compact icon control for card-header secondary actions (#541).
+/// Prefer this over a one-off `Button` + `Image` for any icon-only control so
+/// the glyph size, the 44pt minimum hit target, and the pressed/disabled
+/// treatment stay identical everywhere instead of drifting per screen.
+///
+/// - `accessibilityLabel` is required: an icon with no announced name is not
+///   accessible (#541's rule). `accessibilityHint` is optional extra context
+///   (e.g. "Rename or hide exercises"); `accessibilityIdentifier` is optional
+///   and lets a caller (or a UI test) target the control independent of its
+///   announced copy.
+/// - The hit target is 44pt on both axes regardless of how small the glyph
+///   renders. The frame/shape that deliver it are applied to the *button's
+///   label content*, not the button wrapper — a `.frame`/`.contentShape`
+///   chained after a `Button` only resizes the layout box and does not enlarge
+///   the tappable region, so they sit inside the style's `makeBody`, matching
+///   where `PrimaryActionButtonStyle` puts its own label treatment.
+public struct CompactIconButton: View {
+    let systemImage: String
+    let accessibilityLabel: String
+    var accessibilityHint: String? = nil
+    var accessibilityIdentifier: String? = nil
+    var tint: Color = SendmeterStyle.primary
+    var isDisabled = false
+    let action: () -> Void
+
+    public init(
+        systemImage: String,
+        accessibilityLabel: String,
+        accessibilityHint: String? = nil,
+        accessibilityIdentifier: String? = nil,
+        tint: Color = SendmeterStyle.primary,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.systemImage = systemImage
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityHint = accessibilityHint
+        self.accessibilityIdentifier = accessibilityIdentifier
+        self.tint = tint
+        self.isDisabled = isDisabled
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+        }
+        .buttonStyle(CompactIconButtonStyle(tint: tint))
+        .disabled(isDisabled)
+        // No `.accessibilityElement(children: .ignore)` here: on a `Button`
+        // (unlike a plain `Label`) it left the SF Symbol's own auto-generated
+        // name as the announced label instead of the one set below, so the
+        // label is set explicitly on the button.
+        .accessibilityLabel(accessibilityLabel)
+        .modifier(CompactIconButtonHint(hint: accessibilityHint))
+        .modifier(CompactIconButtonIdentifier(identifier: accessibilityIdentifier))
+    }
+}
+
+private struct CompactIconButtonHint: ViewModifier {
+    let hint: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let hint {
+            content.accessibilityHint(Text(hint))
+        } else {
+            content
+        }
+    }
+}
+
+private struct CompactIconButtonIdentifier: ViewModifier {
+    let identifier: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let identifier {
+            content.accessibilityIdentifier(identifier)
+        } else {
+            content
+        }
+    }
+}
+
+private struct CompactIconButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    var tint: Color = SendmeterStyle.primary
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+            .background(
+                tint.opacity(configuration.isPressed ? 0.16 : 0.08),
+                in: Circle()
+            )
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+    }
+}
+
 public struct StatusPill: View {
     let text: String
     let color: Color

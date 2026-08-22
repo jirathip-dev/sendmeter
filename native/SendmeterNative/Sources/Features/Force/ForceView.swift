@@ -1161,6 +1161,9 @@ struct ForceView: View {
     /// and never persisted — it is mutually exclusive with Free / Suggested /
     /// Saved, exactly like the web's "Movement Starter" selection.
     @State private var movementArmedPreset: TindeqPreset?
+    /// #541: the compact card-header icon action opens the exercise manager
+    /// (rename/hide), the same `TagManagerView` Settings uses.
+    @State private var showingManageExercises = false
 
     private var side: TindeqSide {
         get { TindeqSide(rawValue: sideValue) ?? .unspecified }
@@ -1423,6 +1426,7 @@ struct ForceView: View {
             showsBalance: showBalanceHint,
             balanceLocked: balanceIsLocked,
             onPickFocusNext: armRecommendedZone,
+            onManageExercises: { showingManageExercises = true },
             measurementMode: measurementMode
         )
         .disabled(guidedControlsLocked)
@@ -1609,6 +1613,10 @@ struct ForceView: View {
             }
             .sheet(isPresented: $creatingPreset) {
                 ForcePresetEditor(preset: Self.defaultPreset(), isNew: true)
+                    .onAppear { Haptics.shared.sheetPresented() }
+            }
+            .sheet(isPresented: $showingManageExercises) {
+                TagManagerView()
                     .onAppear { Haptics.shared.sheetPresented() }
             }
             .fullScreenCover(isPresented: $guidedFullscreenPresented) {
@@ -2329,6 +2337,9 @@ private struct ForceMetadataCard: View {
     let showsBalance: Bool
     let balanceLocked: Bool
     let onPickFocusNext: (ZoneQuality) -> Void
+    /// #541: opens the exercise manager (rename/hide) from the card header.
+    /// ForceView owns the sheet presentation so the card stays presentation-free.
+    let onManageExercises: () -> Void
     /// #711: the measurement mode shown as the STATIC / MOVEMENT badge (web
     /// `ProtocolBadge`), derived by the parent from the armed preset's
     /// `protocolMode`.
@@ -2357,6 +2368,7 @@ private struct ForceMetadataCard: View {
         showsBalance: Bool,
         balanceLocked: Bool,
         onPickFocusNext: @escaping (ZoneQuality) -> Void,
+        onManageExercises: @escaping () -> Void,
         measurementMode: ForceMeasurementMode
     ) {
         self._tag = tag
@@ -2375,6 +2387,7 @@ private struct ForceMetadataCard: View {
         self.showsBalance = showsBalance
         self.balanceLocked = balanceLocked
         self.onPickFocusNext = onPickFocusNext
+        self.onManageExercises = onManageExercises
         self.measurementMode = measurementMode
     }
 
@@ -2405,7 +2418,21 @@ private struct ForceMetadataCard: View {
     var body: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 14) {
-                SectionLabel("Recording context", systemImage: "tag")
+                HStack(alignment: .center, spacing: 6) {
+                    SectionLabel("Exercise & Side", systemImage: "figure.climbing")
+                    Spacer(minLength: 12)
+                    // #541: the compact card-header icon action replaces the
+                    // text-heavy manage action — the icon must keep a full
+                    // 44pt touch target even though the glyph is small
+                    // (CompactIconButton owns that frame/contentShape).
+                    CompactIconButton(
+                        systemImage: "pencil",
+                        accessibilityLabel: "Manage exercises",
+                        accessibilityHint: "Rename or hide exercises",
+                        tint: .secondary,
+                        action: onManageExercises
+                    )
+                }
                 TextField("Exercise or grip, e.g. 20 mm half crimp", text: $tag)
                     .textInputAutocapitalization(.sentences)
                     .padding(11)
