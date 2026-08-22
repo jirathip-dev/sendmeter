@@ -85,7 +85,8 @@ final class ForceRuntimeCoordinator: NSObject, WKExtendedRuntimeSessionDelegate 
         // the wrist is already down.  Guided work already cues its own phase
         // haptics in the guided runner, so leave that duplication out — this
         // only confirms a free-hold / hands-free start.
-        if oldState != state, state == .measuring {
+        if state == .measuring,
+           ForceRuntimePolicy.shouldStartHaptic(from: oldState, to: state) {
             acknowledge(.start)
         }
     }

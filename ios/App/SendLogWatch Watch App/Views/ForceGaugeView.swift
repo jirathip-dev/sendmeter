@@ -1219,7 +1219,7 @@ struct ForceGaugeView: View {
     private func measuringContent(availableSize: CGSize) -> some View {
         if isLuminanceReduced {
             reducedLuminanceMeasuringContent()
-        }
+        } else {
         let currentKg = fixtureVisual?.currentKg ?? tindeq.currentKg
         let peakKg = fixtureVisual?.peakKg ?? tindeq.peakKg
         let elapsedS = fixtureVisual?.elapsedS ?? tindeq.elapsedMs / 1000
@@ -1296,6 +1296,7 @@ struct ForceGaugeView: View {
         }
             .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.primary))
             .accessibilityIdentifier("force-stop-save")
+        }
     }
 
     /// #540: the minimal reduced-luminance Force frame.  When watchOS dims
