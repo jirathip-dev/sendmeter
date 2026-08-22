@@ -184,7 +184,12 @@ enum Repo {
         for r in rows where !seen.contains(r.tag) && !hidden.contains(r.tag) {
             seen.insert(r.tag)
             tags.append(
-                TindeqTagInfo(name: r.tag, cf: curves[r.tag]?.cfKg, wPrime: curves[r.tag]?.wPrimeKgs)
+                TindeqTagInfo(
+                    name: r.tag,
+                    cf: curves[r.tag]?.cfKg,
+                    wPrime: curves[r.tag]?.wPrimeKgs,
+                    sideMode: ForceSideMode.normalize(curves[r.tag]?.sideMode)
+                )
             )
         }
         return tags
@@ -196,7 +201,7 @@ enum Repo {
     static func fetchTagRegistry() async throws -> [TagRegistryRow] {
         try await SupabaseService
             .from("tindeq_tags")
-            .select("name, hidden, cf_kg, w_prime_kgs")
+            .select("name, hidden, cf_kg, w_prime_kgs, side_mode")
             .execute()
             .value
     }

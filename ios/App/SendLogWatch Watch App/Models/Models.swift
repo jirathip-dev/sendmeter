@@ -289,28 +289,72 @@ nonisolated struct TindeqTagRow: Codable {
 }
 
 /// A row of the `tindeq_tags` registry (SL-92): the hidden flag SL-94 filters
-/// on, plus the force-curve params the phone banks there (#280) so the watch
-/// can predict a session's RPE from W' depletion. Both curve columns are null
-/// until that tag has enough long holds for the phone to fit a curve.
+/// on, the force-curve params the phone banks there (#280) so the watch can
+/// predict a session's RPE from W' depletion, and the per-exercise
+/// side-applicability mode (#543 slice 3). Both curve columns are null until
+/// that tag has enough long holds for the phone to fit a curve; `side_mode` is
+/// NOT NULL with a default, but a legacy/unconfigured row that predates it
+/// decodes as the default (`unilateral_or_bilateral`) via `init(from:)`.
 nonisolated struct TagRegistryRow: Codable {
     var name: String
     var hidden: Bool
     var cfKg: Double?
     var wPrimeKgs: Double?
+    var sideMode: String
 
     enum CodingKeys: String, CodingKey {
         case name, hidden
         case cfKg = "cf_kg"
         case wPrimeKgs = "w_prime_kgs"
+        case sideMode = "side_mode"
+    }
+
+    init(
+        name: String,
+        hidden: Bool,
+        cfKg: Double?,
+        wPrimeKgs: Double?,
+        sideMode: String = ForceSideMode.defaultMode.rawValue
+    ) {
+        self.name = name
+        self.hidden = hidden
+        self.cfKg = cfKg
+        self.wPrimeKgs = wPrimeKgs
+        self.sideMode = sideMode
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        name = try values.decode(String.self, forKey: .name)
+        hidden = try values.decode(Bool.self, forKey: .hidden)
+        cfKg = try values.decodeIfPresent(Double.self, forKey: .cfKg)
+        wPrimeKgs = try values.decodeIfPresent(Double.self, forKey: .wPrimeKgs)
+        sideMode = try values.decodeIfPresent(String.self, forKey: .sideMode)
+            ?? ForceSideMode.defaultMode.rawValue
     }
 }
 
-/// A visible tag as the Force screen needs it: the name for the picker, plus
-/// its persisted curve for the #280 RPE prediction (nil until fitted).
+/// A visible tag as the Force screen needs it: the name for the picker, its
+/// persisted curve for the #280 RPE prediction (nil until fitted), and its
+/// side-applicability mode (#543). `sideMode` defaults so legacy constructions
+/// (which predate the field) keep compiling.
 nonisolated struct TindeqTagInfo: Sendable, Equatable {
     var name: String
     var cf: Double?
     var wPrime: Double?
+    var sideMode: ForceSideMode
+
+    init(
+        name: String,
+        cf: Double?,
+        wPrime: Double?,
+        sideMode: ForceSideMode = ForceSideMode.defaultMode
+    ) {
+        self.name = name
+        self.cf = cf
+        self.wPrime = wPrime
+        self.sideMode = sideMode
+    }
 }
 
 nonisolated struct UserSettingsRow: Codable {

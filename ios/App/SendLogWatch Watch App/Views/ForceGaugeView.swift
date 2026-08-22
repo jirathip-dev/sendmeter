@@ -204,8 +204,28 @@ struct ForceGaugeView: View {
                 }
             }
             // Keep the phone's live Force mirror in sync with the pickers (SL-87).
-                .onChange(of: tag) { _, t in tindeq.liveTag = t }
-                .onChange(of: side) { _, s in tindeq.liveSide = s }
+                .onChange(of: tag) { _, t in
+                    // #543: a newly selected exercise may not permit the
+                    // currently remembered side. Restore per-exercise, then
+                    // force the canonical recorded side so a stale side is
+                    // never armed or persisted.
+                    tindeq.liveTag = t
+                    restoreRememberedSide()
+                    normalizeSideForMode()
+                    tindeq.liveSide = side
+                }
+                .onChange(of: side) { _, s in
+                    tindeq.liveSide = s
+                    persistRememberedSide()
+                }
+                // #720/#543: the exercise's mode can resolve ASYNCHRONOUSLY
+                // (the registry fetch that carries `side_mode` lands after the
+                // tag list). A freshly-selected tag may therefore start at the
+                // default mode and later tighten — re-normalize so a side that
+                // became invalid under the resolver's mode is corrected.
+                .onChange(of: activeSideMode) { _, _ in
+                    normalizeSideForMode()
+                }
             }
             // The watch's accessibility-large title can consume the same
             // navigation-bar area as the back/time affordances. The primary
@@ -306,9 +326,16 @@ struct ForceGaugeView: View {
             // semantics are unchanged. `LAST_TAG_KEY` keeps being written on
             // save (and cleared by `reconcileLastTag`) but is no longer read
             // here.
-            if side.isEmpty { side = UserDefaults.standard.string(forKey: LAST_SIDE_KEY) ?? "" }
+            // #543: restore a per-exercise remembered side once an exercise is
+            // known; a free hold (no exercise) falls back to the legacy global
+            // last-side key. `normalizeSideForMode` then stamps the canonical
+            // recorded side for the active mode.
+            if side.isEmpty {
+                restoreRememberedSide()
+            }
             tindeq.liveTag = tag
             tindeq.liveSide = side
+            normalizeSideForMode()
             loadTags()
             // SL-584: auto-initiate the connection on entry (issue #589 §1).
             // For real BLE "a device is available" is only discoverable by
@@ -532,28 +559,35 @@ struct ForceGaugeView: View {
     /// The chooser's full side list (both/none) stays behind the settings
     /// icon; these two cover the mainline. Distinct identifiers from the
     /// chooser's `force-side-*` rows so queries can never straddle screens.
+    @ViewBuilder
     private var sideToggle: some View {
-        HStack(spacing: 2) {
-            sideSegment("left", label: "L")
-            sideSegment("right", label: "R")
+        // #543 (slice 3): the side controls follow the active exercise's side
+        // mode. A non-sided exercise (`not_applicable`) hides the selector
+        // entirely; bilateral-only shows a single selected "Both"; unilateral
+        // and either-or-both show L/R (+ Both for the latter). A legacy
+        // persisted "both"/"" on a non-bilateral exercise renders with no
+        // segment selected; the active mode's deterministic fallback corrects
+        // it on exercise selection and again once the async registry fetch
+        // resolves the mode (a historical "" is never rewritten to "both").
+        if ForceSidePolicy.showsSideSelector(activeSideMode) {
+            HStack(spacing: 2) {
+                ForEach(sideChoices, id: \.self) { value in
+                    sideSegment(value)
+                }
+            }
         }
     }
 
-    private func sideSegment(_ value: String, label: String) -> some View {
+    private func sideSegment(_ value: String) -> some View {
         let selected = side == value
         let accent = WatchPalette.accent(WatchDesignTokens.primary, reducedLuminance: isLuminanceReduced)
         return Button {
-            // SL-585 follow-up: L|R are the only offered sides on the watch
-            // now (the chooser's list is gone; "both"/unspecified stay
-            // web-only). A LEGACY persisted "both"/"" renders with neither
-            // segment selected and is rewritten only here, on an explicit
-            // user tap — never silently on appear. Tapping the already-
-            // selected segment is a no-op: clearing back to unspecified is
-            // deliberately not offered.
+            // Tapping the already-selected segment is a no-op: clearing back
+            // to unspecified is deliberately not offered.
             guard side != value else { return }
             side = value
         } label: {
-            Text(label)
+            Text(sideSegmentLabel(value))
                 .font(.system(size: 12, weight: selected ? .heavy : .semibold, design: .rounded))
                 .foregroundStyle(selected ? WatchPalette.textPrimary : WatchPalette.textTertiary)
                 .frame(width: 24, height: 28)
@@ -571,10 +605,28 @@ struct ForceGaugeView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(value == "left" ? "Left side" : "Right side")
+        .accessibilityLabel(sideSegmentAccessibilityLabel(value))
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("force-main-side-\(value)")
+    }
+
+    private func sideSegmentLabel(_ value: String) -> String {
+        switch value {
+        case ForceSidePolicy.left: return "L"
+        case ForceSidePolicy.right: return "R"
+        case ForceSidePolicy.both: return "B"
+        default: return value
+        }
+    }
+
+    private func sideSegmentAccessibilityLabel(_ value: String) -> String {
+        switch value {
+        case ForceSidePolicy.left: return "Left side"
+        case ForceSidePolicy.right: return "Right side"
+        case ForceSidePolicy.both: return "Both sides"
+        default: return value
+        }
     }
 
     /// Row 2: connection state (pill, with session rep count and low-battery
@@ -816,6 +868,72 @@ struct ForceGaugeView: View {
         tag.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    private var activeTag: String {
+        tag.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// #543 (slice 3): the side-applicability policy for the active exercise.
+    /// The single source of truth is `ForceSidePolicy`; views never hardcode a
+    /// mode→side mapping. A tag not yet seen in the registry (or a free hold)
+    /// reads as the default — every side valid, pre-#543 behavior.
+    private var activeSideMode: ForceSideMode {
+        guard !activeTag.isEmpty else { return .defaultMode }
+        return tindeq.tagCurves[activeTag]?.sideMode ?? .defaultMode
+    }
+
+    /// The concrete side choices the active exercise offers, in display order.
+    /// `bilateral_only` yields just `["both"]` — shown as a single selected
+    /// "Both" so it stays explicit rather than implicit.
+    private var sideChoices: [String] {
+        ForceSidePolicy.allowedConcreteSides(activeSideMode)
+    }
+
+    /// #543: the canonical side to stamp on a NEW rep under the active mode.
+    /// Distinct from `normalizeSide`, which keeps `""` as "not chosen yet":
+    /// the WATCH stamps the live side directly at save time, so a
+    /// bilateral-only exercise's unchosen side must become "both", and a
+    /// non-sided exercise must record the no-side value.
+    private var recordedSide: String {
+        ForceSidePolicy.recordedSide(activeSideMode, side)
+    }
+
+    /// Restore the remembered side for the active exercise (or the legacy
+    /// global last-side for a free hold) before normalizing.
+    private func restoreRememberedSide() {
+        if activeTag.isEmpty {
+            if side.isEmpty {
+                side = UserDefaults.standard.string(forKey: LAST_SIDE_KEY) ?? ""
+            }
+            return
+        }
+        side = ForceSideMemory.restoreValidSide(
+            mode: activeSideMode,
+            name: activeTag
+        )
+    }
+
+    /// #543: nudge a stale/legacy side onto the active exercise's valid set.
+    /// A historical empty side stays empty (never reinterpreted as `both`);
+    /// a side that is simply invalid under the mode falls back to the mode's
+    /// canonical state. Runs on exercise selection and on any mode change.
+    private func normalizeSideForMode() {
+        let normalized = recordedSide
+        if normalized != side {
+            side = normalized
+        }
+        persistRememberedSide()
+    }
+
+    /// Persist the active side per-exercise so the next selection restores a
+    /// valid, non-leaking value; a free hold keeps the legacy global key.
+    private func persistRememberedSide() {
+        if activeTag.isEmpty {
+            UserDefaults.standard.set(side, forKey: LAST_SIDE_KEY)
+            return
+        }
+        ForceSideMemory.store(side: side, for: activeTag)
+    }
+
     /// Auto-connect in flight (first ~8s): passive, not a control.
     private var connectingCard: some View {
         readyCardBody(token: WatchDesignTokens.secondary, status: "Connecting…")
@@ -935,10 +1053,15 @@ struct ForceGaugeView: View {
     }
 
     private func startSelectedProtocol() {
+        // #543: the run/arm path stamps the canonical recorded side for the
+        // active exercise's mode, never the raw selector value — a stale or
+        // invalid side is corrected deterministically at start, not persisted
+        // as-is.
         guidedForceRunner.start(
             protocolValue: protocolCatalog.selected,
             tag: tag,
-            side: side,
+            side: recordedSide,
+            sideMode: activeSideMode,
             manager: tindeq
         )
     }

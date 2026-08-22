@@ -322,11 +322,13 @@ struct GuidedForceRunnerView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
                     Spacer(minLength: 3)
-                    Text(display.side.isEmpty ? "Side —" : sideLabel(display.side))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(WatchPalette.textSecondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                    if display.sideMode.isSided {
+                        Text(display.side.isEmpty ? "Side —" : sideLabel(display.side))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(WatchPalette.textSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
                 }
 
                 Text(display.countdownText)
@@ -507,6 +509,7 @@ private struct GuidedRunDisplay {
     let currentRep: Int
     let totalReps: Int
     let side: String
+    let sideMode: ForceSideMode
     let currentKg: Double?
     let tag: String
     let canStop: Bool
@@ -524,6 +527,7 @@ private struct GuidedRunDisplay {
         currentRep = runner.currentRep
         totalReps = runner.totalReps
         side = runner.side
+        sideMode = runner.sideMode
         currentKg = runner.currentKg
         tag = runner.tag
         canStop = runner.phase != .stopping
@@ -545,6 +549,10 @@ private struct GuidedRunDisplay {
         currentRep = fixture.currentRep
         totalReps = fixture.totalReps
         side = fixture.side
+        // The presentation fixture has no side-mode concept of its own; it
+        // defaults to the every-side-allowed mode so the side summary renders
+        // exactly as the pre-#543 view did for a sided exercise.
+        sideMode = .unilateralOrBilateral
         currentKg = fixture.currentKg
         tag = fixture.tag
         canStop = true

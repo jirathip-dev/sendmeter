@@ -28,6 +28,10 @@ final class GuidedForceRunner {
     private(set) var runId: UUID?
     private(set) var tag = ""
     private(set) var side = ""
+    /// #543: the active exercise's side-applicability mode, captured at start
+    /// so the runner (and its display) can distinguish a non-sided exercise
+    /// (no side decision to show) from a sided one whose side is still empty.
+    private(set) var sideMode: ForceSideMode = .defaultMode
     private(set) var errorMessage: String?
     private(set) var completionMessage: String?
     /// Stable account identity captured with the protocol/run snapshot. Token
@@ -143,6 +147,7 @@ final class GuidedForceRunner {
         protocolValue: WatchForceProtocol,
         tag: String,
         side: String,
+        sideMode: ForceSideMode = .defaultMode,
         manager: TindeqManager
     ) -> Bool {
         guard !isActive else { return false }
@@ -181,7 +186,12 @@ final class GuidedForceRunner {
         self.runId = id
         self.ownerUserId = ownerUserId
         self.tag = normalizedTag
-        self.side = side
+        // #543: validate the configured side against the exercise's allowed
+        // side mode at start. The runner stamps the canonical recorded side
+        // (bilateral-only → "both", not_applicable → ""), so an incompatible
+        // value is corrected deterministically and never persisted as-is.
+        self.side = ForceSidePolicy.recordedSide(sideMode, side)
+        self.sideMode = sideMode
         self.manager = manager
         manager.setPersistenceOwner(ownerUserId)
         // #683: a guided protocol is a screen the user entered, and while it
