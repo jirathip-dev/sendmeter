@@ -88,7 +88,6 @@ targets:
         product: SendLogHealthCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native
         PRODUCT_NAME: Sendmeter
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: SendmeterNative.entitlements
@@ -104,9 +103,11 @@ targets:
       configs:
         Debug:
           base:
+            PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native
             SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
         Release:
           base:
+            PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog
             SWIFT_COMPILATION_MODE: wholemodule
             SWIFT_OPTIMIZATION_LEVEL: -O
   # #674: WidgetKit app-extension hosting the guided-protocol Live Activity
@@ -138,7 +139,6 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native.widgets
         PRODUCT_NAME: "$(TARGET_NAME)"
         INFOPLIST_FILE: Resources/WidgetsInfo.plist
         # GENERATE_INFOPLIST_FILE: YES lets Xcode synthesize the CFBundle*
@@ -160,9 +160,11 @@ targets:
       configs:
         Debug:
           base:
+            PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native.widgets
             SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
         Release:
           base:
+            PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.widgets
             SWIFT_COMPILATION_MODE: wholemodule
             SWIFT_OPTIMIZATION_LEVEL: -O
 schemes:
