@@ -250,7 +250,7 @@ private struct PhaseCard: View {
             let next = guidance.nextPhase.map { PhaseCatalog.definition(for: $0).name } ?? model.currentPhase.name
             return "Consider \(next) next"
         case .considerRecovery:
-            return "Readiness low — consider recovery"
+            return "Readiness low or falling — consider recovery"
         }
     }
 

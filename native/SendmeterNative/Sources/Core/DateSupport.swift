@@ -124,12 +124,14 @@ public enum LocalDateSupport {
     /// ("today"/"yesterday") would read awkwardly next to a concrete date.
     public static func monthDayLabel(
         for date: String,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        locale: Locale = .autoupdatingCurrent
     ) -> String {
         guard let day = self.date(from: date, timeZone: timeZone) else { return date }
         var style = Date.FormatStyle().month(.abbreviated).day()
         style.calendar = Calendar(identifier: .gregorian)
         style.timeZone = timeZone
+        style.locale = locale
         return day.formatted(style)
     }
 

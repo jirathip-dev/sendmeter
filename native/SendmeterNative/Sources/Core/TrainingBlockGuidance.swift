@@ -13,7 +13,9 @@ public enum BlockGuidanceState: String, Equatable, Sendable {
 }
 
 /// How far the current block has progressed versus the phase's typical week
-/// range.
+/// range. `within` means at or below the typical minimum (still fresh);
+/// `nearing` is between the minimum and the high end; `beyond` is past the
+/// high end.
 public enum BlockDurationSignal: String, Equatable, Sendable {
     case within
     case nearing
@@ -94,14 +96,21 @@ public enum TrainingBlockGuidance: Sendable {
             referenceDate: referenceDate,
             timeZone: timeZone
         )
+        let stepBack = TrainingMetrics.phaseStepBackSuggestion(
+            readinessHistory: readinessHistory,
+            currentPhase: phase.id,
+            referenceDate: referenceDate,
+            timeZone: timeZone
+        )
         let nextPhase = phase.id.nextLogical
 
         let state: BlockGuidanceState
-        if duration == .within {
-            // A block that is still comfortably inside its typical window is
-            // never switched on a single readiness/ACWR datapoint.
+        if duration == .within && !stepBack.suggested {
+            // A block still in its fresh window (at or below the typical
+            // minimum) is never switched on a single datapoint — unless the
+            // sustained low-readiness streak rule fires.
             state = .continueCurrent
-        } else if readiness == .low || readiness == .falling {
+        } else if readiness == .low || readiness == .falling || stepBack.suggested {
             state = .considerRecovery
         } else if duration == .beyond && load == .onTarget && readiness == .stable && nextPhase != nil {
             state = .considerNext
@@ -118,7 +127,11 @@ public enum TrainingBlockGuidance: Sendable {
 
     static func durationSignal(age: BlockAge?, phase: PhaseDefinition) -> BlockDurationSignal {
         guard let age else { return .within }
-        if age.week < phase.typicalWeeksLow { return .within }
+        // "within" means at or below the typical minimum — the block is still
+        // fresh. "nearing" is the stretch between the minimum and the high
+        // end, so review/recovery only fire as the block approaches its high
+        // end rather than at the exact minimum.
+        if age.week <= phase.typicalWeeksLow { return .within }
         if age.week > phase.typicalWeeksHigh { return .beyond }
         return .nearing
     }

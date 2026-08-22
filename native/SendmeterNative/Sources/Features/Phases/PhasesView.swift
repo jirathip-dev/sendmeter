@@ -268,7 +268,7 @@ private struct GuidanceCard: View {
         let band = phase.acwrBandText
         switch guidance.state {
         case .continueCurrent:
-            return "Within the typical \(phase.weeks) window with load \(loadText(band))."
+            return "Still in the fresh part of the typical \(phase.weeks) window with load \(loadText(band))."
         case .reviewDuration:
             return "You are nearing or past the typical \(phase.weeks) range. Review whether this block has run its course."
         case .considerNext:

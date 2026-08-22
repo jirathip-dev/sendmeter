@@ -73,6 +73,59 @@ final class TrainingBlockGuidanceTests: XCTestCase {
         XCTAssertEqual(result.signals.duration, .nearing)
     }
 
+    func testWeekEqualToTypicalLowStaysFresh() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let strength = PhaseCatalog.definition(for: .strength)
+        // Strength typical range is 3–5 weeks; week 3 is the minimum, so it is
+        // still "within" the window, NOT "nearing" the end.
+        let result = guidance(phase: strength, week: 3, acwr: 0.9, reference: reference)
+        XCTAssertEqual(result.state, .continueCurrent)
+        XCTAssertEqual(result.signals.duration, .within)
+    }
+
+    func testWeekEqualToTypicalHighReviewsDuration() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let strength = PhaseCatalog.definition(for: .strength)
+        // Week 5 is the high end of the typical range — approaching the end,
+        // so the guidance should review the block rather than call it fresh.
+        let result = guidance(phase: strength, week: 5, acwr: 0.9, reference: reference)
+        XCTAssertEqual(result.state, .reviewDuration)
+        XCTAssertEqual(result.signals.duration, .nearing)
+    }
+
+    func testNearingEndWithFallingReadinessConsidersRecovery() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let strength = PhaseCatalog.definition(for: .strength)
+        let history = [
+            makeMetric(dayOffset: 3, reference: reference, readiness: 78),
+            makeMetric(dayOffset: 2, reference: reference, readiness: 72),
+            makeMetric(dayOffset: 1, reference: reference, readiness: 66),
+            makeMetric(dayOffset: 0, reference: reference, readiness: 55)
+        ]
+        // Nearing the high end (week 5) with a falling trend and above-target
+        // load must surface recovery, not a continue.
+        let result = guidance(phase: strength, week: 5, acwr: 1.1, readinessHistory: history, reference: reference)
+        XCTAssertEqual(result.state, .considerRecovery)
+        XCTAssertEqual(result.signals.duration, .nearing)
+        XCTAssertEqual(result.signals.readiness, .falling)
+    }
+
+    func testWithinWindowSustainedLowReadinessStillSurfacesRecovery() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let strength = PhaseCatalog.definition(for: .strength)
+        // Three consecutive days below 40 in a Strength loading block is the
+        // established safety signal. It must surface even while the block is
+        // still inside its fresh window (week 2), via the step-back rule.
+        let history = [
+            makeMetric(dayOffset: 2, reference: reference, readiness: 32),
+            makeMetric(dayOffset: 1, reference: reference, readiness: 35),
+            makeMetric(dayOffset: 0, reference: reference, readiness: 30)
+        ]
+        let result = guidance(phase: strength, week: 2, acwr: 0.9, readinessHistory: history, reference: reference)
+        XCTAssertEqual(result.state, .considerRecovery)
+        XCTAssertEqual(result.signals.duration, .within)
+    }
+
     func testPastEndWithOnTargetLoadConsidersNext() throws {
         let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
         let strength = PhaseCatalog.definition(for: .strength)
