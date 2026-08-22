@@ -911,11 +911,11 @@ public final class AppModel: ObservableObject {
             // sign-in/refresh is never counted twice.
             switch event {
             case .signedIn:
-                auth.recordAuthEvent(.signIn, "Session established")
+                auth.recordAuthEvent(.signIn, detail: "Session established")
             case .initialSession:
-                auth.recordAuthEvent(.signIn, "Session restored at launch")
+                auth.recordAuthEvent(.signIn, detail: "Session restored at launch")
             case .tokenRefreshed:
-                auth.recordAuthEvent(.refresh, "Access token refreshed")
+                auth.recordAuthEvent(.refresh, detail: "Access token refreshed")
             default:
                 break
             }
@@ -960,7 +960,7 @@ public final class AppModel: ObservableObject {
             // #679: sign-out boundary.
             auth.recordAuthEvent(
                 .signOut,
-                event == .signedOut ? "Signed out" : "Account deleted"
+                detail: event == .signedOut ? "Signed out" : "Account deleted"
             )
             watch.relaySession(nil)
             authSession = nil
