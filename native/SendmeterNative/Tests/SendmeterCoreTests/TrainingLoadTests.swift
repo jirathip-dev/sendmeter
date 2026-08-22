@@ -240,6 +240,61 @@ final class TrainingLoadTests: XCTestCase {
         XCTAssertEqual(cell?.type, "board")
     }
 
+    /// #706: a session can be dated up to +7 days ahead (DB `sessions_date_sane`),
+    /// landing in a future grid cell. Future cells render gray (unavailable) and
+    /// must not participate in the load scale, otherwise a large future load
+    /// inflates `grid.max` and compresses every real past data day to level 1 —
+    /// "all cells gray despite data". 2026-08-21 is a Friday, so 08-22 (Saturday,
+    /// the current-week end) is the first future day inside the 53-week grid.
+    func testHeatmapGridExcludesFutureCellsFromScale() {
+        let today = try! XCTUnwrap(LocalDateSupport.date(from: "2026-08-21", timeZone: bangkok))
+        let daily = [
+            "2026-08-20": DailyLoad(total: 680, type: "gym"),
+            "2026-08-21": DailyLoad(total: 910, type: "auto"),
+            "2026-08-22": DailyLoad(total: 5_000, type: "board") // future (+1 day)
+        ]
+        let grid = TrainingLoad.heatmapGrid(daily: daily, today: today, weeks: 53, timeZone: bangkok)
+        let cellsByDate = Dictionary(uniqueKeysWithValues: grid.columns.flatMap { $0 }.map { ($0.date, $0) })
+
+        let future = try! XCTUnwrap(cellsByDate["2026-08-22"])
+        XCTAssertTrue(future.future, "the +1 day row is a future (gray) cell")
+
+        let pastMax = try! XCTUnwrap(cellsByDate["2026-08-21"])
+        XCTAssertEqual(grid.max, 910, "grid.max must be the largest NON-future load, not the future 5000")
+        XCTAssertEqual(
+            TrainingLoad.heatmapLevel(value: pastMax.value, max: grid.max),
+            4,
+            "the real maximum day must not be compressed by the future cell"
+        )
+        XCTAssertEqual(
+            TrainingLoad.heatmapAlpha(level: TrainingLoad.heatmapLevel(value: pastMax.value, max: grid.max)),
+            1.0,
+            "the real maximum day renders at full opacity"
+        )
+    }
+
+    /// #706 production path: a future-dated session flows into `dailyLoads` and
+    /// must not depress the scale of the real data days in the rendered grid.
+    func testProductionFutureSessionDoesNotDimRealData() {
+        let today = try! XCTUnwrap(LocalDateSupport.date(from: "2026-08-21", timeZone: bangkok))
+        let sessions = [
+            session("2026-08-20", "gym", 680),
+            session("2026-08-21", "auto", 910),
+            session("2026-08-22", "board", 5_000) // future (DB allows up to +7 days)
+        ]
+        let daily = TrainingLoad.dailyLoads(sessions: sessions)
+        let grid = TrainingLoad.heatmapGrid(daily: daily, today: today, weeks: 53, timeZone: bangkok)
+        let cellsByDate = Dictionary(uniqueKeysWithValues: grid.columns.flatMap { $0 }.map { ($0.date, $0) })
+
+        XCTAssertEqual(daily["2026-08-22"]?.total, 5_000, "the future-dated session reaches dailyLoads")
+        XCTAssertEqual(grid.max, 910, "grid.max excludes the future cell")
+
+        let realMax = try! XCTUnwrap(cellsByDate["2026-08-21"])
+        XCTAssertEqual(realMax.type, "auto")
+        XCTAssertEqual(TrainingLoad.heatmapLevel(value: realMax.value, max: grid.max), 4)
+        XCTAssertEqual(TrainingLoad.heatmapAlpha(level: 4), 1.0)
+    }
+
     // MARK: - Intensity levels
 
     func testHeatmapLevelMatchesWebFormula() {
