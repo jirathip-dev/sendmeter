@@ -12,8 +12,19 @@ import SendLogWatchCore
 ///     `InterruptionContext` / `recoveredTagSide` and `gaugeInputLock.ts`
 ///     (#119 / #298 round 5), and the watch's
 ///     `TindeqManager.salvageInterruptedRecording`.
+///   * The hands-free persist verdict — `recordingVerdict` in
+///     `ios/App/SendLogWatchCore/Sources/SendLogWatchCore/HandsFreeForce.swift`
+///     (#682 Guard 1), which the watch's `salvageInterruptedRecording` applies
+///     to a hands-free rep even when it ends by a BLE drop.
 ///   * The note text — the web/watch recovery rows both write
 ///     "Recovered after connection loss".
+///
+/// NOTE on "remount recovery": the native app freezes the full force context
+/// (`FreePullContext`) on `AppModel` at Start/Arm, so it survives a Force tab
+/// remount — unlike the web, whose view-backed `pendingTag`/`pendingSide` can
+/// be lost when the drop fires while the view is unmounted. There is therefore
+/// no drop-time snapshot fallback here: the LOCK is the single truth for a
+/// salvaged rep, and a missing lock resolves to the honest empty attribution.
 public enum ForceDisconnectSalvage {
     /// The tag/side a salvaged rep persists — what the user actually set at
     /// recording start, never a re-derived fallback (web #298).
@@ -53,27 +64,35 @@ public enum ForceDisconnectSalvage {
         )
     }
 
-    /// Resolve the tag/side a salvaged rep must persist.
+    /// Whether a salvaged rep should be PERSISTED, after the #678-required
+    /// parity with the salvageable case re-opened by the reviewer.
+    ///
+    /// #682 Guard 1 applies to a hands-free rep even when it ends by a BLE
+    /// drop instead of an Arm/Stop edge (watch parity): a sub-threshold rep
+    /// (peak < `minPeakKg` or duration < `minDurationMs`) is discarded, never
+    /// enters the queue, and never reports a durable loss. Manual interrupted
+    /// reps are never gated — a manual hold that dies mid-pull is a real rep.
+    public static func shouldPersistSalvage(
+        wasHandsFree: Bool,
+        peakKg: Double,
+        durationMs: Double,
+        config: HandsFreeForceConfig = .default
+    ) -> Bool {
+        guard wasHandsFree else { return true }
+        return recordingVerdict(peakKg: peakKg, durationMs: durationMs, config: config) == .persist
+    }
+
+    /// The tag/side a salvaged rep must persist.
     ///
     /// `locked` is the value captured when the recording STARTED (the web's
     /// locked `pendingTag`/`pendingSide`). The LOCK is the single authority:
     /// a salvaged rep writes exactly the tag/side the user set at recording
     /// start, and never reinterprets a missing side (`.unspecified`) as
     /// `.both` (engineering rule), nor falls back to a display value like
-    /// `allTags[0]` (web #298 "never a fallback").
-    ///
-    /// `droppedSnapshot` is only a remount-recovery fallback for a missing
-    /// TAG — the web's `recoveredTagSide` snapshots the label at DROP time
-    /// (`interruptionContext`), and a fresh ForceView that remounts after the
-    /// drop has not seeded its own pendingTag yet (web #117). The side is
-    /// never taken from the snapshot, because the lock already holds it.
-    public static func attribution(
-        locked: Attribution,
-        droppedSnapshot: Attribution? = nil
-    ) -> Attribution {
-        Attribution(
-            tag: locked.tag.isEmpty ? (droppedSnapshot?.tag ?? "") : locked.tag,
-            side: locked.side
-        )
+    /// `allTags[0]` or the live pickers (web #298 "never a fallback").
+    /// When no lock exists the rep is saved honestly untagged/unspecified —
+    /// never something re-derived at save time.
+    public static func attribution(locked: Attribution) -> Attribution {
+        Attribution(tag: locked.tag, side: locked.side)
     }
 }

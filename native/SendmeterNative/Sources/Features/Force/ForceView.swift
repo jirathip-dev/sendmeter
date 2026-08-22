@@ -1779,15 +1779,16 @@ struct ForceView: View {
         // #678: a recovered/salvaged rep persists the tag/side LOCKED at
         // recording start (web #298) and carries the recovered note, not a
         // "· Recovered" suffix on the tag — the note is what History shows,
-        // matching the watch's `salvageInterruptedRecording`. Fall back to
-        // the current pickers only when no lock exists (e.g. an older
-        // recovery whose recording began before this fix).
+        // matching the watch's `salvageInterruptedRecording`. When no lock
+        // exists the recovery is saved honestly untagged/unspecified — never
+        // re-derived from the live pickers (web #298 "never a fallback").
         let attribution = model.forceRecordingLock.map {
             ForceDisconnectSalvage.Attribution(tag: $0.tag, side: $0.side)
-        } ?? ForceDisconnectSalvage.Attribution(tag: tag, side: side)
+        } ?? .empty
         let savedTag = recovered ? attribution.tag : tag
         let savedSide = recovered ? attribution.side : side
         let note = recovered ? ForceDisconnectSalvage.recoveredNote : ""
+        let lossReason = recovered ? ForceDisconnectSalvage.lossReason : "recording"
         Task {
             let enqueued = await model.saveForceSummary(
                 summary,
@@ -1796,11 +1797,17 @@ struct ForceView: View {
                 zone: recordingZone,
                 preset: selectedPreset,
                 targetBand: selectedTargetPlan.band(forSet: 1, side: savedSide),
-                note: note
+                note: note,
+                lossReason: lossReason
             )
             if enqueued {
                 model.tindeq.clearCompletedRecording()
-                if recovered { model.tindeq.clearInterruptedRecording() }
+                if recovered {
+                    model.tindeq.clearInterruptedRecording()
+                    // #678: clear the lock so a stale attribution can't leak
+                    // into the next Start/Arm.
+                    model.clearForceRecordingLock()
+                }
             }
             savingSummary = false
         }

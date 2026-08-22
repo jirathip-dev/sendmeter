@@ -638,6 +638,11 @@ public final class AppModel: ObservableObject {
                     if !self.guidedProtocolActive {
                         let interrupted = self.tindeq.interruptedRecording
                         if let interrupted, !self.disconnectSalvageInFlight {
+                            // #678: capture the hands-free provenance BEFORE
+                            // `clearInterruptedRecording()`/`handleDisconnected()`
+                            // can reset it, so the salvage can apply #682 Guard 1
+                            // (the watch captures `wasHandsFree` the same way).
+                            let wasHandsFree = self.tindeq.interruptedWasHandsFree
                             // #678: claim the interrupted buffer synchronously
                             // — before any await — so a duplicate
                             // `.interrupted` emission (#656: a single
@@ -652,7 +657,7 @@ public final class AppModel: ObservableObject {
                             ) {
                                 self.tindeq.clearInterruptedRecording()
                                 Task { @MainActor in
-                                    await self.salvageInterruptedRecording(interrupted)
+                                    await self.salvageInterruptedRecording(interrupted, wasHandsFree: wasHandsFree)
                                     self.disconnectSalvageInFlight = false
                                 }
                             } else {
@@ -1529,7 +1534,12 @@ public final class AppModel: ObservableObject {
         partial: Bool = false,
         /// #678: the note stamped on the recording (e.g. a disconnect-
         /// salvage's "Recovered after connection loss").
-        note: String = ""
+        note: String = "",
+        /// #678: the durable-loss reason if this save refuses. A manual
+        /// recovered-pull save passes `ForceDisconnectSalvage.lossReason` so
+        /// a failed recovery is reported as a salvage loss, not an ordinary
+        /// recording loss.
+        lossReason: String = "recording"
     ) async -> Bool {
         await saveForceSummaryOutcome(
             summary,
@@ -1542,7 +1552,8 @@ public final class AppModel: ObservableObject {
             setNumber: setNumber,
             repetitionNumber: repetitionNumber,
             partial: partial,
-            note: note
+            note: note,
+            lossReason: lossReason
         ).didPersist
     }
 
@@ -1934,8 +1945,25 @@ public final class AppModel: ObservableObject {
     /// loss (`LostRecordingStore`, via `saveForceSummaryOutcome`) if the save
     /// refuses. The buffer was cleared synchronously by the caller's claim, so
     /// the only paths here are: it survived, or it is honestly reported lost.
-    private func salvageInterruptedRecording(_ summary: ForceSummary) async {
-        let lock = forceRecordingLock ?? freePullContext
+    private func salvageInterruptedRecording(_ summary: ForceSummary, wasHandsFree: Bool) async {
+        // #682 Guard 1 (watch parity): a sub-threshold hands-free rep that ends
+        // by a BLE drop is discarded, silently, exactly like the normal
+        // hands-free stop path — it never enters the recording queue nor
+        // reports a durable loss. Manual interrupted reps are never gated.
+        if !ForceDisconnectSalvage.shouldPersistSalvage(
+            wasHandsFree: wasHandsFree,
+            peakKg: summary.peakKilograms,
+            durationMs: Double(summary.durationMilliseconds)
+        ) {
+            clearForceRecordingLock()
+            return
+        }
+        // #678: the LOCK is the single authority (web #298 "never a fallback").
+        // When no lock was captured the rep is saved honestly untagged/
+        // unspecified — never re-derived from the live pickers. The AppModel-
+        // held lock survives a Force tab remount, so there is no drop-time
+        // snapshot fallback to consider.
+        let lock = forceRecordingLock ?? FreePullContext()
         let resolved = ForceDisconnectSalvage.attribution(
             locked: ForceDisconnectSalvage.Attribution(tag: lock.tag, side: lock.side)
         )

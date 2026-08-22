@@ -25,6 +25,26 @@ final class ForceDisconnectSalvageTests: XCTestCase {
         )
     }
 
+    // MARK: - Hands-free persist verdict (#682 Guard 1, watch parity)
+
+    func testSubThresholdHandsFreeSalvageIsDiscardedNotSaved() {
+        // A hands-free rep that dies mid-pull below 3 kg / 1.5 s is discarded,
+        // the same Guard 1 the watch's salvageInterruptedRecording applies.
+        XCTAssertFalse(
+            ForceDisconnectSalvage.shouldPersistSalvage(wasHandsFree: true, peakKg: 2.9, durationMs: 10_000)
+        )
+        XCTAssertFalse(
+            ForceDisconnectSalvage.shouldPersistSalvage(wasHandsFree: true, peakKg: 10.0, durationMs: 1_400)
+        )
+        XCTAssertTrue(
+            ForceDisconnectSalvage.shouldPersistSalvage(wasHandsFree: true, peakKg: 3.1, durationMs: 1_600)
+        )
+        // Manual interrupted reps are never gated — a real hold dying mid-pull.
+        XCTAssertTrue(
+            ForceDisconnectSalvage.shouldPersistSalvage(wasHandsFree: false, peakKg: 2.9, durationMs: 1_400)
+        )
+    }
+
     // MARK: - Locked tag/side attribution (web #298 "never a fallback")
 
     func testSalvagedRepPersistsExactlyTheLockedTagSide() {
@@ -36,43 +56,19 @@ final class ForceDisconnectSalvageTests: XCTestCase {
 
     func testSalvageNeverInventsTagOrSideWhenLockedIsEmpty() {
         // Locked empty (user set nothing): the rep is saved honest, untagged
-        // and unspecified — never a display fallback like `allTags[0]`.
-        let resolved = ForceDisconnectSalvage.attribution(
-            locked: .empty,
-            droppedSnapshot: .empty
-        )
-        XCTAssertEqual(resolved.tag, "")
-        XCTAssertEqual(resolved.side, .unspecified)
+        // and unspecified — never a display fallback like `allTags[0]` nor the
+        // live pickers.
+        let resolved = ForceDisconnectSalvage.attribution(locked: .empty)
+        XCTAssertEqual(resolved, .empty)
     }
 
     func testSalvageNeverReinterpretsUnsetSideAsBoth() {
         // Engineering rule: a locked `.unspecified` (user set no side) must
-        // stay `.unspecified` even when a drop-time snapshot carries `.both` —
-        // a salvaged rep never reinterprets a missing side as both.
-        let locked = ForceDisconnectSalvage.Attribution(tag: "pocket", side: .unspecified)
-        let dropped = ForceDisconnectSalvage.Attribution(tag: "pocket", side: .both)
-        let resolved = ForceDisconnectSalvage.attribution(locked: locked, droppedSnapshot: dropped)
-        XCTAssertEqual(resolved.side, .unspecified)
-    }
-
-    func testLockedSideWinsOverSnapshotSide() {
-        // The lock is authoritative for the side; the drop snapshot is only a
-        // remount fallback for a missing TAG.
-        let locked = ForceDisconnectSalvage.Attribution(tag: "", side: .left)
-        let dropped = ForceDisconnectSalvage.Attribution(tag: "drift", side: .right)
-        let resolved = ForceDisconnectSalvage.attribution(locked: locked, droppedSnapshot: dropped)
-        XCTAssertEqual(resolved.side, .left)
-        XCTAssertEqual(resolved.tag, "drift")
-    }
-
-    func testDropSnapshotFillsMissingTagForRemountRecovery() {
-        // A fresh ForceView remount has not seeded its own pendingTag (web
-        // #117), so the drop-time snapshot supplies the missing TAG. The SIDE
-        // is never taken from the snapshot.
-        let locked = ForceDisconnectSalvage.Attribution(tag: "", side: .unspecified)
-        let dropped = ForceDisconnectSalvage.Attribution(tag: "warmup", side: .right)
-        let resolved = ForceDisconnectSalvage.attribution(locked: locked, droppedSnapshot: dropped)
-        XCTAssertEqual(resolved.tag, "warmup")
+        // stay `.unspecified` — a salvaged rep never reinterprets a missing
+        // side as both.
+        let resolved = ForceDisconnectSalvage.attribution(
+            locked: ForceDisconnectSalvage.Attribution(tag: "pocket", side: .unspecified)
+        )
         XCTAssertEqual(resolved.side, .unspecified)
     }
 
