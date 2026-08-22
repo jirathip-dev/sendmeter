@@ -17,7 +17,7 @@ protocol TindeqSessionQueueing: Sendable {
 extension PendingSessionQueue: TindeqSessionQueueing {}
 
 /// CoreBluetooth central for the Tindeq Progressor. Mirrors the web app's
-/// useTindeq hook: same statuses, 30 min recording cap, t rounded to ms int,
+/// useTindeq hook: same statuses, 10 min recording cap, t rounded to ms int,
 /// kg to 2 dp, identical summary — recordings look the same in the web UI.
 @Observable
 final class TindeqManager: NSObject {
@@ -538,7 +538,7 @@ final class TindeqManager: NSObject {
     /// Called from every point a rep can end — the durable-save completion
     /// (manual Stop, hands-free auto-rearm, and salvage, which all funnel
     /// through `persistPreparedRecording`), a Stop that produced no
-    /// summary to persist, the 30-minute manual cap's no-save branch, and
+    /// summary to persist, the 10-minute manual cap's no-save branch, and
     /// the end of `handleTransportDisconnect` — so there is no rep-ending
     /// path this can silently miss. Re-runs `handleAccountTransition`'s own
     /// policy (never a different one): a safe no-op if the session already
@@ -667,7 +667,7 @@ final class TindeqManager: NSObject {
     }
 
     /// Stop and persistence share one synchronous claim. Automatic release,
-    /// the Stop & Save button and the 30-minute cap all enter here; only the
+    /// the Stop & Save button and the 10-minute cap all enter here; only the
     /// first can take `repClaims.active`, and that happens before the
     /// Task/await below. `reason` has no default on purpose (#503): only
     /// `.released` carries a trim timestamp and re-arms without fresh slack,
@@ -677,15 +677,16 @@ final class TindeqManager: NSObject {
         guard let claim = repClaims.claimStop() else { return }
         // #681: an auto-release (.released) has already proved stopGraceMs of
         // slack, so it can stop the transport stream outright and re-arm
-        // straight to armed. A tap ("Stop & Save") or the 30-minute cap re-arms
-        // through `waitingForSlack`, which must OBSERVE a sample at/below
-        // stopKg before the next pull can be recognized. If the user's
-        // release-to-slack edge falls inside the async save's dark window
-        // (transport stopped, samples dropped), that sample never arrives: the
-        // re-arm sees only a resumed loaded stream and the second pull never
-        // arms — the #607 report. Keep the weight stream LIVE through tap/cap
-        // saves so the machine observes the release while saving, and let the
-        // re-arm preserve whatever it observed.
+        // straight to armed. A tap ("Stop & Save"), the 10-minute cap, or a
+        // `.staticLoad` termination (#682) re-arms through `waitingForSlack`,
+        // which must OBSERVE a sample at/below stopKg before the next pull can
+        // be recognized. If the user's release-to-slack edge falls inside the
+        // async save's dark window (transport stopped, samples dropped), that
+        // sample never arrives: the re-arm sees only a resumed loaded stream
+        // and the second pull never arms — the #607 report. Keep the weight
+        // stream LIVE through tap/cap/static-load saves so the machine
+        // observes the release while saving, and let the re-arm preserve
+        // whatever it observed.
         // #681 review F3: the keep-live decision is Core's
         // (`reason.keepsStreamLive`) — not a fourth local switch — and the
         // live-window state is Core's own re-arm decision
@@ -702,7 +703,7 @@ final class TindeqManager: NSObject {
             // the sample-clock idle budget so the first post-stop sample
             // starts a fresh 10-minute clock instead of inheriting the stale
             // pre-rep base — with the whole rep's recording time counted as
-            // idle, a 30-minute cap rep would spuriously cancel inside its own
+            // idle, a 10-minute cap rep would spuriously cancel inside its own
             // save window (the "hands-free disarmed" dead gauge under #683).
             if keepStreamRunning { armedStreamIdleBudget = ArmedStreamIdleBudget() }
         }
@@ -716,6 +717,21 @@ final class TindeqManager: NSObject {
             // run for this rep — this IS the rep-ending point. Resolve
             // before the re-arm check below for the same reason as the
             // completion handler: a closed session cancels hands-free too.
+            resolvePendingAccountTransitionIfNeeded()
+            if handsFreeRequested, transportConnected {
+                rearmHandsFreeAfterSave(afterStop: reason, keepStreamRunning: keepStreamRunning)
+            }
+            return
+        }
+        // Guard 1 (#682): evaluate the persisted form AFTER any trim (a
+        // `.staticLoad` termination trims to the flat-window start; release
+        // trims to the release edge). A trivial rep (peak below `minPeakKg` or
+        // duration below `minDurationMs`) is discarded silently, never enters
+        // the recording queue, and is never reported as queued. Only gates
+        // hands-free reps — manual recordings are unchanged while hands-free is
+        // opt-in.
+        if handsFreeRequested,
+           recordingVerdict(peakKg: summary.peakKg, durationMs: Double(summary.durationMs)) != .persist {
             resolvePendingAccountTransitionIfNeeded()
             if handsFreeRequested, transportConnected {
                 rearmHandsFreeAfterSave(afterStop: reason, keepStreamRunning: keepStreamRunning)
@@ -1172,6 +1188,18 @@ final class TindeqManager: NSObject {
             return
         }
         t0us = first.us
+        // #682: Guard 2's flat-watch is seeded by `stepHandsFreeForce` on the
+        // armed clock (`sample.us` absolute), but `handleMeasuringSamples`
+        // below feeds the recording clock (`samples[].t`, t0-relative). Re-base
+        // the flat-watch start to 0 (the first recording sample) so Core's
+        // `atMs - flatWatch.sinceMs` subtracts matching clocks. The min/max are
+        // the START sample's load — exactly `samples[0]` — so they are kept.
+        if case let .recording(belowSinceMs, flatWatch) = handsFreeState {
+            let rebased = flatWatch.map {
+                HandsFreeForceFlatWatch(sinceMs: 0, minKg: $0.minKg, maxKg: $0.maxKg)
+            }
+            handsFreeState = .recording(belowSinceMs: belowSinceMs, flatWatch: rebased)
+        }
         samples.append((t: 0, kg: Double(first.kg)))
         measuring = true
         status = .measuring
@@ -1201,7 +1229,7 @@ final class TindeqManager: NSObject {
             write(.startWeight)
             scheduleArmTimeout()
             pushForceBeat()
-        case .userTapped, .cappedAt30Min:
+        case .userTapped, .cappedAt30Min, .staticLoad:
             // #681: whether THIS stop kept the transport stream running is a
             // value decided synchronously at stop time and carried through
             // the async save (`keepStreamRunning`, #681 review F2) — never
@@ -1495,18 +1523,25 @@ final class TindeqManager: NSObject {
             if t0us == nil { t0us = sample.us }
             let t = Double(sample.us &- (t0us ?? 0)) / 1000
             samples.append((t: t, kg: Double(sample.kg)))
-            guard handsFreeRequested, case .recording(let belowSinceMs) = handsFreeState else {
+            guard handsFreeRequested, case .recording(let belowSinceMs, _) = handsFreeState else {
                 continue // unchanged manual buffering path
             }
             let stepped = stepHandsFreeForce(handsFreeState, atMs: t, kg: Double(sample.kg))
             handsFreeState = stepped.state // claim before stop/save Task
             if stepped.action == .stop {
-                // `.stop` only fires once the grace window measured from a
-                // non-nil belowSinceMs has elapsed, so the fallback is
-                // unreachable while stopGraceMs > 0; `t` (the sample that
-                // crossed the grace) is the conservative no-trim end if a
-                // future config ever made it reachable.
-                stopAndSave(reason: .released(endMs: belowSinceMs ?? t))
+                if let staticLoadEndMs = stepped.staticLoadEndMs {
+                    // Guard 2 (#682): the machine proved a sustained non-human
+                    // load (flat inside the band for flatlineWindowMs). Stop
+                    // as `.staticLoad`, trimming to the flat-window start.
+                    stopAndSave(reason: .staticLoad(endMs: staticLoadEndMs))
+                } else {
+                    // `.stop` only fires once the grace window measured from a
+                    // non-nil belowSinceMs has elapsed, so the fallback is
+                    // unreachable while stopGraceMs > 0; `t` (the sample that
+                    // crossed the grace) is the conservative no-trim end if a
+                    // future config ever made it reachable.
+                    stopAndSave(reason: .released(endMs: belowSinceMs ?? t))
+                }
                 return
             }
         }

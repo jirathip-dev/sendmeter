@@ -44,6 +44,34 @@ final class ForceEngineTests: XCTestCase {
         XCTAssertEqual(summary?.averageKilograms, 9.5)
     }
 
+    /// #682: the iPhone force recording cap is 10 minutes, not 30 — the
+    /// backstop behind the static-load watchdog, mirroring
+    /// `TindeqRecordingLimit.maxRecordingMs` on the watch.
+    func testAccumulatorCapsAtTenMinutesNotThirty() {
+        XCTAssertEqual(ForceSessionAccumulator.maximumRecordingMilliseconds, 600_000)
+
+        var accumulator = ForceSessionAccumulator()
+        // `startMicroseconds` is the first sample's device timestamp, so
+        // elapsed is measured relative to it, not absolute.
+        XCTAssertEqual(
+            accumulator.append([TindeqWireSample(microseconds: 0, kilograms: 5)]),
+            1
+        )
+        // A sample landing exactly on the cap (600 s elapsed) is accepted.
+        let capMicroseconds = UInt32(ForceSessionAccumulator.maximumRecordingMilliseconds * 1_000)
+        XCTAssertEqual(
+            accumulator.append([TindeqWireSample(microseconds: capMicroseconds, kilograms: 5)]),
+            1
+        )
+        // A sample just past the cap is dropped, so the saved trace never
+        // extends beyond the 10-minute ceiling.
+        XCTAssertEqual(
+            accumulator.append([TindeqWireSample(microseconds: capMicroseconds + 1_000, kilograms: 5)]),
+            0
+        )
+        XCTAssertEqual(accumulator.samples.count, 2)
+    }
+
     /// #671: the live window is a zero-copy `ArraySlice` over the
     /// accumulator's stable storage — an O(log n) binary search plus an O(1)
     /// slice, never a per-notification `Array(samples[low...])` copy. This

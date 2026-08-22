@@ -97,8 +97,10 @@ describe("cadence-only Reverse Action run (#422)", () => {
     saveCadenceOnlyRun(legacy);
 
     const restored = loadCadenceOnlyRun();
-    expect(restored?.preset.reps).toBe(29);
-    expect(cadenceOnlyPlannedDurationMs(restored!)).toBe(3_495_000);
-    expect(cadenceOnlyTimeline(restored!).filter((segment) => segment.phase === "move" && segment.set === 1)).toHaveLength(58);
+    // #682: the Progressor recording cap is 10 min, so a 30/30 cadence preset
+    // normalizes to floor(599 / 60) = 9 reps (was 29 under the old 30-min cap).
+    expect(restored?.preset.reps).toBe(9);
+    expect(cadenceOnlyPlannedDurationMs(restored!)).toBe(1_095_000);
+    expect(cadenceOnlyTimeline(restored!).filter((segment) => segment.phase === "move" && segment.set === 1)).toHaveLength(18);
   });
 });

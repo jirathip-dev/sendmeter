@@ -30,7 +30,7 @@ export interface StoppedRecording {
 // Safety cap on a single continuous recording. High enough that long holds
 // (up to 240s smart-CF targets) and full guided endurance protocols never get
 // cut off — it's only a runaway guard, not a normal stop.
-const MAX_RECORDING_MS = 1_800_000; // 30 min
+const MAX_RECORDING_MS = 600_000; // 10 min
 /// #173: the one device-layer lookup. Everything below talks to the
 /// `DynamometerDriver` interface — service UUIDs, packet parsing and command
 /// bytes all live behind it. Resolved (and probed) at module load because the

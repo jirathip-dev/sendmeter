@@ -27,7 +27,13 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         // these samples; the fixed armed path observes them without buffering.
         feed(manager, [(50, 0), (0, 500_000), (2.5, 1_000_000), (2.5, 1_600_000)])
         XCTAssertEqual(manager.status, .measuring)
-        XCTAssertEqual(manager.handsFreeState, .recording(belowSinceMs: nil))
+        XCTAssertEqual(
+            manager.handsFreeState,
+            .recording(
+                belowSinceMs: nil,
+                flatWatch: HandsFreeForceFlatWatch(sinceMs: 0, minKg: 2.5, maxKg: 2.5)
+            )
+        )
 
         // Labels are snapshotted at Start, not read by the later async save.
         manager.liveTag = "Changed after start"

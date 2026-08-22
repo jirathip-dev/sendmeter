@@ -37,7 +37,7 @@ const STORAGE_KEY = "sendmeter:pending-recordings";
 // Byte budget for the SYNC LANE only (#269 — before that, for the whole
 // queue). A rep's samples array dominates an entry's size: a 5-min free hold
 // serializes to ~544 KB, and useTindeq.ts's MAX_RECORDING_MS safety cap
-// (30 min) tops out around 3.3 MB. Capping by COUNT let a handful of long holds
+// (10 min) tops out around 1.1 MB. Capping by COUNT let a handful of long holds
 // blow straight through what some WebKit builds allow for a single localStorage
 // value; capping by approximate serialized bytes instead degrades gracefully
 // (drop the oldest entries first) rather than silently failing to persist at
@@ -52,7 +52,7 @@ export const MAX_QUEUE_BYTES = 1_500_000;
 // the heaviest realistic offline session is a guided protocol run end to end —
 // call it 60 holds of 30 s. At the ~1.8 KB/s that samples serialize to, that's
 // ~54 KB a rep, ~3.2 MB for the session. 64 MB is ~20 such sessions stacked up,
-// or ~19 back-to-back recordings at the 30-min MAX_RECORDING_MS cap. Eviction
+// or ~58 back-to-back recordings at the 10-min MAX_RECORDING_MS cap. Eviction
 // is therefore not something a real session reaches — it is the backstop for a
 // queue that has silently failed to drain for weeks, which is a different bug
 // and one we would rather cap than let grow without bound.

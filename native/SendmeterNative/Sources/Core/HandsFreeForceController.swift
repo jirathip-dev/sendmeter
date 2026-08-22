@@ -103,16 +103,27 @@ public final class HandsFreeForceController {
             onBeginRecording()
         case .stop:
             guard stopPolicy == .automatic else { return }
-            pendingStopReason = .released(endMs: 0)
-            if case let .recording(belowSinceMs) = previous, let belowSinceMs {
-                // The release point on the RECORDING clock (the samples are
-                // t0-relative): the feed clock minus when the recording began
-                // (#503's trim contract — the saved rep must end at the
-                // proven release, not at the first below-threshold sample).
+            if let staticLoadEndMs = step.staticLoadEndMs {
+                // Guard 2 (#682): the machine proved a sustained flat load
+                // (non-human rope/hang bag, sensor drift). The trim is the
+                // START of the flat window on the feed clock; convert it to
+                // the RECORDING clock (the summary samples are t0-relative)
+                // exactly like the release path below.
                 let recordingStart = recordingStartedFeedMs ?? atMs
-                pendingTrimEndMs = max(0, belowSinceMs - recordingStart)
+                pendingStopReason = .staticLoad(endMs: max(0, staticLoadEndMs - recordingStart))
+                pendingTrimEndMs = max(0, staticLoadEndMs - recordingStart)
             } else {
-                pendingTrimEndMs = nil
+                pendingStopReason = .released(endMs: 0)
+                if case let .recording(belowSinceMs, _) = previous, let belowSinceMs {
+                    // The release point on the RECORDING clock (the samples are
+                    // t0-relative): the feed clock minus when the recording began
+                    // (#503's trim contract — the saved rep must end at the
+                    // proven release, not at the first below-threshold sample).
+                    let recordingStart = recordingStartedFeedMs ?? atMs
+                    pendingTrimEndMs = max(0, belowSinceMs - recordingStart)
+                } else {
+                    pendingTrimEndMs = nil
+                }
             }
             onStopAndSave()
         case nil:
