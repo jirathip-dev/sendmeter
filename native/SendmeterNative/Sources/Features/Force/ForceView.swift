@@ -1380,6 +1380,54 @@ struct ForceView: View {
         publishFreePullContext()
     }
 
+    /// #711: the recording-context card. Extracted from the `body` builder so
+    /// the constraint solver type-checks it as its own `@ViewBuilder`
+    /// sub-expression; the heavy closure/ternary/filter/`&&`/`||` arguments are
+    /// hoisted into distinct typed `let`s, and `ForceMetadataCard` carries an
+    /// explicit fully-typed `init`, together anchoring the solver (CI "unable
+    /// to type-check this expression in reasonable time").
+    @ViewBuilder
+    private var recordingContextCard: some View {
+        let sideBinding: Binding<TindeqSide> =
+            Binding(get: { side }, set: { side = $0 })
+        let zoneBinding: Binding<RecordedZone?> =
+            Binding(get: { zone }, set: { zone = $0 })
+        let movementSummary: String? = measurementMode == .movement
+            ? selectedPreset.map { protocolSummary($0) }
+            : nil
+        let contextRecordings: [TindeqRecording] =
+            model.recordings.filter { $0.tag == tag }
+        let showBalanceHint: Bool =
+            !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !isReverseActionTarget
+        let balanceIsLocked: Bool =
+            model.tindeq.status == .measuring
+            || model.handsFree.isArmed
+            || model.handsFree.isMeasuring
+            || guidedControlsLocked
+
+        ForceMetadataCard(
+            tag: $tag,
+            side: sideBinding,
+            zone: zoneBinding,
+            selectedTarget: selectedSelection,
+            onSelectTarget: handleSelectTarget,
+            presets: model.presets,
+            knownTags: model.visibleTagNames,
+            selectedName: selectedPreset?.name,
+            selectedSummary: movementSummary,
+            maintenanceAvailable: armableMaintenanceZones,
+            recordings: contextRecordings,
+            exercise: tag,
+            curveInput: zoneCurve,
+            measurementMode: measurementMode,
+            showsBalance: showBalanceHint,
+            balanceLocked: balanceIsLocked,
+            onPickFocusNext: armRecommendedZone
+        )
+        .disabled(guidedControlsLocked)
+    }
+
     /// #711: the armed preset's concise summary (web `protocolSummary`).
     /// Reverse Action is presented in movement terms (concentric / eccentric)
     /// rather than the internal out/return direction names.
@@ -1445,48 +1493,12 @@ struct ForceView: View {
                         discardRecovered: { model.tindeq.clearInterruptedRecording() }
                     )
 
-                    // #711: hoist the recording-context init's closure/ternary/
-                    // filter/`&&`/`||` sub-expressions into distinct `let`s so
-                    // the constraint solver type-checks each in isolation (CI
-                    // "unable to type-check this expression in reasonable time").
-                    let sideBinding: Binding<TindeqSide> =
-                        Binding(get: { side }, set: { side = $0 })
-                    let zoneBinding: Binding<RecordedZone?> =
-                        Binding(get: { zone }, set: { zone = $0 })
-                    let movementSummary: String? = measurementMode == .movement
-                        ? selectedPreset.map { protocolSummary($0) }
-                        : nil
-                    let contextRecordings: [TindeqRecording] =
-                        model.recordings.filter { $0.tag == tag }
-                    let showBalanceHint: Bool =
-                        !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        && !isReverseActionTarget
-                    let balanceIsLocked: Bool =
-                        model.tindeq.status == .measuring
-                        || model.handsFree.isArmed
-                        || model.handsFree.isMeasuring
-                        || guidedControlsLocked
-
-                    ForceMetadataCard(
-                        tag: $tag,
-                        side: sideBinding,
-                        zone: zoneBinding,
-                        selectedTarget: selectedSelection,
-                        onSelectTarget: handleSelectTarget,
-                        presets: model.presets,
-                        knownTags: model.visibleTagNames,
-                        selectedName: selectedPreset?.name,
-                        selectedSummary: movementSummary,
-                        maintenanceAvailable: armableMaintenanceZones,
-                        recordings: contextRecordings,
-                        exercise: tag,
-                        curveInput: zoneCurve,
-                        measurementMode: measurementMode,
-                        showsBalance: showBalanceHint,
-                        balanceLocked: balanceIsLocked,
-                        onPickFocusNext: armRecommendedZone
-                    )
-                    .disabled(guidedControlsLocked)
+                    // #711: the recording-context card. Extracted into a
+                    // dedicated `@ViewBuilder` sub-expression (plus an explicit
+                    // fully-typed `init` below) so the constraint solver
+                    // type-checks it in isolation (CI "unable to type-check
+                    // this expression in reasonable time").
+                    recordingContextCard
 
                     ForceProgressCardBoundary(
                         recordings: model.recordings,
@@ -2321,6 +2333,50 @@ private struct ForceMetadataCard: View {
     /// `ProtocolBadge`), derived by the parent from the armed preset's
     /// `protocolMode`.
     let measurementMode: ForceMeasurementMode
+
+    /// #711: explicit fully-typed initializer. The synthesized memberwise init
+    /// carries three `@Binding` property wrappers plus 14 `let`s, and the
+    /// constraint solver times out inferring it at the call site ("unable to
+    /// type-check this expression in reasonable time"). Spelling out every
+    /// parameter type anchors the solver so each call-site argument is matched
+    /// against a known type.
+    init(
+        tag: Binding<String>,
+        side: Binding<TindeqSide>,
+        zone: Binding<RecordedZone?>,
+        selectedTarget: ForceProtocolSelection,
+        onSelectTarget: @escaping (ForceProtocolSelection) -> Void,
+        presets: [TindeqPreset],
+        knownTags: [String],
+        selectedName: String?,
+        selectedSummary: String?,
+        maintenanceAvailable: Set<RecordedZone>,
+        recordings: [TindeqRecording],
+        exercise: String,
+        curveInput: ZoneCurveInput?,
+        showsBalance: Bool,
+        balanceLocked: Bool,
+        onPickFocusNext: @escaping (ZoneQuality) -> Void,
+        measurementMode: ForceMeasurementMode
+    ) {
+        self._tag = tag
+        self._side = side
+        self._zone = zone
+        self.selectedTarget = selectedTarget
+        self.onSelectTarget = onSelectTarget
+        self.presets = presets
+        self.knownTags = knownTags
+        self.selectedName = selectedName
+        self.selectedSummary = selectedSummary
+        self.maintenanceAvailable = maintenanceAvailable
+        self.recordings = recordings
+        self.exercise = exercise
+        self.curveInput = curveInput
+        self.showsBalance = showsBalance
+        self.balanceLocked = balanceLocked
+        self.onPickFocusNext = onPickFocusNext
+        self.measurementMode = measurementMode
+    }
 
     private var isFree: Bool { selectedTarget == .free }
 
