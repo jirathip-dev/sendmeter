@@ -3,6 +3,39 @@
 Everything code-side is done in this repo. This file is the copy-paste guide
 for the App Store Connect forms.
 
+## Native app submission (the current path — #719)
+
+App Review prep is now scoped to the **native** app. The canonical reviewer
+notes are `docs/app-review-notes.md` (paste-verbatim Notes). The two
+`[FILL IN]` placeholders (demo credentials, tested devices/OS) and the physical
+iPhone + Watch screen recording are the human/Apple-only steps; everything else
+is in-repo.
+
+- **Bundle / app record**: the native target ships to TestFlight under
+  `com.jirathip.sendlog.native` (fastlane `native_beta`, #637) so it never
+  replaces the Capacitor app's builds. The lane auto-creates the app record,
+  the app/widget App IDs, and the HealthKit / Sign-in-with-Apple /
+  Associated-Domains capabilities (no manual portal step). Promotion to the
+  shipped `com.jirathip.sendlog` is a separate decision.
+- **Privacy manifests** (`PrivacyInfo.xcprivacy`, one per shipped bundle):
+  app `native/SendmeterNative/Resources/PrivacyInfo.xcprivacy` (required-reason
+  UserDefaults `CA92.1`) and the Live Activity appex
+  `native/SendmeterNative/Resources/Widgets/PrivacyInfo.xcprivacy` (no
+  required-reason API). Both declare `NSPrivacyTracking = false`, no
+  `NSPrivacyTrackingDomains`.
+- **App Privacy answers** ("nutrition label"): Email Address, Health, Fitness,
+  Other User Content and Coarse Location, all **Used for Tracking: No** and
+  **Purpose: App Functionality only**; linked to identity **Yes** except
+  **Coarse Location, which is No** (rounded to ~1 km for the Open-Meteo Send
+  Conditions lookup, never tied to the account). There is **no Diagnostics
+  row** — the native target omits the web Sentry SDK, so no error/diagnostic
+  data leaves the device — and **no App Tracking Transparency prompt** (no
+  advertising/analytics/attribution SDK, no IDFA).
+- **No-tracking verification**: `rg -i
+  'ATTrackingManager|AppTrackingTransparency|AdSupport|IDFA|asIdentifierManager|GoogleAnalytics|Mixpanel|Amplitude|AppsFlyer'
+  native/SendmeterNative` should return nothing; the only required-reason API is
+  `UserDefaults`, and no App Group is used.
+
 ## Already handled in the repo ✅
 
 - **App icons**: generated from `scripts/icon.svg` via `node scripts/generate-icons.mjs`

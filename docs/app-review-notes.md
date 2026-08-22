@@ -5,6 +5,14 @@ request. Paste the **Reviewer notes** section verbatim into App Store Connect �
 App Review Information → **Notes**, and keep it there for every future
 submission (Apple explicitly asked for it to be present up front).
 
+This doc now serves the **native** Sendmeter build (#617 / #474 are re-scoped
+native-only; the Capacitor-era answers are superseded). The native target
+currently ships to TestFlight under the distinct bundle id
+`com.jirathip.sendlog.native` (`fastlane native_beta`, #637); the notes below
+describe the product surfaces that the promoted native submission covers.
+Promotion (switching to `com.jirathip.sendlog` and re-pairing the watch
+companion) is a separate decision and is not part of this doc.
+
 Two fields must be refreshed each submission before pasting:
 
 - the **demo account** credentials (see `docs/app-store-checklist.md` →
@@ -118,19 +126,21 @@ advertising identifier.
 - **Sign in with Apple** — one of the offered authentication methods.
 - **Open-Meteo** (open-meteo.com) — public weather API, used only for the
   optional Send Conditions card, called with coordinates rounded to ~1 km.
-- **Sentry** (Functional Software, Inc., sentry.io) — crash and error
-  monitoring only. Reports carry the account's anonymous user id, the error and
-  its stack trace, and basic device/OS/app-version context. Health data, email
-  addresses, and request contents are stripped by an allow-list before any
-  report is sent.
+- **Error monitoring / Sentry** — **not present in the native build.** The
+  native target deliberately omits the web Sentry SDK (the Capacitor app's
+  Sentry wiring is not carried forward), so the app collects no crash, error,
+  or other diagnostic data, declares no Diagnostics data type in its privacy
+  manifest, and this table has no Diagnostics row. The on-device auth/queue
+  breadcrumbs stay on the device. If error monitoring is ever added, re-verify
+  the privacy manifest and every answer in this table.
 - **Tindeq Progressor** — a third-party Bluetooth force gauge the user already
   owns. The app talks to it directly over Bluetooth LE; no Tindeq server or
   account is involved, and no data is sent to Tindeq.
 
 There are **no payment processors, no AI services, no advertising networks, no
-analytics providers, and no data brokers**. Sentry and Open-Meteo are the only
-two third-party services the app sends anything to; Supabase is the app's own
-backend.
+analytics providers, and no data brokers**. Beyond the app's own Supabase
+backend, **Open-Meteo is the only third-party service the app sends anything
+to**; Sign in with Apple additionally makes Apple a party on that login path.
 
 ### 6. Regional differences
 
@@ -151,9 +161,9 @@ protected third-party material**.
 - No financial, gambling, pharmaceutical, cannabis, telehealth, or similar
   regulated activity.
 - All content — text, icons, artwork, protocol definitions, and code — is
-  original work by the developer. The bundled typeface (Inter) is used under
-  the SIL Open Font License. No licensed, trademarked, or copyrighted
-  third-party content is included.
+  original work by the developer. The native build uses the iOS system font
+  (no third-party typeface is bundled). No licensed, trademarked, or
+  copyrighted third-party content is included.
 - The Tindeq Progressor is hardware the user independently owns and connects to
   over standard Bluetooth; the app neither redistributes Tindeq software nor
   claims affiliation with Tindeq.
@@ -169,7 +179,8 @@ protected third-party material**.
   Pro Max, iPad Pro 13-inch (M5), Apple Watch SE 3 (40 mm), Apple Watch Ultra 3
   (49 mm)
 
-Minimum supported versions: **iOS 16.0** (Live Activities require iOS 17), and
+Minimum supported versions: **iOS 16.2** (the native deployment target; the
+in-app Live Activity extension is non-interactive and also min 16.2), and
 **watchOS 10.0** for the companion app.
 
 ---
