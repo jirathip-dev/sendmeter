@@ -9,6 +9,19 @@ public enum PhaseID: String, Codable, CaseIterable, Sendable, Identifiable {
     case execution
 
     public var id: String { rawValue }
+
+    /// The natural next block in the periodization ladder. Conservative by
+    /// design: Execution is terminal, so `nextLogical` is nil rather than
+    /// wrapping back to Capacity (a forced wrap would push a fatigued
+    /// climber into a new loading block).
+    public var nextLogical: PhaseID? {
+        switch self {
+        case .capacity: return .strength
+        case .strength: return .power
+        case .power: return .execution
+        case .execution: return nil
+        }
+    }
 }
 
 public struct PhaseDefinition: Codable, Equatable, Sendable, Identifiable {
@@ -17,10 +30,23 @@ public struct PhaseDefinition: Codable, Equatable, Sendable, Identifiable {
     public let colorHex: String
     public let acwrLow: Double
     public let acwrHigh: Double
-    public let weeks: String
+    public let typicalWeeksLow: Int
+    public let typicalWeeksHigh: Int
     public let summary: String
     public let tools: [String]
     public let intensity: String
+
+    /// Human display for the typical block duration, e.g. "3–5 wks". Derived
+    /// from the numeric range so `blockGuidance` can reason on the same
+    /// machine-readable values without a second source of truth.
+    public var weeks: String {
+        "\(typicalWeeksLow)–\(typicalWeeksHigh) wks"
+    }
+
+    /// The selected block's ACWR target band, e.g. "0.8–1.0".
+    public var acwrBandText: String {
+        "\(acwrLow.formatted(.number.precision(.fractionLength(1))))–\(acwrHigh.formatted(.number.precision(.fractionLength(1))))"
+    }
 
     public init(
         id: PhaseID,
@@ -28,7 +54,8 @@ public struct PhaseDefinition: Codable, Equatable, Sendable, Identifiable {
         colorHex: String,
         acwrLow: Double,
         acwrHigh: Double,
-        weeks: String,
+        typicalWeeksLow: Int,
+        typicalWeeksHigh: Int,
         summary: String,
         tools: [String],
         intensity: String
@@ -38,7 +65,8 @@ public struct PhaseDefinition: Codable, Equatable, Sendable, Identifiable {
         self.colorHex = colorHex
         self.acwrLow = acwrLow
         self.acwrHigh = acwrHigh
-        self.weeks = weeks
+        self.typicalWeeksLow = typicalWeeksLow
+        self.typicalWeeksHigh = typicalWeeksHigh
         self.summary = summary
         self.tools = tools
         self.intensity = intensity
@@ -53,7 +81,8 @@ public enum PhaseCatalog {
             colorHex: "#2E96F0",
             acwrLow: 0.9,
             acwrHigh: 1.1,
-            weeks: "4–6 wks",
+            typicalWeeksLow: 4,
+            typicalWeeksHigh: 6,
             summary: "Aerobic base, density repeaters, high volume low intensity",
             tools: ["Density repeaters", "ARC traversing", "Low-intensity hangs"],
             intensity: "50–65%"
@@ -64,7 +93,8 @@ public enum PhaseCatalog {
             colorHex: "#DDB13A",
             acwrLow: 0.8,
             acwrHigh: 1.0,
-            weeks: "3–5 wks",
+            typicalWeeksLow: 3,
+            typicalWeeksHigh: 5,
             summary: "Max recruitment, heavy hangs, limit bouldering",
             tools: ["Max hangs 7–10s", "Limit bouldering", "Weighted fingerboard"],
             intensity: "85–100%"
@@ -75,7 +105,8 @@ public enum PhaseCatalog {
             colorHex: "#E5743A",
             acwrLow: 0.8,
             acwrHigh: 1.0,
-            weeks: "2–4 wks",
+            typicalWeeksLow: 2,
+            typicalWeeksHigh: 4,
             summary: "Explosive contact strength, campus board, dynamic moves",
             tools: ["Campus board", "Dynamic bouldering", "Limit board problems"],
             intensity: "Max effort"
@@ -86,7 +117,8 @@ public enum PhaseCatalog {
             colorHex: "#7B83EB",
             acwrLow: 0.7,
             acwrHigh: 0.9,
-            weeks: "2–3 wks",
+            typicalWeeksLow: 2,
+            typicalWeeksHigh: 3,
             summary: "Performance consolidation, projecting, fatigue clearance",
             tools: ["Projecting", "Footwork drills", "Easy-moderate volume"],
             intensity: "Moderate"

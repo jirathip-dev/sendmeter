@@ -119,6 +119,20 @@ public enum LocalDateSupport {
         return day.formatted(style)
     }
 
+    /// An absolute, Gregorian short date such as "25 Jul". Used for the
+    /// "You selected this block on …" phrasing where a relative label
+    /// ("today"/"yesterday") would read awkwardly next to a concrete date.
+    public static func monthDayLabel(
+        for date: String,
+        timeZone: TimeZone = .current
+    ) -> String {
+        guard let day = self.date(from: date, timeZone: timeZone) else { return date }
+        var style = Date.FormatStyle().month(.abbreviated).day()
+        style.calendar = Calendar(identifier: .gregorian)
+        style.timeZone = timeZone
+        return day.formatted(style)
+    }
+
     public static func iso8601String(from date: Date) -> String {
         ISO8601DateFormatter().string(from: date)
     }

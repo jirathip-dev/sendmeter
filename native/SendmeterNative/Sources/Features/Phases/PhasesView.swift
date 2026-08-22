@@ -16,10 +16,20 @@ struct PhasesView: View {
         )
     }
 
-    private var stepBack: PhaseStepBackSuggestion {
-        TrainingMetrics.phaseStepBackSuggestion(
-            readinessHistory: model.healthMetrics,
-            currentPhase: model.settings.currentPhase
+    private var canonicalStart: String {
+        TrainingMetrics.canonicalPhaseStart(
+            periods: model.phasePeriods,
+            currentPhase: model.settings.currentPhase,
+            fallbackStartDate: model.settings.phaseStartDate
+        )
+    }
+
+    private var guidance: BlockGuidance {
+        TrainingBlockGuidance.blockGuidance(
+            phase: model.currentPhase,
+            age: blockAge,
+            acwr: model.acwr.ratio,
+            readinessHistory: model.healthMetrics
         )
     }
 
@@ -27,24 +37,28 @@ struct PhasesView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 16) {
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 8) {
+                            SectionLabel("Training blocks", systemImage: "square.stack.3d.up.fill")
+                            Text("Training blocks are managed by you. Sendmeter uses your readiness and training load to show how each block is tracking and when it may be worth reviewing the next one.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     CurrentBlockCard(
                         phase: model.currentPhase,
                         age: blockAge,
-                        acwr: model.acwr.ratio
+                        acwr: model.acwr.ratio,
+                        canonicalStart: canonicalStart,
+                        onPropose: { proposedPhase = $0 }
                     )
 
-                    if stepBack.suggested {
-                        SurfaceCard {
-                            VStack(alignment: .leading, spacing: 9) {
-                                Label("Review training load", systemImage: "exclamationmark.triangle.fill")
-                                    .font(.headline)
-                                    .foregroundStyle(SendmeterStyle.caution)
-                                Text("Readiness has been below 40 for \(stepBack.streakDays) consecutive days during a loading block. Consider stepping back or adding recovery; Sendmeter will not change your block automatically.")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                    GuidanceCard(
+                        guidance: guidance,
+                        phase: model.currentPhase,
+                        onReview: { proposedPhase = $0 }
+                    )
 
                     ForEach(PhaseCatalog.all) { phase in
                         PhaseSelectionCard(
@@ -114,13 +128,19 @@ private struct CurrentBlockCard: View {
     let phase: PhaseDefinition
     let age: BlockAge?
     let acwr: Double?
+    let canonicalStart: String
+    let onPropose: (PhaseID) -> Void
+
+    private var startLabel: String {
+        "You selected this block on \(LocalDateSupport.monthDayLabel(for: canonicalStart))"
+    }
 
     var body: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     VStack(alignment: .leading, spacing: 5) {
-                        SectionLabel("Current block", systemImage: "square.stack.3d.up.fill")
+                        SectionLabel("Your current block", systemImage: "square.stack.3d.up.fill")
                         Text(phase.name)
                             .font(.largeTitle.bold())
                             .foregroundStyle(SendmeterStyle.phaseColor(phase.id))
@@ -130,20 +150,46 @@ private struct CurrentBlockCard: View {
                         VStack(alignment: .trailing, spacing: 3) {
                             Text("Week \(age.week)")
                                 .font(.title3.bold().monospacedDigit())
-                            Text("Day \(age.dayInWeek)")
+                            Text("Day \(age.totalDays)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
                 }
+                Text(startLabel)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 Text(phase.summary)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 12) {
-                    StatusPill(phase.weeks, color: SendmeterStyle.phaseColor(phase.id))
-                    StatusPill(phase.intensity, color: SendmeterStyle.phaseColor(phase.id))
+                    StatusPill("Typical \(phase.typicalWeeksLow)–\(phase.typicalWeeksHigh) weeks (guidance)", color: SendmeterStyle.phaseColor(phase.id))
+                    StatusPill("Target ACWR \(phase.acwrBandText)", color: SendmeterStyle.phaseColor(phase.id))
                     if let acwr {
                         StatusPill("ACWR \(acwr.formatted(.number.precision(.fractionLength(2))))", color: acwrColor(acwr))
+                    }
+                }
+                HStack(spacing: 12) {
+                    Menu {
+                        ForEach(PhaseCatalog.all.filter { $0.id != phase.id }) { candidate in
+                            Button(candidate.name) { onPropose(candidate.id) }
+                        }
+                    } label: {
+                        Label("Change block", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(SendmeterStyle.phaseColor(phase.id).opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .foregroundStyle(SendmeterStyle.phaseColor(phase.id))
+                    }
+
+                    if let next = phase.id.nextLogical {
+                        Button("End block") { onPropose(next) }
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(SendmeterStyle.phaseColor(phase.id), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .foregroundStyle(.white)
                     }
                 }
             }
@@ -156,6 +202,98 @@ private struct CurrentBlockCard: View {
         case .caution, .low: return SendmeterStyle.caution
         case .danger, .underTraining: return SendmeterStyle.alert
         case .noData: return .secondary
+        }
+    }
+}
+
+private struct GuidanceCard: View {
+    let guidance: BlockGuidance
+    let phase: PhaseDefinition
+    let onReview: (PhaseID) -> Void
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionLabel("Guidance", systemImage: "chart.line.uptrend.xyaxis")
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: symbol)
+                        .foregroundStyle(color)
+                        .font(.title3)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(color)
+                        Text(basis)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if guidance.state == .considerNext, let next = guidance.nextPhase {
+                    Button("Review \(PhaseCatalog.definition(for: next).name)") { onReview(next) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(SendmeterStyle.phaseColor(next))
+                }
+            }
+        }
+    }
+
+    private var title: String {
+        switch guidance.state {
+        case .continueCurrent: return "Continue current block"
+        case .reviewDuration: return "Review block duration"
+        case .considerNext: return "Consider the next block"
+        case .considerRecovery: return "Consider recovery"
+        }
+    }
+
+    private var symbol: String {
+        switch guidance.state {
+        case .continueCurrent: return "checkmark.circle.fill"
+        case .reviewDuration: return "clock.arrow.circlepath"
+        case .considerNext: return "arrow.right.circle.fill"
+        case .considerRecovery: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var color: Color {
+        switch guidance.state {
+        case .continueCurrent: return SendmeterStyle.optimal
+        case .reviewDuration: return SendmeterStyle.caution
+        case .considerNext: return SendmeterStyle.phaseColor(guidance.nextPhase ?? phase.id)
+        case .considerRecovery: return SendmeterStyle.alert
+        }
+    }
+
+    private var basis: String {
+        let band = phase.acwrBandText
+        switch guidance.state {
+        case .continueCurrent:
+            return "Within the typical \(phase.weeks) window with load \(loadText(band))."
+        case .reviewDuration:
+            return "You are nearing or past the typical \(phase.weeks) range. Review whether this block has run its course."
+        case .considerNext:
+            let nextName = PhaseCatalog.definition(for: guidance.nextPhase ?? phase.id).name
+            return "Past the typical \(phase.weeks) range with load on target (\(band)). \(nextName) is the natural next block."
+        case .considerRecovery:
+            return "Your readiness is \(readinessText(guidance.signals.readiness)) and load is \(loadText(band)). Consider recovery before pushing on."
+        }
+    }
+
+    private func loadText(_ band: String) -> String {
+        switch guidance.signals.load {
+        case .onTarget: return "on target (\(band))"
+        case .above: return "above the \(band) target"
+        case .below: return "below the \(band) target"
+        case .noData: return "no recent ACWR data"
+        }
+    }
+
+    private func readinessText(_ signal: BlockReadinessSignal) -> String {
+        switch signal {
+        case .stable: return "stable"
+        case .low: return "low"
+        case .falling: return "falling"
+        case .noData: return "unknown"
         }
     }
 }
@@ -174,8 +312,13 @@ private struct PhaseSelectionCard: View {
                         .foregroundStyle(SendmeterStyle.phaseColor(phase.id))
                     Spacer()
                     if isCurrent {
-                        StatusPill("Current", color: SendmeterStyle.phaseColor(phase.id))
+                        StatusPill("Your current block", color: SendmeterStyle.phaseColor(phase.id))
                     }
+                }
+                if isCurrent {
+                    Text("Selected by you")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Text(phase.summary)
                     .font(.subheadline)
@@ -185,7 +328,7 @@ private struct PhaseSelectionCard: View {
                     Spacer()
                     Label(phase.intensity, systemImage: "gauge.with.dots.needle.67percent")
                     Spacer()
-                    Label("\(phase.acwrLow.formatted(.number.precision(.fractionLength(1))))–\(phase.acwrHigh.formatted(.number.precision(.fractionLength(1))))", systemImage: "chart.line.uptrend.xyaxis")
+                    Label(phase.acwrBandText, systemImage: "chart.line.uptrend.xyaxis")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -211,7 +354,7 @@ private struct PhaseTimelineCard: View {
     var body: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 12) {
-                SectionLabel("Block history", systemImage: "clock.arrow.circlepath")
+                SectionLabel("Your block history", systemImage: "clock.arrow.circlepath")
                 if periods.isEmpty {
                     Text("The first block change will start the historical timeline.")
                         .font(.subheadline)
