@@ -235,6 +235,11 @@ public final class AppModel: ObservableObject {
     /// interrupted path preserves the final rep and THEN ends the session),
     /// so the generic disconnect trigger defers to it.
     @Published public private(set) var guidedProtocolActive = false
+    /// The Force owner registers this while a guided run exists, including
+    /// while its fullscreen is minimized. Auth teardown calls it before
+    /// revoking the old bearer token so an active pull can be preserved under
+    /// the old account scope.
+    private var guidedProtocolTeardown: (@MainActor () async -> Void)?
     /// #632: true while a user-initiated sign-out is in flight (drain + any
     /// remainder prompt + auth.signOut) — used to disable the Sign Out button
     /// so a double-tap can't run two drains against one queue.
@@ -703,6 +708,10 @@ public final class AppModel: ObservableObject {
         isSigningOut = true
         defer { isSigningOut = false }
         await perform {
+            // End the guided owner while the old account scope and bearer
+            // token are still live. Its durable recording/session writes must
+            // participate in the bounded drain and remainder decision below.
+            await self.teardownGuidedProtocolBeforeAuthRevocation()
             guard let userID = self.currentUserID, let queue = self.queue else {
                 try await self.auth.signOut()
                 self.watch.relaySession(nil)
@@ -828,12 +837,16 @@ public final class AppModel: ObservableObject {
         switch event {
         case .initialSession, .signedIn, .tokenRefreshed, .userUpdated, .mfaChallengeVerified:
             guard let session else {
+                await teardownGuidedProtocolBeforeAuthRevocation()
                 authSession = nil
                 bootState = .signedOut
                 await tearDownRealtime()
                 return
             }
             let changedUser = authSession?.user.id != session.user.id
+            if changedUser {
+                await teardownGuidedProtocolBeforeAuthRevocation()
+            }
             authSession = session
             bootState = .signedIn
             watch.relaySession(session)
@@ -859,6 +872,7 @@ public final class AppModel: ObservableObject {
             passwordRecovery = true
             bootState = session == nil ? .signedOut : .signedIn
         case .signedOut, .userDeleted:
+            await teardownGuidedProtocolBeforeAuthRevocation()
             watch.relaySession(nil)
             authSession = nil
             didBootstrapUserID = nil
@@ -1577,6 +1591,23 @@ public final class AppModel: ObservableObject {
     /// disconnect trigger defers while this is set.
     public func setGuidedProtocolActive(_ active: Bool) {
         guidedProtocolActive = active
+    }
+
+    /// The Force view owns the guided runner, but auth/account lifecycle owns
+    /// the revocation boundary. Keep the callback explicit so sign-out and
+    /// auth-driven account reset can tear down before the old scope changes.
+    public func setGuidedProtocolTeardown(
+        _ teardown: (@MainActor () async -> Void)?
+    ) {
+        guidedProtocolTeardown = teardown
+    }
+
+    private func teardownGuidedProtocolBeforeAuthRevocation() async {
+        guard GuidedForceAuthTransitionPolicy.steps(
+            hasActiveProtocol: guidedProtocolTeardown != nil
+        ).first == .some(.teardownGuidedProtocol) else { return }
+        let teardown = guidedProtocolTeardown
+        await teardown?()
     }
 
     /// The keep-awake hold follows the transport + arming state (#628): the
@@ -5250,6 +5281,7 @@ public final class AppModel: ObservableObject {
         quarantinedWrites = nil
         gaugeSessionTracker.reset()
         guidedProtocolActive = false
+        guidedProtocolTeardown = nil
         invalidateTagCurveCache()
         handsFree.handleDisconnected()
         manualWorkoutRest.stop()

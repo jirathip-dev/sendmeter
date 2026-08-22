@@ -100,6 +100,8 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
 
         let roomyPortrait = GuidedForceLayout.resolve(width: 430, height: 932)
         XCTAssertTrue(roomyPortrait.essentialContentFits)
+        XCTAssertGreaterThan(roomyPortrait.flexibleChartHeight, roomyPortrait.chartMinimumHeight)
+        XCTAssertEqual(compactPortrait.flexibleChartHeight, compactPortrait.chartMinimumHeight)
 
         let compactLandscape = GuidedForceLayout.resolve(width: 667, height: 375, textScale: 1.5)
         XCTAssertFalse(compactLandscape.essentialContentFits)
@@ -118,6 +120,45 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
         XCTAssertFalse(policy.canCommitAdvance)
         XCTAssertFalse(policy.claimAdvance())
         XCTAssertFalse(policy.claimTerminal())
+    }
+
+    func testPauseClaimFreezesTicksUntilPersistenceFinishes() {
+        var policy = GuidedForceSessionPolicy()
+
+        XCTAssertTrue(policy.claimPause())
+        XCTAssertFalse(policy.canTick)
+        XCTAssertFalse(policy.claimAdvance())
+        XCTAssertFalse(policy.claimPause())
+
+        policy.finishPause()
+        XCTAssertTrue(policy.canTick)
+        XCTAssertTrue(policy.claimAdvance())
+    }
+
+    func testSkipMarksAnActiveWorkSavePartial() {
+        XCTAssertFalse(GuidedForceSessionPolicy.recordingIsPartial(for: .scheduled))
+        XCTAssertTrue(GuidedForceSessionPolicy.recordingIsPartial(for: .skip))
+    }
+
+    func testPauseAndTickerInterleavingCannotAdvanceUntilPausePersistenceFinishes() {
+        var policy = GuidedForceSessionPolicy()
+
+        XCTAssertTrue(policy.claimPause())
+        XCTAssertFalse(policy.claimAdvance(), "a ticker continuation must not claim the paused stage")
+
+        policy.finishPause()
+        XCTAssertTrue(policy.claimAdvance(), "the next tick may advance only after persistence completes")
+    }
+
+    func testAuthTransitionTeardownPrecedesAccountRevocation() {
+        XCTAssertEqual(
+            GuidedForceAuthTransitionPolicy.steps(hasActiveProtocol: true),
+            [.teardownGuidedProtocol, .drainQueue, .revokeAuth]
+        )
+        XCTAssertEqual(
+            GuidedForceAuthTransitionPolicy.steps(hasActiveProtocol: false),
+            [.drainQueue, .revokeAuth]
+        )
     }
 
     func testAdvanceCanCommitOnlyBeforeTerminalClaim() {
@@ -173,5 +214,48 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
                 measurementObserved: true
             )
         )
+        XCTAssertFalse(
+            GuidedForceHandsFreeTimingPolicy.isWaitingForPull(
+                handsFreeEnabled: true,
+                measurementObserved: true
+            )
+        )
+        XCTAssertFalse(
+            GuidedForceHandsFreeTimingPolicy.shouldReanchor(
+                handsFreeEnabled: true,
+                isMeasuring: false,
+                measurementObserved: true
+            )
+        )
+    }
+
+    func testResumedHandsFreeRunKeepsAlreadyElapsedWorkTime() {
+        let protocolValue = preset(repetitions: 1)
+        var run = ForceProtocolRun(preset: protocolValue, startingSide: .left)
+        run.start(at: Date(timeIntervalSince1970: 0))
+        run.advance(at: Date(timeIntervalSince1970: 5))
+        run.pause(at: Date(timeIntervalSince1970: 8))
+        run.resume(at: Date(timeIntervalSince1970: 20))
+
+        XCTAssertEqual(run.elapsedSeconds(at: Date(timeIntervalSince1970: 20)), 3, accuracy: 0.000_001)
+        XCTAssertEqual(run.remainingSeconds(at: Date(timeIntervalSince1970: 20)), 7, accuracy: 0.000_001)
+    }
+
+    func testObservedHandsFreeReleaseKeepsTheScheduledClockMoving() {
+        let protocolValue = preset(repetitions: 1)
+        var run = ForceProtocolRun(preset: protocolValue, startingSide: .left)
+        run.start(at: Date(timeIntervalSince1970: 0))
+        run.advance(at: Date(timeIntervalSince1970: 5))
+        run.restartCurrentStage(at: Date(timeIntervalSince1970: 10))
+
+        // The controller may already report not-measuring after release, but
+        // the observed pull owns the rest of this scheduled work window.
+        XCTAssertFalse(
+            GuidedForceHandsFreeTimingPolicy.isWaitingForPull(
+                handsFreeEnabled: true,
+                measurementObserved: true
+            )
+        )
+        XCTAssertEqual(run.remainingSeconds(at: Date(timeIntervalSince1970: 13)), 7, accuracy: 0.000_001)
     }
 }

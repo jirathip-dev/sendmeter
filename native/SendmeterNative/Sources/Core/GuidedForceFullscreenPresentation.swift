@@ -84,6 +84,14 @@ public struct GuidedForceLayout: Equatable, Sendable {
         essentialContentHeight <= viewportHeight
     }
 
+    /// A bounded chart height for the fitting layout. Compact or large-type
+    /// layouts deliberately use the floor and let the surrounding scroll view
+    /// carry the overflow; roomy layouts give the trace the remaining block.
+    public var flexibleChartHeight: Double {
+        guard essentialContentFits else { return chartMinimumHeight }
+        return chartMinimumHeight + max(0, viewportHeight - essentialContentHeight)
+    }
+
     /// Resolves a compact layout from the actual available viewport. `textScale`
     /// is supplied by the SwiftUI caller so accessibility sizes reserve more
     /// room without making the chart or action unusably small.
@@ -139,6 +147,7 @@ public struct GuidedForceLayout: Equatable, Sendable {
 public struct GuidedForceSessionPolicy: Equatable, Sendable {
     public private(set) var isTerminal = false
     public private(set) var isAdvancing = false
+    public private(set) var isPausing = false
 
     public init() {}
 
@@ -151,8 +160,15 @@ public struct GuidedForceSessionPolicy: Equatable, Sendable {
 
     @discardableResult
     public mutating func claimAdvance() -> Bool {
-        guard !isTerminal, !isAdvancing else { return false }
+        guard !isTerminal, !isAdvancing, !isPausing else { return false }
         isAdvancing = true
+        return true
+    }
+
+    @discardableResult
+    public mutating func claimPause() -> Bool {
+        guard !isTerminal, !isAdvancing, !isPausing else { return false }
+        isPausing = true
         return true
     }
 
@@ -160,9 +176,42 @@ public struct GuidedForceSessionPolicy: Equatable, Sendable {
         isAdvancing = false
     }
 
-    public var canTick: Bool { !isTerminal }
-    public var canStartStage: Bool { !isTerminal && !isAdvancing }
-    public var canCommitAdvance: Bool { !isTerminal && isAdvancing }
+    public mutating func finishPause() {
+        isPausing = false
+    }
+
+    public var canTick: Bool { !isTerminal && !isPausing }
+    public var canStartStage: Bool { !isTerminal && !isAdvancing && !isPausing }
+    public var canCommitAdvance: Bool { !isTerminal && isAdvancing && !isPausing }
+    public var canPause: Bool { !isTerminal && !isAdvancing && !isPausing }
+    public var canResume: Bool { canPause }
+
+    public static func recordingIsPartial(for intent: GuidedForceAdvanceIntent) -> Bool {
+        intent == .skip
+    }
+}
+
+public enum GuidedForceAdvanceIntent: Equatable, Sendable {
+    case scheduled
+    case skip
+}
+
+public enum GuidedForceAuthTransitionStep: Equatable, Sendable {
+    case teardownGuidedProtocol
+    case drainQueue
+    case revokeAuth
+}
+
+/// The native App target owns the guided runner, while auth/account reset is
+/// coordinated there as well. Keeping this order as a pure policy makes the
+/// pre-revocation seam explicit and testable: an old-account pull must be
+/// salvaged before the account scope is invalidated.
+public enum GuidedForceAuthTransitionPolicy {
+    public static func steps(hasActiveProtocol: Bool) -> [GuidedForceAuthTransitionStep] {
+        hasActiveProtocol
+            ? [.teardownGuidedProtocol, .drainQueue, .revokeAuth]
+            : [.drainQueue, .revokeAuth]
+    }
 }
 
 public enum GuidedForceHandsFreeTimingPolicy {
