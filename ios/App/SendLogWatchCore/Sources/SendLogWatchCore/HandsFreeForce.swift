@@ -183,7 +183,7 @@ public func armedHandsFreeForce() -> HandsFreeForceState {
 }
 
 /// A post-save re-arm must observe an unloaded gauge before it can recognize
-/// another pull. Otherwise a manual Stop & Save while still hanging turns the
+/// another pull. Otherwise a "Save now" while still hanging turns the
 /// same continuous load into a phantom second rep after `startStableMs`.
 public func rearmedHandsFreeForce() -> HandsFreeForceState {
     .waitingForSlack

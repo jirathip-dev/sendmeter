@@ -41,6 +41,14 @@ struct GuidedForceRunnerView: View {
         return GuidedRunDisplay(runner: runner)
     }
 
+    /// #683: the persistent mode header. A guided protocol is a screen the
+    /// user entered, so the line reads `Repeaters · set 2/5` (the protocol
+    /// name plus the live set index), mirroring ForceGaugeView's `Free hold
+    /// · armed` / `· recording` header.
+    private var modeHeaderText: String {
+        "\(display.protocolName ?? "Force protocol") · set \(display.currentSet)/\(display.totalSets)"
+    }
+
     // No top-level `.accessibilityIdentifier` here (SL-538 round-2 review
     // finding 1, discovered while writing the first fixture/test this view
     // ever had): on this device+OS, an identifier applied to this
@@ -221,7 +229,7 @@ struct GuidedForceRunnerView: View {
                 compact: true
             )
             Spacer(minLength: 2)
-            Text(display.protocolName ?? "Force protocol")
+            Text(modeHeaderText)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(WatchPalette.textSecondary)
                 .lineLimit(1)
@@ -229,7 +237,7 @@ struct GuidedForceRunnerView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(display.isMeasured ? "Measured force protocol" : "Cadence-only force protocol")
-        .accessibilityValue(display.protocolName ?? "Force protocol")
+        .accessibilityValue(modeHeaderText)
     }
 
     private var compactSetRep: some View {
@@ -280,7 +288,7 @@ struct GuidedForceRunnerView: View {
                     compact: true
                 )
                 Spacer(minLength: 0)
-                Text(display.protocolName ?? "Force protocol")
+                Text(modeHeaderText)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(WatchPalette.textSecondary)
                     .lineLimit(1)
@@ -292,7 +300,7 @@ struct GuidedForceRunnerView: View {
                     title: display.isMeasured ? "Measured" : "Cadence only",
                     compact: true
                 )
-                Text(display.protocolName ?? "Force protocol")
+                Text(modeHeaderText)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(WatchPalette.textSecondary)
                     .lineLimit(1)
@@ -301,7 +309,7 @@ struct GuidedForceRunnerView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(display.isMeasured ? "Measured force protocol" : "Cadence-only force protocol")
-        .accessibilityValue(display.protocolName ?? "Force protocol")
+        .accessibilityValue(modeHeaderText)
     }
 
     private var phaseCard: some View {

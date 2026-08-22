@@ -343,7 +343,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         feed(manager, [(3, 0), (3, 600_000), (25, 700_000), (25, 2_100_000)])
         XCTAssertEqual(manager.status, .measuring)
 
-        // The user taps "Stop & Save" while still hanging. With the stream kept
+        // The user taps "Save now" while still hanging. With the stream kept
         // live, the release that follows is observed during the save window.
         manager.stopAndSave(reason: .userTapped)
         feed(manager, [(0.5, 2_200_000)])
@@ -941,6 +941,9 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         try await waitUntil { manager.status == .connected }
         XCTAssertTrue(transport.connected)
 
+        // #683: connecting always arms free hold now, so the legacy manual
+        // record path must leave hands-free explicitly before `start()`.
+        manager.cancelHandsFree()
         manager.start()
         try await waitUntil { manager.status == .measuring && manager.elapsedMs > 0 }
         manager.stopAndSave(reason: .userTapped)
@@ -1079,6 +1082,9 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         manager.connect()
         try await waitUntil { manager.status == .connected }
 
+        // #683: connecting always arms free hold, so leave hands-free before
+        // the legacy manual `start()` (the rep is then salvaged mid-pull).
+        manager.cancelHandsFree()
         manager.start()
         try await waitUntil(timeout: .seconds(4)) {
             await sessions.count() == 1 && !manager.saving
