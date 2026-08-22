@@ -429,7 +429,16 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         // flat-watch so a continuous 25 kg load does NOT trip the 30 s
         // static-load watchdog before the cap (the cap is the terminator here).
         feed(manager, [(25.5, 589_600_000), (25, 600_600_000)])
-        try await waitUntil { manager.saving }
+        // The cap fires from the 0.1 s UI timer reading `samples.last`. The
+        // generous window absorbs a cold-start-starved main runloop. The save
+        // Task may not have reached the (blocking) queue yet even once
+        // `saving` flips (it is set synchronously), so also wait for the
+        // recording to actually enqueue — otherwise `releaseAll()` below can
+        // run first and resume nothing, deadlocking the Task.
+        try await waitUntil(timeout: .seconds(15)) {
+            guard manager.saving else { return false }
+            return await recordings.count() == 1
+        }
         // #681 review F1 regression: the cap save keeps the stream LIVE, so
         // this post-cap sample lands INSIDE the save window at a device
         // timestamp just past the 10-minute arm timeout. The idle budget was
@@ -444,7 +453,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
         XCTAssertEqual(commands, [.startWeight], "the save-window sample must not emit a .stop")
         await recordings.releaseAll()
-        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
+        try await waitUntil(timeout: .seconds(15)) { manager.sessionCount == 1 && !manager.saving }
         let rows = await recordings.snapshot().map(\.row)
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows[0].durationMs, 600_000, "a cap stop has no release point to trim at")
