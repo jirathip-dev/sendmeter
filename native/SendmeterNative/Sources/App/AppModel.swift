@@ -193,7 +193,10 @@ public final class AppModel: ObservableObject {
     /// auth-ready and whenever Settings opens, and refreshed after a register
     /// or remove — so a registration shows up as a persistent list entry and
     /// count, not just a transient toast.
-    @Published public private(set) var passkeys: [PasskeyListItem] = []
+    // #712 @_spi(Experimental) PasskeyListItem cannot appear in a `public`
+    // property declaration, so this stays internal (SettingsView is in the
+    // same target and reads it via the internal getter).
+    @Published private(set) var passkeys: [PasskeyListItem] = []
     @Published public private(set) var isRefreshing = false
     @Published public private(set) var queuedWriteCount = 0
     @Published public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
