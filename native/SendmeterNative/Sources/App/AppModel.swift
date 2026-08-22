@@ -1,4 +1,4 @@
-import Auth
+@_spi(Experimental) import Auth
 import Combine
 import Foundation
 import SendLogHealthCore

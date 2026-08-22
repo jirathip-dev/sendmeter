@@ -70,6 +70,7 @@ public final class AuthService {
 
     /// Lists the passkeys registered for the signed-in user (#712). Reads the
     /// same server-side source as the web's `supabase.auth.passkey.list()`.
+    @_spi(Experimental)
     public func listPasskeys() async throws -> [PasskeyListItem] {
         try await client.auth.listPasskeys()
     }
