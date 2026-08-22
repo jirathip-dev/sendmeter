@@ -190,7 +190,7 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-            Text("Metric (kg) or Imperial (lb). Coming soon — not yet applied.")
+            Text("Metric (kg) or Imperial (lb). Applies to body weight; Force and load units come later.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -276,6 +276,12 @@ struct SettingsView: View {
                     if let zone = metric.zone {
                         StatusPill(zone.capitalized, color: readinessColor(zone))
                     }
+                }
+                if let weightKg = metric.bodyMassKilograms {
+                    // #721: the first surface that consumes the shared
+                    // conversion layer. Canonical storage stays kg; the value
+                    // is only formatted for the chosen Metric/Imperial unit.
+                    LabeledContent("Weight", value: MassFormatting.storedFormatted(weightKg))
                 }
                 if let computedAt = metric.computedAt {
                     LabeledContent("Last computed", value: computedAt.formatted(date: .abbreviated, time: .shortened))
