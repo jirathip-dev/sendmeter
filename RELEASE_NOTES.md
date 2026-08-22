@@ -10,6 +10,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Native body weight (from Apple Health) now shows in Metric (kg) or Imperial (lb) based on the Settings → General units picker — the first surface that applies the Metric/Imperial preference, with Force and load units to follow.
 - Native Settings is now grouped into General (Metric/Imperial units + appearance), Training, Health & Devices (Apple Health, Apple Watch, Progressor connection), Account & Security (identity, password reset email, passkeys, sign out), and About & Support (version, data sync, diagnostics), with account deletion kept in a separate Danger zone. Adds a Metric/Imperial presentation preference, a Progressor device-status card, and the ability to send a password reset email.
 - Native Settings now lists and removes the passkeys registered for your account, with a live count, a confirmation before each removal, and a registration that shows up in the list right away.
 - Native Settings → Troubleshooting now lists recent on-device auth events (sign-in, refresh, sign-out, and failure reasons), and token-bearing requests refresh an expired session before use instead of trusting a stale bearer token.
