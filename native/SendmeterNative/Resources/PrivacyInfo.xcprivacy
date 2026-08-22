@@ -6,6 +6,12 @@
     <false/>
     <key>NSPrivacyTrackingDomains</key>
     <array/>
+    <!-- Keep in sync with the app-review-notes + app-store-checklist App
+         Privacy answers. This is the NATIVE build (#617/#474): no tracking
+         (no ATT / AdSupport / analytics SDK), and no error-monitoring —
+         the native target deliberately omits the web Sentry SDK, so no
+         Diagnostics data type is declared (the on-device auth/queue
+         breadcrumbs never leave the device). -->
     <key>NSPrivacyCollectedDataTypes</key>
     <array>
         <dict>
@@ -40,6 +46,14 @@
             <key>NSPrivacyCollectedDataTypePurposes</key>
             <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
         </dict>
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeCoarseLocation</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key><false/>
+            <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+        </dict>
     </array>
     <key>NSPrivacyAccessedAPITypes</key>
     <array>
@@ -48,6 +62,15 @@
             <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
             <key>NSPrivacyAccessedAPITypeReasons</key>
             <array><string>CA92.1</string></array>
+        </dict>
+        <!-- ProcessInfo.processInfo.systemUptime (AppModel health-refresh
+             coalescing window, TindeqBluetooth flush timing) — elapsed-time
+             measurement only, never persisted as an absolute timeline event. -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array><string>35F9.1</string></array>
         </dict>
     </array>
 </dict>
