@@ -90,6 +90,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native Force: a mid-pull Progressor disconnect now salvages the interrupted rep as its own recording — persisted with the exercise and side you had set when the pull started (never a fallback), reported as recovered in History, and reported through the durable lost-recording notice if the save itself fails — instead of only offering a manual Save Recovered Pull prompt that could be missed.
 - Native Training Load: the Daily Load heatmap no longer renders all-gray when a session is dated up to a week ahead — a future-dated session no longer inflates the color scale, which was washing real load days down to the faintest level.
 - Native Dashboard: the ACWR projection chart's `Now` marker no longer collides with an early crossing weekday label; the current ratio remains visible in the Dashboard's ACWR cards.
 - Native Dashboard: Send Conditions and Training Block cards now keep the same height while weather data loads or changes state, eliminating the row's layout jump.

@@ -1737,6 +1737,11 @@ struct ForceView: View {
             return
         }
         do {
+            // #678: lock the tag/side the moment the recording begins, so a
+            // disconnect-salvage (or the recovery prompt) persists what the
+            // user actually set, never a fallback (web #298).
+            publishFreePullContext()
+            model.lockForceRecordingContext(model.freePullContext)
             try model.tindeq.startMeasuring()
         } catch {
             refuseAction(error.localizedDescription)
@@ -1759,6 +1764,10 @@ struct ForceView: View {
             return
         }
         publishFreePullContext()
+        // #678: lock at arm time (recording start for the hands-free loop),
+        // same as a manual Start, so a mid-rep disconnect salvage persists the
+        // tag/side the user actually set.
+        model.lockForceRecordingContext(model.freePullContext)
         model.handsFree.arm()
     }
 
@@ -1808,11 +1817,22 @@ struct ForceView: View {
 
     private func save(_ summary: ForceSummary, recovered: Bool) {
         savingSummary = true
-        let savedTag = recovered && !tag.isEmpty ? "\(tag) · Recovered" : tag
+        // #678: a recovered/salvaged rep persists the tag/side LOCKED at
+        // recording start (web #298) and carries the recovered note, not a
+        // "· Recovered" suffix on the tag — the note is what History shows,
+        // matching the watch's `salvageInterruptedRecording`. When no lock
+        // exists the recovery is saved honestly untagged/unspecified — never
+        // re-derived from the live pickers (web #298 "never a fallback").
+        let attribution = model.forceRecordingLock.map {
+            ForceDisconnectSalvage.Attribution(tag: $0.tag, side: $0.side)
+        } ?? .empty
+        let savedTag = recovered ? attribution.tag : tag
+        let savedSide = recovered ? attribution.side : recordedSide
+        let note = recovered ? ForceDisconnectSalvage.recoveredNote : ""
+        let lossReason = recovered ? ForceDisconnectSalvage.lossReason : "recording"
         // #720: snapshot the recording context before the await so a stale
         // closure can never write a side invalid under the active mode (repo
         // rule: a decision never reads captured state after an `await`).
-        let savedSide = recordedSide
         let savedZone = recordingZone
         let savedPreset = selectedPreset
         let savedTargetBand = selectedTargetPlan.band(forSet: 1, side: savedSide)
@@ -1823,11 +1843,18 @@ struct ForceView: View {
                 side: savedSide,
                 zone: savedZone,
                 preset: savedPreset,
-                targetBand: savedTargetBand
+                targetBand: savedTargetBand,
+                note: note,
+                lossReason: lossReason
             )
             if enqueued {
                 model.tindeq.clearCompletedRecording()
-                if recovered { model.tindeq.clearInterruptedRecording() }
+                if recovered {
+                    model.tindeq.clearInterruptedRecording()
+                    // #678: clear the lock so a stale attribution can't leak
+                    // into the next Start/Arm.
+                    model.clearForceRecordingLock()
+                }
             }
             savingSummary = false
         }

@@ -38,6 +38,13 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     public var onWeightSample: ((TindeqWireSample) -> Void)?
 
     public var interruptedRecording: ForceSummary? { interruptedSummary }
+    /// #678: whether the interrupted rep was a hands-free pull (started via
+    /// `beginArmedRecording()`). Captured in `didDisconnectPeripheral` BEFORE
+    /// `handsFreeArmed`/`isRecording` clear, so the AppModel `.interrupted`
+    /// handler can apply #682 Guard 1 to a hands-free salvaged rep (the watch
+    /// captures `wasHandsFree` the same way, before
+    /// `clearHandsFreeAfterTransportLoss()`).
+    public private(set) var interruptedWasHandsFree = false
     public var hasUnsavedRecording: Bool { completedSummary != nil || interruptedSummary != nil }
 
     private lazy var central = CBCentralManager(delegate: self, queue: .main)
@@ -48,6 +55,10 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     private var isRecording = false
     private var connectRequested = false
     private var interruptedSummary: ForceSummary?
+    /// #678: whether the CURRENT recording (when `isRecording`) was started by
+    /// the hands-free machine. Read in `didDisconnectPeripheral` to populate
+    /// `interruptedWasHandsFree`, then reset with the recording.
+    private var wasHandsFreeRecording = false
     /// #671: publishes are coalesced to display rate instead of firing per
     /// BLE notification. Notifications only accumulate and mark
     /// `pendingPublish`; a ~60 Hz flush timer (running while a stream is live)
@@ -97,6 +108,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         stopFlushDriver()
         isRecording = false
         handsFreeArmed = false
+        wasHandsFreeRecording = false
         if let peripheral {
             central.cancelPeripheralConnection(peripheral)
         } else {
@@ -117,6 +129,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         elapsedMilliseconds = 0
         visibleSamples = []
         isRecording = true
+        wasHandsFreeRecording = false
         status = .measuring
         startFlushDriver()
         peripheral.writeValue(
@@ -145,6 +158,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         )
         isRecording = false
         status = .connected
+        wasHandsFreeRecording = false
         return summary
     }
 
@@ -184,6 +198,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         accumulator.reset()
         handsFreeArmed = false
         isRecording = true
+        wasHandsFreeRecording = true
         status = .measuring
         return true
     }
@@ -197,6 +212,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         stopFlushDriver()
         handsFreeArmed = false
         isRecording = false
+        wasHandsFreeRecording = false
         try? write(.stop)
     }
 
@@ -211,10 +227,12 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
 
     public func clearInterruptedRecording() {
         interruptedSummary = nil
+        interruptedWasHandsFree = false
     }
 
     public func clearCompletedRecording() {
         completedSummary = nil
+        wasHandsFreeRecording = false
     }
 
     private func write(_ command: TindeqProtocolConstants.Command) throws {
@@ -425,6 +443,7 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
         Task { @MainActor in
             if isRecording {
                 interruptedSummary = accumulator.summary()
+                interruptedWasHandsFree = wasHandsFreeRecording
             }
             // Final flush while the branch flags still identify the stream, so
             // the last frame renders before the connection resets (#671 review
@@ -432,6 +451,7 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
             stopFlushDriver()
             isRecording = false
             handsFreeArmed = false
+            wasHandsFreeRecording = false
             let message = error?.localizedDescription ?? "Progressor disconnected"
             resetConnection(status: .interrupted(message))
         }
