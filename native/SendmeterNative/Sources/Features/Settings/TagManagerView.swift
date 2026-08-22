@@ -89,6 +89,7 @@ struct TagManagerView: View {
                     Text("\(entry.count) rep\(entry.count == 1 ? "" : "s")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    sideModePicker(entry)
                 }
                 Spacer()
                 Button {
@@ -107,6 +108,32 @@ struct TagManagerView: View {
                 .disabled(busy)
             }
         }
+    }
+
+    /// The per-exercise side-mode picker (#720): the selected mode drives the
+    /// Force tab's side selector. Choices come from `ExerciseSideMode.allCases`,
+    /// never a per-view mapping.
+    private func sideModePicker(_ entry: TagEntry) -> some View {
+        HStack(spacing: 8) {
+            Text("Side")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker("Side", selection: sideModeBinding(entry)) {
+                ForEach(ExerciseSideMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(busy)
+        }
+        .padding(.top, 2)
+    }
+
+    private func sideModeBinding(_ entry: TagEntry) -> Binding<ExerciseSideMode> {
+        Binding(
+            get: { model.sideMode(for: entry.name) },
+            set: { model.setTagSideMode(name: entry.name, mode: $0) }
+        )
     }
 
     private func commitRename(from oldName: String) {

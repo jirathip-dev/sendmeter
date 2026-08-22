@@ -190,6 +190,10 @@ public final class AppModel: ObservableObject {
     /// #631: the per-user tag registry (SL-92) — rename/hide metadata. Tags
     /// themselves stay denormalized on recordings.
     @Published public private(set) var tagMetadata: [TagMetadata] = []
+    /// #720: the device-local side mode per exercise tag (web parity for the
+    /// concept, deliberately NOT account-migrated). Keyed by the trimmed tag
+    /// name; a tag with no entry reads as the default (`unilateral_or_bilateral`).
+    @Published public private(set) var tagSideModes: [String: ExerciseSideMode] = [:]
     /// #712: the passkeys registered for the signed-in user. Loaded on
     /// auth-ready and whenever Settings opens, and refreshed after a register
     /// or remove — so a registration shows up as a persistent list entry and
@@ -512,6 +516,11 @@ public final class AppModel: ObservableObject {
             }
         }
 
+        // #720: device-local per-tag side modes (loaded once; unconfigured tags
+        // read as the default via `sideMode(for:)`). Deliberately not fetched
+        // from the account — the native app keeps them on-device.
+        self.tagSideModes = TagSideModeStore.allStoredModes()
+
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -740,6 +749,24 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// The side-applicability mode for a tag. A tag with no stored mode (or an
+    /// unconfigured / legacy exercise) reads as the default —
+    /// `unilateral_or_bilateral`.
+    public func sideMode(for name: String) -> ExerciseSideMode {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return tagSideModes[trimmed] ?? ExerciseSideMode.defaultMode
+    }
+
+    /// Set a tag's side mode and persist it device-locally (#720). The choice
+    /// is deliberately off the account — it is not upserted to `tindeq_tags`.
+    public func setTagSideMode(name: String, mode: ExerciseSideMode) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        tagSideModes[trimmed] = mode
+        TagSideModeStore.store(mode, for: trimmed)
+        toastMessage = "Set “\(trimmed)” to \(mode.displayName)"
+    }
+
     /// Rename a tag EVERYWHERE — the DB repoints every recording carrying
     /// the old name; the recording list is refetched after (its tags are
     /// the source of truth for counts).
@@ -747,6 +774,19 @@ public final class AppModel: ObservableObject {
         let merged = tagEntries.contains { $0.name == newName.trimmingCharacters(in: .whitespacesAndNewlines) }
         await perform {
             try await self.repository.renameTag(oldName: oldName, newName: newName)
+            // #720: move the device-local side mode with the tag. On a merge
+            // into an existing tag, the surviving row's mode wins (matching the
+            // registry's hidden-state merge contract).
+            let old = oldName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let next = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let mode = self.tagSideModes[old], !old.isEmpty, old != next {
+                if self.tagSideModes[next] == nil {
+                    self.tagSideModes[next] = mode
+                    TagSideModeStore.store(mode, for: next)
+                }
+                self.tagSideModes.removeValue(forKey: old)
+                TagSideModeStore.remove(for: old)
+            }
             self.toastMessage = merged
                 ? "Merged into “\(newName.trimmingCharacters(in: .whitespacesAndNewlines))”"
                 : "Renamed to “\(newName.trimmingCharacters(in: .whitespacesAndNewlines))”"
