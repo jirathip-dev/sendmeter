@@ -165,8 +165,8 @@ final class TindeqManualOwnershipTests: XCTestCase {
         // `TindeqHandsFreeIntegrationTests.testHandsFreeRepThenManualRepShareSessionFeedDepletionAndFinishOnce`.
         feed(manager, [(50, 0), (0, 500_000), (2.5, 1_000_000), (2.5, 1_600_000)])
         XCTAssertEqual(manager.status, .measuring, "the pull must have promoted the armed stream to a recording")
-        feed(manager, [(30, 1_700_000), (0.5, 1_800_000), (0, 3_299_000)])
-        feed(manager, [(0, 3_300_000)])
+        feed(manager, [(30, 3_100_000), (0.5, 3_200_000), (0, 4_699_000)])
+        feed(manager, [(0, 4_700_000)])
 
         try await waitUntil { await recordings.count() == 1 && !manager.saving }
         let rows = await recordings.snapshot()
@@ -410,8 +410,8 @@ final class TindeqManualOwnershipTests: XCTestCase {
 
         // Release grace elapses — same proven deltas as
         // TindeqHandsFreeIntegrationTests.
-        feed(manager, [(30, 1_700_000), (0.5, 1_800_000), (0, 3_299_000)])
-        feed(manager, [(0, 3_300_000)])
+        feed(manager, [(30, 3_100_000), (0.5, 3_200_000), (0, 4_699_000)])
+        feed(manager, [(0, 4_700_000)])
         try await waitUntil { await recordings.count() == 1 && !manager.saving }
 
         let rows = await recordings.snapshot()
@@ -427,9 +427,9 @@ final class TindeqManualOwnershipTests: XCTestCase {
         // Confirm the loop is genuinely broken: B has to explicitly re-arm,
         // and that NEW arm captures B, not a resurrected A.
         manager.armHandsFree()
-        feed(manager, [(40, 4_000_000), (0, 4_500_000), (3, 5_000_000), (3, 5_600_000)])
-        feed(manager, [(20, 5_700_000), (0.5, 5_800_000), (0, 7_299_000)])
-        feed(manager, [(0, 7_300_000)])
+        feed(manager, [(40, 4_800_000), (0, 5_300_000), (3, 5_800_000), (3, 6_400_000)])
+        feed(manager, [(20, 6_500_000), (20, 7_900_000), (0.5, 8_000_000), (0, 9_499_000)])
+        feed(manager, [(0, 9_500_000)])
         try await waitUntil { await recordings.count() == 2 && !manager.saving }
         let allRows = await recordings.snapshot()
         XCTAssertEqual(allRows.last?.enqueuedUserId, accountB, "B's re-armed pull must never inherit A's owner")
