@@ -80,8 +80,12 @@ xcodebuild \
 
 For a physical device, open `SendmeterNative.xcodeproj`, select the existing
 Sendmeter development team and signing profile, then run the `SendmeterNative`
-scheme. The bundle identifier deliberately matches the existing app, so the two
-clients cannot be installed simultaneously on one device.
+scheme. The bundle identifier is the distinct `com.jirathip.sendlog.native`
+(#637) so the two clients ship side-by-side on TestFlight without one replacing
+the other's builds — a consequence is that the native iOS app does not pair
+with the watch companion (WCSession pairing is bundle-ID-prefix-based), so the
+live-workout mirror falls back to the realtime server path. Promotion to the
+shipped `com.jirathip.sendlog` is a separate decision.
 
 ## Verification
 

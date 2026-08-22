@@ -5,6 +5,19 @@ request. Paste the **Reviewer notes** section verbatim into App Store Connect �
 App Review Information → **Notes**, and keep it there for every future
 submission (Apple explicitly asked for it to be present up front).
 
+This doc now serves the **native** Sendmeter build (#617 / #474 are re-scoped
+native-only; the Capacitor-era answers are superseded). The native target
+currently ships to TestFlight under the distinct bundle id
+`com.jirathip.sendlog.native` (`fastlane native_beta`, #637). The notes below
+describe the **native iPhone app + its Live Activity widget extension** — the
+actual binary this submission ships. The Apple Watch companion is a **separate
+target** (`ios/App/SendLogWatch Watch App`) that is **not embedded in this
+binary**, and the native iPhone app does not pair with it (WCSession pairing is
+bundle-ID-prefix-based, so the `.native` id never matches the watch app); the
+live-workout mirror falls back to the realtime server path. Promotion (switching
+to `com.jirathip.sendlog` and re-pairing the watch) is a separate decision and
+is not part of this doc.
+
 Two fields must be refreshed each submission before pasting:
 
 - the **demo account** credentials (see `docs/app-store-checklist.md` →
@@ -47,17 +60,17 @@ Core features:
   weight), plus training-load charts (acute:chronic workload ratio, weekly and
   daily load).
 - **Workout** — logging a climbing session: session type, duration, perceived
-  exertion, boulder attempts. Includes a guided routine timer and a live mirror
-  of a workout being tracked on the Apple Watch companion.
+  exertion, boulder attempts. Includes a guided routine timer and a phone
+  full-screen workout timer.
 - **Force** — finger-strength measurement. Connects over Bluetooth to a
   **Tindeq Progressor** hand dynamometer (a commercial strain gauge sold to
   climbers) and records force-vs-time curves, max strength, critical force, and
   guided test/training protocols.
 - **History** — a timeline of all past sessions and force recordings, editable
   after the fact.
-- **Apple Watch companion app** — tracks a climbing session on the wrist, shows
-  heart rate, detects boulder attempts from wrist motion, and can drive the
-  Tindeq gauge directly.
+- **Apple Watch companion** — a separate target that is **not part of this
+  submission**; the native iPhone build does not pair with it and no watch app
+  is embedded in the binary.
 
 Target audience: recreational and competitive rock climbers who train
 deliberately, and coaches working with them. General audience, age rating 4+.
@@ -74,17 +87,16 @@ fully usable if every one is declined.
   iPhone only reads; it never writes to Health. Requested automatically the
   first time the user signs in on the iPhone — the prompt appears immediately
   after sign-in, not behind a settings toggle.
-- **Apple Health (read/write)** — on the Apple Watch only, to record the
-  climbing workout as a Health workout and to read live heart rate during it.
 - **Bluetooth** — to connect to the user's own Tindeq Progressor force gauge.
   Requested on the Force tab when the user taps Connect.
-- **Motion & Fitness** — on the Apple Watch only, to detect boulder attempts
-  from wrist motion and altitude during a tracked session.
 - **Location (when in use only)** — used *only* by the optional "Send
   Conditions" card, which shows local temperature and humidity (climbing
   friction conditions). Coordinates are rounded to ~1 km before being sent to
   the weather provider, are never stored, and are never linked to the account.
   There is no background location use.
+
+(The separate **Apple Watch** companion — not part of this binary — requests
+Health read/write and Motion & Fitness; this iPhone build does not.)
 
 There is **no App Tracking Transparency prompt**, because the app does no
 tracking: it contains no advertising SDK, no analytics SDK, and no cross-app or
@@ -118,19 +130,21 @@ advertising identifier.
 - **Sign in with Apple** — one of the offered authentication methods.
 - **Open-Meteo** (open-meteo.com) — public weather API, used only for the
   optional Send Conditions card, called with coordinates rounded to ~1 km.
-- **Sentry** (Functional Software, Inc., sentry.io) — crash and error
-  monitoring only. Reports carry the account's anonymous user id, the error and
-  its stack trace, and basic device/OS/app-version context. Health data, email
-  addresses, and request contents are stripped by an allow-list before any
-  report is sent.
+- **Error monitoring / Sentry** — **not present in the native build.** The
+  native target deliberately omits the web Sentry SDK (the Capacitor app's
+  Sentry wiring is not carried forward), so the app collects no crash, error,
+  or other diagnostic data, declares no Diagnostics data type in its privacy
+  manifest, and this table has no Diagnostics row. The on-device auth/queue
+  breadcrumbs stay on the device. If error monitoring is ever added, re-verify
+  the privacy manifest and every answer in this table.
 - **Tindeq Progressor** — a third-party Bluetooth force gauge the user already
   owns. The app talks to it directly over Bluetooth LE; no Tindeq server or
   account is involved, and no data is sent to Tindeq.
 
 There are **no payment processors, no AI services, no advertising networks, no
-analytics providers, and no data brokers**. Sentry and Open-Meteo are the only
-two third-party services the app sends anything to; Supabase is the app's own
-backend.
+analytics providers, and no data brokers**. Beyond the app's own Supabase
+backend, **Open-Meteo is the only third-party service the app sends anything
+to**; Sign in with Apple additionally makes Apple a party on that login path.
 
 ### 6. Regional differences
 
@@ -151,9 +165,9 @@ protected third-party material**.
 - No financial, gambling, pharmaceutical, cannabis, telehealth, or similar
   regulated activity.
 - All content — text, icons, artwork, protocol definitions, and code — is
-  original work by the developer. The bundled typeface (Inter) is used under
-  the SIL Open Font License. No licensed, trademarked, or copyrighted
-  third-party content is included.
+  original work by the developer. The native build uses the iOS system font
+  (no third-party typeface is bundled). No licensed, trademarked, or
+  copyrighted third-party content is included.
 - The Tindeq Progressor is hardware the user independently owns and connects to
   over standard Bluetooth; the app neither redistributes Tindeq software nor
   claims affiliation with Tindeq.
@@ -163,14 +177,13 @@ protected third-party material**.
 `[FILL IN before each submission — for example:]`
 
 - iPhone `[model]`, iOS `[version]` — physical device
-- Apple Watch `[model]`, watchOS `[version]` — physical device, paired to the
-  above
 - Additional simulators used during development: iPhone 17 Pro Max, iPhone 13
   Pro Max, iPad Pro 13-inch (M5), Apple Watch SE 3 (40 mm), Apple Watch Ultra 3
   (49 mm)
 
-Minimum supported versions: **iOS 16.0** (Live Activities require iOS 17), and
-**watchOS 10.0** for the companion app.
+Minimum supported versions: **iOS 16.2** (the native deployment target; the
+in-app Live Activity extension is non-interactive and also min 16.2). The watch
+companion is a separate target/app that is not part of this binary.
 
 ---
 
@@ -212,9 +225,10 @@ Location, or delete and reinstall) so the prompts actually appear on camera.
    curve and the saved recording. (Do this with the real device if you have it —
    this is the feature reviewers most often cannot evaluate, and showing it
    working is the point of the recording.)
-8. **Apple Watch companion**: show the watch app on the wrist — a tracked
-   session, heart rate, and the force gauge screen. Point the camera at the
-   watch or use watch screen mirroring.
+8. **Not in this build**: the Apple Watch companion is a separate target/app in
+   this repo but is **not embedded in or paired with this binary**, so there is
+   no watch app to demonstrate. The lock-screen Live Activity card for guided
+   Force protocols (iOS 16.2+) is in this build if you want to show it.
 9. **History tab**: show the timeline of sessions and recordings, open one, and
    edit it.
 10. **Account deletion**: Account → Danger zone → **Delete account** → confirm →

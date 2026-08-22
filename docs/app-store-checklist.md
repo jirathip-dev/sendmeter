@@ -3,6 +3,61 @@
 Everything code-side is done in this repo. This file is the copy-paste guide
 for the App Store Connect forms.
 
+## Native app submission (the current path — #719)
+
+App Review prep is now scoped to the **native** app. The canonical reviewer
+notes are `docs/app-review-notes.md` (paste-verbatim Notes). The two
+`[FILL IN]` placeholders (demo credentials, tested devices/OS) and the physical
+iPhone + Watch screen recording are the human/Apple-only steps; everything else
+is in-repo.
+
+- **Bundle / app record**: the native target ships to TestFlight under
+  `com.jirathip.sendlog.native` (fastlane `native_beta`, #637) so it never
+  replaces the Capacitor app's builds. The lane auto-creates the app record,
+  the app/widget App IDs, and the HealthKit / Sign-in-with-Apple /
+  Associated-Domains capabilities (no manual portal step). Promotion to the
+  shipped `com.jirathip.sendlog` is a separate decision.
+- **Privacy manifests** (`PrivacyInfo.xcprivacy`, one per shipped bundle):
+  app `native/SendmeterNative/Resources/PrivacyInfo.xcprivacy` (required-reason
+  UserDefaults `CA92.1` + SystemBootTime `35F9.1`) and the Live Activity appex
+  `native/SendmeterNative/Resources/Widgets/PrivacyInfo.xcprivacy` (no
+  required-reason API). Both declare `NSPrivacyTracking = false`, no
+  `NSPrivacyTrackingDomains`.
+- **App Privacy answers** ("nutrition label"): Email Address, Health, Fitness,
+  Other User Content and Coarse Location, all **Used for Tracking: No** and
+  **Purpose: App Functionality only**; linked to identity **Yes** except
+  **Coarse Location, which is No** (rounded to ~1 km for the Open-Meteo Send
+  Conditions lookup, never tied to the account). There is **no Diagnostics
+  row** — the native target omits the web Sentry SDK, so no error/diagnostic
+  data leaves the device — and **no App Tracking Transparency prompt** (no
+  advertising/analytics/attribution SDK, no IDFA).
+- **No-tracking verification**: `rg -i
+  'ATTrackingManager|AppTrackingTransparency|AdSupport|IDFA|asIdentifierManager|GoogleAnalytics|Mixpanel|Amplitude|AppsFlyer'
+  native/SendmeterNative` should return nothing. The only required-reason APIs
+  are `UserDefaults` (`CA92.1`, plain `.standard` — no App Group) and
+  `SystemBootTime` (`35F9.1`, `ProcessInfo.systemUptime` for elapsed-time
+  measurement); there is no file-metadata or disk-space API.
+
+> **This file is now the native submission checklist.** Everything below this
+> banner documents the **superseded Capacitor build** (`ios/App/App`,
+> `src/lib/*`, `@capacitor/*`, the web Sentry SDK, bundled Inter, the watch
+> companion, `com.jirathip.sendlog`). It is **NOT the submission path** and is
+> kept for reference only.
+>
+> Items that **also apply to the native submission**: privacy policy URL
+> (`public/privacy.html`), support URL (`public/support.html`), in-app account
+> deletion, password sign-in, Sign in with Apple, export compliance, and the age
+> rating questionnaire.
+>
+> Capacitor-only items that **do NOT describe the native binary**: the
+> `ios/App/App` privacy manifests, web Sentry / Diagnostics, the bundled Inter
+> typeface, the Apple Watch companion, and the `com.jirathip.sendlog` /
+> `com.jirathip.sendlog.watchkitapp` bundle ids. The native build ships **no
+> watch app, no Sentry, no bundled Inter**, uses **different privacy manifests**
+> (`native/SendmeterNative/Resources/…`), declares **no Diagnostics** data type,
+> and its required-reason APIs are only `UserDefaults` (`CA92.1`) +
+> `SystemBootTime` (`35F9.1`).
+
 ## Already handled in the repo ✅
 
 - **App icons**: generated from `scripts/icon.svg` via `node scripts/generate-icons.mjs`
@@ -233,6 +288,11 @@ For iPhone testing before promotion, use `npm run sync:local` with paired
 simulators. A physical-device build cannot reach the laptop's local Supabase
 stack and currently uses production; use a throwaway production account for
 device-only Bluetooth, HealthKit, and signing checks.
+
+- **Password reset email** (Settings → Account & Security → Send Password Reset
+  Email): device-only — verify the reset email's link reopens the app into the
+  password-recovery flow via `com.jirathip.sendlog://login-callback`. No unit
+  test covers this (email/deep-link dependent).
 
 ## App Store screenshot automation
 

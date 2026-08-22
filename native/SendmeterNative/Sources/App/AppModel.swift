@@ -350,6 +350,15 @@ public final class AppModel: ObservableObject {
     /// `FOREGROUND_SYNC_COALESCE_MS` (5s).
     private let healthRefreshPolicy = HealthRefreshPolicy(coalescingWindow: 5)
     private var lastHealthRefreshStartedAt: TimeInterval?
+    /// #673: the gate that decides whether a scenePhase → `.active`
+    /// transition runs the 9-table authoritative `refreshAll`. The policy is
+    /// pure Core (`ForegroundRefreshPolicy`, unit-tested); the window is the
+    /// no-change grace period — a foreground inside it with data loaded and
+    /// realtime healthy issues 0 full-table fetches. `lastListRefreshAt` is
+    /// MONOTONIC (`systemUptime`), never wall-clock, so an NTP step or manual
+    /// clock change cannot make the delta negative and suppress every refresh.
+    private let foregroundRefreshPolicy = ForegroundRefreshPolicy(staleAfter: 60)
+    private var lastListRefreshAt: TimeInterval?
     /// #656: the previously observed transport status, so the connect
     /// success / drop error haptics fire once per transition (never when
     /// `stopMeasuring()` re-sets `.connected` after a rep).
@@ -824,6 +833,19 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// #722 (parity with web #542): send a password reset email for the
+    /// signed-in user's address. The reset link reopens the app via the
+    /// custom scheme; `handleDeepLink` routes it to `PasswordRecoveryView`.
+    public func sendPasswordResetEmail() async {
+        // Read the address before the await (repo closure-capture rule); the
+        // signing-in account is the only one a reset should target.
+        guard let email = currentUserEmail else { return }
+        await perform {
+            try await self.auth.resetPassword(email: email)
+            self.toastMessage = "Password reset email sent to \(email)."
+        }
+    }
+
     /// Route an incoming URL. `sendmeter://<host>` is the navigation scheme
     /// the Live Activity / Dynamic Island taps (sendmeter://force) and any
     /// future widgets/complications use — it must be intercepted BEFORE the
@@ -875,7 +897,22 @@ public final class AppModel: ObservableObject {
         guard authSession != nil else { return }
         await relayValidSessionToWatch(guaranteed: false)
         await drainQueue()
-        await refreshAll(showSpinner: false)
+        // #673: only sweep all 9 tables when the foreground is actually
+        // stale. A no-change foreground (data already loaded, realtime
+        // healthy, last full refresh inside the grace window) issues 0
+        // full-table fetches — realtime's targeted slice reconciler already
+        // converges the watched tables. The decision is the pure
+        // `ForegroundRefreshPolicy` (unit-tested); it reads live actor state
+        // synchronously before the first await, so there is no stale-closure
+        // capture here.
+        if foregroundRefreshPolicy.shouldRefreshOnForeground(
+            lastFullRefreshAt: lastListRefreshAt,
+            now: ProcessInfo.processInfo.systemUptime,
+            realtimeConnected: realtime.connectionStatus == .connected,
+            hasLoadedData: hasLoadedSessions && hasLoadedRecordings
+        ) {
+            await refreshAll(showSpinner: false)
+        }
         // #631: keep Send Conditions honest on foreground (cached value
         // stays on failure — the service never fabricates). Only the silent
         // refresh path runs here: a COLD first check stays user-initiated
@@ -1110,6 +1147,12 @@ public final class AppModel: ObservableObject {
             guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
                 return
             }
+            // #673: the authoritative sweep succeeded AND is still for the
+            // current account — this is the freshness timestamp the
+            // foreground gate reasons over. Bumped only here (not by the
+            // realtime slice reconciler, which is a targeted refresh that
+            // intentionally leaves the non-watched tables untouched).
+            lastListRefreshAt = ProcessInfo.processInfo.systemUptime
             warmTagCurvesIfMissing(capturedBy: accountFetch)
         } catch {
             if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
@@ -5369,6 +5412,10 @@ public final class AppModel: ObservableObject {
         publishForceProgressInputMutation(.accountReset)
         refreshingOwner = nil
         isRefreshing = false
+        // #673: a fresh account must not inherit the prior account's list
+        // freshness — the foreground gate would otherwise treat a full
+        // refresh as recent and skip the mandatory bootstrap sweep.
+        lastListRefreshAt = nil
         sessions = []
         hasLoadedSessions = false
         deletedSessions = []
