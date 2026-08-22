@@ -1150,6 +1150,12 @@ struct ForceView: View {
     /// stamp stays exact.
     @State private var zoneArmedPreset: TindeqPreset?
     @State private var armedZoneQuality: ZoneQuality?
+    /// #710: a maintenance suggestion (Warm-up / Prehab) arms its own guided
+    /// preset but is NOT a `ZoneQuality` — it records under a maintenance zone
+    /// and never feeds training balance. Kept parallel to `armedZoneQuality`
+    /// so exactly one suggested mode (zone quality OR maintenance) can be
+    /// armed at a time, mutually exclusive with a saved preset.
+    @State private var armedMaintenanceZone: RecordedZone?
 
     private var side: TindeqSide {
         get { TindeqSide(rawValue: sideValue) ?? .unspecified }
@@ -1174,13 +1180,16 @@ struct ForceView: View {
     }
 
     /// The currently selected guided target for the metadata card: a user
-    /// preset, the armed Focus-Next zone preset, or nil (free pull).
+    /// preset, the armed suggested zone/maintenance preset, or nil (free pull).
     private var selectedTarget: GuidedTarget? {
         if let selectedPresetID {
             return .userPreset(selectedPresetID)
         }
-        if let zoneArmedPreset {
-            return .armedZone(zoneArmedPreset.name)
+        if let armedZoneQuality {
+            return .zone(armedZoneQuality)
+        }
+        if let armedMaintenanceZone {
+            return .maintenance(armedMaintenanceZone)
         }
         return nil
     }
@@ -1241,12 +1250,15 @@ struct ForceView: View {
     }
 
     /// The zone stamped onto recordings saved under the current selection:
-    /// the armed Focus-Next quality wins (a guided run's holds carry the zone
-    /// they were performed under as a fact — #653 review finding 1), otherwise
-    /// the persisted metadata picker's zone. Never persisted itself.
+    /// the armed suggestion wins (a guided run's holds carry the zone they
+    /// were performed under as a fact — #653 review finding 1), otherwise the
+    /// persisted metadata picker's zone. Never persisted itself.
     private var recordingZone: RecordedZone? {
         if let armedZoneQuality {
             return ZoneMix.recordedZone(for: armedZoneQuality)
+        }
+        if let armedMaintenanceZone {
+            return armedMaintenanceZone
         }
         return zone
     }
@@ -1271,6 +1283,28 @@ struct ForceView: View {
         guard !guidedSessionIsActive, !guidedLaunchInFlight else { return }
         zoneArmedPreset = ZoneMix.zonePreset(for: zone)
         armedZoneQuality = zone
+        armedMaintenanceZone = nil
+        selectedPresetID = nil
+    }
+
+    /// #710: arm a suggested protocol (zone quality or maintenance) from the
+    /// RECORDING CONTEXT selector. Exactly one suggested mode is armed at a
+    /// time and a saved preset is always cleared — mirroring the web's
+    /// `withZoneSelected` / `withPresetSelected` mutual-exclusivity rule
+    /// (#296). Like `armRecommendedZone`, arming is just a selection; the
+    /// connection/unsaved-recording guard belongs to Start, not the pick.
+    private func armSuggested(_ suggestion: SuggestedArm) {
+        guard !guidedSessionIsActive, !guidedLaunchInFlight else { return }
+        switch suggestion {
+        case .zone(let quality):
+            zoneArmedPreset = ZoneMix.zonePreset(for: quality)
+            armedZoneQuality = quality
+            armedMaintenanceZone = nil
+        case .maintenance(let zone):
+            zoneArmedPreset = ZoneMix.maintenancePreset(for: zone)
+            armedZoneQuality = nil
+            armedMaintenanceZone = zone
+        }
         selectedPresetID = nil
     }
 
@@ -1330,26 +1364,41 @@ struct ForceView: View {
                         zone: Binding(get: { zone }, set: { zone = $0 }),
                         selectedTarget: selectedTarget,
                         onSelectTarget: { target in
-                            // A user preset pick and a Focus-Next arm are
-                            // mutually exclusive (web `selectZoneOutcome` /
-                            // `withPresetSelected`). Selecting any real target
-                            // — or Free pull — clears the other.
+                            // #710: Free hold / suggested zone / suggested
+                            // maintenance / saved preset are mutually
+                            // exclusive (web `withZoneSelected` /
+                            // `withPresetSelected`, #296). Selecting any real
+                            // target — or Free pull — clears the others.
                             switch target {
                             case .userPreset(let id):
                                 zoneArmedPreset = nil
                                 armedZoneQuality = nil
+                                armedMaintenanceZone = nil
                                 selectedPresetID = id
-                            case .armedZone:
-                                break
+                            case .zone(let quality):
+                                armSuggested(.zone(quality))
+                            case .maintenance(let zone):
+                                armSuggested(.maintenance(zone))
                             case nil:
                                 selectedPresetID = nil
                                 zoneArmedPreset = nil
                                 armedZoneQuality = nil
+                                armedMaintenanceZone = nil
                             }
                             publishFreePullContext()
                         },
                         presets: model.presets,
-                        knownTags: model.visibleTagNames
+                        knownTags: model.visibleTagNames,
+                        suggestionName: zoneArmedPreset?.name,
+                        recordings: model.recordings.filter { $0.tag == tag },
+                        exercise: tag,
+                        curveInput: zoneCurve,
+                        showsBalance: !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isReverseActionTarget,
+                        balanceLocked: model.tindeq.status == .measuring
+                            || model.handsFree.isArmed
+                            || model.handsFree.isMeasuring
+                            || guidedControlsLocked,
+                        onPickFocusNext: armRecommendedZone
                     )
                     .disabled(guidedControlsLocked)
 
@@ -1375,29 +1424,6 @@ struct ForceView: View {
                             tag: tag,
                             model: forceCurve,
                             hasLoadedRecordings: model.hasLoadedRecordings
-                        )
-                    }
-
-                    // #653: training balance + Focus Next for the active
-                    // exercise (both sides), arming the recommended zone's
-                    // guided protocol — the same arms the ForceMetadataCard
-                    // zone picker uses. The card shows for any selected tag;
-                    // `zoneCurve` (the Focus-Next tie-break) is optional and
-                    // nil when no static fit exists yet. It offers only
-                    // static-hold zone protocols, so it hides while a
-                    // reverse-action (movement) preset is selected — the
-                    // native analogue of the web's `capacityModality ===
-                    // "static"` gate (#653 review finding 13).
-                    if !tag.isEmpty, !isReverseActionTarget {
-                        ZoneFocusCard(
-                            recordings: model.recordings.filter { $0.tag == tag },
-                            exercise: tag,
-                            curveInput: zoneCurve,
-                            onPick: armRecommendedZone,
-                            locked: model.tindeq.status == .measuring
-                                || model.handsFree.isArmed
-                                || model.handsFree.isMeasuring
-                                || guidedControlsLocked
                         )
                     }
 
@@ -1740,10 +1766,12 @@ struct ForceView: View {
         // so it must not clobber `selectedPresetID` (which would read back
         // as "Free pull" and clear the zone arm).
         if model.presets.contains(where: { $0.id == preset.id }) {
-            // A user preset and a Focus-Next arm are mutually exclusive
-            // (#653 review finding 3): launching a user preset clears the arm.
+            // A user preset and a suggested arm are mutually exclusive
+            // (#653 review finding 3, #710): launching a user preset clears
+            // the armed zone/maintenance suggestion.
             zoneArmedPreset = nil
             armedZoneQuality = nil
+            armedMaintenanceZone = nil
             selectedPresetID = preset.id
         }
         let launchTag = tag
@@ -2164,13 +2192,12 @@ private struct ForceDeviceCard: View {
 }
 
 private struct ForceMetadataCard: View {
+    @Environment(\.colorScheme) private var scheme
     @Binding var tag: String
     @Binding var side: TindeqSide
     @Binding var zone: RecordedZone?
     /// The selected guided target. `nil` = free pull; a UUID = one of the
-    /// user's presets; `armedZonePreset` is shown by name and, when picked,
-    /// maps to a `nil` selection after clearing the arm (#653 review finding 2
-    /// — Focus Next must be disarmable and visible in the picker).
+    /// user's presets; `.zone`/`.maintenance` = the armed suggestion (#710).
     let selectedTarget: GuidedTarget?
     let onSelectTarget: (GuidedTarget?) -> Void
     let presets: [TindeqPreset]
@@ -2178,16 +2205,42 @@ private struct ForceMetadataCard: View {
     /// (SL-92). Hidden tags' recordings still exist, they just leave the
     /// default pickers.
     let knownTags: [String]
+    /// #710: the armed suggestion's display name (e.g. "Power" / "Warm-up"),
+    /// shown when a suggested protocol is armed.
+    let suggestionName: String?
+    /// #710: training balance surfaced inside the protocol-selection context
+    /// — tag-filtered recordings + the Focus-Next curve tie-break, mirroring
+    /// Capacitor's `TRAINING BALANCE · FDP` card.
+    let recordings: [TindeqRecording]
+    let exercise: String
+    let curveInput: ZoneCurveInput?
+    let showsBalance: Bool
+    let balanceLocked: Bool
+    let onPickFocusNext: (ZoneQuality) -> Void
 
-    private var selection: Int {
+    private var isFree: Bool { selectedTarget == nil }
+
+    /// The armed suggestion (zone quality or maintenance), if any.
+    private var armedSuggestion: SuggestedArm? {
         switch selectedTarget {
-        case nil: return 0
-        case .armedZone: return 1
-        case let .userPreset(id):
-            if let index = presets.firstIndex(where: { $0.id == id }) {
-                return index + 2
-            }
-            return 0
+        case .zone(let q): return .zone(q)
+        case .maintenance(let z): return .maintenance(z)
+        default: return nil
+        }
+    }
+
+    private func isActive(_ suggestion: SuggestedArm) -> Bool {
+        armedSuggestion == suggestion
+    }
+
+    private func suggestionColor(_ suggestion: SuggestedArm) -> Color {
+        switch suggestion {
+        case .zone(let quality):
+            return ChartToken.zoneQuality(quality).color(scheme)
+        case .maintenance(let zone):
+            return zone == .warmup
+                ? ChartToken.focus.color(scheme)
+                : ChartToken.reference.color(scheme)
         }
     }
 
@@ -2224,39 +2277,256 @@ private struct ForceMetadataCard: View {
                     }
                     .pickerStyle(.menu)
                 }
-                Picker("Guided target", selection: Binding(
-                    get: { selection },
-                    set: { index in
-                        switch index {
-                        case 0: onSelectTarget(nil)
-                        case 1: break // the armed zone is cleared by picking Free pull; no re-arm here
-                        default:
-                            let presetIndex = index - 2
-                            if presets.indices.contains(presetIndex) {
-                                onSelectTarget(.userPreset(presets[presetIndex].id))
-                            }
-                        }
-                    }
-                )) {
-                    Text("Free pull").tag(0)
-                    if case let .armedZone(name) = selectedTarget {
-                        Text("\(name) (Focus Next)").tag(1)
-                    }
-                    ForEach(Array(presets.enumerated()), id: \.element.id) { index, preset in
-                        Text(preset.name).tag(index + 2)
-                    }
+
+                protocolSection
+
+                if showsBalance {
+                    Divider()
+                    // #710: the training-balance card lives in the protocol-
+                    // selection context (Capacitor `TRAINING BALANCE · FDP`),
+                    // not as a disconnected card lower on the Force tab, so a
+                    // picker can see the balance of the exercise it is
+                    // choosing a protocol for.
+                    ZoneFocusCard(
+                        recordings: recordings,
+                        exercise: exercise,
+                        curveInput: curveInput,
+                        onPick: onPickFocusNext,
+                        locked: balanceLocked
+                    )
                 }
-                .pickerStyle(.menu)
             }
         }
+    }
+
+    /// #710: Free hold / Suggested (colored training-type chips) / Saved are
+    /// mutually exclusive — picking one calls `onSelectTarget`, which clears
+    /// the other two in ForceView. Rendered as native tinted chips, not web
+    /// CSS, using the same hue families as Capacitor's `QUALITY_COLORS`
+    /// (Power orange, Strength gold, Pow End lavender, Endurance blue,
+    /// Warm-up purple, Prehab neutral).
+    private var protocolSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Protocol")
+                .font(.caption2.weight(.semibold))
+                .tracking(1)
+                .foregroundStyle(.secondary)
+
+            protocolChip(
+                "Free hold",
+                color: .secondary,
+                active: isFree,
+                action: { onSelectTarget(nil) }
+            )
+
+            Text("Suggested")
+                .font(.caption2.weight(.semibold))
+                .tracking(1)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+
+            chipFlow {
+                ForEach(ZoneQuality.allCases) { quality in
+                    let suggestion = SuggestedArm.zone(quality)
+                    protocolChip(
+                        quality.label,
+                        color: suggestionColor(suggestion),
+                        active: isActive(suggestion),
+                        action: {
+                            if isActive(suggestion) {
+                                onSelectTarget(nil)
+                            } else {
+                                onSelectTarget(.zone(quality))
+                            }
+                        }
+                    )
+                }
+            }
+
+            chipFlow {
+                ForEach([RecordedZone.warmup, .prehab], id: \.self) { zone in
+                    let suggestion = SuggestedArm.maintenance(zone)
+                    protocolChip(
+                        zone.displayLabel,
+                        color: suggestionColor(suggestion),
+                        active: isActive(suggestion),
+                        action: {
+                            if isActive(suggestion) {
+                                onSelectTarget(nil)
+                            } else {
+                                onSelectTarget(.maintenance(zone))
+                            }
+                        }
+                    )
+                }
+            }
+
+            if let suggestionName {
+                Text("Selected: \(suggestionName)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !presets.isEmpty {
+                Text("Saved")
+                    .font(.caption2.weight(.semibold))
+                    .tracking(1)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+
+                chipFlow {
+                    ForEach(presets) { preset in
+                        protocolChip(
+                            preset.name,
+                            color: SendmeterStyle.primary,
+                            active: selectedTarget == .userPreset(preset.id),
+                            action: {
+                                if selectedTarget == .userPreset(preset.id) {
+                                    onSelectTarget(nil)
+                                } else {
+                                    onSelectTarget(.userPreset(preset.id))
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// A wrapping row of coloured protocol chips (#710).
+    private func chipFlow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        FlowLayout(spacing: 8) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// One coloured protocol chip. Active = solid hue fill, inactive =
+    /// tinted surface with a coloured label — the native analogue of the web
+    /// `BoxChip` selected/inactive fill states.
+    private func protocolChip(
+        _ label: String,
+        color: Color,
+        active: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .foregroundStyle(active ? Color.white : color)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    active ? color : color.opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(color.opacity(active ? 0 : 0.35), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+        .accessibilityLabel(label)
+        .accessibilityValue(active ? "Selected" : "Not selected")
     }
 }
 
 /// The selected guided target on the Force tab: a free pull, one of the user's
-/// presets, or a Focus-Next-armed zone preset (#653).
+/// presets, or an armed suggested protocol (zone quality / maintenance) (#710).
 private enum GuidedTarget: Equatable {
     case userPreset(UUID)
-    case armedZone(String)
+    case zone(ZoneQuality)
+    case maintenance(RecordedZone)
+}
+
+/// #710: the suggested protocols the RECORDING CONTEXT selector offers — the
+/// four trainable zone qualities plus the Warm-up/Prehab maintenance
+/// protocols. Picking any one arms it and clears both the other suggested
+/// mode and a saved preset; the web's `TargetZonesCard` box chips are the
+/// same options.
+private enum SuggestedArm: Equatable {
+    case zone(ZoneQuality)
+    case maintenance(RecordedZone)
+}
+
+/// #710: a minimal horizontal flow layout so the coloured protocol chips wrap
+/// onto a new line instead of overflowing a narrow iPhone width — the native
+/// analogue of the web's `flexWrap: "wrap"` BoxChip row. iOS 16+ (`Layout`
+/// protocol).
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let rows = makeRows(proposal: proposal, subviews: subviews)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.map(\.height).reduce(0, +)
+            + spacing * CGFloat(max(0, rows.count - 1))
+        return CGSize(width: proposal.width ?? width, height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let rows = makeRows(proposal: proposal, subviews: subviews)
+        var y = bounds.minY
+        for row in rows {
+            var x = bounds.minX
+            for (itemOffset, subviewIndex) in row.items.enumerated() {
+                let size = row.sizes[itemOffset]
+                subviews[subviewIndex].place(
+                    at: CGPoint(x: x, y: y),
+                    proposal: ProposedViewSize(size)
+                )
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row {
+        var items: [Int] = []
+        var sizes: [CGSize] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func makeRows(
+        proposal: ProposedViewSize,
+        subviews: Subviews
+    ) -> [Row] {
+        let maxWidth = proposal.width ?? .infinity
+        var rows: [Row] = []
+        var current = Row()
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(ProposedViewSize(width: nil, height: nil))
+            if !current.items.isEmpty,
+               current.width + spacing + size.width > maxWidth {
+                rows.append(current)
+                current = Row()
+            }
+            if current.items.isEmpty {
+                current.height = size.height
+            }
+            current.items.append(index)
+            current.sizes.append(size)
+            current.width += (current.items.count == 1 ? 0 : spacing) + size.width
+            current.height = max(current.height, size.height)
+        }
+        if !current.items.isEmpty {
+            rows.append(current)
+        }
+        return rows
+    }
 }
 
 struct ForceTraceChart: View {

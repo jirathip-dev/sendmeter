@@ -482,6 +482,49 @@ extension ZoneMix {
         )
     }
 
+    /// Builds the guided-protocol preset a MAINTENANCE zone arms — the native
+    /// sibling of the web's `buildWarmupSelection(...).protocol` /
+    /// `buildPrehabSelection(...).protocol` (#710). Warm-up ramps
+    /// 30% → 40% → 50% → 60% of PR (20s → 15s → 10s → 10s holds) and Prehab
+    /// sits at 70% of critical force (90s → 60s → 30s → 30s holds), both
+    /// mirroring `WARMUP_PROTOCOL` / `PREHAB_PROTOCOL` in `force-curve.ts`.
+    /// Maintenance is deliberately NOT a `ZoneQuality`: it always records and
+    /// never feeds training balance (web `zoneSets` drops it). Returns nil for
+    /// any non-maintenance zone.
+    public static func maintenancePreset(for zone: RecordedZone) -> TindeqPreset? {
+        switch zone {
+        case .warmup:
+            return TindeqPreset(
+                name: "Warm-up",
+                holdSeconds: 20,
+                holdSecondsBySet: [20, 15, 10, 10],
+                repetitions: 1,
+                sets: 4,
+                restBetweenRepetitionsSeconds: 0,
+                restBetweenSetsSeconds: 60,
+                targetPercentage: 30,
+                percentageBasis: .personalRecord,
+                percentageStep: 10,
+                alternateSides: true
+            )
+        case .prehab:
+            return TindeqPreset(
+                name: "Prehab",
+                holdSeconds: 90,
+                holdSecondsBySet: [90, 60, 30, 30],
+                repetitions: 1,
+                sets: 4,
+                restBetweenRepetitionsSeconds: 0,
+                restBetweenSetsSeconds: 20,
+                targetPercentage: 70,
+                percentageBasis: .criticalForce,
+                alternateSides: true
+            )
+        default:
+            return nil
+        }
+    }
+
     /// The `RecordedZone` a recommended zone's recordings are stamped with
     /// when its preset is armed — every zone has one, so a guided run's holds
     /// carry the performed quality as a fact instead of being re-inferred from

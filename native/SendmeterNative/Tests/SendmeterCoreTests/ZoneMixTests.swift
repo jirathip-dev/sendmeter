@@ -227,4 +227,46 @@ final class ZoneMixTests: XCTestCase {
             .compactMap(\.peakKilograms)
         XCTAssertEqual(prCandidates, [28, 20])
     }
+
+    // MARK: maintenancePreset(for:) — Warm-up / Prehab guided presets (#710)
+
+    func testMaintenancePresetWarmupMatchesWebProtocol() {
+        let preset = ZoneMix.maintenancePreset(for: .warmup)
+        XCTAssertEqual(preset?.name, "Warm-up")
+        XCTAssertEqual(preset?.holdSeconds, 20)
+        XCTAssertEqual(preset?.holdSecondsBySet, [20, 15, 10, 10])
+        XCTAssertEqual(preset?.repetitions, 1)
+        XCTAssertEqual(preset?.sets, 4)
+        XCTAssertEqual(preset?.restBetweenRepetitionsSeconds, 0)
+        XCTAssertEqual(preset?.restBetweenSetsSeconds, 60)
+        XCTAssertEqual(preset?.targetPercentage, 30)
+        XCTAssertEqual(preset?.percentageBasis, .personalRecord)
+        XCTAssertEqual(preset?.percentageStep, 10)
+        XCTAssertEqual(preset?.alternateSides, true)
+    }
+
+    func testMaintenancePresetPrehabMatchesWebProtocol() {
+        let preset = ZoneMix.maintenancePreset(for: .prehab)
+        XCTAssertEqual(preset?.name, "Prehab")
+        XCTAssertEqual(preset?.holdSeconds, 90)
+        XCTAssertEqual(preset?.holdSecondsBySet, [90, 60, 30, 30])
+        XCTAssertEqual(preset?.repetitions, 1)
+        XCTAssertEqual(preset?.sets, 4)
+        XCTAssertEqual(preset?.restBetweenRepetitionsSeconds, 0)
+        XCTAssertEqual(preset?.restBetweenSetsSeconds, 20)
+        // Prehab anchors to critical force (0.70 × CF), not PR.
+        XCTAssertEqual(preset?.targetPercentage, 70)
+        XCTAssertEqual(preset?.percentageBasis, .criticalForce)
+        XCTAssertEqual(preset?.alternateSides, true)
+    }
+
+    func testMaintenancePresetOnlyForMaintenanceZones() {
+        // The four trainable qualities are NOT maintenance presets — they use
+        // `zonePreset(for:)` instead.
+        XCTAssertNil(ZoneMix.maintenancePreset(for: .power))
+        XCTAssertNil(ZoneMix.maintenancePreset(for: .strength))
+        XCTAssertNil(ZoneMix.maintenancePreset(for: .powerEndurance))
+        XCTAssertNil(ZoneMix.maintenancePreset(for: .endurance))
+        XCTAssertNil(ZoneMix.maintenancePreset(for: .capacity))
+    }
 }
