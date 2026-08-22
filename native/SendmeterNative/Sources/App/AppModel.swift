@@ -171,17 +171,14 @@ public final class AppModel: ObservableObject {
         currentPhase: .capacity,
         phaseStartDate: LocalDateSupport.string(from: Date())
     )
-    /// True once the recording list has been fetched and merged at least once
-    /// for the current account (even if it came back empty). Recordings have
-    /// no disk cache, so `recordings.isEmpty` cannot distinguish "no force
-    /// history" from "not fetched yet" or an initial fetch failure. Consumers
-    /// use this to keep the Force consistency card's empty state honest.
-    @Published public private(set) var hasLoadedRecordings = false
+    /// The shared force-recording list. It is read by the Force tab, History,
+    /// and Settings; a fresh account resets it via `resetAccountState()`. The
+    /// force-scoped "has loaded" flag lives on `ForceModel` (see
+    /// `ForceModel.hasLoadedRecordings`).
     @Published public private(set) var recordings: [TindeqRecording] = []
     /// O(1) progress-input identity for the tiles, detail sheets, and selected
     /// Static curve. This is published only at actual progress mutation
     /// boundaries; live Tindeq display frames do not advance it.
-    @Published public private(set) var forceProgressRevision: UInt64 = 0
     @Published public private(set) var presets: [TindeqPreset] = []
     @Published public private(set) var routines: [RoutinePreset] = []
     @Published public private(set) var workouts: [WorkoutListItem] = []
@@ -242,12 +239,6 @@ public final class AppModel: ObservableObject {
     }
     @Published public var passwordRecovery = false
     @Published public var selectedTab: AppTab = .dashboard
-    /// #627: the fitted per-tag curves the gauge-session RPE prediction reads.
-    @Published public private(set) var tagCurves: [TagForceCurve] = []
-    /// True while a guided protocol runs: the run owns its session end (its
-    /// interrupted path preserves the final rep and THEN ends the session),
-    /// so the generic disconnect trigger defers to it.
-    @Published public private(set) var guidedProtocolActive = false
     /// The Force owner registers this while a guided run exists, including
     /// while its fullscreen is minimized. Auth teardown calls it before
     /// revoking the old bearer token so an active pull can be preserved under
@@ -286,6 +277,10 @@ public final class AppModel: ObservableObject {
     /// #708: owns the Manual workout rest deadline outside the fullscreen
     /// presentation so minimize/background transitions cannot suspend it.
     public let manualWorkoutRest: ManualWorkoutRestScheduler
+    /// #672: the Force tab's hot, feature-scoped observable state. Kept as a
+    /// dedicated object (not an `@Published` on `AppModel`) so a force-stream
+    /// publish no longer invalidates History/Dashboard/Settings bodies.
+    public let forceModel: ForceModel
 
     public private(set) var gaugeSessionTracker = GaugeSessionTracker()
     public var freePullContext = FreePullContext()
@@ -430,7 +425,7 @@ public final class AppModel: ObservableObject {
 
     private func publishForceProgressInputMutation(_ mutation: ForceProgressInputMutation) {
         let revision = forceProgressInputRevision.apply(mutation)
-        forceProgressRevision = revision
+        forceModel.forceProgressRevision = revision
     }
 
     private func storePendingCurveSamples(_ samples: [TindeqSample], for id: UUID) {
@@ -510,6 +505,7 @@ public final class AppModel: ObservableObject {
         self.guidedActivity = GuidedProtocolActivityManager()
         self.gaugeSessionSaveGate = GaugeSessionSaveGate()
         self.manualWorkoutRest = ManualWorkoutRestScheduler()
+        self.forceModel = ForceModel()
         self.keepAwake = KeepAwakeCoordinator { active in
             await MainActor.run {
                 UIApplication.shared.isIdleTimerDisabled = active
@@ -644,7 +640,7 @@ public final class AppModel: ObservableObject {
                 }
                 if case .interrupted = status {
                     self.handsFree.handleDisconnected()
-                    if !self.guidedProtocolActive {
+                    if !forceModel.guidedProtocolActive {
                         let interrupted = self.tindeq.interruptedRecording
                         if let interrupted, !self.disconnectSalvageInFlight {
                             // #678: capture the hands-free provenance BEFORE
@@ -1010,7 +1006,7 @@ public final class AppModel: ObservableObject {
             lastFullRefreshAt: lastListRefreshAt,
             now: ProcessInfo.processInfo.systemUptime,
             realtimeConnected: realtime.connectionStatus == .connected,
-            hasLoadedData: hasLoadedSessions && hasLoadedRecordings
+            hasLoadedData: hasLoadedSessions && forceModel.hasLoadedRecordings
         ) {
             await refreshAll(showSpinner: false)
         }
@@ -1241,7 +1237,7 @@ public final class AppModel: ObservableObject {
                 // progress task restarts even when the metadata snapshot is
                 // equal.
                 publishForceProgressInputMutation(.recordings)
-                hasLoadedRecordings = true
+                forceModel.hasLoadedRecordings = true
             }
             guard publishedLists else { return }
             await refreshQueueCount(for: accountFetch)
@@ -1843,7 +1839,7 @@ public final class AppModel: ObservableObject {
     /// end (its interrupted path preserves the final rep first); the generic
     /// disconnect trigger defers while this is set.
     public func setGuidedProtocolActive(_ active: Bool) {
-        guidedProtocolActive = active
+        forceModel.guidedProtocolActive = active
     }
 
     /// The Force view owns the guided runner, but auth/account lifecycle owns
@@ -2097,7 +2093,7 @@ public final class AppModel: ObservableObject {
         ForceProgressCurveInputKey(
             selectedTag: tag,
             selectedSide: side?.rawValue,
-            revision: forceProgressRevision,
+            revision: forceModel.forceProgressRevision,
             accountUserID: currentUserID,
             accountEpoch: accountEpoch
         )
@@ -2234,7 +2230,7 @@ public final class AppModel: ObservableObject {
     }
 
     private func publishTagCurves() {
-        tagCurves = tagCurveCache.values.sorted {
+        forceModel.tagCurves = tagCurveCache.values.sorted {
             $0.tag < $1.tag || ($0.tag == $1.tag && $0.modality < $1.modality)
         }
         // The fitted model is a progress-card input too. Use the same small
@@ -4990,7 +4986,7 @@ public final class AppModel: ObservableObject {
                     accountEpoch: accountEpoch
                 ) {
                     mergeRecordings(remote: fetchedRecordings)
-                    hasLoadedRecordings = true
+                    forceModel.hasLoadedRecordings = true
                 }
                 guard publishedRecordings else { return }
                 warmTagCurvesIfMissing(capturedBy: accountFetch)
@@ -5552,7 +5548,7 @@ public final class AppModel: ObservableObject {
             tagCurveWarmTaskGenerations.removeValue(forKey: key)
             tagCurveCache.removeValue(forKey: key)
             tagCurveBandGenerations.removeValue(forKey: key)
-            tagCurves.removeAll {
+            forceModel.tagCurves.removeAll {
                 TagCurveKey(tag: $0.tag, modality: $0.modality) == key
             }
         }
@@ -5578,7 +5574,7 @@ public final class AppModel: ObservableObject {
         tagCurveWarmTaskGenerations.removeAll()
         tagCurveCache.removeAll()
         tagCurveBandGenerations.removeAll()
-        tagCurves = []
+        forceModel.tagCurves = []
     }
 
     private func resetAccountState() {
@@ -5596,7 +5592,7 @@ public final class AppModel: ObservableObject {
         deletedRecordings = []
         healthMetrics = []
         phasePeriods = []
-        hasLoadedRecordings = false
+        forceModel.hasLoadedRecordings = false
         recordings = []
         presets = []
         routines = []
@@ -5625,7 +5621,7 @@ public final class AppModel: ObservableObject {
         queueBreadcrumbs = []
         quarantinedWrites = nil
         gaugeSessionTracker.reset()
-        guidedProtocolActive = false
+        forceModel.guidedProtocolActive = false
         guidedProtocolTeardown = nil
         guidedProtocolTeardownOwnerID = nil
         invalidateTagCurveCache()

@@ -1119,6 +1119,7 @@ private struct GuidedForceProtocolView: View {
 
 struct ForceView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var forceModel: ForceModel
     @AppStorage("sendmeter.native.force.tag") private var tag = ""
     @AppStorage("sendmeter.native.force.side") private var sideValue = ""
     @AppStorage("sendmeter.native.force.zone") private var zoneValue = ""
@@ -1256,7 +1257,7 @@ struct ForceView: View {
     private var zoneCurve: ZoneCurveInput? {
         let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else { return nil }
-        guard let curve = model.tagCurves.first(where: {
+        guard let curve = forceModel.tagCurves.first(where: {
             $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
                 && $0.modality == "static"
         }) else { return nil }
@@ -1269,7 +1270,7 @@ struct ForceView: View {
     private var forceCurve: ForceCurveModel? {
         let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else { return nil }
-        return model.tagCurves.first(where: {
+        return forceModel.tagCurves.first(where: {
             $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
                 && $0.modality == "static"
         })?.forceCurveModel
@@ -1528,8 +1529,8 @@ struct ForceView: View {
                         selectedTag: progressTag,
                         selectedSide: progressSide,
                         forceCurve: progressForceCurve,
-                        hasLoadedRecordings: model.hasLoadedRecordings,
-                        progressRevision: model.forceProgressRevision,
+                        hasLoadedRecordings: forceModel.hasLoadedRecordings,
+                        progressRevision: forceModel.forceProgressRevision,
                         curveRevision: sideScopedForceCurveRevision
                     )
                     .equatable()
@@ -1537,14 +1538,14 @@ struct ForceView: View {
                     ForceConsistencyCard(
                         recordings: model.recordings,
                         hiddenTags: model.hiddenTagNames,
-                        hasLoadedRecordings: model.hasLoadedRecordings
+                        hasLoadedRecordings: forceModel.hasLoadedRecordings
                     )
 
                     if !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         NativeForceCurveCard(
                             tag: tag,
                             model: forceCurve,
-                            hasLoadedRecordings: model.hasLoadedRecordings
+                            hasLoadedRecordings: forceModel.hasLoadedRecordings
                         )
                     }
 
