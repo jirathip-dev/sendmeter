@@ -1696,6 +1696,11 @@ struct ForceView: View {
             return
         }
         do {
+            // #678: lock the tag/side the moment the recording begins, so a
+            // disconnect-salvage (or the recovery prompt) persists what the
+            // user actually set, never a fallback (web #298).
+            publishFreePullContext()
+            model.lockForceRecordingContext(model.freePullContext)
             try model.tindeq.startMeasuring()
         } catch {
             refuseAction(error.localizedDescription)
@@ -1718,6 +1723,10 @@ struct ForceView: View {
             return
         }
         publishFreePullContext()
+        // #678: lock at arm time (recording start for the hands-free loop),
+        // same as a manual Start, so a mid-rep disconnect salvage persists the
+        // tag/side the user actually set.
+        model.lockForceRecordingContext(model.freePullContext)
         model.handsFree.arm()
     }
 
@@ -1767,15 +1776,27 @@ struct ForceView: View {
 
     private func save(_ summary: ForceSummary, recovered: Bool) {
         savingSummary = true
-        let savedTag = recovered && !tag.isEmpty ? "\(tag) · Recovered" : tag
+        // #678: a recovered/salvaged rep persists the tag/side LOCKED at
+        // recording start (web #298) and carries the recovered note, not a
+        // "· Recovered" suffix on the tag — the note is what History shows,
+        // matching the watch's `salvageInterruptedRecording`. Fall back to
+        // the current pickers only when no lock exists (e.g. an older
+        // recovery whose recording began before this fix).
+        let attribution = model.forceRecordingLock.map {
+            ForceDisconnectSalvage.Attribution(tag: $0.tag, side: $0.side)
+        } ?? ForceDisconnectSalvage.Attribution(tag: tag, side: side)
+        let savedTag = recovered ? attribution.tag : tag
+        let savedSide = recovered ? attribution.side : side
+        let note = recovered ? ForceDisconnectSalvage.recoveredNote : ""
         Task {
             let enqueued = await model.saveForceSummary(
                 summary,
                 tag: savedTag,
-                side: side,
+                side: savedSide,
                 zone: recordingZone,
                 preset: selectedPreset,
-                targetBand: selectedTargetPlan.band(forSet: 1, side: side)
+                targetBand: selectedTargetPlan.band(forSet: 1, side: savedSide),
+                note: note
             )
             if enqueued {
                 model.tindeq.clearCompletedRecording()

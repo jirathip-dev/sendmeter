@@ -286,6 +286,35 @@ public final class AppModel: ObservableObject {
     public private(set) var gaugeSessionTracker = GaugeSessionTracker()
     public var freePullContext = FreePullContext()
 
+    /// #678: the full force context LOCKED when the current recording began —
+    /// captured once by ForceView at a manual Start / hands-free Arm. The
+    /// disconnect-salvage save writes the tag/side from this lock, so a
+    /// recovered rep persists what the user actually set at recording start,
+    /// never a fallback (web #298). Distinct from `freePullContext`, which
+    /// keeps tracking the visible pickers; this one is frozen for the rep.
+    public private(set) var forceRecordingLock: FreePullContext?
+
+    /// #678: lock the force context at recording start. Called only by
+    /// ForceView at the manual-Start / hands-free-Arm gesture — NOT from the
+    /// `onChange` of the visible pickers — so it overwrites the previous rep's
+    /// lock with this rep's, and a mid-recording tag/side nudge can never move
+    /// the attribution of the in-flight rep (web #298).
+    public func lockForceRecordingContext(_ context: FreePullContext) {
+        forceRecordingLock = context
+    }
+
+    /// #678: release the lock once the recording it owned has ended (saved or
+    /// reported lost). The next recording start locks a fresh context.
+    public func clearForceRecordingLock() {
+        forceRecordingLock = nil
+    }
+
+    /// #678: true from the moment the disconnect-salvage claims the
+    /// interrupted buffer until its save settles, so a duplicate
+    /// `.interrupted` emission (#656: a single Bluetooth-off delivers two
+    /// `.interrupted` values) cannot queue a second salvage for the same rep.
+    private var disconnectSalvageInFlight = false
+
     /// #656 (review F1): the one way a user asks to connect the Progressor.
     /// Marks the transport as user-initiated for THIS LAUNCH so the
     /// success/error haptics in the `$status` sink may fire — a cold launch
@@ -607,6 +636,33 @@ public final class AppModel: ObservableObject {
                 if case .interrupted = status {
                     self.handsFree.handleDisconnected()
                     if !self.guidedProtocolActive {
+                        let interrupted = self.tindeq.interruptedRecording
+                        if let interrupted, !self.disconnectSalvageInFlight {
+                            // #678: claim the interrupted buffer synchronously
+                            // — before any await — so a duplicate
+                            // `.interrupted` emission (#656: a single
+                            // Bluetooth-off delivers two) cannot queue a second
+                            // salvage, and so the Force tab's recovery prompt
+                            // cannot also grab the same rep.
+                            self.disconnectSalvageInFlight = true
+                            if ForceDisconnectSalvage.shouldSalvage(
+                                wasIntentional: false,
+                                wasMeasuring: true,
+                                sampleCount: interrupted.samples.count
+                            ) {
+                                self.tindeq.clearInterruptedRecording()
+                                Task { @MainActor in
+                                    await self.salvageInterruptedRecording(interrupted)
+                                    self.disconnectSalvageInFlight = false
+                                }
+                            } else {
+                                // Too trivial to auto-salvage (or an
+                                // intentional drop): leave the buffer in place
+                                // so the Force tab's recovery prompt still
+                                // offers it. Release the claim synchronously.
+                                self.disconnectSalvageInFlight = false
+                            }
+                        }
                         Task { @MainActor in await self.endGaugeSession() }
                     }
                 }
@@ -1470,7 +1526,10 @@ public final class AppModel: ObservableObject {
         protocolRunID: UUID? = nil,
         setNumber: Int? = nil,
         repetitionNumber: Int? = nil,
-        partial: Bool = false
+        partial: Bool = false,
+        /// #678: the note stamped on the recording (e.g. a disconnect-
+        /// salvage's "Recovered after connection loss").
+        note: String = ""
     ) async -> Bool {
         await saveForceSummaryOutcome(
             summary,
@@ -1482,7 +1541,8 @@ public final class AppModel: ObservableObject {
             protocolRunID: protocolRunID,
             setNumber: setNumber,
             repetitionNumber: repetitionNumber,
-            partial: partial
+            partial: partial,
+            note: note
         ).didPersist
     }
 
@@ -1496,7 +1556,14 @@ public final class AppModel: ObservableObject {
         protocolRunID: UUID? = nil,
         setNumber: Int? = nil,
         repetitionNumber: Int? = nil,
-        partial: Bool = false
+        partial: Bool = false,
+        /// #678: the note stamped on the recording. Defaults to "" for a
+        /// normal save; a disconnect-salvage passes
+        /// `ForceDisconnectSalvage.recoveredNote`.
+        note: String = "",
+        /// #678: the durable-loss reason. Defaults to "recording"; a
+        /// disconnect-salvage passes `ForceDisconnectSalvage.lossReason`.
+        lossReason: String = "recording"
     ) async -> ForceSaveOutcome {
         guard let userID = currentUserID else { return .stale }
         let accountFetch = AccountScopedFetch(
@@ -1585,7 +1652,7 @@ public final class AppModel: ObservableObject {
             durationMilliseconds: max(1, actualDuration),
             peakKilograms: persistedPeak,
             averageKilograms: averageKilograms,
-            note: "",
+            note: note,
             tag: String(tag.prefix(120)),
             side: side,
             groupID: groupID,
@@ -1647,7 +1714,7 @@ public final class AppModel: ObservableObject {
             // optimistic row being discarded below. The durable one-shot
             // notice IS the out-loud reporting (no Sentry in this target);
             // `surfaceLostRecordingNoticeIfAny` shows it on next foreground.
-            LostRecordingStore.note(reason: "recording", in: .standard)
+            LostRecordingStore.note(reason: lossReason, in: .standard)
             removePendingRecording(for: recording.id, accountUserID: userID)
             removePendingCurveSamples(for: recording.id)
             invalidateTagCurveKeys([savedKey])
@@ -1857,6 +1924,45 @@ public final class AppModel: ObservableObject {
                     errorMessage = "Hands-free pull couldn't be saved."
                 }
             }
+        }
+    }
+
+    /// #678: the disconnect-salvage save. Routes the already-claimed
+    /// interrupted rep through `saveForceSummaryOutcome` so it persists with an
+    /// explicit `accountUserID`, the tag/side LOCKED at recording start (web
+    /// #298 — never a fallback), and the recovered note — and reports a durable
+    /// loss (`LostRecordingStore`, via `saveForceSummaryOutcome`) if the save
+    /// refuses. The buffer was cleared synchronously by the caller's claim, so
+    /// the only paths here are: it survived, or it is honestly reported lost.
+    private func salvageInterruptedRecording(_ summary: ForceSummary) async {
+        let lock = forceRecordingLock ?? freePullContext
+        let resolved = ForceDisconnectSalvage.attribution(
+            locked: ForceDisconnectSalvage.Attribution(tag: lock.tag, side: lock.side)
+        )
+        let outcome = await saveForceSummaryOutcome(
+            summary,
+            tag: resolved.tag,
+            side: resolved.side,
+            zone: lock.zone,
+            preset: lock.preset,
+            targetBand: lock.targetBand,
+            note: ForceDisconnectSalvage.recoveredNote,
+            lossReason: ForceDisconnectSalvage.lossReason
+        )
+        switch outcome {
+        case .saved:
+            clearForceRecordingLock()
+        case .failed:
+            // `saveForceSummaryOutcome` already recorded the durable loss
+            // under `ForceDisconnectSalvage.lossReason`; say so out loud too.
+            clearForceRecordingLock()
+            errorMessage = "Recovered pull couldn't be saved."
+        case .stale:
+            // The account no longer owns the active model — signing out or a
+            // mid-save epoch change. Not a persistence failure (no loss to
+            // report), and the interrupted buffer is already claimed, so the
+            // rep cannot be recovered under the wrong account.
+            break
         }
     }
 
