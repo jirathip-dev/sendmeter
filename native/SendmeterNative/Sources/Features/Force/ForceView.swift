@@ -897,21 +897,9 @@ private struct GuidedForceProtocolView: View {
                 color: accent
             )
             if session.handsFreeEnabled {
-                let handsFreeLabel: String
-                let handsFreeColor: Color
-                if session.model.handsFree.isMeasuring {
-                    handsFreeLabel = "Hands-free · measuring"
-                    handsFreeColor = SendmeterStyle.optimal
-                } else if session.model.handsFree.isArmed {
-                    handsFreeLabel = "Hands-free · pull to start"
-                    handsFreeColor = SendmeterStyle.caution
-                } else {
-                    handsFreeLabel = "Hands-free · ready"
-                    handsFreeColor = SendmeterStyle.caution
-                }
                 StatusPill(
-                    handsFreeLabel,
-                    color: handsFreeColor
+                    handsFreeStatus.label,
+                    color: handsFreeStatus.color
                 )
             }
             Spacer(minLength: 4)
@@ -920,6 +908,16 @@ private struct GuidedForceProtocolView: View {
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("\(session.savedCount) pulls durably queued")
         }
+    }
+
+    private var handsFreeStatus: (label: String, color: Color) {
+        if session.model.handsFree.isMeasuring {
+            return ("Hands-free · measuring", SendmeterStyle.optimal)
+        }
+        if session.model.handsFree.isArmed {
+            return ("Hands-free · pull to start", SendmeterStyle.caution)
+        }
+        return ("Hands-free · ready", SendmeterStyle.caution)
     }
 
     @ViewBuilder
@@ -2184,7 +2182,7 @@ private struct ForceMetadataCard: View {
     private var selection: Int {
         switch selectedTarget {
         case nil: return 0
-        case let .armedZone(name): return 1
+        case .armedZone: return 1
         case let .userPreset(id):
             if let index = presets.firstIndex(where: { $0.id == id }) {
                 return index + 2
