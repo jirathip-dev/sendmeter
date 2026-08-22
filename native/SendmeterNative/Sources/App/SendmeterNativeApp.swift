@@ -13,6 +13,7 @@ struct SendmeterNativeApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(model)
+                .environmentObject(model.forceModel)
                 .environmentObject(theme)
                 .onOpenURL { url in
                     Task { await model.handleDeepLink(url) }

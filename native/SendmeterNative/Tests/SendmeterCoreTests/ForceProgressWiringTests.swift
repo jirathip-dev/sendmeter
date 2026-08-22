@@ -4,10 +4,11 @@ import XCTest
 final class ForceProgressWiringTests: XCTestCase {
     func testAppModelPublishesAfterAwaitedUploadSampleRemoval() {
         let appModel = code(source("Sources/App/AppModel.swift"))
+        let forceModel = code(source("Sources/App/ForceModel.swift"))
 
         XCTAssertTrue(
-            appModel.contains(
-                "@Published public private(set) var forceProgressRevision: UInt64 = 0"
+            forceModel.contains(
+                "@Published public internal(set) var forceProgressRevision: UInt64 = 0"
             )
         )
 
@@ -96,7 +97,7 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertTrue(forceView.contains(".task(id: progressCurveKey)"))
         XCTAssertTrue(forceView.contains("ForceProgressCardBoundary("))
         XCTAssertTrue(forceView.contains(".equatable()"))
-        XCTAssertTrue(forceView.contains("progressRevision: model.forceProgressRevision"))
+        XCTAssertTrue(forceView.contains("progressRevision: forceModel.forceProgressRevision"))
         XCTAssertTrue(forceView.contains("curveRevision: sideScopedForceCurveRevision"))
         XCTAssertTrue(forceView.contains("sideScopedForceCurveRevision"))
         let loadCurveBody = exactFunction(
