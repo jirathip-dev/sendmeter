@@ -1167,6 +1167,28 @@ struct ForceView: View {
         nonmutating set { sideValue = newValue.rawValue }
     }
 
+    private var activeTag: String {
+        tag.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// #720: the side-applicability policy for the active exercise. The single
+    /// source of truth is `ExerciseSidePolicy`; views never hardcode options.
+    private var sideMode: ExerciseSideMode {
+        model.sideMode(for: activeTag)
+    }
+
+    /// The canonical side to stamp on a NEW recording under the active mode.
+    private var recordedSide: TindeqSide {
+        ExerciseSidePolicy.recordedSide(sideMode, side)
+    }
+
+    /// Nudge a stale/legacy remembered side onto the active mode's valid set.
+    /// A historical empty side stays empty (never reinterpreted as `both`).
+    private func normalizeSideForMode() {
+        let normalized = ExerciseSidePolicy.normalizeSide(sideMode, side)
+        if normalized != side { side = normalized }
+    }
+
     /// The persisted zone pick (the metadata card's "Zone" picker). Deliberately
     /// separate from the Focus-Next arm: arming a recommendation never writes
     /// this, so clearing the arm never leaves a stale persisted zone stamp on
@@ -1409,6 +1431,7 @@ struct ForceView: View {
         ForceMetadataCard(
             tag: $tag,
             side: sideBinding,
+            sideMode: sideMode,
             zone: zoneBinding,
             selectedTarget: selectedSelection,
             onSelectTarget: handleSelectTarget,
@@ -1572,13 +1595,31 @@ struct ForceView: View {
                 await loadProgressCurve()
             }
             .onAppear {
+                // #720: a persisted side can be stale for the active exercise's
+                // mode even on a fresh launch (not just on a tag switch).
+                normalizeSideForMode()
+                // #720: re-stamp the armed hands-free context from the current
+                // (normalized) recorded side — normalize must run before this.
+                publishFreePullContext()
                 if let guidedSession {
                     registerGuidedTeardown(for: guidedSession)
                 }
             }
             // #628: the hands-free save path snapshots the recording context
             // (tag/side/zone/preset/target) at arm time.
-            .onChange(of: tag) { _ in publishFreePullContext() }
+            .onChange(of: tag) { _ in
+                // #720: a remembered side may be invalid under the newly
+                // selected exercise's mode — fall back deterministically.
+                normalizeSideForMode()
+                publishFreePullContext()
+            }
+            .onChange(of: sideMode) { _ in normalizeSideForMode() }
+            // #720 review (blocker): the free-pull context stamps `recordedSide`,
+            // which can change when the exercise's side MODE changes without the
+            // raw `side` changing (e.g. bilateral_only→not_applicable with an
+            // unspecified side). Re-publish on the EFFECTIVE side so the armed
+            // hands-free loop can never persist a stale/forbidden side.
+            .onChange(of: recordedSide) { _ in publishFreePullContext() }
             .onChange(of: side) { _ in publishFreePullContext() }
             .onChange(of: zone) { _ in publishFreePullContext() }
             .onChange(of: selectedPresetID) { _ in publishFreePullContext() }
@@ -1748,10 +1789,10 @@ struct ForceView: View {
     private func publishFreePullContext() {
         model.freePullContext = FreePullContext(
             tag: tag,
-            side: side,
+            side: recordedSide,
             zone: recordingZone,
             preset: selectedPreset,
-            targetBand: selectedTargetPlan.band(forSet: 1, side: side)
+            targetBand: selectedTargetPlan.band(forSet: 1, side: recordedSide)
         )
     }
 
@@ -1768,14 +1809,21 @@ struct ForceView: View {
     private func save(_ summary: ForceSummary, recovered: Bool) {
         savingSummary = true
         let savedTag = recovered && !tag.isEmpty ? "\(tag) · Recovered" : tag
+        // #720: snapshot the recording context before the await so a stale
+        // closure can never write a side invalid under the active mode (repo
+        // rule: a decision never reads captured state after an `await`).
+        let savedSide = recordedSide
+        let savedZone = recordingZone
+        let savedPreset = selectedPreset
+        let savedTargetBand = selectedTargetPlan.band(forSet: 1, side: savedSide)
         Task {
             let enqueued = await model.saveForceSummary(
                 summary,
                 tag: savedTag,
-                side: side,
-                zone: recordingZone,
-                preset: selectedPreset,
-                targetBand: selectedTargetPlan.band(forSet: 1, side: side)
+                side: savedSide,
+                zone: savedZone,
+                preset: savedPreset,
+                targetBand: savedTargetBand
             )
             if enqueued {
                 model.tindeq.clearCompletedRecording()
@@ -2295,6 +2343,9 @@ private struct ForceMetadataCard: View {
     @Environment(\.colorScheme) private var scheme
     @Binding var tag: String
     @Binding var side: TindeqSide
+    /// #720: the active exercise's side-applicability policy. The card only
+    /// offers the sides the policy allows — never a hardcoded mode→options map.
+    let sideMode: ExerciseSideMode
     @Binding var zone: RecordedZone?
     /// #710: the single-armed selection — `.free`, a suggested zone /
     /// maintenance protocol, the resisted-movement suggestion, or a saved user
@@ -2343,6 +2394,7 @@ private struct ForceMetadataCard: View {
     init(
         tag: Binding<String>,
         side: Binding<TindeqSide>,
+        sideMode: ExerciseSideMode,
         zone: Binding<RecordedZone?>,
         selectedTarget: ForceProtocolSelection,
         onSelectTarget: @escaping (ForceProtocolSelection) -> Void,
@@ -2361,6 +2413,7 @@ private struct ForceMetadataCard: View {
     ) {
         self._tag = tag
         self._side = side
+        self.sideMode = sideMode
         self._zone = zone
         self.selectedTarget = selectedTarget
         self.onSelectTarget = onSelectTarget
@@ -2402,6 +2455,17 @@ private struct ForceMetadataCard: View {
         }
     }
 
+    private var sideOptions: [TindeqSide] {
+        ExerciseSidePolicy.allowedSides(sideMode)
+    }
+
+    /// Show the side selector only when the exercise offers more than one
+    /// concrete side. Bilateral-only (one concrete side) and not-applicable
+    /// (none) hide it — the save path stamps the canonical side instead.
+    private var sidePickerShown: Bool {
+        sideOptions.filter { $0 != .unspecified }.count > 1
+    }
+
     var body: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 14) {
@@ -2420,13 +2484,15 @@ private struct ForceMetadataCard: View {
                     .pickerStyle(.menu)
                 }
                 HStack {
-                    Picker("Side", selection: $side) {
-                        ForEach(TindeqSide.allCases) { side in
-                            Text(side.label).tag(side)
+                    if sidePickerShown {
+                        Picker("Side", selection: $side) {
+                            ForEach(sideOptions) { side in
+                                Text(side.label).tag(side)
+                            }
                         }
+                        .pickerStyle(.menu)
+                        Spacer()
                     }
-                    .pickerStyle(.menu)
-                    Spacer()
                     Picker("Zone", selection: $zone) {
                         Text("Not set").tag(Optional<RecordedZone>.none)
                         ForEach(RecordedZone.allCases, id: \.self) { zone in
