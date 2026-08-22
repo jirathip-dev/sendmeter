@@ -184,6 +184,11 @@ final class GuidedForceRunner {
         self.side = side
         self.manager = manager
         manager.setPersistenceOwner(ownerUserId)
+        // #683: a guided protocol is a screen the user entered, and while it
+        // is active free-hold hands-free is suspended entirely. Suspend here
+        // (and re-arm in `endRun`/`fail`/`discardRunForAccountChange`) so a
+        // stray pull cannot start an untimed rep beside the guided set.
+        manager.setFreeHoldSuspended(true)
         self.errorMessage = nil
         self.completionMessage = nil
         self.sessionFinishIssued = false
@@ -526,6 +531,10 @@ final class GuidedForceRunner {
 
         let oldManager = manager
         oldManager?.discardWithoutSaving()
+        // After discard the manager is idle; clearing the flag here never
+        // re-arms (status != .connected), so the armed waiting state from an
+        // undisrupted run can't leak onto a different account.
+        oldManager?.setFreeHoldSuspended(false)
 
         runState = nil
         snapshot = nil
@@ -568,6 +577,7 @@ final class GuidedForceRunner {
         phase = .failed
         tickTask?.cancel()
         finishSessionIfNeeded()
+        manager?.setFreeHoldSuspended(false)
         manager?.clearPersistenceOwner()
         publishMessage(message, generation: messageGeneration + 1)
     }
@@ -578,6 +588,7 @@ final class GuidedForceRunner {
     ) {
         tickTask?.cancel()
         tickTask = nil
+        manager?.setFreeHoldSuspended(false)
         manager?.clearPersistenceOwner()
         completionMessage = message
         publishMessage(message, generation: messageGeneration + 1)

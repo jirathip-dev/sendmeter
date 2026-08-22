@@ -41,7 +41,7 @@ final class TindeqManualOwnershipTests: XCTestCase {
         manager.start() // captures accountA as this session's owner, before any stop/save
         feed(manager, [(20, 0), (25, 500_000)])
 
-        // A -> signed-out -> B, all before Stop & Save.
+        // A -> signed-out -> B, all before Save now.
         box.current = nil
         box.current = UUID() // account B
 

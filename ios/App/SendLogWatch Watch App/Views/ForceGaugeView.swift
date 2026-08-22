@@ -73,13 +73,35 @@ struct ForceGaugeView: View {
         selectedStartEligibility == .alternatingSidesUnsupported
     }
 
+    /// #683: the persistent mode header. When a guided runner is active this
+    /// view is replaced by `GuidedForceRunnerView`, so here it only ever
+    /// narrates the always-armed free hold (resting or recording).
+    private var modeHeaderText: String? {
+        if visibleStatus == .measuring { return "Free hold · recording" }
+        if visibleStatus == .connected { return "Free hold · armed" }
+        return nil
+    }
+
     var body: some View {
         GeometryReader { geometry in
             ScrollViewReader { proxy in
-                Group {
+                VStack(spacing: 0) {
+                // #683: one persistent header line naming the live mode — the
+                // always-armed free hold (resting or recording). The guided
+                // screen replaces ForceGaugeView (RootView) while a protocol
+                // is active and carries its own Repeaters · set header.
+                if let headerText = modeHeaderText {
+                    Text(headerText)
+                        .font(.system(.caption2, design: .rounded).weight(.semibold))
+                        .foregroundStyle(WatchPalette.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 9)
+                        .environment(\.dynamicTypeSize, .medium)
+                        .accessibilityIdentifier("force-mode-header")
+                }
                 // Measuring owns the whole screen in a plain, non-scrolling
-                // VStack (issue #149) — the live gauge, peak/timer, and Stop
-                // & Save must all be visible at once without hunting for a
+                // VStack (issue #149) — the live gauge, peak/timer, and
+                // Save now must all be visible at once without hunting for a
                 // scroll position mid-hang. Every other state keeps the
                 // ScrollView (loading/empty/error states legitimately may
                 // need it).
@@ -295,7 +317,8 @@ struct ForceGaugeView: View {
             // fixture being absent (fixtures own their displayed state),
             // this visit having no deliberate disconnect, and the manager
             // actually being idle — never fires while connected, scanning,
-            // or measuring. Arming stays behind its explicit tap always.
+            // or measuring. #683: the gauge arms hands-free automatically on
+            // connect, so this only kicks off the connection; no arm tap.
             if ScreenshotFixtures.force == nil, !autoConnectSuppressed, tindeq.status == .idle {
                 startConnectAttempt()
             }
@@ -680,9 +703,9 @@ struct ForceGaugeView: View {
     // "Connected" chip, disconnect) is either folded into that one card,
     // demoted to a compact top-right context action, or made
     // passive/below-the-fold — see #541's icon-first rule for the same
-    // move. Hands-free arming keeps its exact behavior (TindeqManager owns
-    // it untouched); only its position and the "Free hold" fallback's
-    // visual weight change here.
+    // move. #683: the gauge arms hands-free automatically on connect (the
+    // always-armed resting state), so there is no separate arm button or
+    // mode toggle to place; the ready card is a passive status.
     //
     // Round-1 review (SL-537): every current Watch size measures as
     // `isMicroSetupSize` here once the nav bar is subtracted, so this no
@@ -697,25 +720,25 @@ struct ForceGaugeView: View {
     // No container-level `.accessibilityIdentifier` here — see
     // `GuidedForceRunnerView`'s note on this exact footgun: on this
     // device+OS an identifier on a container silently overwrites every
-    // descendant's own identifier (Free hold, Arm hands-free, disconnect
-    // all reported back as this container's ID during this redesign's own
+    // descendant's own identifier (several `force-*` controls were all
+    // reported back as this container's ID during this redesign's own
     // testing). Every control below already carries its own unique
     // `force-*` identifier, so no container ID is needed.
     @ViewBuilder
     private func setupContent() -> some View {
         VStack(spacing: 3) {
             // SL-584: the whole one-page primary path — selector row,
-            // connection row, the ready card and the start-mode toggle —
-            // is the no-scroll guarantee: cap Dynamic Type here exactly
-            // like the old micro rows did, so an accessibility text size
-            // cannot push the primary start below the fold. Everything
-            // below (Free hold first, then banners) stays free to scale
-            // and may scroll, same as before this redesign.
+            // connection row and the ready card — is the no-scroll
+            // guarantee: cap Dynamic Type here exactly like the old micro
+            // rows did, so an accessibility text size cannot push the
+            // primary start below the fold. Everything below (the guided
+            // start, then banners) stays free to scale and may scroll, same
+            // as before this redesign. (#683 removed the start-mode toggle —
+            // free hold is always armed, so there is nothing to toggle.)
             Group {
                 selectorRow
                 connectionRow
                 readyCard
-                startModeToggle
             }
             .environment(\.dynamicTypeSize, .medium)
             secondaryContent
@@ -767,30 +790,6 @@ struct ForceGaugeView: View {
         .accessibilityIdentifier("force-context-button")
     }
 
-    /// Q2/Q3: the small link that flips the connected ready card between
-    /// arm-hands-free (the default) and classic tap-to-start. The toggle
-    /// itself never starts or arms anything; the preference is per-launch
-    /// (`TindeqManager.preferTapToStart`, not persisted).
-    @ViewBuilder
-    private var startModeToggle: some View {
-        if visibleStatus == .connected && !tindeq.handsFreeRequested {
-            Button {
-                tindeq.preferTapToStart.toggle()
-            } label: {
-                Text(tindeq.preferTapToStart ? "Use hands-free" : "Use tap-to-start")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(WatchPalette.textTertiary)
-                    // Inside the label — a frame chained after `Button`
-                    // grows only the layout box, not the tappable region.
-                    .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Switches how a measurement starts; never starts one")
-            .accessibilityIdentifier("force-start-mode-toggle")
-        }
-    }
-
     /// Round-1 review finding 1 (BLOCKER): a movement protocol is runnable
     /// as cadence-only without a Progressor (`GuidedForcePolicy` returns
     /// `.allowed` with `sensorConnected: false`, and the always-available
@@ -801,14 +800,11 @@ struct ForceGaugeView: View {
     /// sensor (a static hold) or the protocol can't run on watch at all.
     @ViewBuilder
     private var readyCard: some View {
-        if visibleStatus == .connected && tindeq.handsFreeRequested {
+        if visibleStatus == .connected {
+            // #683: connecting a gauge ALWAYS arms free hold, so the ready
+            // state is a passive status card ("pull to start"), never an
+            // arm button or a tap-to-start toggle.
             armedReadyCard
-        } else if visibleStatus == .connected && !tindeq.preferTapToStart {
-            // SL-584: hands-free is the default start affordance once
-            // connected; the toggle below the card flips to tap-to-start.
-            armHandsFreeCard
-        } else if visibleStatus == .connected {
-            startReadyCard
         } else if isPresentingConnecting {
             connectingCard
         } else if selectedStartEligibility == .allowed && !noExerciseSelected {
@@ -826,35 +822,10 @@ struct ForceGaugeView: View {
 
     /// SL-585: `""` IS the free-hold selection — there is no refused
     /// "Pick an exercise" state any more. With nothing selected the primary
-    /// card arms (or starts) an untagged free hold; picking a chip switches
-    /// to the tagged flow.
+    /// card is the always-armed untagged free hold; picking a chip switches
+    /// to the tagged flow and reveals the guided-protocol start.
     private var noExerciseSelected: Bool {
         tag.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-
-    /// The default connected primary (SL-584): tap ARMS hands-free — the
-    /// explicit tap the accidental-start guard requires; auto-connect never
-    /// arms. With no exercise picked this is the free-hold primary (SL-585):
-    /// same arm, untagged rep — the dead-end refusal is gone.
-    private var armHandsFreeCard: some View {
-        let refused = tindeq.saving
-        return Button { tindeq.armHandsFree() } label: {
-            readyCardBody(
-                token: WatchDesignTokens.primary,
-                status: noExerciseSelected ? "Arm hands-free · Free hold" : "Arm hands-free",
-                symbol: "hand.raised.fill"
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(refused)
-        .opacity(refused ? 0.52 : 1)
-        .accessibilityLabel("Arm hands-free")
-        .accessibilityHint(
-            noExerciseSelected
-                ? "Arms the gauge to start an untagged free hold when you pull"
-                : "Arms the gauge to start when you pull"
-        )
-        .accessibilityIdentifier("force-arm-hands-free")
     }
 
     /// Auto-connect in flight (first ~8s): passive, not a control.
@@ -864,21 +835,17 @@ struct ForceGaugeView: View {
             .accessibilityIdentifier("force-connecting-card")
     }
 
-    /// Tap-to-start mode. With an exercise selected this starts the guided
-    /// protocol exactly as shipped; with nothing selected (SL-585, only
-    /// reachable while connected) the tap starts a manual untagged free
-    /// hold — `tindeq.start()`, the same action the below-the-fold Free
-    /// hold button has always run, with the same `""` tag semantics.
+    /// Disconnected cadence-only Start: a movement protocol is runnable
+    /// without a Progressor, so this card remains the primary when a device
+    /// never answered (or none was sought). #683: connected free hold is
+    /// always armed, so this Start card is only ever the disconnected
+    /// cadence-only path — it enters the guided protocol, not a free hold.
     private var startReadyCard: some View {
         let eligible = !tindeq.saving
             && !guidedForceRunner.isActive
-            && (noExerciseSelected || selectedStartEligibility == .allowed)
+            && selectedStartEligibility == .allowed
         return Button {
-            if noExerciseSelected {
-                tindeq.start()
-            } else {
-                startSelectedProtocol()
-            }
+            startSelectedProtocol()
         } label: {
             readyCardBody(
                 token: WatchDesignTokens.primary,
@@ -889,23 +856,23 @@ struct ForceGaugeView: View {
         .buttonStyle(.plain)
         .disabled(!eligible)
         .opacity(eligible ? 1 : 0.52)
-        .accessibilityLabel(noExerciseSelected ? "Start free hold" : "Start selected protocol")
-        .accessibilityHint(noExerciseSelected ? "Starts one untimed free hold" : startHint)
+        .accessibilityLabel("Start selected protocol")
+        .accessibilityHint(startHint)
         .accessibilityIdentifier("force-start-selected")
     }
 
+    /// #683: the connected resting state — always-armed free hold, so this
+    /// card is a passive status (pull-to-start), not a dismissible chip.
+    /// The "Armed" state lives on the gauge itself; there is no longer a
+    /// tap-to-disarm control to remove.
     private var armedReadyCard: some View {
-        Button { tindeq.cancelHandsFree() } label: {
-            readyCardBody(
-                token: WatchDesignTokens.success,
-                status: tindeq.saving ? "Saving…" : "Armed — pull to start"
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(tindeq.saving)
-        .accessibilityLabel("Hands-free mode")
-        .accessibilityHint("Tap to disarm hands-free mode")
-        .accessibilityIdentifier("force-hands-free-armed")
+        readyCardBody(
+            token: WatchDesignTokens.primary,
+            status: "Armed — pull to start",
+            symbol: "hand.raised.fill"
+        )
+        .accessibilityLabel("Free hold, armed")
+        .accessibilityIdentifier("force-armed-ready")
     }
 
     private var connectReadyCard: some View {
@@ -979,21 +946,6 @@ struct ForceGaugeView: View {
         }
     }
 
-    /// The clear, explicit manual fallback (#537 AC-3) for the TAGGED flow —
-    /// with an exercise selected, this starts a tagged untimed hold beside
-    /// the guided primary. With nothing selected it is hidden (SL-585): the
-    /// primary card IS free hold then, and duplicating it below the fold
-    /// would be noise. The old empty-tag disable is gone with the refusal
-    /// state itself.
-    private var freeHoldButton: some View {
-        Button("Free hold") { tindeq.start() }
-            .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
-            .disabled(tindeq.saving)
-            .accessibilityLabel("Free hold")
-            .accessibilityHint("Starts one untimed force hold")
-            .accessibilityIdentifier("force-free-hold")
-    }
-
     private func startSelectedProtocol() {
         guidedForceRunner.start(
             protocolValue: protocolCatalog.selected,
@@ -1014,17 +966,24 @@ struct ForceGaugeView: View {
         }
     }
 
-    /// Everything below the no-scroll primary path: Free hold first (the
-    /// manual fallback, approved design Q6), then warnings and hints.
-    /// Reachable by scrolling, same acceptance the pre-#537 design already
-    /// gave its secondary controls. SL-584 removals: the "Arm hands-free"
-    /// button (arming IS the primary card now), the passive connection
-    /// footer (status lives in the connection row's pill), and the separate
-    /// disconnect (unified into the finish flag).
+    /// Everything below the no-scroll primary path: the explicit guided
+    /// protocol start (while connected), then warnings and hints. Reachable
+    /// by scrolling, same acceptance the pre-#537 design already gave its
+    /// secondary controls. #683: the arm and tap-to-start controls are gone —
+    /// connecting always arms free hold, so the only connected secondary
+    /// action is entering a guided protocol.
     @ViewBuilder
     private var secondaryContent: some View {
-        if visibleStatus == .connected && !tindeq.handsFreeRequested && !noExerciseSelected {
-            freeHoldButton
+        // #683: with free hold always-armed on connect, a guided protocol is
+        // an explicit secondary action the user enters (and then exits) — a
+        // "screen", not the resting state. This button renders even while
+        // hands-free is armed (the old `!tindeq.handsFreeRequested` gate is
+        // dropped) so guided remains reachable once the gauge is connected.
+        if visibleStatus == .connected,
+           !noExerciseSelected,
+           !guidedForceRunner.isActive,
+           selectedStartEligibility == .allowed {
+            guidedStartButton
         }
 
         if let error = guidedForceRunner.errorMessage {
@@ -1072,6 +1031,31 @@ struct ForceGaugeView: View {
                 action: { loadTags() }
             )
         }
+    }
+
+    /// The connected secondary action that enters the guided protocol screen.
+    /// While the runner is active the Force screen is replaced by
+    /// `GuidedForceRunnerView` (RootView), which suspends free hold entirely.
+    private var guidedStartButton: some View {
+        Button {
+            startSelectedProtocol()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13, weight: .bold))
+                Text(startHint)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.primary))
+        .disabled(tindeq.saving)
+        .accessibilityLabel("Start selected protocol")
+        .accessibilityHint(startHint)
+        .accessibilityIdentifier("force-guided-start")
     }
 
     @ViewBuilder
@@ -1177,7 +1161,7 @@ struct ForceGaugeView: View {
                 .minimumScaleFactor(0.7)
         }
 
-        // The live screen is intentionally non-scrolling so Stop & Save can
+        // The live screen is intentionally non-scrolling so "Save now" can
         // never move out of reach mid-pull. Larger watches have room for a
         // dedicated trace; 40mm renders the same samples behind the readout.
         if !isMicroSetupSize(availableSize) {
@@ -1185,7 +1169,9 @@ struct ForceGaugeView: View {
                 .frame(minHeight: 28, maxHeight: 50)
         }
 
-        Button("Stop & Save") { tindeq.stopAndSave(reason: .userTapped) }
+        // #683: the old save control is demoted to "Save now" — it ends ONE
+        // rep, not the session; release-to-slack still saves + re-arms.
+        Button("Save now") { tindeq.stopAndSave(reason: .userTapped) }
             .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.primary))
             .accessibilityIdentifier("force-stop-save")
     }

@@ -474,13 +474,12 @@ final class SendmeterWatchScreenshots: XCTestCase {
         app.terminate()
     }
 
-    /// SL-584: auto-connect on entry, driven end to end with the #567 fake
+    /// #683: auto-connect on entry, driven end to end with the #567 fake
     /// transport. The Home `status` fixture leaves the Force screen
     /// un-posed, so navigating there runs the REAL entry path: the pill
-    /// must reach Connected without any tap, nothing may arm on its own
-    /// (the explicit-tap guard), and the primary card must sit visibly
-    /// refused on "Pick an exercise" because nothing is pre-selected on
-    /// entry (user decision).
+    /// must reach Connected without any tap, and — with the Arm button gone —
+    /// connecting ALWAYS arms free hold. With nothing pre-selected on entry
+    /// it is the untagged free-hold resting state (no refusal dead-end).
     func testForceAutoConnectsWithFakeTransport() throws {
         let app = launchFixture("status", extraArguments: ["-sendmeter-fake-tindeq", "pull"])
         defer { app.terminate() }
@@ -493,26 +492,20 @@ final class SendmeterWatchScreenshots: XCTestCase {
             connectedPill.waitForExistence(timeout: 10),
             "Force must auto-initiate the connection on entry when a device is available"
         )
-        XCTAssertFalse(
-            app.buttons["force-hands-free-armed"].exists,
-            "auto-connect must never arm hands-free — arming stays behind its explicit tap"
-        )
-        // SL-585: this unauthenticated launch IS the empty-account state (no
-        // exercises exist, nothing selected) — and it must have a live
-        // primary with zero scrolling: the card is the free-hold arm, fully
-        // enabled. The old "refused until an exercise is picked" dead-end is
-        // gone by design (#591).
-        let arm = app.buttons["force-arm-hands-free"]
-        XCTAssertTrue(arm.waitForExistence(timeout: 5))
+        // Always-armed: the ready card is the passive armed state, not an arm
+        // or disarm button. The deleted arm/chip controls must not exist.
+        let armed = app.descendants(matching: .any)
+            .matching(identifier: "force-armed-ready").firstMatch
+        XCTAssertTrue(armed.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["force-arm-hands-free"].exists, "the Arm button must be gone")
+        XCTAssertFalse(app.buttons["force-hands-free-armed"].exists, "the Hands-free mode chip must be gone")
+        XCTAssertFalse(app.buttons["force-free-hold"].exists, "the Free hold button must be gone")
+        // The persistent mode header narrates the resting state.
         XCTAssertTrue(
-            arm.isEnabled,
-            "with nothing selected the primary must be the ENABLED free-hold arm — no dead-end refusal (#591)"
+            app.staticTexts["Free hold · armed"].waitForExistence(timeout: 5),
+            "the persistent header must read as the armed free hold"
         )
-        assertFullyVisible(arm, in: app, fixture: "force-auto-connect")
-        XCTAssertTrue(
-            app.staticTexts["Arm hands-free · Free hold"].waitForExistence(timeout: 5),
-            "the empty-selection primary must read as a free-hold start"
-        )
+        assertFullyVisible(armed, in: app, fixture: "force-auto-connect")
 
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "force-auto-connect"
@@ -537,25 +530,24 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
         // SL-584: the one-page primary path is the selector row (exercise
         // chips + L|R + settings icon), the connection row (pill + unified
-        // finish flag) and the ready card — hands-free arm by default for
-        // the connected fixture. Free hold and the mode toggle live below
-        // the fold by design (approved layout); the old separate disconnect
-        // control no longer exists at all.
+        // finish flag) and the ready card. #683: connecting always arms free
+        // hold, so the connected ready card is the armed state; the guided
+        // protocol start lives below the fold by design. The old separate
+        // disconnect control no longer exists at all.
         let context = app.buttons["force-context-button"]
         let chip = app.buttons["force-quick-tag-Half crimp"]
         let sideLeft = app.buttons["force-main-side-left"]
         let sideRight = app.buttons["force-main-side-right"]
         let finish = app.buttons["force-session-finish"]
-        let arm = app.buttons["force-arm-hands-free"]
+        let armed = app.descendants(matching: .any)
+            .matching(identifier: "force-armed-ready").firstMatch
 
-        let fullTargets = [context, chip, finish, arm]
+        let fullTargets = [context, chip, finish, armed]
         let sideSegments = [sideLeft, sideRight]
-        // A future eligibility regression (arm refused, `.opacity(0.52)`)
-        // would otherwise fail the pixel scan below with a colour-shaped
-        // error pointing at the wrong cause — the fixture selects a tag, so
-        // arming must be offered for the scan to mean anything.
-        XCTAssertTrue(arm.waitForExistence(timeout: 10))
-        XCTAssertTrue(arm.isEnabled, "Arm must be enabled for the pixel scan below to mean anything")
+        // #683: the primary surface is the always-armed free-hold card — the
+        // pixel scan below depends on it being present (a regression that
+        // dropped the primary card would fail the colour scan).
+        XCTAssertTrue(armed.waitForExistence(timeout: 10))
         var validatedPNGData: Data?
         for _ in 0..<3 {
             // A watch can remain in reduced-luminance/AOD after the navigation
@@ -591,15 +583,15 @@ final class SendmeterWatchScreenshots: XCTestCase {
             // (icon over the readout's kg unit) is impossible when their
             // frames are disjoint rows.
             XCTAssertLessThanOrEqual(
-                context.frame.maxY, arm.frame.minY + 0.5,
+                context.frame.maxY, armed.frame.minY + 0.5,
                 "the selector row must sit fully above the ready card"
             )
             XCTAssertFalse(
-                context.frame.intersects(arm.frame),
+                context.frame.intersects(armed.frame),
                 "the settings icon must never overlap the ready card/readout again (#589)"
             )
             XCTAssertLessThanOrEqual(
-                finish.frame.maxY, arm.frame.minY + 0.5,
+                finish.frame.maxY, armed.frame.minY + 0.5,
                 "the connection row must sit fully above the ready card"
             )
             // The chips carry the selection state the card gates on.
@@ -643,11 +635,10 @@ final class SendmeterWatchScreenshots: XCTestCase {
         capture.lifetime = .keepAlways
         add(capture)
 
-        // SL-585 (#591): tapping the SELECTED chip deselects — the card must
-        // switch live to the enabled free-hold primary (no refused state
-        // exists any more), the below-the-fold Free hold button must vanish
-        // (it would duplicate the primary), and re-selecting must restore
-        // the tagged flow exactly as shipped.
+        // #683: tapping the SELECTED chip deselects — the armed free-hold card
+        // stays (it is the always-armed resting state, so it never swaps), but
+        // the guided-protocol start (a tagged-flow secondary action) must
+        // disappear with nothing selected, and re-selecting restores it.
         XCTAssertTrue(
             waitForAccessibilityValue(chip, expected: "Selected"),
             "the fixture's chip must start selected"
@@ -658,13 +649,16 @@ final class SendmeterWatchScreenshots: XCTestCase {
             "tapping the selected chip must deselect it"
         )
         XCTAssertTrue(
-            app.staticTexts["Arm hands-free · Free hold"].waitForExistence(timeout: 5),
-            "deselecting must switch the primary to the free-hold arm"
+            app.staticTexts["Free hold · armed"].waitForExistence(timeout: 5),
+            "deselecting must keep the armed free-hold primary (it never swaps)"
         )
-        XCTAssertTrue(arm.isEnabled, "the free-hold primary must be enabled with nothing selected")
         XCTAssertFalse(
-            app.buttons["force-free-hold"].exists,
-            "the below-the-fold Free hold duplicate must be hidden while the primary IS free hold"
+            app.buttons["force-guided-start"].exists,
+            "the guided-protocol start must hide while nothing is selected"
+        )
+        XCTAssertFalse(
+            app.buttons["force-arm-hands-free"].exists,
+            "the Arm button must be gone"
         )
         chip.tap()
         XCTAssertTrue(
@@ -672,8 +666,8 @@ final class SendmeterWatchScreenshots: XCTestCase {
             "re-tapping must restore the tagged selection"
         )
         XCTAssertTrue(
-            app.staticTexts["Arm hands-free"].waitForExistence(timeout: 5),
-            "re-selecting must restore the tagged arm primary"
+            app.buttons["force-guided-start"].waitForExistence(timeout: 5),
+            "re-selecting must restore the guided-protocol start"
         )
     }
 
@@ -923,7 +917,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
             // presented by the page itself (pill + passive connecting card).
             ("forceConnecting", "force-connecting-card"),
             ("forceConnected", "force-session-finish"),
-            ("forceLive", "Stop & Save"),
+            ("forceLive", "force-stop-save"),
             ("forceSaved", "watch-banner-success"),
             ("forceError", "watch-banner-danger"),
         ]

@@ -34,14 +34,10 @@ final class TindeqManager: NSObject {
     var elapsedMs: Double = 0
     private(set) var handsFreeState = idleHandsFreeForce()
     private(set) var handsFreeRequested = false
-    /// SL-584: which start affordance the Force ready card presents while
-    /// connected — hands-free arm (default) or the classic tap-to-start.
-    /// Deliberately per-launch and NOT persisted (approved design Q3):
-    /// hands-free is the decided default flow, and a persisted tap
-    /// preference would silently defeat it on every future launch. Lives
-    /// here rather than in view `@State` so the choice survives the Force
-    /// view being popped and recreated within one app launch.
-    var preferTapToStart = false
+    /// #683: while a guided Force protocol is running, free-hold hands-free is
+    /// suspended entirely — a pull must never start an untimed rep beside the
+    /// guided set. `GuidedForceRunner` flips this around its active window.
+    private(set) var freeHoldSuspended = false
     private(set) var saving = false
     private(set) var savedMsg: String?
 
@@ -253,6 +249,11 @@ final class TindeqManager: NSObject {
             self.lowBattery = false
             self.write(.sampleBattery)
             self.pushForceBeat()
+            // #683: connecting a gauge ALWAYS arms free hold — the "Arm
+            // hands-free" button is gone, so this auto-arm is the resting
+            // state. `armHandsFree()` no-ops if a guided run is active
+            // (`freeHoldSuspended`) or the stream is already armed.
+            self.armHandsFree()
         }
         self.fakeTransport?.onNotification = { [weak self] data in
             self?.handleNotification(data)
@@ -323,7 +324,7 @@ final class TindeqManager: NSObject {
     }
 
     /// Fold one just-saved rep into the session's W' depletion (#280). Called
-    /// from every path that persists a rep — the Stop & Save button and the
+    /// from every path that persists a rep — the Save now button and the
     /// disconnect salvage — so the prediction covers the whole session.
     func recordRepDepletion(peakKg: Double, durationMs: Int, tag: String) {
         let curve = tagCurves[tag]
@@ -631,7 +632,10 @@ final class TindeqManager: NSObject {
         // the manual `start()` path never required a tag). With no exercise
         // selected, the Force page's primary card arms an untagged free
         // hold; picking an exercise later tags subsequent reps as always.
-        guard status == .connected, !handsFreeRequested, !saving,
+        // #683: `freeHoldSuspended` blocks an auto-arm from landing while a
+        // guided protocol owns the gauge — the always-armed free hold is the
+        // resting state, not a state that can interrupt a guided set.
+        guard status == .connected, !handsFreeRequested, !saving, !freeHoldSuspended,
               guidedClaims.active == nil else { return }
         captureManualSessionOwnerIfNeeded()
         savedMsgGeneration += 1
@@ -646,8 +650,51 @@ final class TindeqManager: NSObject {
         pushForceBeat() // armed intentionally mirrors as "connected"
     }
 
+    /// #683: entering a guided Force protocol suspends free-hold hands-free
+    /// entirely; leaving the run restores the always-armed resting state.
+    /// `freeHoldSuspended` is checked by `armHandsFree()` so a stray pull
+    /// during a guided set can never start an untimed rep. Calling this with
+    /// `true` disarms any armed wait (it never discards an active recording);
+    /// calling with `false` re-arms only when the gauge is still connected.
+    func setFreeHoldSuspended(_ suspended: Bool) {
+        freeHoldSuspended = suspended
+        if suspended {
+            cancelHandsFree()
+        } else if status == .connected {
+            // #683 review blocker (AC #4): returning from a guided protocol is
+            // NOT a free-hold release — a guided static hold ends by planned
+            // duration with no proof of slack, so re-arming straight to
+            // `.armed(aboveSinceMs: nil)` (via `armHandsFree()`) would let the
+            // resumed stream read ~25 kg, start the `startStableMs` window and
+            // begin a phantom second rep from the same continuous load. Go
+            // through `.waitingForSlack` instead (observe ≤ stopKg first),
+            // mirroring the `.userTapped`/`.staticLoad` branch of
+            // `rearmHandsFreeAfterSave` rather than calling `armHandsFree()`.
+            rearmHandsFreeAfterGuidedExit()
+        }
+    }
+
+    /// #683 review blocker (AC #4): the slack-aware re-arm used when a guided
+    /// protocol ends while the gauge is still connected. The stream was
+    /// stopped at the guided save (`stopTransport` wrote `.stop`), so restart
+    /// it live, set the machine to `.waitingForSlack` (the Core state that
+    /// demands an observed ≤ stopKg sample before the next pull is
+    /// recognized), and clear the guided samples so they cannot leak into the
+    /// next free-hold rep. The disconnect / account-change paths land here
+    /// with `status == .idle` and are correctly inert (the caller's guard).
+    private func rearmHandsFreeAfterGuidedExit() {
+        handsFreeRequested = true
+        handsFreeState = rearmedHandsFreeForce() // .waitingForSlack: needs slack proof
+        armedStreamIdleBudget = ArmedStreamIdleBudget()
+        repClaims.discard()
+        resetRecordingBuffer()
+        write(.startWeight)
+        scheduleArmTimeout()
+        pushForceBeat()
+    }
+
     /// Cancels an armed wait or prevents a post-save re-arm. It never discards
-    /// an active recording; the measuring screen owns Stop & Save.
+    /// an active recording; the measuring screen owns Save now.
     func cancelHandsFree() {
         let wasArmedStream: Bool
         switch handsFreeState {
@@ -667,7 +714,7 @@ final class TindeqManager: NSObject {
     }
 
     /// Stop and persistence share one synchronous claim. Automatic release,
-    /// the Stop & Save button and the 10-minute cap all enter here; only the
+    /// the Save now button and the 10-minute cap all enter here; only the
     /// first can take `repClaims.active`, and that happens before the
     /// Task/await below. `reason` has no default on purpose (#503): only
     /// `.released` carries a trim timestamp and re-arms without fresh slack,
@@ -677,7 +724,7 @@ final class TindeqManager: NSObject {
         guard let claim = repClaims.claimStop() else { return }
         // #681: an auto-release (.released) has already proved stopGraceMs of
         // slack, so it can stop the transport stream outright and re-arm
-        // straight to armed. A tap ("Stop & Save"), the 10-minute cap, or a
+        // straight to armed. A tap ("Save now"), the 10-minute cap, or a
         // `.staticLoad` termination (#682) re-arms through `waitingForSlack`,
         // which must OBSERVE a sample at/below stopKg before the next pull can
         // be recognized. If the user's release-to-slack edge falls inside the
@@ -806,10 +853,16 @@ final class TindeqManager: NSObject {
         // synchronous event list (especially with zero rest). The first row
         // is already claimed and has its own durable id/group; blocking the
         // next BLE start here would leave Core's next boundary unsaved.
-        guard status == .connected, !handsFreeRequested,
+        guard status == .connected,
               repClaims.active == nil, !context.tag.isEmpty,
               guidedClaims.begin(context: context) != nil
         else { return false }
+        // #683 review blocker: connecting always arms the resting hands-free
+        // wait now, so the guided entry must preempt it rather than require it
+        // already off. `cancelHandsFree()` is idempotent and never touches
+        // `freeHoldSuspended`, so the guided runner still owns the suspend flag
+        // and the guided-exit re-arm contract is unchanged.
+        cancelHandsFree()
         savedMsgGeneration += 1
         savedMsg = nil
         resetRecordingBuffer()
@@ -1653,7 +1706,7 @@ extension TindeqManager: CBCentralManagerDelegate {
         // surfaces the log prompt (mirrors the web status→idle effect). SL-58 #5.
         // Issue #151: a drop mid-hold used to silently lose the in-flight rep —
         // the samples buffer survived but nothing wrote it, and the next
-        // start() wiped it. Salvage it like a manual Stop & Save when there's
+        // start() wiped it. Salvage it like a manual Save now when there's
         // enough of a hold to be worth keeping; otherwise fall back to the
         // existing drop-with-saved-reps prompt unchanged.
         if shouldSalvageGuidedForce(
@@ -1768,7 +1821,7 @@ extension TindeqManager: CBCentralManagerDelegate {
         // queued. The stream is already back to idle (the transport is gone;
         // `clearHandsFreeAfterTransportLoss` reset it), so a discard re-arms
         // cleanly on the next connect with nothing further to do. Manual
-        // interrupted reps (a manual Stop & Save drop) keep their existing
+        // interrupted reps (a manual Save now drop) keep their existing
         // behavior and are never gated.
         if wasHandsFree,
            recordingVerdict(
@@ -1828,6 +1881,8 @@ extension TindeqManager: CBPeripheralDelegate {
             status = .connected
             write(.sampleBattery)
             pushForceBeat()
+            // #683: see auto-arm note in the fake-transport connect handler.
+            armHandsFree()
         }
     }
 
