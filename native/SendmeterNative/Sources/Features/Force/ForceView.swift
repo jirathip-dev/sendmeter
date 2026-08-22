@@ -1156,6 +1156,11 @@ struct ForceView: View {
     /// so exactly one suggested mode (zone quality OR maintenance) can be
     /// armed at a time, mutually exclusive with a saved preset.
     @State private var armedMaintenanceZone: RecordedZone?
+    /// #711: the transient resisted-movement (reverse-action) preset armed by
+    /// the recording context's MOVEMENT choice. Built by `ZoneMix.movementPreset`
+    /// and never persisted — it is mutually exclusive with Free / Suggested /
+    /// Saved, exactly like the web's "Movement Starter" selection.
+    @State private var movementArmedPreset: TindeqPreset?
 
     private var side: TindeqSide {
         get { TindeqSide(rawValue: sideValue) ?? .unspecified }
@@ -1198,12 +1203,13 @@ struct ForceView: View {
         if let selectedPresetID {
             return model.presets.first(where: { $0.id == selectedPresetID })
         }
-        return zoneArmedPreset
+        return zoneArmedPreset ?? movementArmedPreset
     }
 
-    /// The single-armed selection for the metadata card (#710): free hold, a
-    /// suggested zone/maintenance protocol, or a saved user preset. Exactly one
-    /// mode is armed at a time (web `withZoneSelected`/`withPresetSelected`).
+    /// The single-armed selection for the metadata card (#710/#711): free hold,
+    /// a suggested zone/maintenance protocol, the resisted-movement suggestion,
+    /// or a saved user preset. Exactly one mode is armed at a time (web
+    /// `withZoneSelected`/`withPresetSelected`).
     private var selectedSelection: ForceProtocolSelection {
         if let selectedPresetID {
             return .savedPreset(selectedPresetID)
@@ -1214,7 +1220,17 @@ struct ForceView: View {
         if let armedMaintenanceZone {
             return .suggestedMaintenance(armedMaintenanceZone)
         }
+        if movementArmedPreset != nil {
+            return .movement
+        }
         return .free
+    }
+
+    /// #711: the measurement mode surfaced in the recording context (web
+    /// `setupMode` / `forceMeasurementMode`). It is a *presentation* of the
+    /// armed protocol's modality, not an independent setting.
+    private var measurementMode: ForceMeasurementMode {
+        ForceMeasurementMode(protocolMode: selectedPreset?.protocolMode ?? .hold)
     }
 
     /// True when the selected guided target is a reverse-action (movement)
@@ -1310,12 +1326,12 @@ struct ForceView: View {
         })
     }
 
-    /// #653/#710: apply a single-armed selection. Focus Next (recommended
+    /// #653/#710/#711: apply a single-armed selection. Focus Next (recommended
     /// zone) and the RECORDING CONTEXT picker both route through here, so the
-    /// mutually-exclusive Free / Suggested / Saved invariant is decided by the
-    /// pure reducer `ForceProtocolPicker.next` and applied in one place.
-    /// Arming is just a selection — the connection/unsaved-recording guard
-    /// belongs to Start, not the pick.
+    /// mutually-exclusive Free / Suggested / Movement / Saved invariant is
+    /// decided by the pure reducer `ForceProtocolPicker.next` and applied in
+    /// one place. Arming is just a selection — the connection/unsaved-recording
+    /// guard belongs to Start, not the pick.
     private func applySelection(_ selection: ForceProtocolSelection) {
         guard !guidedSessionIsActive, !guidedLaunchInFlight else { return }
         switch selection {
@@ -1324,9 +1340,11 @@ struct ForceView: View {
             zoneArmedPreset = nil
             armedZoneQuality = nil
             armedMaintenanceZone = nil
+            movementArmedPreset = nil
         case .suggestedZone(let quality):
             zoneArmedPreset = ZoneMix.zonePreset(for: quality)
             armedZoneQuality = quality
+            movementArmedPreset = nil
             armedMaintenanceZone = nil
             selectedPresetID = nil
         case .suggestedMaintenance(let zone):
@@ -1341,11 +1359,22 @@ struct ForceView: View {
             zoneArmedPreset = preset
             armedZoneQuality = nil
             armedMaintenanceZone = zone
+            movementArmedPreset = nil
+            selectedPresetID = nil
+        case .movement:
+            // #711: arming MOVEMENT builds the transient reverse-action
+            // "Movement Starter" preset, which `launch` runs as a
+            // reverse-action guided set (web `forceProtocolMode("movement")`).
+            movementArmedPreset = ZoneMix.movementPreset()
+            zoneArmedPreset = nil
+            armedZoneQuality = nil
+            armedMaintenanceZone = nil
             selectedPresetID = nil
         case .savedPreset(let id):
             zoneArmedPreset = nil
             armedZoneQuality = nil
             armedMaintenanceZone = nil
+            movementArmedPreset = nil
             selectedPresetID = id
         }
     }
@@ -1355,6 +1384,83 @@ struct ForceView: View {
     /// recommended zone and any saved preset are mutually exclusive.
     private func armRecommendedZone(_ zone: ZoneQuality) {
         applySelection(.suggestedZone(zone))
+    }
+
+    /// #711: the RECORDING CONTEXT target-tap. Extracted out of the SwiftUI
+    /// `onSelectTarget` closure — the combined type-check of that modifier
+    /// chain was too expensive to compile in reasonable time on CI. Applies
+    /// the pure single-armed reducer (`ForceProtocolPicker.next`) then
+    /// republishes the free-pull context, exactly as the previous inline
+    /// closure did.
+    private func handleSelectTarget(_ tapped: ForceProtocolSelection) {
+        applySelection(
+            ForceProtocolPicker.next(
+                current: selectedSelection,
+                tapped: tapped
+            )
+        )
+        publishFreePullContext()
+    }
+
+    /// #711: the recording-context card. Extracted from the `body` builder so
+    /// the constraint solver type-checks it as its own `@ViewBuilder`
+    /// sub-expression; the heavy closure/ternary/filter/`&&`/`||` arguments are
+    /// hoisted into distinct typed `let`s, and `ForceMetadataCard` carries an
+    /// explicit fully-typed `init`, together anchoring the solver (CI "unable
+    /// to type-check this expression in reasonable time").
+    @ViewBuilder
+    private var recordingContextCard: some View {
+        let sideBinding: Binding<TindeqSide> =
+            Binding(get: { side }, set: { side = $0 })
+        let zoneBinding: Binding<RecordedZone?> =
+            Binding(get: { zone }, set: { zone = $0 })
+        let movementSummary: String? = measurementMode == .movement
+            ? selectedPreset.map { protocolSummary($0) }
+            : nil
+        let contextRecordings: [TindeqRecording] =
+            model.recordings.filter { $0.tag == tag }
+        let showBalanceHint: Bool =
+            !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !isReverseActionTarget
+        let balanceIsLocked: Bool =
+            model.tindeq.status == .measuring
+            || model.handsFree.isArmed
+            || model.handsFree.isMeasuring
+            || guidedControlsLocked
+
+        ForceMetadataCard(
+            tag: $tag,
+            side: sideBinding,
+            sideMode: sideMode,
+            zone: zoneBinding,
+            selectedTarget: selectedSelection,
+            onSelectTarget: handleSelectTarget,
+            presets: model.presets,
+            knownTags: model.visibleTagNames,
+            selectedName: selectedPreset?.name,
+            selectedSummary: movementSummary,
+            maintenanceAvailable: armableMaintenanceZones,
+            recordings: contextRecordings,
+            exercise: tag,
+            curveInput: zoneCurve,
+            showsBalance: showBalanceHint,
+            balanceLocked: balanceIsLocked,
+            onPickFocusNext: armRecommendedZone,
+            measurementMode: measurementMode
+        )
+        .disabled(guidedControlsLocked)
+    }
+
+    /// #711: the armed preset's concise summary (web `protocolSummary`).
+    /// Reverse Action is presented in movement terms (concentric / eccentric)
+    /// rather than the internal out/return direction names.
+    private func protocolSummary(_ preset: TindeqPreset) -> String {
+        let repsAndSets = "\(preset.repetitions) rep\(preset.repetitions == 1 ? "" : "s") × \(preset.sets) set\(preset.sets == 1 ? "" : "s")"
+        let rest = preset.sets > 1 ? " · \(preset.restBetweenSetsSeconds)s rest" : ""
+        if preset.protocolMode == .reverseAction {
+            return "\(preset.cadenceOutSeconds.formatted())s \(MovementTerminology.concentric.lowercased()) · \(preset.cadenceReturnSeconds.formatted())s \(MovementTerminology.eccentric.lowercased()) · \(repsAndSets)\(rest)"
+        }
+        return "\(preset.holdSeconds)s hold · \(repsAndSets)\(rest)"
     }
 
     var body: some View {
@@ -1410,42 +1516,12 @@ struct ForceView: View {
                         discardRecovered: { model.tindeq.clearInterruptedRecording() }
                     )
 
-                    ForceMetadataCard(
-                        tag: $tag,
-                        side: Binding(get: { side }, set: { side = $0 }),
-                        sideMode: sideMode,
-                        zone: Binding(get: { zone }, set: { zone = $0 }),
-                        selectedTarget: selectedSelection,
-                        onSelectTarget: { tapped in
-                            // #710: Free hold / suggested zone / suggested
-                            // maintenance / saved preset are mutually
-                            // exclusive (web `withZoneSelected` /
-                            // `withPresetSelected`, #296). The pure reducer
-                            // decides the single-armed result; `applySelection`
-                            // writes it to the four selection `@State`s.
-                            applySelection(
-                                ForceProtocolPicker.next(
-                                    current: selectedSelection,
-                                    tapped: tapped
-                                )
-                            )
-                            publishFreePullContext()
-                        },
-                        presets: model.presets,
-                        knownTags: model.visibleTagNames,
-                        selectedName: selectedPreset?.name,
-                        maintenanceAvailable: armableMaintenanceZones,
-                        recordings: model.recordings.filter { $0.tag == tag },
-                        exercise: tag,
-                        curveInput: zoneCurve,
-                        showsBalance: !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isReverseActionTarget,
-                        balanceLocked: model.tindeq.status == .measuring
-                            || model.handsFree.isArmed
-                            || model.handsFree.isMeasuring
-                            || guidedControlsLocked,
-                        onPickFocusNext: armRecommendedZone
-                    )
-                    .disabled(guidedControlsLocked)
+                    // #711: the recording-context card. Extracted into a
+                    // dedicated `@ViewBuilder` sub-expression (plus an explicit
+                    // fully-typed `init` below) so the constraint solver
+                    // type-checks it in isolation (CI "unable to type-check
+                    // this expression in reasonable time").
+                    recordingContextCard
 
                     ForceProgressCardBoundary(
                         recordings: model.recordings,
@@ -1548,6 +1624,7 @@ struct ForceView: View {
             .onChange(of: zone) { _ in publishFreePullContext() }
             .onChange(of: selectedPresetID) { _ in publishFreePullContext() }
             .onChange(of: zoneArmedPreset) { _ in publishFreePullContext() }
+            .onChange(of: movementArmedPreset) { _ in publishFreePullContext() }
             .onChange(of: selectedTargetPlan) { _ in publishFreePullContext() }
             .onChange(of: handsFreeEnabled) { enabled in
                 if !enabled, !guidedControlsLocked { model.handsFree.disarm() }
@@ -1767,6 +1844,7 @@ struct ForceView: View {
         // the zone's target as soon as it is picked, not after Start.
         let presetKey = selectedPresetID?.uuidString
             ?? zoneArmedPreset.map { "zone:\($0.name)" }
+            ?? (movementArmedPreset != nil ? "movement" : nil)
             ?? "free"
         return "\(presetKey)|\(tag)|\(side.rawValue)|\(recordingFingerprint)"
     }
@@ -2270,8 +2348,9 @@ private struct ForceMetadataCard: View {
     let sideMode: ExerciseSideMode
     @Binding var zone: RecordedZone?
     /// #710: the single-armed selection — `.free`, a suggested zone /
-    /// maintenance protocol, or a saved user preset. Exactly one is active at a
-    /// time (web `withZoneSelected`/`withPresetSelected`).
+    /// maintenance protocol, the resisted-movement suggestion, or a saved user
+    /// preset. Exactly one is active at a time (web
+    /// `withZoneSelected`/`withPresetSelected`).
     let selectedTarget: ForceProtocolSelection
     /// Called with the tapped target; ForceView runs the pure reducer
     /// `ForceProtocolPicker.next` and applies the single-armed result.
@@ -2284,6 +2363,11 @@ private struct ForceMetadataCard: View {
     /// #710: the armed selection's display name (e.g. "Power" / "Warm-up" /
     /// a saved preset's name), shown as a "Selected:" line.
     let selectedName: String?
+    /// #711: the armed protocol's concise summary (web `protocolSummary`).
+    /// The parent supplies it only for a MOVEMENT (reverse-action) selection so
+    /// the recording context can present the concentric / eccentric cadence
+    /// where it applies, without changing the static summary line.
+    let selectedSummary: String?
     /// #710: the maintenance zones whose guided protocol has a usable CF/PR
     /// right now — an unavailable chip is disabled (web `!warmupT`/`!prehabT`).
     let maintenanceAvailable: Set<RecordedZone>
@@ -2296,6 +2380,56 @@ private struct ForceMetadataCard: View {
     let showsBalance: Bool
     let balanceLocked: Bool
     let onPickFocusNext: (ZoneQuality) -> Void
+    /// #711: the measurement mode shown as the STATIC / MOVEMENT badge (web
+    /// `ProtocolBadge`), derived by the parent from the armed preset's
+    /// `protocolMode`.
+    let measurementMode: ForceMeasurementMode
+
+    /// #711: explicit fully-typed initializer. The synthesized memberwise init
+    /// carries three `@Binding` property wrappers plus 14 `let`s, and the
+    /// constraint solver times out inferring it at the call site ("unable to
+    /// type-check this expression in reasonable time"). Spelling out every
+    /// parameter type anchors the solver so each call-site argument is matched
+    /// against a known type.
+    init(
+        tag: Binding<String>,
+        side: Binding<TindeqSide>,
+        sideMode: ExerciseSideMode,
+        zone: Binding<RecordedZone?>,
+        selectedTarget: ForceProtocolSelection,
+        onSelectTarget: @escaping (ForceProtocolSelection) -> Void,
+        presets: [TindeqPreset],
+        knownTags: [String],
+        selectedName: String?,
+        selectedSummary: String?,
+        maintenanceAvailable: Set<RecordedZone>,
+        recordings: [TindeqRecording],
+        exercise: String,
+        curveInput: ZoneCurveInput?,
+        showsBalance: Bool,
+        balanceLocked: Bool,
+        onPickFocusNext: @escaping (ZoneQuality) -> Void,
+        measurementMode: ForceMeasurementMode
+    ) {
+        self._tag = tag
+        self._side = side
+        self.sideMode = sideMode
+        self._zone = zone
+        self.selectedTarget = selectedTarget
+        self.onSelectTarget = onSelectTarget
+        self.presets = presets
+        self.knownTags = knownTags
+        self.selectedName = selectedName
+        self.selectedSummary = selectedSummary
+        self.maintenanceAvailable = maintenanceAvailable
+        self.recordings = recordings
+        self.exercise = exercise
+        self.curveInput = curveInput
+        self.showsBalance = showsBalance
+        self.balanceLocked = balanceLocked
+        self.onPickFocusNext = onPickFocusNext
+        self.measurementMode = measurementMode
+    }
 
     private var isFree: Bool { selectedTarget == .free }
 
@@ -2316,6 +2450,8 @@ private struct ForceMetadataCard: View {
             return zone == .warmup
                 ? ChartToken.focus.color(scheme)
                 : ChartToken.reference.color(scheme)
+        case .movement:
+            return SendmeterStyle.primary
         }
     }
 
@@ -2368,6 +2504,14 @@ private struct ForceMetadataCard: View {
 
                 protocolSection
 
+                // #711: mode-aware setup guidance. Capacitor surfaces this in
+                // the setup guide sheet; the native recording context shows it
+                // inline so a MOVEMENT selection carries its setup contract
+                // (endpoints, clear path, smooth movement) where it is made.
+                if measurementMode == .movement {
+                    movementGuide
+                }
+
                 // #710: the training-balance surface lives in the protocol-
                 // selection context (Capacitor `TRAINING BALANCE · FDP`) and
                 // draws its own divider once it has a recommendation (no bare
@@ -2385,19 +2529,30 @@ private struct ForceMetadataCard: View {
         }
     }
 
-    /// #710: Free hold / Suggested (colored training-type chips) / Saved are
-    /// mutually exclusive. Each chip reports the target it represents; the
-    /// pure `ForceProtocolPicker.next` reducer in ForceView decides whether the
-    /// tap deselects (tapping the active chip) or clears the other two. Rendered
-    /// as native tinted chips, not web CSS, using the same hue families as
-    /// Capacitor's `QUALITY_COLORS` (Power orange, Strength gold, Pow End
-    /// lavender, Endurance blue, Warm-up purple, Prehab neutral).
+    /// #710/#711: Free hold / Suggested (colored training-type chips) /
+    /// Movement / Saved are mutually exclusive. Each chip reports the target it
+    /// represents; the pure `ForceProtocolPicker.next` reducer in ForceView
+    /// decides whether the tap deselects (tapping the active chip) or clears
+    /// the others. Rendered as native tinted chips, not web CSS, using the same
+    /// hue families as Capacitor's `QUALITY_COLORS` (Power orange, Strength
+    /// gold, Pow End lavender, Endurance blue, Warm-up purple, Prehab neutral)
+    /// plus the `--primary` MOVEMENT hue.
     private var protocolSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Protocol")
-                .font(.caption2.weight(.semibold))
-                .tracking(1)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text("Protocol")
+                    .font(.caption2.weight(.semibold))
+                    .tracking(1)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                // #711: the STATIC / MOVEMENT badge (web `ProtocolBadge`).
+                StatusPill(
+                    measurementMode.badgeLabel,
+                    color: measurementMode == .movement
+                        ? SendmeterStyle.primary
+                        : SendmeterStyle.optimal
+                )
+            }
 
             protocolChip(
                 "Free hold",
@@ -2437,9 +2592,29 @@ private struct ForceMetadataCard: View {
                 }
             }
 
+            // #711: the resisted-movement (reverse_action) suggestion — the
+            // native "Movement Starter" (web `MOVEMENT_STARTER_PRESET`). Tapping
+            // it arms the transient movement preset and flips the badge to
+            // MOVEMENT; a saved static preset or Suggested chip clears it back.
+            chipFlow {
+                let suggestion = SuggestedProtocol.movement
+                protocolChip(
+                    MovementTerminology.resistedMovement,
+                    color: suggestionColor(suggestion),
+                    active: isActive(suggestion),
+                    action: { onSelectTarget(.movement) }
+                )
+            }
+
             if let selectedName {
                 Text("Selected: \(selectedName)")
                     .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let selectedSummary {
+                Text(selectedSummary)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
@@ -2462,6 +2637,29 @@ private struct ForceMetadataCard: View {
                 }
             }
         }
+    }
+
+    /// #711: the mode-aware movement setup guidance inline in the recording
+    /// context (the native sibling of Capacitor's `ForceSetupGuide` movement
+    /// copy). Only shown while a MOVEMENT protocol is armed.
+    private var movementGuide: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Movement setup", systemImage: "arrow.left.and.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(SendmeterStyle.primary)
+            Text("Mark both movement endpoints and keep the path clear of pinch or impact hazards.")
+            Text("Move smoothly through your chosen range. Jerking to chase a target can create misleading force peaks.")
+            Text("Keep the movement area clear and use an appropriate tether or clear impact area for compliant or spring setups.")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            SendmeterStyle.primary.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .accessibilityElement(children: .combine)
     }
 
     /// A wrapping row of coloured protocol chips (#710).

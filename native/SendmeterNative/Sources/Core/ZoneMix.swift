@@ -578,6 +578,29 @@ extension ZoneMix {
         }
     }
 
+    /// #711: the transient guided-protocol preset a MOVEMENT (resisted
+    /// movement / reverse-action) selection arms — the native sibling of the
+    /// web's `MOVEMENT_STARTER_PRESET`. Deliberately NOT persisted (like
+    /// `zonePreset` / `maintenancePreset`), so it never appears in the user's
+    /// own protocol library. Reverse Action stores one continuous recording
+    /// per set, so the web's exact starter cadence (3s concentric · 1s
+    /// eccentric) is mirrored here.
+    public static func movementPreset() -> TindeqPreset {
+        TindeqPreset(
+            name: "Movement Starter",
+            holdSeconds: 40,
+            repetitions: 10,
+            sets: 3,
+            restBetweenRepetitionsSeconds: 0,
+            restBetweenSetsSeconds: 60,
+            protocolMode: .reverseAction,
+            cadenceOutSeconds: 3,
+            cadenceReturnSeconds: 1,
+            prepareSeconds: 5,
+            setupNote: MovementTerminology.resistedMovement
+        )
+    }
+
     /// The `RecordedZone` a recommended zone's recordings are stamped with
     /// when its preset is armed — every zone has one, so a guided run's holds
     /// carry the performed quality as a fact instead of being re-inferred from

@@ -305,4 +305,23 @@ final class ZoneMixTests: XCTestCase {
         XCTAssertNil(ZoneMix.prehabTargetKilograms(cf: nil, maxForce: 0))
         XCTAssertNil(ZoneMix.prehabTargetKilograms(cf: nil, maxForce: nil))
     }
+
+    // MARK: #711 — movementPreset() — the transient "Movement Starter"
+
+    func testMovementPresetIsReverseActionStarter() {
+        let preset = ZoneMix.movementPreset()
+        XCTAssertEqual(preset.protocolMode, .reverseAction)
+        XCTAssertEqual(preset.name, "Movement Starter")
+        XCTAssertEqual(preset.repetitions, 10)
+        XCTAssertEqual(preset.sets, 3)
+        XCTAssertEqual(preset.cadenceOutSeconds, 3)
+        XCTAssertEqual(preset.cadenceReturnSeconds, 1)
+        XCTAssertEqual(preset.restBetweenRepetitionsSeconds, 0)
+        XCTAssertEqual(preset.restBetweenSetsSeconds, 60)
+        XCTAssertEqual(preset.prepareSeconds, 5)
+        XCTAssertEqual(preset.setupNote, MovementTerminology.resistedMovement)
+        XCTAssertFalse(preset.targetFromCurve)
+        XCTAssertNil(preset.targetKilograms)
+        XCTAssertNil(preset.targetPercentage)
+    }
 }
