@@ -27,6 +27,7 @@ struct ForceGaugeView: View {
     @State private var connectAttempt = 0
     @State private var connectAttemptStale = false
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(ForceRuntimeCoordinator.self) private var forceRuntimeCoordinator
 
     // Exercise setup — set once before the first rep, tweak side between reps.
     // Stop always saves with whatever tag/side is set (no post-stop decision).
@@ -281,6 +282,9 @@ struct ForceGaugeView: View {
             }
             tindeq.logSessionNow()
             tindeq.disconnect()
+            // #540: confirm the finish so a dim pull that ends with a
+            // confirmed disconnect is unambiguous.
+            forceRuntimeCoordinator.acknowledge(.finish)
             // A deliberate disconnect means "I'm done" — no auto-reconnect
             // for the rest of this visit (approved design Q5); re-entering
             // the Force screen from Home starts a fresh visit.
@@ -1213,6 +1217,10 @@ struct ForceGaugeView: View {
 
     @ViewBuilder
     private func measuringContent(availableSize: CGSize) -> some View {
+        if isLuminanceReduced {
+            reducedLuminanceMeasuringContent()
+            return
+        }
         let currentKg = fixtureVisual?.currentKg ?? tindeq.currentKg
         let peakKg = fixtureVisual?.peakKg ?? tindeq.peakKg
         let elapsedS = fixtureVisual?.elapsedS ?? tindeq.elapsedMs / 1000
@@ -1282,8 +1290,60 @@ struct ForceGaugeView: View {
 
         // #683: the old save control is demoted to "Save now" — it ends ONE
         // rep, not the session; release-to-slack still saves + re-arms.
-        Button("Save now") { tindeq.stopAndSave(reason: .userTapped) }
+        Button("Save now") {
+            tindeq.stopAndSave(reason: .userTapped)
+            // #540: a save confirmation makes a dim pull's end trustworthy.
+            forceRuntimeCoordinator.acknowledge(.save)
+        }
             .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.primary))
             .accessibilityIdentifier("force-stop-save")
+    }
+
+    /// #540: the minimal reduced-luminance Force frame.  When watchOS dims
+    /// (Always On / wrist-down) we render only the essential live numbers
+    /// (current force, peak, hold time, side, terse state word) and drop the
+    /// decorative sparkline / header chip and the nonessential Save control.
+    private func reducedLuminanceMeasuringContent() -> some View {
+        let spec = forceRuntimeCoordinator.reducedLuminanceSpec
+        let currentKg = fixtureVisual?.currentKg ?? tindeq.currentKg
+        let peakKg = fixtureVisual?.peakKg ?? tindeq.peakKg
+        let elapsedS = fixtureVisual?.elapsedS ?? tindeq.elapsedMs / 1000
+        let displaySide = sideLabel(side)
+        return VStack(spacing: 5) {
+            Text(spec.stateWord.uppercased())
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(WatchPalette.textSecondary)
+            if spec.showsCurrentForce {
+                (Text(String(format: "%.1f", currentKg))
+                    .font(.system(size: 46, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                + Text(" kg").font(.footnote).foregroundStyle(WatchPalette.textSecondary))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            if spec.showsPeakForce {
+                Text("peak \(String(format: "%.1f", peakKg))")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(WatchPalette.textSecondary)
+            }
+            if spec.showsPhaseCountdown {
+                (Text(String(format: "%.1f", elapsedS))
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                + Text(" s").font(.footnote).foregroundStyle(.secondary))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            if spec.showsSide, !displaySide.isEmpty, displaySide != "—" {
+                Text(displaySide)
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(WatchPalette.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.horizontal, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("force-reduced-luminance")
     }
 }
