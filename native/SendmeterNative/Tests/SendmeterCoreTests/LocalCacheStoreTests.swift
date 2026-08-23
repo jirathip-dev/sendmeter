@@ -508,7 +508,9 @@ final class LocalCacheStoreTests: XCTestCase {
         )
         XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
         XCTAssertEqual(try Self.originFlag(in: store, entityID: entityA.uuidString, accountID: accountA), "server")
-        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+        // Confirmation clears pending but preserves the monotonic revision so a
+        // stale duplicate ack cannot match a future local edit.
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), localRevision)
 
         // A stale refresh (older server timestamp) is dropped by server LWW.
         try store.upsertServer(
@@ -560,7 +562,8 @@ final class LocalCacheStoreTests: XCTestCase {
         // Confirmation applies the tombstone and clears pending.
         XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
         XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
-        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+        // Confirmation clears pending but preserves the monotonic revision.
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), localRevision)
 
         // A stale refresh cannot resurrect the confirmed tombstone.
         try store.upsertServer(
@@ -957,7 +960,102 @@ final class LocalCacheStoreTests: XCTestCase {
         )
         XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
         XCTAssertEqual(try Self.originFlag(in: store, entityID: entityA.uuidString, accountID: accountA), "server")
-        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+        // Confirmation clears pending but preserves the monotonic revision.
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), rev)
+    }
+
+    func testDuplicateConfirmFromEarlierCycleDoesNotClobberNewerUpsert() throws {
+        let store = try makeStore()
+        let a = makeSession(id: entityA, date: "A")
+        let b = makeSession(id: entityA, date: "B")
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        // First cycle: upload A, confirm it.
+        let revA = try store.upsertLocal(
+            a,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        try store.confirmServerUpsert(
+            a,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1),
+            confirmingLocalRevision: revA
+        )
+
+        // Second cycle: a newer local edit B bumps the monotonic revision.
+        let revB = try store.upsertLocal(
+            b,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        XCTAssertGreaterThan(revB, revA)
+
+        // A duplicate/late ack for the FIRST cycle (revA) must not match B.
+        try store.confirmServerUpsert(
+            a,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1),
+            confirmingLocalRevision: revA
+        )
+
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            b
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), revB)
+    }
+
+    func testDuplicateConfirmDeleteFromEarlierCycleDoesNotClobberNewerUpsert() throws {
+        let store = try makeStore()
+        let b = makeSession(id: entityA, date: "B")
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        // First cycle: local delete, upload, confirm it.
+        let revD = try store.markDeletedLocal(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        try store.confirmServerDelete(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1),
+            confirmingLocalRevision: revD
+        )
+
+        // Second cycle: a newer local upsert B bumps the monotonic revision.
+        let revB = try store.upsertLocal(
+            b,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        XCTAssertGreaterThan(revB, revD)
+
+        // A duplicate/late delete ack for the FIRST cycle (revD) must not hide B.
+        try store.confirmServerDelete(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1),
+            confirmingLocalRevision: revD
+        )
+
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            b
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), revB)
     }
 
     func testServerRefreshKeepsLocalRevisionForPendingRow() throws {
@@ -983,11 +1081,11 @@ final class LocalCacheStoreTests: XCTestCase {
         XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
     }
 
-    func testServerRefreshResetsLocalRevisionOnNonPendingLocalRow() throws {
+    func testServerRefreshPreservesLocalRevisionOnNonPendingLocalRow() throws {
         let store = try makeStore()
         // A pre-existing local-origin row that is not pending (e.g. backfilled
         // by a migration) with a stale nonzero revision. A server refresh must
-        // take over and reset the revision to 0.
+        // take over the row but keep the revision monotonic (never reset it).
         try store.dbQueue.write { db in
             try db.execute(
                 sql: """
@@ -1008,10 +1106,10 @@ final class LocalCacheStoreTests: XCTestCase {
         )
         XCTAssertEqual(try Self.originFlag(in: store, entityID: entityA.uuidString, accountID: accountA), "server")
         XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
-        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 3)
     }
 
-    func testServerRefreshResetsLocalRevisionOnNewerServerRow() throws {
+    func testServerRefreshPreservesLocalRevisionOnNewerServerRow() throws {
         let store = try makeStore()
         let base = Date(timeIntervalSince1970: 1_700_000_000)
         _ = try store.upsertServer(
@@ -1022,7 +1120,7 @@ final class LocalCacheStoreTests: XCTestCase {
             updatedAt: base.addingTimeInterval(1)
         )
         // Simulate a server-origin row that once carried a local revision but
-        // is now clean; a newer server refresh must reset it to 0.
+        // is now clean; a newer server refresh must keep it monotonic.
         try store.dbQueue.write { db in
             try db.execute(
                 sql: "UPDATE cache_rows SET local_revision = 7 WHERE entity_id = ?",
@@ -1037,7 +1135,7 @@ final class LocalCacheStoreTests: XCTestCase {
             updatedAt: base.addingTimeInterval(2)
         )
         XCTAssertEqual(try Self.originFlag(in: store, entityID: entityA.uuidString, accountID: accountA), "server")
-        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 7)
     }
 
     func testServerRefreshLeavesLocalRevisionForStaleServerRow() throws {

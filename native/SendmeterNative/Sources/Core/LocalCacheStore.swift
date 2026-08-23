@@ -89,10 +89,14 @@ public struct CacheLoadOneResult<T> {
 ///
 /// Every row records its `write_origin`, `pending`, and `local_revision`
 /// state. Local writes are optimistic and always replace a cached row, marking
-/// it pending and bumping `local_revision` until the server confirms. A server
-/// **refresh** (`upsertServer`/`markDeletedServer`) never reverts a pending
-/// local action — it only replaces non-pending local-origin rows and otherwise
-/// uses last-writer-wins on a microsecond-precision `updated_at`. A server
+/// it pending and bumping `local_revision` until the server confirms.
+/// `local_revision` is strictly monotonic over a row's lifetime: every local
+/// write/delete increments it, and neither a **confirmation** nor a refresh
+/// **adoption** ever resets it, so a stale confirmation from an earlier cycle
+/// can never numerically match a newer pending edit. A server **refresh**
+/// (`upsertServer`/`markDeletedServer`) never reverts a pending local action —
+/// it only replaces non-pending local-origin rows and otherwise uses
+/// last-writer-wins on a microsecond-precision `updated_at`. A server
 /// **confirmation** (`confirmServerUpsert`/`confirmServerDelete`) applies the
 /// server's post-upload state and clears pending only when the row's stored
 /// `local_revision` still equals the revision that was uploaded; slice 2+
@@ -119,8 +123,9 @@ public struct LocalCacheStore: @unchecked Sendable {
     /// - `.serverConfirm`: the server's ack for a successfully uploaded local
     ///   write/delete. It applies the post-upload server state and clears
     ///   `pending` only while the cached row's `local_revision` still equals
-    ///   the revision that was uploaded. Only slice 2+ calls this after
-    ///   `DurableQueue` upload.
+    ///   the revision that was uploaded, and preserves the row's monotonic
+    ///   `local_revision`. Only slice 2+ calls this after `DurableQueue`
+    ///   upload.
     private enum CacheWriteMode {
         case local
         case serverRefresh
@@ -210,8 +215,9 @@ public struct LocalCacheStore: @unchecked Sendable {
             // Every local optimistic write/delete bumps a per-row revision so a
             // server **confirmation** for an uploaded change can tell whether
             // the pending row it is about to clear still belongs to that same
-            // upload. `local_revision` is 0 for confirmed/clean rows and
-            // monotonically increases across a row's unconfirmed local edits.
+            // upload. `local_revision` is 0 only for a brand-new row (or a
+            // backfilled pre-revision row); each local write increments it,
+            // and it is never reused after a confirmation or refresh adoption.
             let hasRevision = try Self.hasColumn("local_revision", in: "cache_rows", db: db)
             if !hasRevision {
                 try db.execute(sql: """
@@ -380,12 +386,12 @@ public struct LocalCacheStore: @unchecked Sendable {
     /// A refresh must **not** revert an unconfirmed local action: if the cached
     /// row is `pending`, the incoming payload is dropped and its
     /// `local_revision` is preserved. Otherwise a server write replaces a
-    /// non-pending local-origin row regardless of clock (resetting
-    /// `local_revision` to 0) and replaces a server-origin row only when
-    /// `updatedAt` is strictly newer (also resetting `local_revision` to 0).
-    /// The writer must pass the entity's server `updated_at`; timestamps are
-    /// microsecond-precision and compared within the server domain only. Use
-    /// `confirmServerUpsert` for the post-upload ack instead.
+    /// non-pending local-origin row regardless of clock and replaces a
+    /// server-origin row only when `updatedAt` is strictly newer; in both
+    /// adoption cases the row's monotonic `local_revision` is preserved rather
+    /// than reused. The writer must pass the entity's server `updated_at`;
+    /// timestamps are microsecond-precision and compared within the server
+    /// domain only. Use `confirmServerUpsert` for the post-upload ack instead.
     public func upsertServer<T: Encodable>(
         _ value: T,
         accountUserID: UUID,
@@ -494,12 +500,7 @@ public struct LocalCacheStore: @unchecked Sendable {
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN 0
                                 ELSE cache_rows.pending
                             END,
-                            local_revision = CASE
-                                WHEN cache_rows.pending = 1 THEN cache_rows.local_revision
-                                WHEN cache_rows.write_origin = 'local' THEN 0
-                                WHEN cache_rows.updated_at < excluded.updated_at THEN 0
-                                ELSE cache_rows.local_revision
-                            END
+                            local_revision = cache_rows.local_revision
                         """,
                     arguments: [
                         Self.accountIDString(accountUserID),
@@ -538,10 +539,7 @@ public struct LocalCacheStore: @unchecked Sendable {
                                 WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 0
                                 ELSE cache_rows.pending
                             END,
-                            local_revision = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 0
-                                ELSE cache_rows.local_revision
-                            END
+                            local_revision = cache_rows.local_revision
                         """,
                     arguments: [
                         Self.accountIDString(accountUserID),
@@ -549,7 +547,6 @@ public struct LocalCacheStore: @unchecked Sendable {
                         entityID,
                         payload,
                         incoming,
-                        confirming,
                         confirming,
                         confirming,
                         confirming,
@@ -620,10 +617,10 @@ public struct LocalCacheStore: @unchecked Sendable {
     /// is `pending`, the incoming tombstone is dropped and its `local_revision`
     /// is preserved. Otherwise it inserts a tombstone even when the key was
     /// never cached (so an out-of-order stale upsert cannot resurrect a
-    /// server-deleted row), replaces a non-pending local-origin row (resetting
-    /// `local_revision` to 0), and only replaces an older server-origin row
-    /// (also resetting `local_revision` to 0). Use `confirmServerDelete` for
-    /// the post-upload ack instead.
+    /// server-deleted row), replaces a non-pending local-origin row, and only
+    /// replaces an older server-origin row; in both adoption cases the row's
+    /// monotonic `local_revision` is preserved rather than reused. Use
+    /// `confirmServerDelete` for the post-upload ack instead.
     public func markDeletedServer(
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
@@ -725,12 +722,7 @@ public struct LocalCacheStore: @unchecked Sendable {
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN 0
                                 ELSE cache_rows.pending
                             END,
-                            local_revision = CASE
-                                WHEN cache_rows.pending = 1 THEN cache_rows.local_revision
-                                WHEN cache_rows.write_origin = 'local' THEN 0
-                                WHEN cache_rows.updated_at < excluded.updated_at THEN 0
-                                ELSE cache_rows.local_revision
-                            END
+                            local_revision = cache_rows.local_revision
                         """,
                     arguments: [
                         Self.accountIDString(accountUserID),
@@ -769,10 +761,7 @@ public struct LocalCacheStore: @unchecked Sendable {
                                 WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 0
                                 ELSE cache_rows.pending
                             END,
-                            local_revision = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 0
-                                ELSE cache_rows.local_revision
-                            END
+                            local_revision = cache_rows.local_revision
                         """,
                     arguments: [
                         Self.accountIDString(accountUserID),
@@ -780,7 +769,6 @@ public struct LocalCacheStore: @unchecked Sendable {
                         entityID,
                         incoming,
                         incoming,
-                        confirming,
                         confirming,
                         confirming,
                         confirming,
