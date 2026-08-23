@@ -30,7 +30,13 @@ public enum TrainingLoad {
             var label: String?
         }
         var grouped: [String: Group] = [:]
-        for session in sessions where session.date >= startDate && session.date <= endDate {
+        for session in sessions {
+            guard let date = LocalDateSupport.canonicalDayKey(
+                session.date,
+                timeZone: timeZone
+            ),
+            date >= startDate && date <= endDate
+            else { continue }
             let knownLabel = SessionTypeCatalog.all.first { $0.id == session.type }?.label
             let legacy = session.typeLabel.trimmingCharacters(in: .whitespaces)
             let label = knownLabel
@@ -105,20 +111,30 @@ public enum TrainingLoad {
     // MARK: - Daily aggregation
 
     /// Per-date load + dominant activity over ALL sessions (the sheet builds
-    /// this map once; the heatmap looks up by date key). A day with several
-    /// activity types is hued by the type with the HIGHEST load — dominant,
-    /// not first; ties resolve to the first-encountered type.
-    public static func dailyLoads(sessions: [Session]) -> [String: DailyLoad] {
+    /// this map once; the heatmap looks up by date key). Keys are normalized
+    /// to the same `LocalDateSupport.string(from:timeZone:)` calendar day the
+    /// grid generates, so a noncanonical/wrong-zone `session.date` cannot make
+    /// a trained day fall through to a grey rest cell (#754 cause 1). A day
+    /// with several activity types is hued by the type with the HIGHEST load —
+    /// dominant, not first; ties resolve to the first-encountered type.
+    public static func dailyLoads(
+        sessions: [Session],
+        timeZone: TimeZone = .current
+    ) -> [String: DailyLoad] {
         var accumulated: [String: (total: Double, byType: [(type: String, load: Double)])] = [:]
         for session in sessions {
-            var entry = accumulated[session.date] ?? (total: 0, byType: [])
+            guard let date = LocalDateSupport.canonicalDayKey(
+                session.date,
+                timeZone: timeZone
+            ) else { continue }
+            var entry = accumulated[date] ?? (total: 0, byType: [])
             entry.total += session.load
             if let index = entry.byType.firstIndex(where: { $0.type == session.type }) {
                 entry.byType[index].load += session.load
             } else {
                 entry.byType.append((type: session.type, load: session.load))
             }
-            accumulated[session.date] = entry
+            accumulated[date] = entry
         }
 
         var result: [String: DailyLoad] = [:]

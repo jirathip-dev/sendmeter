@@ -71,6 +71,19 @@ final class TrainingLoadTests: XCTestCase {
         XCTAssertTrue(mix.activities.isEmpty)
     }
 
+    func testActivityMixNormalizesNoncanonicalSessionDate() {
+        let mix = TrainingLoad.activityMix(
+            sessions: [
+                session("2026-08-02T00:00:00Z", "board", 100),
+                session("2026-08-03T00:00:00Z", "gym", 200)
+            ],
+            endDate: "2026-08-03",
+            timeZone: bangkok
+        )
+        XCTAssertEqual(mix.total, 300)
+        XCTAssertEqual(mix.activities.map(\.type), ["gym", "board"])
+    }
+
     func testActivityMixKeepsUnknownAndLegacyTypesWithUsefulLabels() {
         let mix = TrainingLoad.activityMix(
             sessions: [
@@ -182,6 +195,66 @@ final class TrainingLoadTests: XCTestCase {
         ])
         XCTAssertEqual(daily["2026-08-02"]?.total, 0)
         XCTAssertEqual(daily["2026-08-02"]?.type, "board")
+    }
+
+    /// #754 cause 1: `heatmapGrid` builds its keys with
+    /// `LocalDateSupport.string(from: cursor)`, but `dailyLoads` has always
+    /// keyed the map by the raw `session.date`. A session that arrives as an
+    /// ISO timestamp (or any noncanonical payload) therefore misses every
+    /// lookup: the cell reads `value == 0`, `type == ""`, the tooltip says
+    /// "rest", and the legend still shows the color because it scans the
+    /// `daily` values directly. This is the grey+rest symptom from the issue.
+    func testHeatmapGridFindsTrainedDayWhenSessionDateArrivesAsTimestamp() {
+        let today = try! XCTUnwrap(LocalDateSupport.date(from: "2026-08-21", timeZone: bangkok))
+        let sessions = [
+            session("2026-06-11T00:00:00Z", "board", 420)
+        ]
+        let daily = TrainingLoad.dailyLoads(sessions: sessions, timeZone: bangkok)
+        let grid = TrainingLoad.heatmapGrid(
+            daily: daily,
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+        let cellsByDate = Dictionary(
+            uniqueKeysWithValues: grid.columns.flatMap { $0 }.map { ($0.date, $0) }
+        )
+
+        XCTAssertEqual(daily["2026-06-11"]?.total, 420)
+        let trained = try! XCTUnwrap(cellsByDate["2026-06-11"])
+        XCTAssertEqual(trained.value, 420, "the trained day must not render as rest")
+        XCTAssertEqual(trained.type, "board")
+        XCTAssertGreaterThan(trained.value, 0)
+        XCTAssertEqual(TrainingLoad.heatmapLevel(value: trained.value, max: grid.max), 4)
+    }
+
+    /// #754 cause 1, the concrete historical payload: before e22cf78 the
+    /// watch's `Date.localDateString` used `Calendar.current`, so a Thai-region
+    /// device stored sessions as `2569-...` while the grid generated
+    /// `2026-...` keys. The old daily map kept that raw `session.date`, so the
+    /// trained day missed the lookup, rendered grey, and the tooltip said rest.
+    func testHeatmapGridFindsTrainedDayWhenSessionDateIsLegacyBuddhistDate() {
+        let today = try! XCTUnwrap(LocalDateSupport.date(from: "2026-08-21", timeZone: bangkok))
+        let sessions = [
+            session("2569-06-11", "board", 420)
+        ]
+        let daily = TrainingLoad.dailyLoads(sessions: sessions, timeZone: bangkok)
+        let grid = TrainingLoad.heatmapGrid(
+            daily: daily,
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+        let cellsByDate = Dictionary(
+            uniqueKeysWithValues: grid.columns.flatMap { $0 }.map { ($0.date, $0) }
+        )
+
+        XCTAssertNil(daily["2569-06-11"])
+        XCTAssertEqual(daily["2026-06-11"]?.total, 420)
+        let trained = try! XCTUnwrap(cellsByDate["2026-06-11"])
+        XCTAssertEqual(trained.value, 420, "the trained day must not render as rest")
+        XCTAssertEqual(trained.type, "board")
+        XCTAssertEqual(TrainingLoad.heatmapLevel(value: trained.value, max: grid.max), 4)
     }
 
     // MARK: - Heatmap geometry

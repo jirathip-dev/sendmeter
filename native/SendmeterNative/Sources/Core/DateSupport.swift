@@ -142,7 +142,100 @@ public enum LocalDateSupport {
     public static func iso8601Date(from string: String) -> Date? {
         let formatter = ISO8601DateFormatter()
         if let exact = formatter.date(from: string) { return exact }
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: string) { return date }
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: string)
+    }
+
+    /// Canonical local-day key for a stored date string.
+    ///
+    /// The heatmap grid generates its keys with `string(from:timeZone:)`, so a
+    /// `Session.date` that arrives as an ISO timestamp, a bare local
+    /// date-time, or a legacy Buddhist-era date must be normalized before it
+    /// is used as the aggregation key (#754 cause 1). Date-only values pass
+    /// through unchanged; timestamps are converted into the supplied time
+    /// zone's calendar day. A string that cannot be parsed as a real
+    /// `YYYY-MM-DD` day returns nil so it is not silently grouped under a
+    /// wrong date.
+    public static func canonicalDayKey(
+        _ value: String,
+        timeZone: TimeZone = .current
+    ) -> String? {
+        guard !value.isEmpty,
+              value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+        else { return nil }
+
+        var timestampCandidate = value
+        if value.contains("T") || value.contains(" ") {
+            // ISO8601DateFormatter only accepts the "T" separator. A stored
+            // timestamp that uses a space still carries a real offset and
+            // must be converted as an instant, not treated as a bare local
+            // date below (e.g. 2026-06-10 23:00:00-05:00 is 2026-06-11 in
+            // Bangkok). Bare local timestamps without an offset still fall
+            // through to the date-only path below.
+            if value.contains(" ") {
+                let separator = value.index(value.startIndex, offsetBy: 10)
+                timestampCandidate = value.replacingCharacters(
+                    in: separator..<value.index(after: separator),
+                    with: "T"
+                )
+            }
+        }
+        if value.contains("T") || value.contains(" "),
+           let instant = iso8601Date(from: timestampCandidate) {
+            return canonicalDayString(from: instant, timeZone: timeZone)
+        }
+
+        guard value.count >= 10 else { return nil }
+        let prefix = String(value.prefix(10))
+        let dateOnly = value.count == 10
+        if !dateOnly {
+            let delimiter = value[value.index(value.startIndex, offsetBy: 10)]
+            guard delimiter == "T" || delimiter == " " else {
+                return nil
+            }
+            let suffix = String(value.dropFirst(11))
+            guard isBareLocalTimestampSuffix(suffix) else { return nil }
+        }
+        guard let parsed = parseCanonicalDateKey(prefix, timeZone: timeZone) else { return nil }
+        return canonicalDayString(from: parsed, timeZone: timeZone)
+    }
+
+    private static func isBareLocalTimestampSuffix(_ value: String) -> Bool {
+        guard value.contains(":") else { return false }
+        return value.unicodeScalars.allSatisfy {
+            $0 == ":" || $0 == "." || ($0.value >= 48 && $0.value <= 57)
+        }
+    }
+
+    private static func parseCanonicalDateKey(
+        _ value: String,
+        timeZone: TimeZone
+    ) -> Date? {
+        guard let parsed = date(from: value, timeZone: timeZone),
+              string(from: parsed, timeZone: timeZone) == value
+        else { return nil }
+        return parsed
+    }
+
+    private static func canonicalDayString(
+        from date: Date,
+        timeZone: TimeZone
+    ) -> String? {
+        let calendar = calendar(timeZone: timeZone)
+        var components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year else { return nil }
+
+        // Legacy watch builds wrote Gregorian year +543 under a Thai region
+        // (e.g. 2569-07-12). Server rows were backfilled, but an optimistic
+        // or cached row must still land on the displayed Gregorian day.
+        if year >= 2400 {
+            components.year = year - 543
+            guard let corrected = calendar.date(from: components) else { return nil }
+            return string(from: corrected, timeZone: timeZone)
+        }
+
+        return string(from: date, timeZone: timeZone)
     }
 }
