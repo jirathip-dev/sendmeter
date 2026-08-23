@@ -303,7 +303,7 @@ final class ReadinessManager {
                     Task { @MainActor in
                         guard let self else { return }
                         self.queueFallback(request)
-                        self.errorMsg = error.localizedDescription
+                        self.errorMsg = ErrorText.message(for: .readinessUnavailable)
                     }
                 }
             )

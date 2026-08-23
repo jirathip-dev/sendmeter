@@ -257,7 +257,7 @@ struct ManualWorkoutFullscreen: View {
             engine = copy
             Haptics.shared.playGesture(.medium)
         } catch {
-            model.errorMessage = error.localizedDescription
+            model.errorMessage = UserFacingError.message(for: error)
             Haptics.shared.playGesture(RefusedActionHaptics.cue(tappableAndRefused: true))
         }
     }

@@ -124,7 +124,7 @@ struct LoginView: View {
                                 case let .failure(error):
                                     // Cancellation is expected — stay quiet.
                                     if (error as NSError).code != ASAuthorizationError.canceled.rawValue {
-                                        model.errorMessage = error.localizedDescription
+                                        model.errorMessage = UserFacingError.message(for: error)
                                     }
                                 }
                             }

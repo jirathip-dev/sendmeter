@@ -2,6 +2,7 @@ import AuthenticationServices
 @_spi(Experimental) import Auth
 import Foundation
 import SendmeterCore
+import SendLogWatchCore
 import Supabase
 import UIKit
 
@@ -295,6 +296,38 @@ extension PostgRESTError: ServerRejectionClassifying {
     /// this conformance just feeds it this error's code + status.
     public var rejectionClass: RejectionClass {
         ServerRejectionClassifier.classify(code: code, statusCode: statusCode)
+    }
+}
+
+extension PostgRESTError: FriendlyErrorClassifying {
+    public var friendlyErrorClass: FriendlyErrorClass {
+        switch rejectionClass {
+        case .auth: return .authExpired
+        case .parked: return .accessDenied
+        case .permanent:
+            return .serverRejected
+        case .retryable:
+            switch BackendFailureReason(errorDescription: message) {
+            case .authExpired: return .authExpired
+            case .unreachable: return .offline
+            case .unknown: return .unknown
+            }
+        }
+    }
+}
+
+extension AuthError: @retroactive FriendlyErrorClassifying {
+    public var friendlyErrorClass: FriendlyErrorClass {
+        switch self {
+        case .weakPassword:
+            return .weakPassword
+        case .sessionMissing, .jwtVerificationFailed:
+            return .authExpired
+        case .api(_, let errorCode, _, _):
+            return UserFacingError.friendlyErrorClass(forAuthErrorCode: errorCode.rawValue)
+        case .pkceGrantCodeExchange, .implicitGrantRedirect:
+            return .authFailed
+        }
     }
 }
 

@@ -402,7 +402,7 @@ final class TindeqManager: NSObject {
             let outcome = await sessionQueue.enqueue(pending)
             guard generation == persistenceGeneration else { return }
             guard outcome == .lost else { return }
-            self.errorMsg = "Force session couldn't be saved"
+            self.errorMsg = ErrorText.message(for: .forceSessionSaveFailed)
             GaugeSessionLossNotice.record()
         }
     }
@@ -945,8 +945,8 @@ final class TindeqManager: NSObject {
             row,
             displayPeakKg: nil,
             depletion: nil,
-            lostSavedMessage: "Movement set was not saved",
-            lostErrorMessage: "Set not saved — couldn't write to the watch.",
+            lostSavedMessage: ErrorText.message(for: .recordingNotSavedOnWatch),
+            lostErrorMessage: ErrorText.message(for: .recordingNotSavedOnWatch),
             rememberSelection: true,
             keepStreamRunning: false,
             rearmHandsFreeAfterStop: nil
@@ -1017,7 +1017,7 @@ final class TindeqManager: NSObject {
             guard let self, self.status == .scanning else { return }
             central.stopScan()
             self.status = .idle
-            self.errorMsg = "No Progressor found. Is it on?"
+            self.errorMsg = ErrorText.message(for: .progressorNotFound)
         }
     }
 
@@ -1345,7 +1345,7 @@ final class TindeqManager: NSObject {
         // nil = never re-arm (the disconnect salvage); non-nil re-arms after
         // the save with slack semantics decided by the stop reason (#503).
         rearmHandsFreeAfterStop: HandsFreeStopReason?,
-        lostSavedMessage: String = "Rep not saved — try pulling again",
+        lostSavedMessage: String = ErrorText.message(for: .repNotSaved),
         lostErrorMessage: String? = nil,
         rememberSelection: Bool = true
     ) {
@@ -1400,8 +1400,8 @@ final class TindeqManager: NSObject {
             row,
             displayPeakKg: summary.peakKg,
             depletion: (summary.peakKg, completion.actualDurationMs, context.tag),
-            lostSavedMessage: "Guided recording was not saved",
-            lostErrorMessage: "Recording not saved — couldn't write to the watch.",
+            lostSavedMessage: ErrorText.message(for: .recordingNotSavedOnWatch),
+            lostErrorMessage: ErrorText.message(for: .recordingNotSavedOnWatch),
             rememberSelection: rememberSelection,
             keepStreamRunning: false,
             rearmHandsFreeAfterStop: nil
@@ -1617,14 +1617,18 @@ extension TindeqManager: CBCentralManagerDelegate {
         switch central.state {
         case .poweredOn:
             if status == .scanning { startScanIfPoweredOn() }
-        case .unsupported, .unauthorized:
+        case .unsupported:
             clearHandsFreeAfterTransportLoss()
             status = .unsupported
-            errorMsg = "Bluetooth unavailable"
+            errorMsg = ErrorText.message(for: .progressorUnsupported)
+        case .unauthorized:
+            clearHandsFreeAfterTransportLoss()
+            status = .unsupported
+            errorMsg = ErrorText.message(for: .progressorUnavailable)
         case .poweredOff:
             clearHandsFreeAfterTransportLoss()
             status = .idle
-            errorMsg = "Bluetooth is off"
+            errorMsg = ErrorText.message(for: .progressorUnavailable)
         default:
             break
         }
@@ -1655,7 +1659,7 @@ extension TindeqManager: CBCentralManagerDelegate {
         self.peripheral = nil
         clearHandsFreeAfterTransportLoss()
         status = .idle
-        errorMsg = error?.localizedDescription ?? "Connection failed"
+        errorMsg = ErrorText.message(for: .progressorConnectFailed)
     }
 
     func centralManager(
@@ -1705,7 +1709,9 @@ extension TindeqManager: CBCentralManagerDelegate {
         status = .idle
         let wasIntentional = wasIntentionalOverride ?? intentionalDisconnect
         intentionalDisconnect = false
-        if error != nil { errorMsg = "Device disconnected" }
+        if error != nil {
+            errorMsg = ErrorText.message(for: .progressorDisconnected)
+        }
         // Capture the kind before salvage consumes the synchronous claim. A
         // movement run may continue with cadence-only sets after this trace is
         // queued, so it must keep the same manager-owned session open; static
@@ -1775,7 +1781,7 @@ extension TindeqManager: CBCentralManagerDelegate {
             if finishSessionAfterSave {
                 logSessionNow()
             }
-            errorMsg = "Interrupted guided recording was not saved — recovery state was missing."
+            errorMsg = ErrorText.message(for: .recordingNotSavedOnWatch)
             return
         }
         currentKg = 0
@@ -1820,7 +1826,7 @@ extension TindeqManager: CBCentralManagerDelegate {
             logSessionNow()
             // `logSessionNow()` may disarm an armed stream, whose buffer reset
             // clears errorMsg. Set this after cleanup so the loud report stays.
-            errorMsg = "Interrupted force rep was not saved — recovery state was missing."
+            errorMsg = ErrorText.message(for: .repNotSavedOnWatch)
             return
         }
         // #682 Guard 1: the persist-boundary verdict applies to a hands-free
@@ -1853,8 +1859,8 @@ extension TindeqManager: CBCentralManagerDelegate {
             note: "Recovered after connection loss",
             keepStreamRunning: false,
             rearmHandsFreeAfterStop: nil,
-            lostSavedMessage: "Recovered rep was not saved",
-            lostErrorMessage: "Rep not saved — couldn't write to the watch.",
+            lostSavedMessage: ErrorText.message(for: .repNotSavedOnWatch),
+            lostErrorMessage: ErrorText.message(for: .repNotSavedOnWatch),
             rememberSelection: false
         )
         // Defer session logging until this save is durable or honestly lost.
@@ -1867,7 +1873,7 @@ extension TindeqManager: CBCentralManagerDelegate {
 extension TindeqManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let service = peripheral.services?.first(where: { $0.uuid == Tindeq.service }) else {
-            errorMsg = "Progressor service not found"
+            errorMsg = ErrorText.message(for: .progressorUnrecognized)
             disconnect()
             return
         }

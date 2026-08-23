@@ -560,7 +560,7 @@ struct SettingsView: View {
             if let breadcrumb = model.queueBreadcrumbs.first {
                 LabeledContent("Most recent recovery", value: breadcrumb.leftQueueAt.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
-                Text("\(breadcrumb.reason) · \(breadcrumb.attempts) failed attempt\(breadcrumb.attempts == 1 ? "" : "s")")
+                Text("\(UserFacingError.message(forQueueBreadcrumbReason: breadcrumb.reason)) · \(breadcrumb.attempts) failed attempt\(breadcrumb.attempts == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -639,16 +639,10 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if let code = item.rejection.code {
-                LabeledContent("Server code", value: code)
-                    .font(.caption)
-            }
-            if !item.rejection.detail.isEmpty {
-                Text(item.rejection.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
+            Text(UserFacingError.message(for: item.rejection))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
             HStack {
                 Button {
                     retryingQuarantined = true
@@ -688,7 +682,11 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if let detail = entry.detail {
+            if entry.category == .failure, let detail = entry.detail {
+                Text(UserFacingError.message(forDiagnosticDetail: detail))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let detail = entry.detail {
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)

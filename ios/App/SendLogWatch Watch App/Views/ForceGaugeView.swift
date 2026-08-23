@@ -123,7 +123,7 @@ struct ForceGaugeView: View {
                             case .unsupported:
                                 WatchStateBanner(
                                     state: .danger,
-                                    title: "Bluetooth unavailable",
+                                    title: "Progressor unavailable",
                                     message: tindeq.errorMsg ?? "Turn on Bluetooth to connect a Progressor."
                                 )
 
@@ -163,7 +163,7 @@ struct ForceGaugeView: View {
                                 WatchStateBanner(
                                     state: tindeq.saving
                                         ? .syncing
-                                        : savedMsg.hasPrefix("Rep not saved") ? .danger
+                                        : ErrorText.isFailureMessage(savedMsg) ? .danger
                                             : savedMsg.hasPrefix("Saved") ? .success : .warning,
                                     title: savedMsg,
                                     message: nil

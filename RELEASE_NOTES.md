@@ -47,6 +47,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native and Watch error messages now use plain language that says what went wrong and what to do next, instead of showing raw server, Bluetooth, or HealthKit errors.
 - Native app: foreground refreshes now fetch and apply only the sessions, health metrics, workouts, presets, routines, phases, and tags changed since the last sync — including items deleted on another device — instead of replacing the whole local cache on every refresh, while the first sync after a fresh install or cache rebuild still loads everything.
 - Native Settings: Delete Account is now an explicit two-step danger flow — a detailed, irreversible-deletion warning first, then a separate type-DELETE confirmation — so a single tap can never reach the destructive action.
 - Native Force: Exercise and Side are now compact, selectable chips inside Recording context, with a reveal-all `+N` chip and an inline add-exercise field; the redundant standalone Zone picker is gone, and the zone saved with a pull now comes only from the armed protocol.
