@@ -23,6 +23,10 @@ struct DashboardView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     LoadCard()
+                    // The web ACWR status card (#748) — risk track + ratio +
+                    // phase-fit line, shown alongside the existing Load card
+                    // (which keeps the weekly-load bars, not removed).
+                    AcwrStatusCard()
                     AcwrProjectionCard()
                     RecentSessionsCard()
                 }
