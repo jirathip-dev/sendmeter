@@ -10,6 +10,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Native Dashboard now opens a Recovery Inputs sheet from today's decision card: the seven raw HealthKit inputs behind your readiness score appear as simple shared 14-day bar charts with one 7-day trend and tap/scrub tooltips.
 - Native Dashboard now shows the same ACWR status card as the web: a big ACWR ratio, its risk-zone status, a phase-fit line, a gradient 0–2 risk track with true-scale 0/1.0/1.5/2 ticks and a marker dot, and an Acute/Chronic footer. It is the canonical Training Load surface — tapping it opens the Training Load details sheet, and the Training load card is now a weekly-load chart only (its Acute/Chronic/ACWR numbers and status pill moved here).
 - Native Force recordings now carry the measurement mode: the recording context shows a STATIC / MOVEMENT badge and a Resisted movement protocol choice, which arms a movement (reverse-action) run and surfaces movement-specific setup guidance (mark both movement endpoints, keep the path clear, move smoothly through the range).
 - Native body weight (from Apple Health) now shows in Metric (kg) or Imperial (lb) based on the Settings → General units picker — the first surface that applies the Metric/Imperial preference, with Force and load units to follow.
