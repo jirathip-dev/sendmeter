@@ -13,6 +13,26 @@ final class LocalCacheStoreTests: XCTestCase {
         try LocalCacheStore()
     }
 
+    private static func pendingFlag(in store: LocalCacheStore, entityID: String, accountID: UUID) throws -> Int {
+        try store.dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT pending FROM cache_rows WHERE account_user_id = ? AND entity_id = ?",
+                arguments: [accountID.uuidString, entityID]
+            )!
+        }
+    }
+
+    private static func originFlag(in store: LocalCacheStore, entityID: String, accountID: UUID) throws -> String {
+        try store.dbQueue.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT write_origin FROM cache_rows WHERE account_user_id = ? AND entity_id = ?",
+                arguments: [accountID.uuidString, entityID]
+            )!
+        }
+    }
+
     // MARK: - Representative payloads
 
     private func makeSession(id: UUID, date: String = "2026-08-20") -> Session {
@@ -368,12 +388,13 @@ final class LocalCacheStoreTests: XCTestCase {
         )
     }
 
-    func testServerWriteReplacesLocalOriginRowRegardlessOfClock() throws {
+    func testServerRefreshDoesNotReplacePendingLocalEdit() throws {
         let store = try makeStore()
         let local = makeSession(id: entityA, date: "2026-08-20")
         let server = makeSession(id: entityA, date: "2026-08-21")
 
         try store.upsertLocal(local, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        // A stale server refresh must not revert an unconfirmed local edit.
         try store.upsertServer(
             server,
             accountUserID: accountA,
@@ -383,9 +404,10 @@ final class LocalCacheStoreTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions),
-            [server]
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            local
         )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
     }
 
     func testServerUpsertOnlyAcceptsNewerServerOriginRow() throws {
@@ -427,18 +449,181 @@ final class LocalCacheStoreTests: XCTestCase {
         )
     }
 
-    func testServerDeleteReplacesLocalOriginRow() throws {
+    func testServerRefreshDeleteDoesNotHidePendingLocalEdit() throws {
         let store = try makeStore()
-        let session = makeSession(id: entityA)
-        try store.upsertLocal(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        let local = makeSession(id: entityA, date: "2026-08-20")
 
+        try store.upsertLocal(local, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        // A stale server delete refresh must not clear an unconfirmed local edit.
         try store.markDeletedServer(
             accountUserID: accountA,
             entityType: .sessions,
             entityID: entityA.uuidString,
             updatedAt: Date(timeIntervalSince1970: 0)
         )
+
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            local
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+    }
+
+    func testServerConfirmationClearsPendingAndAllowsLaterRefresh() throws {
+        let store = try makeStore()
+        let local = makeSession(id: entityA, date: "local")
+        let confirmed = makeSession(id: entityA, date: "confirmed")
+        let newest = makeSession(id: entityA, date: "newest")
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try store.upsertLocal(local, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.confirmServerUpsert(
+            confirmed,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1)
+        )
+
+        // Confirmation applies the server state and clears pending.
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            confirmed
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+        XCTAssertEqual(try Self.originFlag(in: store, entityID: entityA.uuidString, accountID: accountA), "server")
+
+        // A stale refresh (older server timestamp) is dropped by server LWW.
+        try store.upsertServer(
+            makeSession(id: entityA, date: "stale"),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(0.5)
+        )
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            confirmed
+        )
+
+        // A newer refresh wins.
+        try store.upsertServer(
+            newest,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(2)
+        )
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            newest
+        )
+    }
+
+    func testServerConfirmationDeleteClearsPendingAndAllowsLaterRefresh() throws {
+        let store = try makeStore()
+        let local = makeSession(id: entityA, date: "local")
+        let newest = makeSession(id: entityA, date: "newest")
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try store.upsertLocal(local, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.confirmServerDelete(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1)
+        )
+
+        // Confirmation applies the tombstone and clears pending.
         XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+
+        // A stale refresh cannot resurrect the confirmed tombstone.
+        try store.upsertServer(
+            makeSession(id: entityA, date: "stale"),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(0.5)
+        )
+        XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
+
+        // A newer server write clears the tombstone and is visible again.
+        try store.upsertServer(
+            newest,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(2)
+        )
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            newest
+        )
+    }
+
+    func testConfirmServerDeleteRemembersNeverCachedKey() throws {
+        let store = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try store.confirmServerDelete(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(2)
+        )
+        XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
+
+        // A stale refresh upsert cannot resurrect the never-cached tombstone.
+        try store.upsertServer(
+            makeSession(id: entityA),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1)
+        )
+        XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
+    }
+
+    func testLoadOneResultReportsInvalidPayloadAndLoadOneReturnsNil() throws {
+        let store = try makeStore()
+        let session = makeSession(id: entityA)
+        try store.upsertLocal(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO cache_rows
+                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at)
+                    VALUES (?, ?, ?, ?, NULL, ?)
+                    """,
+                arguments: [
+                    accountA.uuidString,
+                    LocalCacheEntityType.sessions.rawValue,
+                    entityB.uuidString,
+                    "not-json",
+                    "2026-08-23T09:00:00.000Z"
+                ]
+            )
+        }
+
+        let valid = try store.loadOneResult(
+            Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString
+        )
+        XCTAssertEqual(valid.value, session)
+        XCTAssertFalse(valid.invalid)
+
+        let corrupt = try store.loadOneResult(
+            Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityB.uuidString
+        )
+        XCTAssertNil(corrupt.value)
+        XCTAssertTrue(corrupt.invalid)
+        XCTAssertNil(try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityB.uuidString))
+
+        let missing = try store.loadOneResult(
+            Session.self, accountUserID: accountA, entityType: .sessions, entityID: "missing"
+        )
+        XCTAssertNil(missing.value)
+        XCTAssertFalse(missing.invalid)
     }
 
     func testTimestampPreservesMicroseconds() throws {
@@ -505,6 +690,85 @@ final class LocalCacheStoreTests: XCTestCase {
             try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
             makeSession(id: entityA, date: String(count - 1))
         )
+    }
+
+    func testConcurrentPendingLocalUpsertSurvivesStaleServerRefresh() throws {
+        let store = try makeStore()
+        let count = 40
+        let lock = NSLock()
+        var failures: [Error] = []
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        DispatchQueue.concurrentPerform(iterations: count) { index in
+            do {
+                if index == count / 2 {
+                    // One unconfirmed local edit races many stale server refreshes.
+                    try store.upsertLocal(
+                        self.makeSession(id: self.entityA, date: "local"),
+                        accountUserID: self.accountA,
+                        entityType: .sessions,
+                        entityID: self.entityA.uuidString
+                    )
+                } else {
+                    try store.upsertServer(
+                        self.makeSession(id: self.entityA, date: "server-\(index)"),
+                        accountUserID: self.accountA,
+                        entityType: .sessions,
+                        entityID: self.entityA.uuidString,
+                        updatedAt: base.addingTimeInterval(TimeInterval(index) / 10)
+                    )
+                }
+            } catch {
+                lock.lock()
+                failures.append(error)
+                lock.unlock()
+            }
+        }
+
+        XCTAssertTrue(failures.isEmpty)
+        // Regardless of interleaving, the pending local edit survives refresh.
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            makeSession(id: entityA, date: "local")
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+    }
+
+    func testConcurrentPendingLocalDeleteSurvivesStaleServerRefresh() throws {
+        let store = try makeStore()
+        let count = 40
+        let lock = NSLock()
+        var failures: [Error] = []
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        DispatchQueue.concurrentPerform(iterations: count) { index in
+            do {
+                if index == count / 2 {
+                    try store.markDeletedLocal(
+                        accountUserID: self.accountA,
+                        entityType: .sessions,
+                        entityID: self.entityA.uuidString
+                    )
+                } else {
+                    try store.upsertServer(
+                        self.makeSession(id: self.entityA, date: "server-\(index)"),
+                        accountUserID: self.accountA,
+                        entityType: .sessions,
+                        entityID: self.entityA.uuidString,
+                        updatedAt: base.addingTimeInterval(TimeInterval(index) / 10)
+                    )
+                }
+            } catch {
+                lock.lock()
+                failures.append(error)
+                lock.unlock()
+            }
+        }
+
+        XCTAssertTrue(failures.isEmpty)
+        // Regardless of interleaving, the pending local delete stays hidden.
+        XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
     }
 
     // MARK: - Upsert replaces + soft delete
@@ -641,5 +905,99 @@ final class LocalCacheStoreTests: XCTestCase {
             )!
         }
         XCTAssertEqual(origin, LocalCacheWriteOrigin.local.rawValue)
+
+        // The pending migration backfills pre-existing rows as not pending:
+        // they predate the pending concept and are not unconfirmed local edits.
+        let pending: Int = try queue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT pending FROM cache_rows WHERE entity_id = ?",
+                arguments: [entityA.uuidString]
+            )!
+        }
+        XCTAssertEqual(pending, 0)
+    }
+
+    func testPendingMigrationBackfillsExistingRowsAsNotPending() throws {
+        let queue = try DatabaseQueue()
+        try queue.write { db in
+            // Simulate a DB that already has write_origin (the schema after the
+            // addWriteOrigin migration) but not the pending column.
+            try db.execute(sql: """
+                CREATE TABLE cache_rows (
+                    account_user_id TEXT NOT NULL,
+                    entity_type     TEXT NOT NULL,
+                    entity_id       TEXT NOT NULL,
+                    payload         TEXT NOT NULL,
+                    deleted_at      TEXT,
+                    updated_at      TEXT NOT NULL,
+                    write_origin    TEXT NOT NULL DEFAULT 'local',
+                    PRIMARY KEY (account_user_id, entity_type, entity_id)
+                );
+                """)
+            try db.execute(
+                sql: """
+                    INSERT INTO cache_rows
+                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin)
+                    VALUES (?, ?, ?, '{}', NULL, '2026-08-23T00:00:00.000000Z', 'local')
+                    """,
+                arguments: [accountA.uuidString, LocalCacheEntityType.sessions.rawValue, entityA.uuidString]
+            )
+        }
+
+        _ = try LocalCacheStore(dbQueue: queue)
+
+        let pending: Int = try queue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT pending FROM cache_rows WHERE entity_id = ?",
+                arguments: [entityA.uuidString]
+            )!
+        }
+        XCTAssertEqual(pending, 0)
+    }
+
+    func testColumnAddMigrationsAreIdempotentWhenColumnsAlreadyPresent() throws {
+        let queue = try DatabaseQueue()
+        try queue.write { db in
+            // Simulate a future dev who folded write_origin AND pending into the
+            // CREATE TABLE: both columns already exist, so the guarded ALTER
+            // migrations must be no-ops rather than failing with duplicate column.
+            try db.execute(sql: """
+                CREATE TABLE cache_rows (
+                    account_user_id TEXT NOT NULL,
+                    entity_type     TEXT NOT NULL,
+                    entity_id       TEXT NOT NULL,
+                    payload         TEXT NOT NULL,
+                    deleted_at      TEXT,
+                    updated_at      TEXT NOT NULL,
+                    write_origin    TEXT NOT NULL DEFAULT 'local',
+                    pending         INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (account_user_id, entity_type, entity_id)
+                );
+                """)
+            try db.execute(
+                sql: """
+                    INSERT INTO cache_rows
+                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending)
+                    VALUES (?, ?, ?, '{}', NULL, '2026-08-23T00:00:00.000000Z', 'local', 0)
+                    """,
+                arguments: [accountA.uuidString, LocalCacheEntityType.sessions.rawValue, entityA.uuidString]
+            )
+        }
+
+        // Running the store's migrator on a queue whose columns already exist
+        // must not throw a duplicate-column error.
+        _ = try LocalCacheStore(dbQueue: queue)
+        try LocalCacheStore.migrate(queue)
+
+        let pending: Int = try queue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT pending FROM cache_rows WHERE entity_id = ?",
+                arguments: [entityA.uuidString]
+            )!
+        }
+        XCTAssertEqual(pending, 0)
     }
 }
