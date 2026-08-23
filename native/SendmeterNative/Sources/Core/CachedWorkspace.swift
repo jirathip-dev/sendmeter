@@ -1,5 +1,46 @@
 import Foundation
 
+/// One observable change returned by a cursor-based repository fetch.
+///
+/// `value` is non-nil for an active or restored server row and nil for an
+/// explicit tombstone. The caller never infers a delete from an absent row;
+/// only the server's `deleted_at` row is authoritative for delta reconcile.
+public struct RemoteEntityChange<Value: Sendable>: Sendable {
+    public let entityID: String
+    public let value: Value?
+    public let updatedAt: Date
+
+    public init(entityID: String, value: Value?, updatedAt: Date) {
+        self.entityID = entityID
+        self.value = value
+        self.updatedAt = updatedAt
+    }
+
+    public var deleted: Bool { value == nil }
+}
+
+/// The cursor-bounded result of one repository entity fetch.
+///
+/// `activeValues` is the convenience full list for a first sync; `cursor` is
+/// the greatest server `updated_at` observed in the response, formatted as a
+/// cache cursor string. A nil cursor means no server rows were observed and
+/// the caller must leave the existing cursor untouched until a later fetch.
+public struct RemoteEntityDelta<Value: Sendable>: Sendable {
+    public let changes: [RemoteEntityChange<Value>]
+    public let activeValues: [Value]
+    public let cursor: String?
+
+    public init(
+        changes: [RemoteEntityChange<Value>],
+        activeValues: [Value],
+        cursor: String?
+    ) {
+        self.changes = changes
+        self.activeValues = activeValues
+        self.cursor = cursor
+    }
+}
+
 /// The full read snapshot held by `AppModel`'s `@Published` collections.
 ///
 /// This is the cache's typed boundary: the app target loads one of these
@@ -294,6 +335,129 @@ public struct CachedWorkspace: @unchecked Sendable {
                 updatedAt: updatedAt
             )
         }
+    }
+
+    /// Reconciles one cursor-bounded delta into the account cache.
+    ///
+    /// Unlike `reconcileServer`, this never treats a row absent from the
+    /// response as deleted: delta fetches include tombstones explicitly, so a
+    /// hard-delete entity must reset its cursor when full reconciliation is
+    /// needed. Pending rows are protected by the same store guards as every
+    /// other server refresh. The cursor advances only after every change in
+    /// the batch has been applied.
+    public func reconcileDelta<T: Encodable>(
+        _ delta: RemoteEntityDelta<T>,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws {
+        try applyDeltaChanges(
+            delta,
+            accountUserID: accountUserID,
+            entityType: entityType
+        )
+        if let cursor = delta.cursor {
+            try store.setCursor(
+                cursor,
+                accountUserID: accountUserID,
+                entityType: entityType
+            )
+        }
+    }
+
+    /// Reconciles one cursor-bounded delta as a full first-sync snapshot.
+    ///
+    /// Active delta rows are applied with their server `updated_at`, then
+    /// cached rows absent from every active change are tombstoned and the
+    /// cursor is persisted. All writes happen before the cursor advances, so a
+    /// failure leaves the cache safely repairable by another full refresh.
+    public func reconcileServerDelta<T: Encodable>(
+        _ delta: RemoteEntityDelta<T>,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws {
+        try applyDeltaChanges(
+            delta,
+            accountUserID: accountUserID,
+            entityType: entityType
+        )
+        let remoteIDs = Set(
+            delta.changes.compactMap { $0.value == nil ? nil : $0.entityID }
+        )
+        let cachedIDs = try store.activeEntityIDs(
+            accountUserID: accountUserID,
+            entityType: entityType
+        )
+        let pendingIDs = Set(try store.pendingEntityIDs(
+            accountUserID: accountUserID,
+            entityType: entityType
+        ))
+        for cachedID in cachedIDs
+            where !remoteIDs.contains(cachedID) && !pendingIDs.contains(cachedID) {
+            try store.markDeletedDeltaServer(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: cachedID,
+                updatedAt: Date()
+            )
+        }
+        if let cursor = delta.cursor {
+            try store.setCursor(
+                cursor,
+                accountUserID: accountUserID,
+                entityType: entityType
+            )
+        }
+    }
+
+    private func applyDeltaChanges<T: Encodable>(
+        _ delta: RemoteEntityDelta<T>,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws {
+        for change in delta.changes {
+            if let value = change.value {
+                try store.upsertDeltaServer(
+                    value,
+                    accountUserID: accountUserID,
+                    entityType: entityType,
+                    entityID: change.entityID,
+                    updatedAt: change.updatedAt
+                )
+            } else {
+                try store.markDeletedDeltaServer(
+                    accountUserID: accountUserID,
+                    entityType: entityType,
+                    entityID: change.entityID,
+                    updatedAt: change.updatedAt
+                )
+            }
+        }
+    }
+
+    public func cursor(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws -> String? {
+        try store.cursor(accountUserID: accountUserID, entityType: entityType)
+    }
+
+    public func setCursor(
+        _ cursor: String,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws {
+        try store.setCursor(
+            cursor,
+            accountUserID: accountUserID,
+            entityType: entityType
+        )
+    }
+
+    public func resetCursor(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws {
+        try store.deleteCursor(accountUserID: accountUserID, entityType: entityType)
     }
 
     @discardableResult

@@ -23,6 +23,7 @@ export async function fetchPhasePeriods(): Promise<PhasePeriod[]> {
     await supabase
       .from("phase_periods")
       .select("id, phase, started_on, ended_on")
+      .is("deleted_at", null)
       .order("started_on", { ascending: false })
       .order("created_at", { ascending: false }),
   );
@@ -61,7 +62,10 @@ export async function switchPhase(
     if (prev && prev.phase === newPhase && prev.endedOn === t) {
       // Undo: delete the sliver first so the one-open index never sees two.
       unwrap(
-        await supabase.from("phase_periods").delete().eq("id", open.id),
+        await supabase
+          .from("phase_periods")
+          .update({ deleted_at: new Date().toISOString() })
+          .eq("id", open.id),
       );
       unwrap(
         await supabase
