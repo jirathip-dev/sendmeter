@@ -33,6 +33,16 @@ final class LocalCacheStoreTests: XCTestCase {
         }
     }
 
+    private static func revisionFlag(in store: LocalCacheStore, entityID: String, accountID: UUID) throws -> Int {
+        try store.dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT local_revision FROM cache_rows WHERE account_user_id = ? AND entity_id = ?",
+                arguments: [accountID.uuidString, entityID]
+            )!
+        }
+    }
+
     // MARK: - Representative payloads
 
     private func makeSession(id: UUID, date: String = "2026-08-20") -> Session {
@@ -476,13 +486,19 @@ final class LocalCacheStoreTests: XCTestCase {
         let newest = makeSession(id: entityA, date: "newest")
         let base = Date(timeIntervalSince1970: 1_700_000_000)
 
-        try store.upsertLocal(local, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        let localRevision = try store.upsertLocal(
+            local,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
         try store.confirmServerUpsert(
             confirmed,
             accountUserID: accountA,
             entityType: .sessions,
             entityID: entityA.uuidString,
-            updatedAt: base.addingTimeInterval(1)
+            updatedAt: base.addingTimeInterval(1),
+            confirmingLocalRevision: localRevision
         )
 
         // Confirmation applies the server state and clears pending.
@@ -492,6 +508,7 @@ final class LocalCacheStoreTests: XCTestCase {
         )
         XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
         XCTAssertEqual(try Self.originFlag(in: store, entityID: entityA.uuidString, accountID: accountA), "server")
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
 
         // A stale refresh (older server timestamp) is dropped by server LWW.
         try store.upsertServer(
@@ -526,17 +543,24 @@ final class LocalCacheStoreTests: XCTestCase {
         let newest = makeSession(id: entityA, date: "newest")
         let base = Date(timeIntervalSince1970: 1_700_000_000)
 
-        try store.upsertLocal(local, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        let localRevision = try store.upsertLocal(
+            local,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
         try store.confirmServerDelete(
             accountUserID: accountA,
             entityType: .sessions,
             entityID: entityA.uuidString,
-            updatedAt: base.addingTimeInterval(1)
+            updatedAt: base.addingTimeInterval(1),
+            confirmingLocalRevision: localRevision
         )
 
         // Confirmation applies the tombstone and clears pending.
         XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
         XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
 
         // A stale refresh cannot resurrect the confirmed tombstone.
         try store.upsertServer(
@@ -570,7 +594,8 @@ final class LocalCacheStoreTests: XCTestCase {
             accountUserID: accountA,
             entityType: .sessions,
             entityID: entityA.uuidString,
-            updatedAt: base.addingTimeInterval(2)
+            updatedAt: base.addingTimeInterval(2),
+            confirmingLocalRevision: 0
         )
         XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
 
@@ -771,6 +796,278 @@ final class LocalCacheStoreTests: XCTestCase {
         XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
     }
 
+    // MARK: - Local revision + conditional confirmation
+
+    func testUpsertLocalReturnsIncreasingRevisionAndStoresIt() throws {
+        let store = try makeStore()
+        let first = makeSession(id: entityA, date: "first")
+        let second = makeSession(id: entityA, date: "second")
+
+        let firstRev = try store.upsertLocal(
+            first,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        XCTAssertEqual(firstRev, 1)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+
+        let secondRev = try store.upsertLocal(
+            second,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        XCTAssertEqual(secondRev, 2)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 2)
+    }
+
+    func testMarkDeletedLocalReturnsIncreasingRevision() throws {
+        let store = try makeStore()
+        let session = makeSession(id: entityA)
+
+        _ = try store.upsertLocal(
+            session,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        let deleteRev = try store.markDeletedLocal(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        XCTAssertEqual(deleteRev, 2)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 2)
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+    }
+
+    func testConfirmServerUpsertDoesNotClobberNewerLocalEdit() throws {
+        let store = try makeStore()
+        let a = makeSession(id: entityA, date: "A")
+        let b = makeSession(id: entityA, date: "B")
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        // Upload A, then edit again to B while A is in flight.
+        let revA = try store.upsertLocal(
+            a,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        let revB = try store.upsertLocal(
+            b,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        XCTAssertEqual(revB, revA + 1)
+
+        // A's upload completes; confirming with revA is stale and must not
+        // clobber the newer local edit B.
+        try store.confirmServerUpsert(
+            a,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1),
+            confirmingLocalRevision: revA
+        )
+
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            b
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), revB)
+
+        // A stale refresh also cannot revert B.
+        try store.upsertServer(
+            a,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(0.5)
+        )
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            b
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+    }
+
+    func testConfirmServerDeleteDoesNotClobberNewerLocalUpsert() throws {
+        let store = try makeStore()
+        let b = makeSession(id: entityA, date: "B")
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        // Local delete uploaded with deleteRev, then a newer edit to B.
+        let deleteRev = try store.markDeletedLocal(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        _ = try store.upsertLocal(
+            b,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+
+        // The delete upload confirms with the old revision; B must survive.
+        try store.confirmServerDelete(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1),
+            confirmingLocalRevision: deleteRev
+        )
+
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            b
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+    }
+
+    func testConfirmWithCurrentRevisionAppliesAndClearsPending() throws {
+        let store = try makeStore()
+        let local = makeSession(id: entityA, date: "local")
+        let confirmed = makeSession(id: entityA, date: "confirmed")
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let rev = try store.upsertLocal(
+            local,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        try store.confirmServerUpsert(
+            confirmed,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1),
+            confirmingLocalRevision: rev
+        )
+
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            confirmed
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+        XCTAssertEqual(try Self.originFlag(in: store, entityID: entityA.uuidString, accountID: accountA), "server")
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+    }
+
+    func testServerRefreshKeepsLocalRevisionForPendingRow() throws {
+        let store = try makeStore()
+        let local = makeSession(id: entityA, date: "local")
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let rev = try store.upsertLocal(
+            local,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        // A refresh on a pending row must preserve the revision.
+        try store.upsertServer(
+            makeSession(id: entityA, date: "server"),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(10)
+        )
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), rev)
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+    }
+
+    func testServerRefreshResetsLocalRevisionOnNonPendingLocalRow() throws {
+        let store = try makeStore()
+        // A pre-existing local-origin row that is not pending (e.g. backfilled
+        // by a migration) with a stale nonzero revision. A server refresh must
+        // take over and reset the revision to 0.
+        try store.dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO cache_rows
+                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                    VALUES (?, ?, ?, '{}', NULL, '2026-08-23T00:00:00.000000Z', 'local', 0, 3)
+                    """,
+                arguments: [accountA.uuidString, LocalCacheEntityType.sessions.rawValue, entityA.uuidString]
+            )
+        }
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        try store.upsertServer(
+            makeSession(id: entityA, date: "server"),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1)
+        )
+        XCTAssertEqual(try Self.originFlag(in: store, entityID: entityA.uuidString, accountID: accountA), "server")
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+    }
+
+    func testServerRefreshResetsLocalRevisionOnNewerServerRow() throws {
+        let store = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        _ = try store.upsertServer(
+            makeSession(id: entityA, date: "older"),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1)
+        )
+        // Simulate a server-origin row that once carried a local revision but
+        // is now clean; a newer server refresh must reset it to 0.
+        try store.dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE cache_rows SET local_revision = 7 WHERE entity_id = ?",
+                arguments: [entityA.uuidString]
+            )
+        }
+        try store.upsertServer(
+            makeSession(id: entityA, date: "newer"),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(2)
+        )
+        XCTAssertEqual(try Self.originFlag(in: store, entityID: entityA.uuidString, accountID: accountA), "server")
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+    }
+
+    func testServerRefreshLeavesLocalRevisionForStaleServerRow() throws {
+        let store = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        _ = try store.upsertServer(
+            makeSession(id: entityA, date: "newest"),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(2)
+        )
+        // Simulate a server-origin row that once carried a local revision; a
+        // stale refresh must leave it unchanged.
+        try store.dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE cache_rows SET local_revision = 5 WHERE entity_id = ?",
+                arguments: [entityA.uuidString]
+            )
+        }
+        try store.upsertServer(
+            makeSession(id: entityA, date: "stale"),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1)
+        )
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 5)
+    }
+
     // MARK: - Upsert replaces + soft delete
 
     func testUpsertReplacesSameEntity() throws {
@@ -916,6 +1213,17 @@ final class LocalCacheStoreTests: XCTestCase {
             )!
         }
         XCTAssertEqual(pending, 0)
+
+        // The local_revision migration backfills pre-existing rows as 0: they
+        // have no unconfirmed local edit to track.
+        let revision: Int = try queue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT local_revision FROM cache_rows WHERE entity_id = ?",
+                arguments: [entityA.uuidString]
+            )!
+        }
+        XCTAssertEqual(revision, 0)
     }
 
     func testPendingMigrationBackfillsExistingRowsAsNotPending() throws {
@@ -955,14 +1263,24 @@ final class LocalCacheStoreTests: XCTestCase {
             )!
         }
         XCTAssertEqual(pending, 0)
+
+        let revision: Int = try queue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT local_revision FROM cache_rows WHERE entity_id = ?",
+                arguments: [entityA.uuidString]
+            )!
+        }
+        XCTAssertEqual(revision, 0)
     }
 
     func testColumnAddMigrationsAreIdempotentWhenColumnsAlreadyPresent() throws {
         let queue = try DatabaseQueue()
         try queue.write { db in
-            // Simulate a future dev who folded write_origin AND pending into the
-            // CREATE TABLE: both columns already exist, so the guarded ALTER
-            // migrations must be no-ops rather than failing with duplicate column.
+            // Simulate a future dev who folded write_origin, pending, AND
+            // local_revision into the CREATE TABLE: all three columns already
+            // exist, so the guarded ALTER migrations must be no-ops rather
+            // than failing with duplicate column.
             try db.execute(sql: """
                 CREATE TABLE cache_rows (
                     account_user_id TEXT NOT NULL,
@@ -973,14 +1291,15 @@ final class LocalCacheStoreTests: XCTestCase {
                     updated_at      TEXT NOT NULL,
                     write_origin    TEXT NOT NULL DEFAULT 'local',
                     pending         INTEGER NOT NULL DEFAULT 0,
+                    local_revision  INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (account_user_id, entity_type, entity_id)
                 );
                 """)
             try db.execute(
                 sql: """
                     INSERT INTO cache_rows
-                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending)
-                    VALUES (?, ?, ?, '{}', NULL, '2026-08-23T00:00:00.000000Z', 'local', 0)
+                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                    VALUES (?, ?, ?, '{}', NULL, '2026-08-23T00:00:00.000000Z', 'local', 0, 0)
                     """,
                 arguments: [accountA.uuidString, LocalCacheEntityType.sessions.rawValue, entityA.uuidString]
             )
@@ -999,5 +1318,33 @@ final class LocalCacheStoreTests: XCTestCase {
             )!
         }
         XCTAssertEqual(pending, 0)
+
+        let revision: Int = try queue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT local_revision FROM cache_rows WHERE entity_id = ?",
+                arguments: [entityA.uuidString]
+            )!
+        }
+        XCTAssertEqual(revision, 0)
+    }
+
+    func testLocalRevisionMigrationCreatesColumnOnFreshSchema() throws {
+        let store = try makeStore()
+        // A fresh store already has local_revision; a local write bumps it.
+        let rev = try store.upsertLocal(
+            makeSession(id: entityA),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString
+        )
+        XCTAssertEqual(rev, 1)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+
+        // Re-running the migrator on the same queue is a no-op and keeps the
+        // store usable.
+        _ = try LocalCacheStore(dbQueue: store.dbQueue)
+        try LocalCacheStore.migrate(store.dbQueue)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
     }
 }

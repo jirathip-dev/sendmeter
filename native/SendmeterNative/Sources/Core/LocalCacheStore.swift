@@ -87,16 +87,17 @@ public struct CacheLoadOneResult<T> {
 /// `deleted_at` tombstone that hides the row from reads, while a later upsert
 /// clears the tombstone so a refreshed server row becomes visible again.
 ///
-/// Every row records its `write_origin` and `pending` state. Local writes are
-/// optimistic and always replace a cached row, marking it pending until the
-/// server confirms. A server **refresh** (`upsertServer`/`markDeletedServer`)
-/// never reverts a pending local action — it only replaces non-pending
-/// local-origin rows and otherwise uses last-writer-wins on a
-/// microsecond-precision `updated_at`. A server **confirmation**
-/// (`confirmServerUpsert`/`confirmServerDelete`) applies the server's
-/// post-upload state and clears pending; slice 2+ calls this after the
-/// DurableQueue successfully uploads. Server deletes are remembered as
-/// tombstones even for keys that have never been cached.
+/// Every row records its `write_origin`, `pending`, and `local_revision`
+/// state. Local writes are optimistic and always replace a cached row, marking
+/// it pending and bumping `local_revision` until the server confirms. A server
+/// **refresh** (`upsertServer`/`markDeletedServer`) never reverts a pending
+/// local action — it only replaces non-pending local-origin rows and otherwise
+/// uses last-writer-wins on a microsecond-precision `updated_at`. A server
+/// **confirmation** (`confirmServerUpsert`/`confirmServerDelete`) applies the
+/// server's post-upload state and clears pending only when the row's stored
+/// `local_revision` still equals the revision that was uploaded; slice 2+
+/// calls this after the DurableQueue successfully uploads. Server deletes are
+/// remembered as tombstones even for keys that have never been cached.
 ///
 /// The schema also has a per-account `sync_cursors` table so later slices can
 /// implement incremental reconcile per entity type. `deleteAccount` purges
@@ -117,7 +118,9 @@ public struct LocalCacheStore: @unchecked Sendable {
     ///   otherwise uses server LWW.
     /// - `.serverConfirm`: the server's ack for a successfully uploaded local
     ///   write/delete. It applies the post-upload server state and clears
-    ///   `pending`. Only slice 2+ calls this after `DurableQueue` upload.
+    ///   `pending` only while the cached row's `local_revision` still equals
+    ///   the revision that was uploaded. Only slice 2+ calls this after
+    ///   `DurableQueue` upload.
     private enum CacheWriteMode {
         case local
         case serverRefresh
@@ -200,6 +203,20 @@ public struct LocalCacheStore: @unchecked Sendable {
                 try db.execute(sql: """
                     ALTER TABLE cache_rows
                     ADD COLUMN pending INTEGER NOT NULL DEFAULT 0
+                    """)
+            }
+        }
+        migrator.registerMigration("addLocalRevisionToCacheRows") { db in
+            // Every local optimistic write/delete bumps a per-row revision so a
+            // server **confirmation** for an uploaded change can tell whether
+            // the pending row it is about to clear still belongs to that same
+            // upload. `local_revision` is 0 for confirmed/clean rows and
+            // monotonically increases across a row's unconfirmed local edits.
+            let hasRevision = try Self.hasColumn("local_revision", in: "cache_rows", db: db)
+            if !hasRevision {
+                try db.execute(sql: """
+                    ALTER TABLE cache_rows
+                    ADD COLUMN local_revision INTEGER NOT NULL DEFAULT 0
                     """)
             }
         }
@@ -303,16 +320,22 @@ public struct LocalCacheStore: @unchecked Sendable {
     // MARK: - Writes
 
     /// Optimistically upserts one locally-produced payload for an account +
-    /// entity. Local writes always replace any cached row and mark it
-    /// `pending`: a later server **refresh** (`upsertServer`) will not revert
-    /// the unconfirmed edit, and `confirmServerUpsert` is what clears the
-    /// pending flag after the DurableQueue upload succeeds.
+    /// entity. Local writes always replace any cached row, mark it `pending`,
+    /// and bump its `local_revision`: a later server **refresh**
+    /// (`upsertServer`) will not revert the unconfirmed edit, and
+    /// `confirmServerUpsert` is what clears the pending flag after the
+    /// DurableQueue upload succeeds.
+    ///
+    /// - Returns: the `local_revision` assigned to this optimistic write. Pass
+    ///   the same value to `confirmServerUpsert` so the server ack applies only
+    ///   if no newer local edit has replaced it.
+    @discardableResult
     public func upsertLocal<T: Encodable>(
         _ value: T,
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
         entityID: String
-    ) throws {
+    ) throws -> Int {
         try writePayload(
             value,
             accountUserID: accountUserID,
@@ -327,36 +350,42 @@ public struct LocalCacheStore: @unchecked Sendable {
     ///
     /// This is the **confirmation** path, not the refresh path. Call it only
     /// after the DurableQueue successfully uploads a local change, and pass the
-    /// entity's post-upload server `updated_at`. It unconditionally replaces the
-    /// cached row with the server state (so a stale refresh can never leave an
-    /// unresolved pending edit), clears `pending`, and marks the row
-    /// server-origin so later refreshes use server LWW.
+    /// entity's post-upload server `updated_at` plus the `local_revision`
+    /// returned by the matching `upsertLocal`. It replaces the cached row with
+    /// the server state and clears `pending` **only** while that revision still
+    /// matches; if a newer local edit bumped the revision while the upload was
+    /// in flight, the confirmation is a no-op so the newer edit survives with
+    /// its `pending` flag intact.
     public func confirmServerUpsert<T: Encodable>(
         _ value: T,
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
         entityID: String,
-        updatedAt: Date
+        updatedAt: Date,
+        confirmingLocalRevision: Int
     ) throws {
-        try writePayload(
+        _ = try writePayload(
             value,
             accountUserID: accountUserID,
             entityType: entityType,
             entityID: entityID,
             mode: .serverConfirm,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            confirmingLocalRevision: confirmingLocalRevision
         )
     }
 
     /// Upserts one server payload from a refresh (poll or realtime).
     ///
     /// A refresh must **not** revert an unconfirmed local action: if the cached
-    /// row is `pending`, the incoming payload is dropped. Otherwise a
-    /// server write replaces a non-pending local-origin row regardless of clock
-    /// and replaces a server-origin row only when `updatedAt` is strictly
-    /// newer. The writer must pass the entity's server `updated_at`;
-    /// timestamps are microsecond-precision and compared within the server
-    /// domain only. Use `confirmServerUpsert` for the post-upload ack instead.
+    /// row is `pending`, the incoming payload is dropped and its
+    /// `local_revision` is preserved. Otherwise a server write replaces a
+    /// non-pending local-origin row regardless of clock (resetting
+    /// `local_revision` to 0) and replaces a server-origin row only when
+    /// `updatedAt` is strictly newer (also resetting `local_revision` to 0).
+    /// The writer must pass the entity's server `updated_at`; timestamps are
+    /// microsecond-precision and compared within the server domain only. Use
+    /// `confirmServerUpsert` for the post-upload ack instead.
     public func upsertServer<T: Encodable>(
         _ value: T,
         accountUserID: UUID,
@@ -364,7 +393,7 @@ public struct LocalCacheStore: @unchecked Sendable {
         entityID: String,
         updatedAt: Date
     ) throws {
-        try writePayload(
+        _ = try writePayload(
             value,
             accountUserID: accountUserID,
             entityType: entityType,
@@ -380,42 +409,60 @@ public struct LocalCacheStore: @unchecked Sendable {
         entityType: LocalCacheEntityType,
         entityID: String,
         mode: CacheWriteMode,
-        updatedAt: Date
-    ) throws {
+        updatedAt: Date,
+        confirmingLocalRevision: Int? = nil
+    ) throws -> Int {
         let json = try JSONEncoder().encode(value)
         guard let payload = String(data: json, encoding: .utf8) else {
             throw LocalCacheError.invalidJSON
         }
         let incoming = Self.timestamp(updatedAt)
-        try dbQueue.write { db in
+        return try dbQueue.write { db -> Int in
             switch mode {
             case .local:
+                let current = try Int.fetchOne(
+                    db,
+                    sql: """
+                        SELECT local_revision FROM cache_rows
+                        WHERE account_user_id = ? AND entity_type = ? AND entity_id = ?
+                        """,
+                    arguments: [
+                        Self.accountIDString(accountUserID),
+                        entityType.rawValue,
+                        entityID
+                    ]
+                ) ?? 0
+                let next = current + 1
                 try db.execute(
                     sql: """
                         INSERT INTO cache_rows
-                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending)
-                        VALUES (?, ?, ?, ?, NULL, ?, 'local', 1)
+                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                        VALUES (?, ?, ?, ?, NULL, ?, 'local', 1, ?)
                         ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
                             payload = excluded.payload,
                             deleted_at = NULL,
                             updated_at = excluded.updated_at,
                             write_origin = 'local',
-                            pending = 1
+                            pending = 1,
+                            local_revision = ?
                         """,
                     arguments: [
                         Self.accountIDString(accountUserID),
                         entityType.rawValue,
                         entityID,
                         payload,
-                        incoming
+                        incoming,
+                        next,
+                        next
                     ]
                 )
+                return next
             case .serverRefresh:
                 try db.execute(
                     sql: """
                         INSERT INTO cache_rows
-                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending)
-                        VALUES (?, ?, ?, ?, NULL, ?, 'server', 0)
+                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                        VALUES (?, ?, ?, ?, NULL, ?, 'server', 0, 0)
                         ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
                             payload = CASE
                                 WHEN cache_rows.pending = 1 THEN cache_rows.payload
@@ -446,6 +493,12 @@ public struct LocalCacheStore: @unchecked Sendable {
                                 WHEN cache_rows.write_origin = 'local' THEN 0
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN 0
                                 ELSE cache_rows.pending
+                            END,
+                            local_revision = CASE
+                                WHEN cache_rows.pending = 1 THEN cache_rows.local_revision
+                                WHEN cache_rows.write_origin = 'local' THEN 0
+                                WHEN cache_rows.updated_at < excluded.updated_at THEN 0
+                                ELSE cache_rows.local_revision
                             END
                         """,
                     arguments: [
@@ -456,41 +509,75 @@ public struct LocalCacheStore: @unchecked Sendable {
                         incoming
                     ]
                 )
+                return 0
             case .serverConfirm:
+                let confirming = confirmingLocalRevision ?? 0
                 try db.execute(
                     sql: """
                         INSERT INTO cache_rows
-                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending)
-                        VALUES (?, ?, ?, ?, NULL, ?, 'server', 0)
+                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                        VALUES (?, ?, ?, ?, NULL, ?, 'server', 0, 0)
                         ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
-                            payload = excluded.payload,
-                            deleted_at = NULL,
-                            updated_at = excluded.updated_at,
-                            write_origin = 'server',
-                            pending = 0
+                            payload = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN excluded.payload
+                                ELSE cache_rows.payload
+                            END,
+                            deleted_at = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN NULL
+                                ELSE cache_rows.deleted_at
+                            END,
+                            updated_at = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN excluded.updated_at
+                                ELSE cache_rows.updated_at
+                            END,
+                            write_origin = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 'server'
+                                ELSE cache_rows.write_origin
+                            END,
+                            pending = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 0
+                                ELSE cache_rows.pending
+                            END,
+                            local_revision = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 0
+                                ELSE cache_rows.local_revision
+                            END
                         """,
                     arguments: [
                         Self.accountIDString(accountUserID),
                         entityType.rawValue,
                         entityID,
                         payload,
-                        incoming
+                        incoming,
+                        confirming,
+                        confirming,
+                        confirming,
+                        confirming,
+                        confirming,
+                        confirming
                     ]
                 )
+                return 0
             }
         }
     }
 
     /// Optimistically soft-deletes one locally-produced entity for an account
-    /// (hidden from reads), marking it pending. The tombstone is created even
-    /// when the key was never cached, so a later server **refresh** cannot
-    /// resurrect it; `confirmServerDelete` is what clears the pending flag
-    /// after the DurableQueue uploads the delete.
+    /// (hidden from reads), marking it pending and bumping its
+    /// `local_revision`. The tombstone is created even when the key was never
+    /// cached, so a later server **refresh** cannot resurrect it;
+    /// `confirmServerDelete` is what clears the pending flag after the
+    /// DurableQueue uploads the delete.
+    ///
+    /// - Returns: the `local_revision` assigned to this optimistic delete. Pass
+    ///   the same value to `confirmServerDelete` so the server ack applies only
+    ///   if no newer local edit has replaced it.
+    @discardableResult
     public func markDeletedLocal(
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
         entityID: String
-    ) throws {
+    ) throws -> Int {
         try writeTombstone(
             accountUserID: accountUserID,
             entityType: entityType,
@@ -504,39 +591,46 @@ public struct LocalCacheStore: @unchecked Sendable {
     ///
     /// This is the **confirmation** path, not the refresh path. Call it only
     /// after the DurableQueue successfully uploads a local delete, and pass the
-    /// server's post-delete `updated_at`. It unconditionally writes a tombstone
-    /// (even for a never-cached key), clears `pending`, and marks the row
-    /// server-origin.
+    /// server's post-delete `updated_at` plus the `local_revision` returned by
+    /// the matching `markDeletedLocal`. It writes the tombstone and clears
+    /// `pending` **only** while that revision still matches; if a newer local
+    /// edit bumped the revision while the upload was in flight, the
+    /// confirmation is a no-op so the newer edit survives with its `pending`
+    /// flag intact.
     public func confirmServerDelete(
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
         entityID: String,
-        updatedAt: Date
+        updatedAt: Date,
+        confirmingLocalRevision: Int
     ) throws {
-        try writeTombstone(
+        _ = try writeTombstone(
             accountUserID: accountUserID,
             entityType: entityType,
             entityID: entityID,
             mode: .serverConfirm,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            confirmingLocalRevision: confirmingLocalRevision
         )
     }
 
     /// Soft-deletes one server entity from a refresh (hidden from reads).
     ///
     /// A refresh delete never reverts a pending local action: if the cached row
-    /// is `pending`, the incoming tombstone is dropped. Otherwise it inserts a
-    /// tombstone even when the key was never cached (so an out-of-order stale
-    /// upsert cannot resurrect a server-deleted row), replaces a non-pending
-    /// local-origin row, and only replaces an older server-origin row. Use
-    /// `confirmServerDelete` for the post-upload ack instead.
+    /// is `pending`, the incoming tombstone is dropped and its `local_revision`
+    /// is preserved. Otherwise it inserts a tombstone even when the key was
+    /// never cached (so an out-of-order stale upsert cannot resurrect a
+    /// server-deleted row), replaces a non-pending local-origin row (resetting
+    /// `local_revision` to 0), and only replaces an older server-origin row
+    /// (also resetting `local_revision` to 0). Use `confirmServerDelete` for
+    /// the post-upload ack instead.
     public func markDeletedServer(
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
         entityID: String,
         updatedAt: Date
     ) throws {
-        try writeTombstone(
+        _ = try writeTombstone(
             accountUserID: accountUserID,
             entityType: entityType,
             entityID: entityID,
@@ -550,38 +644,56 @@ public struct LocalCacheStore: @unchecked Sendable {
         entityType: LocalCacheEntityType,
         entityID: String,
         mode: CacheWriteMode,
-        updatedAt: Date
-    ) throws {
+        updatedAt: Date,
+        confirmingLocalRevision: Int? = nil
+    ) throws -> Int {
         let incoming = Self.timestamp(updatedAt)
-        try dbQueue.write { db in
+        return try dbQueue.write { db -> Int in
             switch mode {
             case .local:
+                let current = try Int.fetchOne(
+                    db,
+                    sql: """
+                        SELECT local_revision FROM cache_rows
+                        WHERE account_user_id = ? AND entity_type = ? AND entity_id = ?
+                        """,
+                    arguments: [
+                        Self.accountIDString(accountUserID),
+                        entityType.rawValue,
+                        entityID
+                    ]
+                ) ?? 0
+                let next = current + 1
                 try db.execute(
                     sql: """
                         INSERT INTO cache_rows
-                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending)
-                        VALUES (?, ?, ?, '{}', ?, ?, 'local', 1)
+                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                        VALUES (?, ?, ?, '{}', ?, ?, 'local', 1, ?)
                         ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
                             payload = excluded.payload,
                             deleted_at = excluded.deleted_at,
                             updated_at = excluded.updated_at,
                             write_origin = 'local',
-                            pending = 1
+                            pending = 1,
+                            local_revision = ?
                         """,
                     arguments: [
                         Self.accountIDString(accountUserID),
                         entityType.rawValue,
                         entityID,
                         incoming,
-                        incoming
+                        incoming,
+                        next,
+                        next
                     ]
                 )
+                return next
             case .serverRefresh:
                 try db.execute(
                     sql: """
                         INSERT INTO cache_rows
-                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending)
-                        VALUES (?, ?, ?, '{}', ?, ?, 'server', 0)
+                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                        VALUES (?, ?, ?, '{}', ?, ?, 'server', 0, 0)
                         ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
                             payload = CASE
                                 WHEN cache_rows.pending = 1 THEN cache_rows.payload
@@ -612,6 +724,12 @@ public struct LocalCacheStore: @unchecked Sendable {
                                 WHEN cache_rows.write_origin = 'local' THEN 0
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN 0
                                 ELSE cache_rows.pending
+                            END,
+                            local_revision = CASE
+                                WHEN cache_rows.pending = 1 THEN cache_rows.local_revision
+                                WHEN cache_rows.write_origin = 'local' THEN 0
+                                WHEN cache_rows.updated_at < excluded.updated_at THEN 0
+                                ELSE cache_rows.local_revision
                             END
                         """,
                     arguments: [
@@ -622,27 +740,55 @@ public struct LocalCacheStore: @unchecked Sendable {
                         incoming
                     ]
                 )
+                return 0
             case .serverConfirm:
+                let confirming = confirmingLocalRevision ?? 0
                 try db.execute(
                     sql: """
                         INSERT INTO cache_rows
-                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending)
-                        VALUES (?, ?, ?, '{}', ?, ?, 'server', 0)
+                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                        VALUES (?, ?, ?, '{}', ?, ?, 'server', 0, 0)
                         ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
-                            payload = excluded.payload,
-                            deleted_at = excluded.deleted_at,
-                            updated_at = excluded.updated_at,
-                            write_origin = 'server',
-                            pending = 0
+                            payload = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN excluded.payload
+                                ELSE cache_rows.payload
+                            END,
+                            deleted_at = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN excluded.deleted_at
+                                ELSE cache_rows.deleted_at
+                            END,
+                            updated_at = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN excluded.updated_at
+                                ELSE cache_rows.updated_at
+                            END,
+                            write_origin = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 'server'
+                                ELSE cache_rows.write_origin
+                            END,
+                            pending = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 0
+                                ELSE cache_rows.pending
+                            END,
+                            local_revision = CASE
+                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 0
+                                ELSE cache_rows.local_revision
+                            END
                         """,
                     arguments: [
                         Self.accountIDString(accountUserID),
                         entityType.rawValue,
                         entityID,
                         incoming,
-                        incoming
+                        incoming,
+                        confirming,
+                        confirming,
+                        confirming,
+                        confirming,
+                        confirming,
+                        confirming
                     ]
                 )
+                return 0
             }
         }
     }
