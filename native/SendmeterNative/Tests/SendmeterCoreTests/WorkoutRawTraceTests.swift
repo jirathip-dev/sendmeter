@@ -341,4 +341,36 @@ final class WorkoutRawTraceTests: XCTestCase {
             ]
         )
     }
+
+    // MARK: selectedSample — scrub hit testing (#755)
+
+    func testSelectedSampleStaysInsideItsRun() {
+        let runOne = [
+            sample(0, 88), sample(1, 91), sample(2, 95)
+        ]
+        let runTwo = [
+            sample(10, 100), sample(11, 102), sample(12, 103)
+        ]
+        XCTAssertEqual(WorkoutRawTrace.selectedSample(at: 1.4, inRuns: [runOne, runTwo]), sample(1, 91))
+        XCTAssertEqual(WorkoutRawTrace.selectedSample(at: 11.4, inRuns: [runOne, runTwo]), sample(11, 102))
+    }
+
+    func testSelectedSampleNeverCrossesAGap() {
+        let runOne = [
+            sample(0, 88), sample(1, 91), sample(2, 95)
+        ]
+        let runTwo = [
+            sample(10, 100), sample(11, 102), sample(12, 103)
+        ]
+        XCTAssertNil(WorkoutRawTrace.selectedSample(at: 4, inRuns: [runOne, runTwo]))
+        XCTAssertNil(WorkoutRawTrace.selectedSample(at: 9, inRuns: [runOne, runTwo]))
+    }
+
+    func testSelectedSampleIgnoresEmptyRunsAndNonFiniteTime() {
+        let run = [
+            sample(0, 88), sample(1, 91)
+        ]
+        XCTAssertNil(WorkoutRawTrace.selectedSample(at: .nan, inRuns: [run]))
+        XCTAssertNil(WorkoutRawTrace.selectedSample(at: 0, inRuns: [[]]))
+    }
 }

@@ -14,6 +14,12 @@ struct SessionDetailView: View {
 
     @State private var boxStatsByID: [UUID: BoxStats] = [:]
     @State private var loadingSamples = false
+    /// #755: shared scrub position for the stacked HR and effort charts. The
+    /// parent owns it so the two charts stay perfectly aligned, and the
+    /// haptic guard stays here too so crossing into a different sample or
+    /// attempt ticks once for the whole visible chart group.
+    @State private var selectedWorkoutTime: Double?
+    @State private var tickedWorkoutSelection: String?
     /// #645: the lazily-fetched detail for this session's workout — the HR
     /// trace, its fetch state and the attempt windows. A 4-state model
     /// (notLoaded/loading/loaded/failed) so a null/empty `raw` on a watch
@@ -77,6 +83,13 @@ struct SessionDetailView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(session.typeLabel)
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: selectedWorkoutTime) { _ in
+            handleWorkoutScrubHaptic()
+        }
+        .onDisappear {
+            selectedWorkoutTime = nil
+            tickedWorkoutSelection = nil
+        }
         .task {
             await loadSamples()
             await loadWorkoutDetail()
@@ -306,13 +319,15 @@ struct SessionDetailView: View {
                                 startedAt: workout.startedAt,
                                 endedAt: workout.endedAt,
                                 source: workout.source,
-                                tMax: chartTMax
+                                tMax: chartTMax,
+                                selectedTime: $selectedWorkoutTime
                             )
                             if !attempts.isEmpty {
                                 WorkoutEffortChartView(
                                     attempts: attempts,
                                     startedAt: workout.startedAt,
-                                    tMax: chartTMax
+                                    tMax: chartTMax,
+                                    selectedTime: $selectedWorkoutTime
                                 )
                             }
                         }
@@ -328,7 +343,8 @@ struct SessionDetailView: View {
                                 startedAt: workout.startedAt,
                                 endedAt: workout.endedAt,
                                 source: workout.source,
-                                tMax: chartTMax
+                                tMax: chartTMax,
+                                selectedTime: $selectedWorkoutTime
                             )
                         }
                     }
@@ -340,7 +356,8 @@ struct SessionDetailView: View {
                             WorkoutEffortChartView(
                                 attempts: attempts,
                                 startedAt: workout.startedAt,
-                                tMax: chartTMax
+                                tMax: chartTMax,
+                                selectedTime: $selectedWorkoutTime
                             )
                         }
                     }
@@ -364,6 +381,53 @@ struct SessionDetailView: View {
     }
 
     // MARK: Samples
+
+    /// #755: one `.selection` tick per distinct HR sample or attempt the
+    /// stacked charts expose. Both chart views write this same `selectedTime`
+    /// binding, so a single parent-side guard prevents two ticks when the
+    /// sibling observes the same scrub frame.
+    private func handleWorkoutScrubHaptic() {
+        guard case let .loaded(trace, attempts) = traceState, let workout else {
+            tickedWorkoutSelection = nil
+            return
+        }
+        let key = workoutSelectionKey(
+            selectedWorkoutTime,
+            trace: trace,
+            attempts: attempts,
+            startedAt: workout.startedAt
+        )
+        if let key {
+            if SelectionHaptics.valueChanged(tickedWorkoutSelection, key) {
+                tickedWorkoutSelection = key
+                Haptics.shared.playGesture(.selection)
+            }
+        } else {
+            tickedWorkoutSelection = nil
+        }
+    }
+
+    private func workoutSelectionKey(
+        _ time: Double?,
+        trace: [WorkoutHrSample],
+        attempts: [WorkoutAttempt],
+        startedAt: Date
+    ) -> String? {
+        guard let time else { return nil }
+        let runs = WorkoutRawTrace.downsampleRuns(
+            trace,
+            maxPoints: WorkoutRawTrace.maxChartPoints
+        )
+        let sample = WorkoutRawTrace.selectedSample(at: time, inRuns: runs)
+        let attempt = attempts.first { attempt in
+            let start = attempt.startedAt.timeIntervalSince(startedAt)
+            return time >= start && time <= start + Double(attempt.durationSeconds)
+        }
+        if let sample {
+            return "hr:\(sample.t)|attempt:\(attempt?.id.uuidString ?? "none")"
+        }
+        return attempt.map { "attempt:\($0.id.uuidString)" }
+    }
 
     private func loadWorkoutDetail() async {
         guard isWorkout, let workout, traceState != .loading else { return }
@@ -425,6 +489,9 @@ struct RepBoxPlotCanvas: View {
     /// a tie.
     let bestIndex: Int
     @Environment(\.colorScheme) private var scheme
+    @State private var selectedRepIndex: Int?
+    @State private var tickedRepIndex: Int?
+    @State private var tooltipSize: CGSize = .zero
 
     private static let maxOutlierDots = 12
 
@@ -435,117 +502,168 @@ struct RepBoxPlotCanvas: View {
     }
 
     var body: some View {
-        Canvas { context, size in
-            let width = size.width
-            let height = size.height
-            let leftInset: CGFloat = 30
-            let rightInset: CGFloat = 8
-            let topInset: CGFloat = 8
-            let bottomInset: CGFloat = 8
-            let plotWidth = max(1, width - leftInset - rightInset)
-            let plotHeight = max(1, height - topInset - bottomInset)
-            let gridColor = ChartToken.grid.color(scheme)
-            let axisColor = ChartToken.axis.color(scheme)
+        ZStack(alignment: .topLeading) {
+            Canvas { context, size in
+                let width = size.width
+                let height = size.height
+                let leftInset: CGFloat = 30
+                let rightInset: CGFloat = 8
+                let topInset: CGFloat = 8
+                let bottomInset: CGFloat = 8
+                let plotWidth = max(1, width - leftInset - rightInset)
+                let plotHeight = max(1, height - topInset - bottomInset)
+                let gridColor = ChartToken.grid.color(scheme)
+                let axisColor = ChartToken.axis.color(scheme)
 
-            var allValues: [Double] = []
-            for rep in reps {
-                if let stats = rep.stats {
-                    allValues.append(stats.whiskerLow)
-                    allValues.append(stats.whiskerHigh)
-                    allValues.append(contentsOf: stats.outliers)
+                var allValues: [Double] = []
+                for rep in reps {
+                    if let stats = rep.stats {
+                        allValues.append(stats.whiskerLow)
+                        allValues.append(stats.whiskerHigh)
+                        allValues.append(contentsOf: stats.outliers)
+                    }
                 }
-            }
-            let yMin: Double = allValues.isEmpty ? 0 : (allValues.min() ?? 0)
-            let yMax: Double = allValues.isEmpty ? 1 : (allValues.max() ?? 1)
-            let yPad = max((yMax - yMin) * 0.08, 0.5)
-            let domainLow = yMin - yPad
-            let domainHigh = yMax + yPad
+                let yMin: Double = allValues.isEmpty ? 0 : (allValues.min() ?? 0)
+                let yMax: Double = allValues.isEmpty ? 1 : (allValues.max() ?? 1)
+                let yPad = max((yMax - yMin) * 0.08, 0.5)
+                let domainLow = yMin - yPad
+                let domainHigh = yMax + yPad
 
-            func y(_ value: Double) -> CGFloat {
-                topInset + plotHeight - CGFloat((value - domainLow) / (domainHigh - domainLow)) * plotHeight
-            }
+                func y(_ value: Double) -> CGFloat {
+                    topInset + plotHeight - CGFloat((value - domainLow) / (domainHigh - domainLow)) * plotHeight
+                }
 
-            for index in 1..<4 {
-                var grid = Path()
-                let gridY = topInset + plotHeight * CGFloat(index) / 4
-                grid.move(to: CGPoint(x: leftInset, y: gridY))
-                grid.addLine(to: CGPoint(x: width - rightInset, y: gridY))
-                context.stroke(grid, with: .color(gridColor), lineWidth: 1)
-            }
+                for index in 1..<4 {
+                    var grid = Path()
+                    let gridY = topInset + plotHeight * CGFloat(index) / 4
+                    grid.move(to: CGPoint(x: leftInset, y: gridY))
+                    grid.addLine(to: CGPoint(x: width - rightInset, y: gridY))
+                    context.stroke(grid, with: .color(gridColor), lineWidth: 1)
+                }
 
-            guard !reps.isEmpty else { return }
-            let bandWidth = plotWidth / CGFloat(reps.count)
-            let boxWidth = min(34, max(10, bandWidth * 0.6))
-            let capWidth = boxWidth * 0.4
+                guard !reps.isEmpty else { return }
+                let bandWidth = plotWidth / CGFloat(reps.count)
+                let boxWidth = min(34, max(10, bandWidth * 0.6))
+                let capWidth = boxWidth * 0.4
 
-            for (index, rep) in reps.enumerated() {
-                let centerX = leftInset + bandWidth * (CGFloat(index) + 0.5)
-                guard let stats = rep.stats else {
-                    // Fetched (or loading) with no samples — faint baseline.
-                    var tick = Path()
-                    tick.move(to: CGPoint(x: centerX - boxWidth / 2, y: y(domainLow)))
-                    tick.addLine(to: CGPoint(x: centerX + boxWidth / 2, y: y(domainLow)))
-                    context.stroke(
-                        tick,
-                        with: .color(axisColor.opacity(0.5)),
-                        style: StrokeStyle(lineWidth: 1.5, dash: [2, 2])
+                for (index, rep) in reps.enumerated() {
+                    let centerX = leftInset + bandWidth * (CGFloat(index) + 0.5)
+                    let isSelected = selectedRepIndex == index
+                    if isSelected {
+                        let highlightRect = CGRect(
+                            x: centerX - boxWidth / 2 - 2,
+                            y: topInset + 2,
+                            width: boxWidth + 4,
+                            height: max(1, plotHeight - 4)
+                        )
+                        context.fill(
+                            Path(roundedRect: highlightRect, cornerRadius: 4),
+                            with: .color(axisColor.opacity(0.07))
+                        )
+                        context.stroke(
+                            Path(roundedRect: highlightRect, cornerRadius: 4),
+                            with: .color(axisColor.opacity(0.4)),
+                            lineWidth: 1
+                        )
+                    }
+                    guard let stats = rep.stats else {
+                        // Fetched (or loading) with no samples — faint baseline.
+                        var tick = Path()
+                        tick.move(to: CGPoint(x: centerX - boxWidth / 2, y: y(domainLow)))
+                        tick.addLine(to: CGPoint(x: centerX + boxWidth / 2, y: y(domainLow)))
+                        context.stroke(
+                            tick,
+                            with: .color(axisColor.opacity(0.5)),
+                            style: StrokeStyle(lineWidth: 1.5, dash: [2, 2])
+                        )
+                        continue
+                    }
+                    let (strokeToken, fillToken) = sideColors(for: rep.recording.side)
+                    let strokeColor = strokeToken.color(scheme)
+
+                    var whisker = Path()
+                    whisker.move(to: CGPoint(x: centerX, y: y(stats.whiskerLow)))
+                    whisker.addLine(to: CGPoint(x: centerX, y: y(stats.whiskerHigh)))
+                    context.stroke(whisker, with: .color(axisColor.opacity(0.7)), lineWidth: 1)
+
+                    for value in [stats.whiskerLow, stats.whiskerHigh] {
+                        var cap = Path()
+                        cap.move(to: CGPoint(x: centerX - capWidth / 2, y: y(value)))
+                        cap.addLine(to: CGPoint(x: centerX + capWidth / 2, y: y(value)))
+                        context.stroke(cap, with: .color(axisColor.opacity(0.7)), lineWidth: 1)
+                    }
+
+                    let boxRect = CGRect(
+                        x: centerX - boxWidth / 2,
+                        y: y(stats.q3),
+                        width: boxWidth,
+                        height: max(0.5, y(stats.q1) - y(stats.q3))
                     )
-                    continue
-                }
-                let (strokeToken, fillToken) = sideColors(for: rep.recording.side)
-                let strokeColor = strokeToken.color(scheme)
-
-                var whisker = Path()
-                whisker.move(to: CGPoint(x: centerX, y: y(stats.whiskerLow)))
-                whisker.addLine(to: CGPoint(x: centerX, y: y(stats.whiskerHigh)))
-                context.stroke(whisker, with: .color(axisColor.opacity(0.7)), lineWidth: 1)
-
-                for value in [stats.whiskerLow, stats.whiskerHigh] {
-                    var cap = Path()
-                    cap.move(to: CGPoint(x: centerX - capWidth / 2, y: y(value)))
-                    cap.addLine(to: CGPoint(x: centerX + capWidth / 2, y: y(value)))
-                    context.stroke(cap, with: .color(axisColor.opacity(0.7)), lineWidth: 1)
-                }
-
-                let boxRect = CGRect(
-                    x: centerX - boxWidth / 2,
-                    y: y(stats.q3),
-                    width: boxWidth,
-                    height: max(0.5, y(stats.q1) - y(stats.q3))
-                )
-                let boxPath = Path(roundedRect: boxRect, cornerRadius: 2.5)
-                // Glassy vertical fill — the web's focus-area / health-area
-                // gradients (`ChartDefs.tsx`).
-                context.fill(
-                    boxPath,
-                    with: .linearGradient(
-                        Gradient(stops: [
-                            .init(color: fillToken.color(scheme).opacity(fillToken.areaOpacity(scheme)), location: 0),
-                            .init(color: fillToken.color(scheme).opacity(fillToken.areaBottomOpacity), location: 1)
-                        ]),
-                        startPoint: CGPoint(x: boxRect.midX, y: boxRect.minY),
-                        endPoint: CGPoint(x: boxRect.midX, y: boxRect.maxY)
+                    let boxPath = Path(roundedRect: boxRect, cornerRadius: 2.5)
+                    // Glassy vertical fill — the web's focus-area / health-area
+                    // gradients (`ChartDefs.tsx`).
+                    context.fill(
+                        boxPath,
+                        with: .linearGradient(
+                            Gradient(stops: [
+                                .init(color: fillToken.color(scheme).opacity(fillToken.areaOpacity(scheme)), location: 0),
+                                .init(color: fillToken.color(scheme).opacity(fillToken.areaBottomOpacity), location: 1)
+                            ]),
+                            startPoint: CGPoint(x: boxRect.midX, y: boxRect.minY),
+                            endPoint: CGPoint(x: boxRect.midX, y: boxRect.maxY)
+                        )
                     )
-                )
-                context.stroke(boxPath, with: .color(strokeColor), lineWidth: 1)
+                    context.stroke(boxPath, with: .color(strokeColor), lineWidth: isSelected ? 2 : 1)
 
-                var median = Path()
-                median.move(to: CGPoint(x: centerX - boxWidth / 2, y: y(stats.median)))
-                median.addLine(to: CGPoint(x: centerX + boxWidth / 2, y: y(stats.median)))
-                context.stroke(
-                    median,
-                    // Session-best rep called out in the caution token (the
-                    // web uses `--warning` for the same tick).
-                    with: .color(index == bestIndex ? ChartToken.caution.color(scheme) : strokeColor),
-                    style: StrokeStyle(lineWidth: 2, lineCap: .round)
-                )
-
-                for value in stats.outliers.prefix(Self.maxOutlierDots) {
-                    let rect = CGRect(x: centerX - 1.5, y: y(value) - 1.5, width: 3, height: 3)
+                    var median = Path()
+                    median.move(to: CGPoint(x: centerX - boxWidth / 2, y: y(stats.median)))
+                    median.addLine(to: CGPoint(x: centerX + boxWidth / 2, y: y(stats.median)))
                     context.stroke(
-                        Path(ellipseIn: rect),
-                        with: .color(axisColor.opacity(0.55)),
-                        lineWidth: 1
+                        median,
+                        // Session-best rep called out in the caution token (the
+                        // web uses `--warning` for the same tick).
+                        with: .color(index == bestIndex ? ChartToken.caution.color(scheme) : strokeColor),
+                        style: StrokeStyle(lineWidth: isSelected ? 2.5 : 2, lineCap: .round)
+                    )
+
+                    for value in stats.outliers.prefix(Self.maxOutlierDots) {
+                        let rect = CGRect(x: centerX - 1.5, y: y(value) - 1.5, width: 3, height: 3)
+                        context.stroke(
+                            Path(ellipseIn: rect),
+                            with: .color(axisColor.opacity(0.55)),
+                            lineWidth: 1
+                        )
+                    }
+                }
+            }
+
+            GeometryReader { geo in
+                if #available(iOS 17, *) {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .hapticTapMuted()
+                        .gesture(
+                            SpatialTapGesture()
+                                .onEnded { value in
+                                    let index = repIndex(at: value.location, size: geo.size)
+                                    select(index == selectedRepIndex ? nil : index)
+                                }
+                        )
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 10)
+                                .onChanged { value in
+                                    select(repIndex(at: value.location, size: geo.size))
+                                }
+                        )
+                        .accessibilityHidden(true)
+                }
+
+                if let selectedRepIndex,
+                   reps.indices.contains(selectedRepIndex) {
+                    tooltip(
+                        rep: reps[selectedRepIndex],
+                        x: repCenterX(index: selectedRepIndex, size: geo.size),
+                        containerSize: geo.size
                     )
                 }
             }
@@ -553,7 +671,190 @@ struct RepBoxPlotCanvas: View {
         .frame(height: 110)
         .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Force distribution by repetition")
+        .accessibilityValue(accessibilityValue)
+        .accessibilityRepBoxChartDescriptor(reps)
+        .onDisappear {
+            selectedRepIndex = nil
+            tickedRepIndex = nil
+        }
+    }
+
+    private var accessibilityValue: String {
+        guard let selectedRepIndex, reps.indices.contains(selectedRepIndex) else {
+            return "\(reps.count) repetitions"
+        }
+        let rep = reps[selectedRepIndex]
+        let peak = rep.recording.peakKilograms.map {
+            ", \($0.formatted(.number.precision(.fractionLength(1)))) kilograms peak"
+        } ?? ""
+        return "Selected \(repLabel(rep.recording))\(peak)"
+    }
+
+    private func select(_ index: Int?) {
+        if SelectionHaptics.valueChanged(tickedRepIndex, index) {
+            tickedRepIndex = index
+            Haptics.shared.playGesture(.selection)
+        }
+        selectedRepIndex = index
+    }
+
+    private func repIndex(at point: CGPoint, size: CGSize) -> Int? {
+        let leftInset: CGFloat = 30
+        let rightInset: CGFloat = 8
+        let plotWidth = max(1, size.width - leftInset - rightInset)
+        guard !reps.isEmpty,
+              point.x >= leftInset,
+              point.x <= size.width - rightInset
+        else { return nil }
+        let bandWidth = plotWidth / CGFloat(reps.count)
+        let index = Int((point.x - leftInset) / bandWidth)
+        return reps.indices.contains(index) ? index : nil
+    }
+
+    private func repCenterX(index: Int, size: CGSize) -> CGFloat {
+        let leftInset: CGFloat = 30
+        let rightInset: CGFloat = 8
+        let plotWidth = max(1, size.width - leftInset - rightInset)
+        let bandWidth = plotWidth / CGFloat(max(1, reps.count))
+        return leftInset + bandWidth * (CGFloat(index) + 0.5)
+    }
+
+    private func repLabel(_ recording: TindeqRecording) -> String {
+        var parts: [String] = []
+        if let setNumber = recording.setNumber {
+            if recording.protocolMode == .reverseAction {
+                let completed = recording.completedRepetitions ?? 0
+                parts.append("Set \(setNumber) · \(completed) reps")
+            } else {
+                parts.append("Set \(setNumber) · Rep \(recording.repetitionNumber ?? 1)")
+            }
+        }
+        if recording.side != .unspecified { parts.append(recording.side.label) }
+        if let zone = recording.zone { parts.append(zone.displayLabel) }
+        if parts.isEmpty {
+            parts.append(recording.recordedAt.formatted(date: .abbreviated, time: .shortened))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func tooltip(
+        rep: RepBoxPlotEntry,
+        x: CGFloat,
+        containerSize: CGSize
+    ) -> some View {
+        let content = VStack(alignment: .leading, spacing: 2) {
+            Text(repLabel(rep.recording))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            if let peak = rep.recording.peakKilograms {
+                Text("\(peak.formatted(.number.precision(.fractionLength(1)))) kg peak")
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+            } else {
+                Text("No recorded peak")
+                    .font(.subheadline.weight(.semibold))
+            }
+            if let stats = rep.stats {
+                Text("Median \(stats.median.formatted(.number.precision(.fractionLength(1)))) kg")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .background(ChartToken.tooltip.color(scheme), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(ChartToken.tooltipBorder.color(scheme), lineWidth: 1)
+        )
+        .shadow(radius: 4, y: 2)
+        .fixedSize()
+
+        let plotFrame = CGRect(origin: .zero, size: containerSize)
+        return content
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { tooltipSize = geo.size }
+                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                }
+            )
+            .position(
+                x: clampedTooltipX(x: x, plotFrame: plotFrame, tooltipWidth: tooltipSize.width),
+                y: clampedTooltipY(plotFrame: plotFrame, tooltipHeight: tooltipSize.height)
+            )
+            .zIndex(1)
+    }
+
+    private func clampedTooltipX(x: CGFloat, plotFrame: CGRect, tooltipWidth: CGFloat) -> CGFloat {
+        let width = tooltipWidth > 0 ? tooltipWidth : 90
+        let minCenter = plotFrame.minX + width / 2 + 8
+        let maxCenter = plotFrame.maxX - width / 2 - 8
+        if minCenter > maxCenter { return plotFrame.midX }
+        return min(max(x, minCenter), maxCenter)
+    }
+
+    private func clampedTooltipY(plotFrame: CGRect, tooltipHeight: CGFloat) -> CGFloat {
+        let height = tooltipHeight > 0 ? tooltipHeight : 60
+        let minCenter = plotFrame.minY + height / 2 + 4
+        let maxCenter = plotFrame.maxY - height / 2 - 4
+        if minCenter > maxCenter { return plotFrame.midY }
+        return minCenter
+    }
+}
+
+private struct RepBoxAccessibilityDescriptor: AXChartDescriptorRepresentable {
+    let reps: [RepBoxPlotEntry]
+
+    func makeChartDescriptor() -> AXChartDescriptor { makeDescriptor() }
+
+    func updateChartDescriptor(_ descriptor: AXChartDescriptor) {
+        let rebuilt = makeDescriptor()
+        descriptor.title = rebuilt.title
+        descriptor.summary = rebuilt.summary
+        descriptor.xAxis = rebuilt.xAxis
+        descriptor.yAxis = rebuilt.yAxis
+        descriptor.series = rebuilt.series
+    }
+
+    private func makeDescriptor() -> AXChartDescriptor {
+        let labels = reps.indices.map { "Rep \($0 + 1)" }
+        let points = reps.enumerated().map { index, rep -> AXDataPoint in
+            let recording = rep.recording
+            let peak = recording.peakKilograms ?? 0
+            let y = rep.stats?.median ?? peak
+            let peakLabel = recording.peakKilograms.map {
+                ", \($0.formatted(.number.precision(.fractionLength(1)))) kilograms peak"
+            } ?? ""
+            let side = recording.side == .unspecified ? "" : ", \(recording.side.label)"
+            let zone = recording.zone.map { ", \($0.displayLabel)" } ?? ""
+            return AXDataPoint(
+                x: labels[index],
+                y: y,
+                label: "\(recording.recordedAt.formatted(date: .abbreviated, time: .shortened))\(side)\(zone)\(peakLabel)"
+            )
+        }
+        let yMax = max(1, reps.compactMap { $0.recording.peakKilograms }.max() ?? 1)
+        return AXChartDescriptor(
+            title: "Force distribution by repetition",
+            summary: "Per-rep force distribution for this Tindeq session, with peak force and side for each rep.",
+            xAxis: AXCategoricalDataAxisDescriptor(title: "Rep", categoryOrder: labels),
+            yAxis: AXNumericDataAxisDescriptor(title: "Kilograms", range: 0...yMax, gridlinePositions: []) {
+                "\($0.formatted(.number.precision(.fractionLength(1)))) kg"
+            },
+            additionalAxes: [],
+            series: [AXDataSeriesDescriptor(
+                name: "Force distribution",
+                isContinuous: false,
+                dataPoints: points
+            )]
+        )
+    }
+}
+
+private extension View {
+    func accessibilityRepBoxChartDescriptor(_ reps: [RepBoxPlotEntry]) -> some View {
+        accessibilityChartDescriptor(RepBoxAccessibilityDescriptor(reps: reps))
     }
 }
 

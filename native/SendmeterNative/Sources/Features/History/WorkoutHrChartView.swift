@@ -27,6 +27,9 @@ struct WorkoutHrChartView: View {
     /// chart in the stack plots the same instants (web `workoutTimeMaxS`).
     let tMax: Double
 
+    @Binding private var selectedTime: Double?
+    @State private var tooltipSize: CGSize = .zero
+
     /// Derived series computed once in the initializer (#645 review F12) —
     /// the run split, the downsample (F11) and the y-domain are all stable
     /// for the life of the view, so body evaluation reuses them instead of
@@ -80,7 +83,8 @@ struct WorkoutHrChartView: View {
         startedAt: Date,
         endedAt: Date,
         source: WorkoutSource,
-        tMax: Double
+        tMax: Double,
+        selectedTime: Binding<Double?>
     ) {
         self.samples = samples
         self.attempts = attempts
@@ -88,6 +92,7 @@ struct WorkoutHrChartView: View {
         self.endedAt = endedAt
         self.source = source
         self.tMax = tMax
+        _selectedTime = selectedTime
         self.derived = Derived(samples: samples, attempts: attempts, startedAt: startedAt)
     }
 
@@ -150,7 +155,42 @@ struct WorkoutHrChartView: View {
         }
     }
 
+    @ViewBuilder
     private var chart: some View {
+        if #available(iOS 17, *) {
+            baseChart
+                .chartXSelection(value: $selectedTime)
+                .hapticTapMuted()
+                .chartOverlay { proxy in
+                    GeometryReader { geo in
+                        if selectedTime != nil, let selectedSample {
+                            let plotFrame = geo[proxy.plotAreaFrame]
+                            let x = (proxy.position(forX: selectedSample.t) ?? 0) + plotFrame.minX
+                            tooltip(for: selectedSample, x: x, plotFrame: plotFrame)
+                        }
+                    }
+                }
+                .accessibilityLabel("Workout heart rate timeline")
+                .accessibilityValue(selectedSample.map(accessibilityText) ?? accessibilitySummary)
+                .accessibilityWorkoutHrChartDescriptor(
+                    runs: derived.runs,
+                    attempts: attempts,
+                    startedAt: startedAt
+                )
+        } else {
+            baseChart
+                .hapticTapMuted()
+                .accessibilityLabel("Workout heart rate timeline")
+                .accessibilityValue(accessibilitySummary)
+                .accessibilityWorkoutHrChartDescriptor(
+                    runs: derived.runs,
+                    attempts: attempts,
+                    startedAt: startedAt
+                )
+        }
+    }
+
+    private var baseChart: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionLabel("Heart rate", systemImage: "heart.fill")
             if let recoveryBpm = derived.recoveryBpm {
@@ -168,6 +208,11 @@ struct WorkoutHrChartView: View {
             Chart {
                 windowMarks
                 runMarks
+                if let sample = selectedSample {
+                    RuleMark(x: .value("Selected time", sample.t))
+                        .foregroundStyle(ChartToken.axis.color(scheme))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                }
             }
             .chartXScale(domain: 0...tMax)
             .chartYScale(domain: derived.yDomain)
@@ -204,11 +249,158 @@ struct WorkoutHrChartView: View {
                 }
             }
             .frame(height: 160)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Workout heart rate timeline")
-            .accessibilityValue(
-                "\(derived.hrs.count) samples, \(Int(derived.hrMin.rounded())) to \(Int(derived.hrMax.rounded())) bpm"
+        }
+    }
+
+    private var selectedSample: WorkoutHrSample? {
+        guard let selectedTime else { return nil }
+        return WorkoutRawTrace.selectedSample(at: selectedTime, inRuns: derived.runs)
+    }
+
+    private var selectedAttempt: WorkoutAttempt? {
+        guard let selectedTime else { return nil }
+        return attempts.first { attempt in
+            let start = attempt.startedAt.timeIntervalSince(startedAt)
+            return selectedTime >= start && selectedTime <= start + Double(attempt.durationSeconds)
+        }
+    }
+
+    private var accessibilitySummary: String {
+        "\(derived.hrs.count) samples, \(Int(derived.hrMin.rounded())) to \(Int(derived.hrMax.rounded())) bpm"
+    }
+
+    private func accessibilityText(for sample: WorkoutHrSample) -> String {
+        let hr = sample.hr.map { "\(Int($0.rounded())) beats per minute" } ?? "no reading"
+        if let attempt = selectedAttempt {
+            return "\(WorkoutChartAxis.fmtMinSec(sample.t)), \(hr), \(attempt.source == "manual" ? "manual climb" : "detected climb")"
+        }
+        return "\(WorkoutChartAxis.fmtMinSec(sample.t)), \(hr)"
+    }
+
+    private func tooltip(for sample: WorkoutHrSample, x: CGFloat, plotFrame: CGRect) -> some View {
+        let hr = sample.hr.map {
+            "\(Int($0.rounded())) bpm"
+        } ?? "No reading"
+        let content = VStack(alignment: .leading, spacing: 2) {
+            Text(WorkoutChartAxis.fmtMinSec(sample.t))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(hr)
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+            if let attempt = selectedAttempt {
+                Text(attempt.source == "manual" ? "Manual climb" : "Detected climb")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(attempt.source == "manual" ? ChartToken.caution.color(scheme) : ChartToken.optimal.color(scheme))
+            }
+        }
+        .padding(8)
+        .background(ChartToken.tooltip.color(scheme), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(ChartToken.tooltipBorder.color(scheme), lineWidth: 1)
+        )
+        .shadow(radius: 4, y: 2)
+        .fixedSize()
+
+        return content
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { tooltipSize = geo.size }
+                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                }
+            )
+            .position(
+                x: clampedTooltipX(x: x, plotFrame: plotFrame, tooltipWidth: tooltipSize.width),
+                y: clampedTooltipY(plotFrame: plotFrame, tooltipHeight: tooltipSize.height)
+            )
+            .zIndex(1)
+    }
+
+    private func clampedTooltipX(x: CGFloat, plotFrame: CGRect, tooltipWidth: CGFloat) -> CGFloat {
+        let width = tooltipWidth > 0 ? tooltipWidth : 90
+        let minCenter = plotFrame.minX + width / 2 + 8
+        let maxCenter = plotFrame.maxX - width / 2 - 8
+        if minCenter > maxCenter { return plotFrame.midX }
+        return min(max(x, minCenter), maxCenter)
+    }
+
+    private func clampedTooltipY(plotFrame: CGRect, tooltipHeight: CGFloat) -> CGFloat {
+        let height = tooltipHeight > 0 ? tooltipHeight : 60
+        let minCenter = plotFrame.minY + height / 2 + 4
+        let maxCenter = plotFrame.maxY - height / 2 - 4
+        if minCenter > maxCenter { return plotFrame.midY }
+        return minCenter
+    }
+}
+
+private struct WorkoutHrAccessibilityDescriptor: AXChartDescriptorRepresentable {
+    let runs: [[WorkoutHrSample]]
+    let attempts: [WorkoutAttempt]
+    let startedAt: Date
+
+    func makeChartDescriptor() -> AXChartDescriptor { makeDescriptor() }
+
+    func updateChartDescriptor(_ descriptor: AXChartDescriptor) {
+        let rebuilt = makeDescriptor()
+        descriptor.title = rebuilt.title
+        descriptor.summary = rebuilt.summary
+        descriptor.xAxis = rebuilt.xAxis
+        descriptor.yAxis = rebuilt.yAxis
+        descriptor.series = rebuilt.series
+    }
+
+    private func makeDescriptor() -> AXChartDescriptor {
+        let allSamples = runs.flatMap { $0 }
+        let labels = allSamples.enumerated().map { index, _ in "Sample \(index + 1)" }
+        let points = allSamples.enumerated().map { index, sample -> AXDataPoint in
+            let attempt = attempt(at: sample.t)
+            let attemptLabel = attempt.map { $0.source == "manual" ? ", manual climb" : ", detected climb" } ?? ""
+            let hr = sample.hr.map { "\(Int($0.rounded())) beats per minute" } ?? "no reading"
+            return AXDataPoint(
+                x: labels[index],
+                y: sample.hr ?? 0,
+                label: "\(WorkoutChartAxis.fmtMinSec(sample.t)), \(hr)\(attemptLabel)"
             )
         }
+        let yMax = max(1, allSamples.compactMap(\.hr).max() ?? 1)
+        return AXChartDescriptor(
+            title: "Workout heart rate timeline",
+            summary: "Heart-rate samples across the workout, with climb attempts shown as shaded windows.",
+            xAxis: AXCategoricalDataAxisDescriptor(title: "Time", categoryOrder: labels),
+            yAxis: AXNumericDataAxisDescriptor(title: "Beats per minute", range: 0...yMax, gridlinePositions: []) {
+                "\(Int($0)) bpm"
+            },
+            additionalAxes: [],
+            series: [AXDataSeriesDescriptor(
+                name: "Heart rate",
+                isContinuous: true,
+                dataPoints: points
+            )]
+        )
+    }
+
+    private func attempt(at t: Double) -> WorkoutAttempt? {
+        attempts.first { attempt in
+            let start = attempt.startedAt.timeIntervalSince(startedAt)
+            return t >= start && t <= start + Double(attempt.durationSeconds)
+        }
+    }
+}
+
+private extension View {
+    func accessibilityWorkoutHrChartDescriptor(
+        runs: [[WorkoutHrSample]],
+        attempts: [WorkoutAttempt],
+        startedAt: Date
+    ) -> some View {
+        accessibilityElement(children: .contain)
+            .accessibilityChartDescriptor(
+                WorkoutHrAccessibilityDescriptor(
+                    runs: runs,
+                    attempts: attempts,
+                    startedAt: startedAt
+                )
+            )
     }
 }

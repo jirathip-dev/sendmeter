@@ -1,3 +1,4 @@
+import Charts
 import SendmeterCore
 import SwiftUI
 
@@ -31,6 +32,7 @@ struct NativeForceCurveCard: View {
                                 : "Force duration curve"
                         )
                         .accessibilityValue(accessibilityValue(for: model))
+                        .accessibilityForceCurveChartDescriptor(model)
 
                     HStack(spacing: 12) {
                         curveMetric("Max", value: model.maximumForceKilograms, unit: "kg")
@@ -93,6 +95,9 @@ private struct NativeForceCurvePlot: View {
     let model: ForceCurveModel
 
     @Environment(\.colorScheme) private var scheme
+    @State private var selectedPointIndex: Int?
+    @State private var tooltipSize: CGSize = .zero
+    @State private var tickedPointIndex: Int?
 
     private let topInset: CGFloat = 8
     private let bottomInset: CGFloat = 20
@@ -100,7 +105,8 @@ private struct NativeForceCurvePlot: View {
     private let trailingInset: CGFloat = 8
 
     var body: some View {
-        Canvas { context, size in
+        ZStack(alignment: .topLeading) {
+            Canvas { context, size in
             guard let firstPoint = model.points.first,
                   let lastPoint = model.points.last,
                   size.width > leadingInset + trailingInset,
@@ -229,15 +235,248 @@ private struct NativeForceCurvePlot: View {
                 )
             }
 
-            for point in model.points {
+            if let selectedPointIndex,
+               model.points.indices.contains(selectedPointIndex) {
+                let point = model.points[selectedPointIndex]
                 let center = CGPoint(x: x(point.windowSeconds), y: y(point.kilograms))
                 context.fill(
-                    Path(ellipseIn: CGRect(x: center.x - 3, y: center.y - 3, width: 6, height: 6)),
+                    Path(ellipseIn: CGRect(x: center.x - 7, y: center.y - 7, width: 14, height: 14)),
+                    with: .color(secondaryColor.opacity(0.2))
+                )
+            }
+
+            for (index, point) in model.points.enumerated() {
+                let center = CGPoint(x: x(point.windowSeconds), y: y(point.kilograms))
+                let radius: CGFloat = index == selectedPointIndex ? 5 : 3
+                context.fill(
+                    Path(ellipseIn: CGRect(
+                        x: center.x - radius,
+                        y: center.y - radius,
+                        width: radius * 2,
+                        height: radius * 2
+                    )),
                     with: .color(secondaryColor)
                 )
+            }
+            }
+
+            GeometryReader { geo in
+                if #available(iOS 17, *) {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .hapticTapMuted()
+                        .gesture(
+                            SpatialTapGesture()
+                                .onEnded { value in
+                                    let index = selectedPointIndex(
+                                        at: value.location,
+                                        size: geo.size
+                                    )
+                                    select(index == selectedPointIndex ? nil : index)
+                                }
+                        )
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 10)
+                                .onChanged { value in
+                                    select(
+                                        selectedPointIndex(
+                                            at: value.location,
+                                            size: geo.size
+                                        )
+                                    )
+                                }
+                        )
+                        .accessibilityHidden(true)
+                }
+
+                if let selectedPointIndex,
+                   model.points.indices.contains(selectedPointIndex) {
+                    tooltip(
+                        pointIndex: selectedPointIndex,
+                        x: x(for: model.points[selectedPointIndex].windowSeconds, size: geo.size),
+                        size: geo.size
+                    )
+                }
             }
         }
         .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .onChange(of: model.points) { _ in
+            selectedPointIndex = nil
+            tickedPointIndex = nil
+        }
+        .onDisappear {
+            selectedPointIndex = nil
+            tickedPointIndex = nil
+        }
+    }
+
+    private func select(_ index: Int?) {
+        if SelectionHaptics.valueChanged(tickedPointIndex, index) {
+            tickedPointIndex = index
+            Haptics.shared.playGesture(.selection)
+        }
+        selectedPointIndex = index
+    }
+
+    private func selectedPointIndex(at location: CGPoint, size: CGSize) -> Int? {
+        let plotWidth = size.width - leadingInset - trailingInset
+        guard plotWidth > 0,
+              let firstPoint = model.points.first,
+              let lastPoint = model.points.last,
+              location.x >= leadingInset,
+              location.x <= size.width - trailingInset
+        else { return nil }
+        let minimumSeconds = max(0.001, firstPoint.windowSeconds)
+        let maximumSeconds = max(minimumSeconds * 1.01, max(lastPoint.windowSeconds, 10))
+        let fraction = Double((location.x - leadingInset) / plotWidth)
+        guard let seconds = ForceCurveSelection.seconds(
+            atXFraction: fraction,
+            firstSeconds: minimumSeconds,
+            lastSeconds: maximumSeconds
+        ) else { return nil }
+        return ForceCurveSelection.nearestPointIndex(points: model.points, toSeconds: seconds)
+    }
+
+    private func x(for seconds: Double, size: CGSize) -> CGFloat {
+        guard let firstPoint = model.points.first,
+              let lastPoint = model.points.last
+        else { return leadingInset }
+        let minimumSeconds = max(0.001, firstPoint.windowSeconds)
+        let maximumSeconds = max(minimumSeconds * 1.01, max(lastPoint.windowSeconds, 10))
+        let plotWidth = max(1, size.width - leadingInset - trailingInset)
+        let fraction = ForceCurveSelection.xFraction(
+            forSeconds: seconds,
+            firstSeconds: minimumSeconds,
+            lastSeconds: maximumSeconds
+        ) ?? 0
+        return leadingInset + CGFloat(fraction) * plotWidth
+    }
+
+    private func tooltip(pointIndex: Int, x: CGFloat, size: CGSize) -> some View {
+        let point = model.points[pointIndex]
+        let bandPoint = model.confidenceBand.flatMap { band -> ForceCurveConfidencePoint? in
+            guard band.indices.contains(pointIndex),
+                  abs(band[pointIndex].windowSeconds - point.windowSeconds) < 0.001
+            else { return nil }
+            return band[pointIndex]
+        }
+        let content = VStack(alignment: .leading, spacing: 2) {
+            Text("\(point.windowSeconds.formatted(.number.precision(.fractionLength(0...1))))s")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text("\(point.kilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+            if let bandPoint {
+                Text(
+                    "95% \(bandPoint.lowKilograms.formatted(.number.precision(.fractionLength(1))))–"
+                        + "\(bandPoint.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg"
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .background(ChartToken.tooltip.color(scheme), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(ChartToken.tooltipBorder.color(scheme), lineWidth: 1)
+        )
+        .shadow(radius: 4, y: 2)
+        .fixedSize()
+
+        let plotFrame = CGRect(
+            x: leadingInset,
+            y: topInset,
+            width: max(1, size.width - leadingInset - trailingInset),
+            height: max(1, size.height - topInset - bottomInset)
+        )
+        return content
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { tooltipSize = geo.size }
+                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                }
+            )
+            .position(
+                x: clampedTooltipX(x: x, plotFrame: plotFrame, tooltipWidth: tooltipSize.width),
+                y: clampedTooltipY(plotFrame: plotFrame, tooltipHeight: tooltipSize.height)
+            )
+            .zIndex(1)
+    }
+
+    private func clampedTooltipX(x: CGFloat, plotFrame: CGRect, tooltipWidth: CGFloat) -> CGFloat {
+        let width = tooltipWidth > 0 ? tooltipWidth : 90
+        let minCenter = plotFrame.minX + width / 2 + 8
+        let maxCenter = plotFrame.maxX - width / 2 - 8
+        if minCenter > maxCenter { return plotFrame.midX }
+        return min(max(x, minCenter), maxCenter)
+    }
+
+    private func clampedTooltipY(plotFrame: CGRect, tooltipHeight: CGFloat) -> CGFloat {
+        let height = tooltipHeight > 0 ? tooltipHeight : 60
+        let minCenter = plotFrame.minY + height / 2 + 4
+        let maxCenter = plotFrame.maxY - height / 2 - 4
+        if minCenter > maxCenter { return plotFrame.midY }
+        return minCenter
+    }
+}
+
+private struct ForceCurveAccessibilityDescriptor: AXChartDescriptorRepresentable {
+    let model: ForceCurveModel
+
+    func makeChartDescriptor() -> AXChartDescriptor { makeDescriptor() }
+
+    func updateChartDescriptor(_ descriptor: AXChartDescriptor) {
+        let rebuilt = makeDescriptor()
+        descriptor.title = rebuilt.title
+        descriptor.summary = rebuilt.summary
+        descriptor.xAxis = rebuilt.xAxis
+        descriptor.yAxis = rebuilt.yAxis
+        descriptor.series = rebuilt.series
+    }
+
+    private func makeDescriptor() -> AXChartDescriptor {
+        let labels = model.points.indices.map { index in
+            "\(index + 1): \(model.points[index].windowSeconds.formatted(.number.precision(.fractionLength(0...1))))s"
+        }
+        let yMax = max(model.maximumForceKilograms, model.confidenceBand?.map(\.highKilograms).max() ?? 0) * 1.1
+        let points = model.points.enumerated().map { index, point -> AXDataPoint in
+            let bandLabel: String
+            if let band = model.confidenceBand,
+               band.indices.contains(index),
+               abs(band[index].windowSeconds - point.windowSeconds) < 0.001
+            {
+                bandLabel = ", 95% \(band[index].lowKilograms.formatted(.number.precision(.fractionLength(1)))) to \(band[index].highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
+            } else {
+                bandLabel = ""
+            }
+            return AXDataPoint(
+                x: labels[index],
+                y: point.kilograms,
+                label: "\(point.windowSeconds.formatted(.number.precision(.fractionLength(0...1)))) seconds, \(point.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms\(bandLabel)"
+            )
+        }
+        return AXChartDescriptor(
+            title: "Force duration curve",
+            summary: "Measured force-duration curve with the fitted Hill model and 95 percent confidence band.",
+            xAxis: AXCategoricalDataAxisDescriptor(title: "Seconds", categoryOrder: labels),
+            yAxis: AXNumericDataAxisDescriptor(title: "Kilograms", range: 0...yMax, gridlinePositions: []) {
+                "\($0.formatted(.number.precision(.fractionLength(1)))) kg"
+            },
+            additionalAxes: [],
+            series: [AXDataSeriesDescriptor(
+                name: "Measured force",
+                isContinuous: true,
+                dataPoints: points
+            )]
+        )
+    }
+}
+
+private extension View {
+    func accessibilityForceCurveChartDescriptor(_ model: ForceCurveModel) -> some View {
+        accessibilityChartDescriptor(ForceCurveAccessibilityDescriptor(model: model))
     }
 }

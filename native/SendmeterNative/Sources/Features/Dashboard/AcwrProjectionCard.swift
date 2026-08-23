@@ -20,6 +20,9 @@ struct AcwrProjectionCard: View {
     /// Bumped on a calendar-day rollover so the projection (whose dates and
     /// relative labels read `Date()`) recomputes for the new today (#652 F11).
     @State private var dayMarker = Date()
+    @State private var selectedScrubX: Double?
+    @State private var tooltipSize: CGSize = .zero
+    @State private var tickedDayOffset: Int?
 
     /// The projection, recomputed on each model change. Deliberately no
     /// snapshot machinery like the readiness trend — the projection itself is
@@ -34,6 +37,14 @@ struct AcwrProjectionCard: View {
             state: TrainingMetrics.ewmaLoadState(sessions: model.sessions),
             band: band
         )
+    }
+
+    private func selectedProjectionDay(_ projection: AcwrProjection.Result) -> AcwrProjection.ProjectedDay? {
+        guard let selectedScrubX else { return nil }
+        return projection.days.min { lhs, rhs in
+            abs(Double(lhs.dayOffset) - selectedScrubX)
+                < abs(Double(rhs.dayOffset) - selectedScrubX)
+        }
     }
 
     var body: some View {
@@ -99,7 +110,51 @@ struct AcwrProjectionCard: View {
     // MARK: - Chart
 
     private func chart(_ projection: AcwrProjection.Result) -> some View {
+        return Group {
+            if #available(iOS 17, *) {
+                baseChart(projection)
+                    .chartXSelection(value: $selectedScrubX)
+                    .hapticTapMuted()
+                    .onChange(of: selectedScrubX) { _ in
+                        if let day = selectedProjectionDay(projection) {
+                            if SelectionHaptics.valueChanged(tickedDayOffset, day.dayOffset) {
+                                tickedDayOffset = day.dayOffset
+                                Haptics.shared.playGesture(.selection)
+                            }
+                        } else {
+                            tickedDayOffset = nil
+                        }
+                    }
+                    .onDisappear { tickedDayOffset = nil }
+                    .chartOverlay { proxy in
+                        GeometryReader { geo in
+                            if selectedScrubX != nil, let day = selectedProjectionDay(projection) {
+                                let plotFrame = geo[proxy.plotAreaFrame]
+                                let x = (proxy.position(forX: Double(day.dayOffset)) ?? 0) + plotFrame.minX
+                                tooltip(for: day, projection: projection, x: x, plotFrame: plotFrame)
+                            }
+                        }
+                    }
+                    .accessibilityLabel("Projected ACWR over the next seven days")
+                    .accessibilityValue(
+                        selectedProjectionDay(projection).map {
+                            accessibilityText(for: $0, projection: projection)
+                        } ?? accessibilitySummary(projection)
+                    )
+                    .accessibilityProjectionChartDescriptor(projection)
+            } else {
+                baseChart(projection)
+                    .hapticTapMuted()
+                    .accessibilityLabel("Projected ACWR over the next seven days")
+                    .accessibilityValue(accessibilitySummary(projection))
+                    .accessibilityProjectionChartDescriptor(projection)
+            }
+        }
+    }
+
+    private func baseChart(_ projection: AcwrProjection.Result) -> some View {
         let today = projection.days[0]
+        let selectedDay = selectedProjectionDay(projection)
         return Chart {
             // The phase's target band — deliberately the phase band, not the
             // universal 0.8–1.3 risk zone the ACWR track draws.
@@ -129,6 +184,12 @@ struct AcwrProjectionCard: View {
             }
             .foregroundStyle(ChartToken.reference.color(scheme))
             .lineStyle(StrokeStyle(lineWidth: 2, dash: [3, 4]))
+
+            if let selectedDay {
+                RuleMark(x: .value("Selected day", Double(selectedDay.dayOffset)))
+                    .foregroundStyle(ChartToken.axis.color(scheme))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            }
 
             // The first day the curve drops under the floor.
             if let crossing = projection.fallsBelow {
@@ -175,9 +236,90 @@ struct AcwrProjectionCard: View {
                 .foregroundStyle(ChartToken.axis.color(scheme).opacity(0.7))
             }
         }
-        .accessibilityLabel("Projected ACWR over the next seven days")
-        .accessibilityValue(accessibilitySummary(projection))
-        .accessibilityProjectionChartDescriptor(projection)
+    }
+
+    private func tooltip(
+        for day: AcwrProjection.ProjectedDay,
+        projection: AcwrProjection.Result,
+        x: CGFloat,
+        plotFrame: CGRect
+    ) -> some View {
+        let heading = day.dayOffset == 0 ? "Now" : "Day \(day.dayOffset)"
+        let content = VStack(alignment: .leading, spacing: 2) {
+            Text(heading)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(day.acwr.formatted(.number.precision(.fractionLength(2))))
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+            if let fit = day.fit {
+                Text(fit.rawValue.capitalized)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(fit == .below ? ChartToken.alert.color(scheme) : .secondary)
+            }
+            if let band = projection.band {
+                Text("Band \(formatOneDecimal(band.low))–\(formatOneDecimal(band.high))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if projection.fallsBelow?.dayOffset == day.dayOffset {
+                Text("Crosses below the band here")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(ChartToken.caution.color(scheme))
+            }
+        }
+        .padding(8)
+        .background(ChartToken.tooltip.color(scheme), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(ChartToken.tooltipBorder.color(scheme), lineWidth: 1)
+        )
+        .shadow(radius: 4, y: 2)
+        .fixedSize()
+
+        return content
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { tooltipSize = geo.size }
+                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                }
+            )
+            .position(
+                x: clampedTooltipX(x: x, plotFrame: plotFrame, tooltipWidth: tooltipSize.width),
+                y: clampedTooltipY(plotFrame: plotFrame, tooltipHeight: tooltipSize.height)
+            )
+            .zIndex(1)
+    }
+
+    private func accessibilityText(
+        for day: AcwrProjection.ProjectedDay,
+        projection: AcwrProjection.Result
+    ) -> String {
+        let heading = day.dayOffset == 0 ? "Now" : "Day \(day.dayOffset)"
+        var parts = ["\(heading) \(String(format: "%.2f", day.acwr))"]
+        if let fit = day.fit {
+            parts.append(fit.rawValue)
+        }
+        if projection.fallsBelow?.dayOffset == day.dayOffset {
+            parts.append("crosses below the band")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private func clampedTooltipX(x: CGFloat, plotFrame: CGRect, tooltipWidth: CGFloat) -> CGFloat {
+        let width = tooltipWidth > 0 ? tooltipWidth : 90
+        let minCenter = plotFrame.minX + width / 2 + 8
+        let maxCenter = plotFrame.maxX - width / 2 - 8
+        if minCenter > maxCenter { return plotFrame.midX }
+        return min(max(x, minCenter), maxCenter)
+    }
+
+    private func clampedTooltipY(plotFrame: CGRect, tooltipHeight: CGFloat) -> CGFloat {
+        let height = tooltipHeight > 0 ? tooltipHeight : 60
+        let minCenter = plotFrame.minY + height / 2 + 4
+        let maxCenter = plotFrame.maxY - height / 2 - 4
+        if minCenter > maxCenter { return plotFrame.midY }
+        return minCenter
     }
 
     /// Y domain from the plotted values + band edges, with ~12% headroom

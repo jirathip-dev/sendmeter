@@ -24,6 +24,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native guided Force protocols now use an immersive, phase-tinted fullscreen with OUT/RETURN cadence guidance, live force chart and target coaching, a large stop control, and minimize/reopen that keeps the same protocol running.
 - Native Force now shows Static capacity and Resisted movement progress tiles; the Static detail sheet includes the recent peak trend, force-duration model, and side comparison, while movement metrics stay execution-only and never alter Static PR, Hill/CF, or asymmetry.
 - Native Training Load charts now support tap/scrub tooltips for weekly load and activity mix, with selection haptics and heatmap selection/dismissal feedback.
+- Native History HR + effort, Tindeq per-rep history, peak-force trend and curve, ACWR next-7-day projection, and force consistency charts now support tap/scrub tooltips with one selection haptic tick per value change (iOS 17+), plus VoiceOver chart descriptors (iOS 16+).
 - Native History: open a Force recording to edit its tag, side, notes, and linked session effort; the original force samples stay unchanged.
 - Native Force now shows the Hill force-duration curve and, when enough data supports it, a deterministic 95% confidence band that widens honestly when the exercise has fewer long-duration efforts.
 - Force now shows consistency as distinct training days across eight rolling seven-day windows, with optional exercise filters that respect hidden tags.
