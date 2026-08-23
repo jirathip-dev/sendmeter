@@ -99,7 +99,41 @@ final class AcwrStatusCardTests: XCTestCase {
         )
         XCTAssertEqual(
             AcwrStatusCard.nilExplainer(hasLoadedSessions: true, hasSessions: true),
-            "Your most recent sessions fall outside the 90-day window this card reads, so there's no ACWR ratio yet."
+            "There isn't enough training load in your recent 90 days to compute an ACWR ratio yet."
+        )
+    }
+
+    func testAccessibilitySummaryNilRatioReadsSingleNoData() {
+        // #748 round 2 finding 5: one "No data." — never "No data. No data."
+        XCTAssertEqual(
+            AcwrStatusCard.accessibilitySummary(
+                ratio: nil,
+                acute: 12,
+                chronic: 34,
+                phase: capacity
+            ),
+            "No data. Acute 7d 12. Chronic avg 34."
+        )
+    }
+
+    func testAccessibilitySummaryWithRatioCombinesFields() {
+        XCTAssertEqual(
+            AcwrStatusCard.accessibilitySummary(
+                ratio: 1.0,
+                acute: 12,
+                chronic: 34,
+                phase: capacity
+            ),
+            "1.00. Optimal. On target for Capacity. Acute 7d 12. Chronic avg 34."
+        )
+        XCTAssertEqual(
+            AcwrStatusCard.accessibilitySummary(
+                ratio: 0.5,
+                acute: 12,
+                chronic: 34,
+                phase: capacity
+            ),
+            "0.50. Under-training. Below Capacity target (0.9–1.1). Acute 7d 12. Chronic avg 34."
         )
     }
 

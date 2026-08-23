@@ -127,6 +127,32 @@ public enum AcwrStatusCard {
         if !hasSessions {
             return "Log a few sessions to see your ACWR."
         }
-        return "Your most recent sessions fall outside the 90-day window this card reads, so there's no ACWR ratio yet."
+        // Accuracy matters here (#748 round 2 finding 6): ratio is nil with
+        // history present whenever the 90-day window has no measurable load —
+        // the sessions may sit outside the window, OR be inside it but carry
+        // zero load (duration × RPE = 0). Don't claim a single cause.
+        return "There isn't enough training load in your recent 90 days to compute an ACWR ratio yet."
+    }
+
+    /// The VoiceOver summary for the card. Reads a single "No data." when the
+    /// ratio is nil — never "No data. No data." — and otherwise combines the
+    /// ratio, status, phase-fit line, and the Acute/Chronic footer.
+    public static func accessibilitySummary(
+        ratio: Double?,
+        acute: Double,
+        chronic: Double,
+        phase: PhaseDefinition?
+    ) -> String {
+        var parts: [String] = []
+        if let ratio {
+            parts.append(String(format: "%.2f", ratio) + ". " + TrainingMetrics.acwrStatus(ratio).rawValue + ".")
+            if let fitLine = phaseFitLine(ratio: ratio, phase: phase) {
+                parts.append(fitLine + ".")
+            }
+        } else {
+            parts.append("No data.")
+        }
+        parts.append("Acute 7d \(Int(acute.rounded())). Chronic avg \(Int(chronic.rounded())).")
+        return parts.joined(separator: " ")
     }
 }

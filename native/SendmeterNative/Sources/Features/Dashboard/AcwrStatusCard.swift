@@ -5,20 +5,32 @@ import SwiftUI
 /// (`src/components/Dashboard.tsx`, the ACWR card near lines 238–362) with the
 /// gradient risk track that `LoadCard` and `AcwrProjectionCard` don't provide.
 ///
+/// Per the #748 round-2 design decision this card is the **canonical Training
+/// Load surface**: tapping the header title/chevron OR the card body opens the
+/// same `TrainingLoadSheet` that `LoadCard` used to open. `LoadCard` is now a
+/// weekly-load chart card only (numbers + status pill + open-sheet affordance
+/// removed there), so the three load numbers and the open-sheet affordance are
+/// never duplicated between the two cards.
+///
 /// Layout: title + info affordance + chevron, big `%.2f` ratio (status-colored),
 /// status label, phase-fit line, a 0–2 gradient risk track with true-scale
 /// 0/1.0/1.5/2 ticks and a clamped marker dot, and an Acute/Chronic footer.
 ///
-/// Geometry, threshold mapping, and phase-fit copy all live in
-/// `SendmeterCore.AcwrStatusCard` (unit-tested); this view only resolves the
-/// semantic `ChartToken` colors and renders. Tapping the card opens the same
-/// `TrainingLoadSheet` `LoadCard` opens; the info affordance opens a focused
-/// explainer sheet.
+/// Geometry, threshold mapping, phase-fit copy, VoiceOver summary, and the
+/// no-data explainer all live in `SendmeterCore.AcwrStatusCard` (unit-tested);
+/// this view only resolves the semantic `ChartToken` colors and renders. The
+/// info button is a sibling of (never nested inside) the tappable header and
+/// body surfaces, so one tap can't present both sheets (#748 round 2 finding 2).
 struct AcwrStatusCard: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.colorScheme) private var scheme
     @State private var showTrainingLoad = false
     @State private var showInfo = false
+
+    // #748 round 2 finding 3: Dynamic Type. The big ratio and the tick row
+    // must scale with accessibility text sizes instead of using fixed points.
+    @ScaledMetric(relativeTo: .largeTitle) private var bigNumberSize: CGFloat = 38
+    @ScaledMetric(relativeTo: .caption) private var tickRowHeight: CGFloat = 16
 
     private var ratio: Double? { model.acwr.ratio }
     private var status: ACWRStatus { TrainingMetrics.acwrStatus(ratio) }
@@ -28,38 +40,9 @@ struct AcwrStatusCard: View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 10) {
                 header
-                Text(ratio.map { String(format: "%.2f", $0) } ?? "—")
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(statusColor)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Text(status.rawValue)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(statusColor)
-                if let fitLine = SendmeterCore.AcwrStatusCard.phaseFitLine(
-                    ratio: ratio,
-                    phase: model.currentPhase
-                ) {
-                    Text(fitLine)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                riskTrack
-                tickLabels
-                if ratio == nil {
-                    Text(SendmeterCore.AcwrStatusCard.nilExplainer(
-                        hasLoadedSessions: model.hasLoadedSessions,
-                        hasSessions: !model.sessions.isEmpty
-                    ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-                footer
+                content
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: openTrainingLoad)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("ACWR")
         .accessibilityValue(accessibilitySummary)
@@ -78,25 +61,78 @@ struct AcwrStatusCard: View {
 
     // MARK: - Header
 
+    /// Title + chevron form their own tap surface (opens the sheet); the info
+    /// button is a SIBLING, outside it, so one tap can't present both sheets.
     private var header: some View {
         HStack(spacing: 10) {
-            SectionLabel("ACWR")
+            titleAndChevron
             Spacer()
-            Button {
-                Haptics.shared.tap()
-                showInfo = true
-            } label: {
-                Image(systemName: "info.circle")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("About ACWR")
-            .accessibilityHint("Opens an explanation of how ACWR is calculated.")
+            infoButton
+        }
+    }
+
+    private var titleAndChevron: some View {
+        HStack(spacing: 6) {
+            SectionLabel("ACWR")
             Image(systemName: "chevron.right")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.tertiary)
         }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: openTrainingLoad)
+    }
+
+    private var infoButton: some View {
+        Button {
+            Haptics.shared.tap()
+            showInfo = true
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("About ACWR")
+        .accessibilityHint("Opens an explanation of how ACWR is calculated.")
+    }
+
+    // MARK: - Content
+
+    /// The card body — also tappable to open the Training Load sheet (shared
+    /// action with the header, same state, no conflict with the info button).
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(ratio.map { String(format: "%.2f", $0) } ?? "—")
+                .font(.system(size: bigNumberSize, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(statusColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(status.rawValue)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(statusColor)
+            if let fitLine = SendmeterCore.AcwrStatusCard.phaseFitLine(
+                ratio: ratio,
+                phase: model.currentPhase
+            ) {
+                Text(fitLine)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            riskTrack
+            tickLabels
+            if ratio == nil {
+                Text(SendmeterCore.AcwrStatusCard.nilExplainer(
+                    hasLoadedSessions: model.hasLoadedSessions,
+                    hasSessions: !model.sessions.isEmpty
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            footer
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: openTrainingLoad)
     }
 
     // MARK: - Risk track
@@ -145,19 +181,46 @@ struct AcwrStatusCard: View {
         .accessibilityHidden(true)
     }
 
+    /// True-scale ticks under the track. Edge ticks anchor to the track's outer
+    /// edge (0 leading at 0%, 2 trailing at 100%); interior ticks center on
+    /// their fraction (1.0 at 50%, 1.5 at 75%) using the label's measured width
+    /// via alignment guides — never magic offsets (#748 round 2 finding 1). The
+    /// row height scales with Dynamic Type so labels don't clip/overlap at
+    /// large accessibility sizes (#748 round 2 finding 3).
     private var tickLabels: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
+                // Invisible full-width anchor so the guides position against
+                // the same span as the risk track above.
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 0)
                 ForEach(SendmeterCore.AcwrStatusCard.ticks, id: \.label) { tick in
                     Text(tick.label)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
-                        .position(x: CGFloat(tick.fraction) * geo.size.width, y: geo.size.height / 2)
+                        .alignmentGuide(.leading) { d in
+                            tickLeadingOffset(d, fraction: tick.fraction, trackWidth: geo.size.width)
+                        }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .frame(height: 14)
+        .frame(height: tickRowHeight)
         .accessibilityHidden(true)
+    }
+
+    private func tickLeadingOffset(_ d: ViewDimensions, fraction: Double, trackWidth: CGFloat) -> CGFloat {
+        let labelWidth = d.width
+        let width = trackWidth
+        // Leading-aligned at the left edge, trailing-aligned at the right edge,
+        // centered on the fraction otherwise (mirrors the web's transforms).
+        if fraction <= 0 {
+            return 0
+        } else if fraction >= 1 {
+            return labelWidth - width
+        }
+        return labelWidth / 2 - width * CGFloat(fraction)
     }
 
     // MARK: - Footer
@@ -190,16 +253,12 @@ struct AcwrStatusCard: View {
     // MARK: - Accessibility
 
     private var accessibilitySummary: String {
-        let number = ratio.map { String(format: "%.2f", $0) } ?? "No data"
-        var parts = ["\(number). \(status.rawValue)."]
-        if let fitLine = SendmeterCore.AcwrStatusCard.phaseFitLine(
+        SendmeterCore.AcwrStatusCard.accessibilitySummary(
             ratio: ratio,
+            acute: model.acwr.acute,
+            chronic: model.acwr.chronic,
             phase: model.currentPhase
-        ) {
-            parts.append(fitLine + ".")
-        }
-        parts.append("Acute 7d \(Int(model.acwr.acute.rounded())). Chronic avg \(Int(model.acwr.chronic.rounded())).")
-        return parts.joined(separator: " ")
+        )
     }
 
     private func openTrainingLoad() {
