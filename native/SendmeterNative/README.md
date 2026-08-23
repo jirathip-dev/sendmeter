@@ -49,6 +49,15 @@ SwiftUI application
 └── Sources/App        App lifecycle, orchestration, design system, and optimistic reconciliation
 ```
 
+`AppModel` hydrates its published lists from the account-scoped cache before
+any remote fetch, so a cold start renders the last-known sessions, recordings,
+workouts, presets, routines, phase periods, health rows, settings, and tag
+metadata immediately. Successful full and realtime-slice refreshes reconcile
+through the same cache, while user-initiated creates/edits/deletes are written
+optimistically and confirmed only when the matching server revision still wins;
+a cache open/read failure degrades to the existing network-only path and is
+reported in the auth diagnostics ring.
+
 `Sources/Shared` + `Sources/Widgets` compile into a second product target —
 `SendmeterNativeWidgets`, a WidgetKit app-extension embedded in the app
 bundle — in the same XcodeGen project. The extension renders the guided
