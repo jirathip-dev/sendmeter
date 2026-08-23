@@ -4775,7 +4775,7 @@ public final class AppModel: ObservableObject {
         // necessarily a full disk, so claiming a cause ("device storage was
         // full", the web's copy) would be a guess.
         let label = "\(notice.count) item\(notice.count == 1 ? "" : "s")"
-        toastMessage = "\(label) couldn\u{2019}t be saved. Try again."
+        toastMessage = "\(label) couldn\u{2019}t be saved."
     }
     // MARK: Offline queue
 

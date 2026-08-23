@@ -37,6 +37,7 @@ final class ErrorTextTests: XCTestCase {
         XCTAssertFalse(message.localizedCaseInsensitiveContains("Status Code"))
         XCTAssertFalse(message.localizedCaseInsensitiveContains("500"))
         XCTAssertFalse(message.localizedCaseInsensitiveContains("PostgRESTError"))
+        XCTAssertEqual(message, "Something went wrong. Try again.")
     }
 
     func testFailureMessageVerdictMatchesCopy() {

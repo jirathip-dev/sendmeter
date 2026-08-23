@@ -83,7 +83,7 @@ public enum ErrorText {
         case .unreachable:
             return message(for: .unreachable)
         case .unknown:
-            return message(for: .saveFailed)
+            return "Something went wrong. Try again."
         }
     }
 }
