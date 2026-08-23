@@ -23,6 +23,12 @@ struct DashboardView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     LoadCard()
+                    // #748 round 2: the ACWR status card is the canonical
+                    // Training Load surface (ratio + status + phase-fit + risk
+                    // track + Acute/Chronic, tap opens TrainingLoadSheet).
+                    // LoadCard is now the weekly-load chart card only — it no
+                    // longer shows the three load numbers or opens the sheet.
+                    AcwrStatusCard()
                     AcwrProjectionCard()
                     RecentSessionsCard()
                 }
@@ -293,76 +299,36 @@ private struct PhaseCard: View {
     }
 }
 
+/// Weekly-load bar chart card (#748 round 2). The ACWR status card
+/// (`AcwrStatusCard`) is the canonical Training Load surface — the three load
+/// numbers (Acute/Chronic/ACWR), the status pill, and the open-sheet
+/// affordance live there. This card keeps only the weekly bars + chart title,
+/// so the numbers and the open-sheet affordance are never duplicated.
 private struct LoadCard: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.colorScheme) private var scheme
-    @State private var showTrainingLoad = false
 
     var body: some View {
-        Button { showTrainingLoad = true } label: {
-            SurfaceCard {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        SectionLabel("Training load", systemImage: "chart.bar.fill")
-                        Spacer()
-                        StatusPill(
-                            TrainingMetrics.acwrStatus(model.acwr.ratio).rawValue,
-                            color: statusColor(scheme)
-                        )
-                    }
-                    HStack(spacing: 24) {
-                        VStack(alignment: .leading) {
-                            Text("Acute")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(model.acwr.acute, format: .number.precision(.fractionLength(0)))
-                                .font(.title2.bold())
-                                .monospacedDigit()
-                        }
-                        VStack(alignment: .leading) {
-                            Text("Chronic")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(model.acwr.chronic, format: .number.precision(.fractionLength(0)))
-                                .font(.title2.bold())
-                                .monospacedDigit()
-                        }
-                        VStack(alignment: .leading) {
-                            Text("ACWR")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(model.acwr.ratio.map { String(format: "%.2f", $0) } ?? "—")
-                                .font(.title2.bold())
-                                .monospacedDigit()
-                        }
-                    }
-
-                    Chart(model.weeklyLoads) { item in
-                        BarMark(
-                            x: .value("Week", item.label),
-                            y: .value("Load", item.total)
-                        )
-                        .foregroundStyle(ChartToken.load.areaGradient(scheme))
-                        .cornerRadius(5)
-                    }
-                    .frame(height: 150)
-                    .chartYAxis {
-                        AxisMarks(position: .leading) {
-                            AxisGridLine().foregroundStyle(ChartToken.grid.color(scheme))
-                            AxisValueLabel().foregroundStyle(ChartToken.axis.color(scheme))
-                        }
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 14) {
+                SectionLabel("Training load", systemImage: "chart.bar.fill")
+                Chart(model.weeklyLoads) { item in
+                    BarMark(
+                        x: .value("Week", item.label),
+                        y: .value("Load", item.total)
+                    )
+                    .foregroundStyle(ChartToken.load.areaGradient(scheme))
+                    .cornerRadius(5)
+                }
+                .frame(height: 150)
+                .chartYAxis {
+                    AxisMarks(position: .leading) {
+                        AxisGridLine().foregroundStyle(ChartToken.grid.color(scheme))
+                        AxisValueLabel().foregroundStyle(ChartToken.axis.color(scheme))
                     }
                 }
             }
         }
-        .buttonStyle(.plain)
-        .sheet(isPresented: $showTrainingLoad) {
-            TrainingLoadSheet()
-        }
-    }
-
-    private func statusColor(_ scheme: ColorScheme) -> Color {
-        ChartToken.acwrStatusColor(model.acwr.ratio, scheme)
     }
 }
 
