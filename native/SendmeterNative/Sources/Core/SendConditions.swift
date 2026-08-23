@@ -12,6 +12,14 @@ public enum SendConditionsLabel: String, Codable, Equatable, Sendable {
     case poor = "Poor"
 }
 
+/// The shared semantic color band for a Send Conditions headline, gauge
+/// marker, and sub-score bar (web `percentileColor` / `sendScoreColor`).
+public enum SendConditionsColorBand: Equatable, Sendable {
+    case optimal
+    case caution
+    case alert
+}
+
 public struct ClimateSummary: Codable, Equatable, Sendable {
     /// Hourly send scores over the ~30-day window, aligned to LOCAL time
     /// (index `i` = day `floor(i/24)`, hour `i%24` — the archive is
@@ -19,13 +27,30 @@ public struct ClimateSummary: Codable, Equatable, Sendable {
     /// return is kept as a placeholder (not skipped) so the day/hour index
     /// arithmetic stays valid.
     public var scores: [Int?]
+    /// The raw hourly temperatures behind `scores`, same alignment. Kept so
+    /// the detail sheet's scrub tooltip can show the actual reading, not just
+    /// the derived score. Optional for backward compatibility with caches
+    /// written before this field existed.
+    public var tempScores: [Double?]?
+    /// Raw hourly humidity percentages behind `scores`, same alignment.
+    public var humidityScores: [Double?]?
     public var tempMin: Double
     public var tempMax: Double
     public var humMin: Double
     public var humMax: Double
 
-    public init(scores: [Int?], tempMin: Double, tempMax: Double, humMin: Double, humMax: Double) {
+    public init(
+        scores: [Int?],
+        tempMin: Double,
+        tempMax: Double,
+        humMin: Double,
+        humMax: Double,
+        tempScores: [Double?]? = nil,
+        humidityScores: [Double?]? = nil
+    ) {
         self.scores = scores
+        self.tempScores = tempScores
+        self.humidityScores = humidityScores
         self.tempMin = tempMin
         self.tempMax = tempMax
         self.humMin = humMin
@@ -214,6 +239,59 @@ public enum SendConditionsScore {
             : "bottom \(max(1, percentile))%"
     }
 
+    /// Same percentile-first display label as the native summary card and the
+    /// web card, so the headline and badge can never drift.
+    public static func displayLabel(for conditions: SendConditions) -> SendConditionsLabel {
+        if let percentile = conditions.percentile {
+            return percentileLabel(percentile)
+        }
+        return conditions.label
+    }
+
+    /// Web `percentileColor`: ≥75 is the best-for-here band, ≥40 typical,
+    /// below is the poor-for-here band.
+    public static func percentileColorBand(_ percentile: Int) -> SendConditionsColorBand {
+        if percentile >= 75 { return .optimal }
+        if percentile >= 40 { return .caution }
+        return .alert
+    }
+
+    /// Web `sendScoreColor`: ≥55 Prime/Good, ≥35 Fair, else Poor.
+    public static func scoreColorBand(_ score: Int) -> SendConditionsColorBand {
+        if score >= 55 { return .optimal }
+        if score >= 35 { return .caution }
+        return .alert
+    }
+
+    public static func colorBand(for conditions: SendConditions) -> SendConditionsColorBand {
+        if let percentile = conditions.percentile {
+            return percentileColorBand(percentile)
+        }
+        return scoreColorBand(conditions.score)
+    }
+
+    /// Whether the temperature sub-score is saturated at 0 across the WHOLE
+    /// history range (web `isTempRangeSaturated`): even the coolest day in
+    /// the window scores 0, so the "maxed out year-round" claim holds.
+    public static func isTempRangeSaturated(tempMin: Double, tempMax: Double) -> Bool {
+        let best = min(max(6, tempMin), tempMax)
+        return tempFrictionScore(tempC: best) == 0
+    }
+
+    /// The web `median` used by the chart's reference line: the R-7 /
+    /// linear-interpolation median, averaged between the two middle values
+    /// for an even-length series. Nil for an empty series.
+    public static func median(_ values: [Int]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let position = Double(sorted.count - 1) * 0.5
+        let lower = Int(floor(position))
+        let upper = Int(ceil(position))
+        if lower == upper { return Double(sorted[lower]) }
+        let fraction = position - Double(lower)
+        return Double(sorted[lower]) + (Double(sorted[upper]) - Double(sorted[lower])) * fraction
+    }
+
     public static func sameHourDaysAgo(index: Int, length: Int) -> Int {
         length - index - 1 + era5LagDays
     }
@@ -325,7 +403,26 @@ public enum OpenMeteo {
             humMax = max(humMax, humidity)
         }
         guard tempMin.isFinite else { return nil }
-        return ClimateSummary(scores: scores, tempMin: tempMin, tempMax: tempMax, humMin: humMin, humMax: humMax)
+        var tempScores: [Double?] = []
+        var humidityScores: [Double?] = []
+        for index in 0..<max(temps.count, hums.count) {
+            guard index < temps.count, index < hums.count else {
+                tempScores.append(nil)
+                humidityScores.append(nil)
+                continue
+            }
+            tempScores.append(temps[index])
+            humidityScores.append(hums[index])
+        }
+        return ClimateSummary(
+            scores: scores,
+            tempMin: tempMin,
+            tempMax: tempMax,
+            humMin: humMin,
+            humMax: humMax,
+            tempScores: tempScores,
+            humidityScores: humidityScores
+        )
     }
 }
 

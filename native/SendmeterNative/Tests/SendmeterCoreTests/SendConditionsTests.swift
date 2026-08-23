@@ -201,6 +201,8 @@ final class SendConditionsTests: XCTestCase {
         XCTAssertEqual(summary.tempMax, 35, accuracy: 0.0001)
         XCTAssertEqual(summary.humMin, 0, accuracy: 0.0001)
         XCTAssertEqual(summary.humMax, 45, accuracy: 0.0001)
+        XCTAssertEqual(summary.tempScores, [6, nil, 35])
+        XCTAssertEqual(summary.humidityScores, [0, nil, 45])
     }
 
     func testClimateSummaryEveryHourNullReturnsNil() throws {

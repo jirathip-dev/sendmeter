@@ -10,6 +10,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Native Dashboard: tap the Send Conditions card to open a detail sheet with the same 30-day same-time-of-day comparison, median line, absolute-friction gauge, how-it's-scored breakdown, and scrub tooltips as the web.
 - Native Dashboard now opens a Recovery Inputs sheet from today's decision card: the seven raw HealthKit inputs behind your readiness score appear as simple shared 14-day bar charts with one 7-day trend and tap/scrub tooltips.
 - Native app now opens with your latest history, readiness, presets, routines, and settings already on screen from the local cache, and new/edited/deleted items render immediately while the server syncs.
 - Native Dashboard now shows the same ACWR status card as the web: a big ACWR ratio, its risk-zone status, a phase-fit line, a gradient 0–2 risk track with true-scale 0/1.0/1.5/2 ticks and a marker dot, and an Acute/Chronic footer. It is the canonical Training Load surface — tapping it opens the Training Load details sheet, and the Training load card is now a weekly-load chart only (its Acute/Chronic/ACWR numbers and status pill moved here).

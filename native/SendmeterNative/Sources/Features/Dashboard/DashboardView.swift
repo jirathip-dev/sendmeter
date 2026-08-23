@@ -511,6 +511,7 @@ private struct LogSessionSheet: View {
 /// and a failed refresh keeps the last reading — never a fabricated score.
 private struct SendConditionsCard: View {
     @EnvironmentObject private var model: AppModel
+    @State private var showSendConditions = false
 
     private var state: SendConditionsCardContent.State {
         if let conditions = model.weather.conditions {
@@ -523,13 +524,19 @@ private struct SendConditionsCard: View {
         Task { _ = await model.weather.refresh(trigger: .manual) }
     }
 
+    private func openSheet() {
+        Haptics.shared.tap()
+        showSendConditions = true
+    }
+
     var body: some View {
         SurfaceCard(fillsHeight: true) {
             ZStack(alignment: .topLeading) {
                 SendConditionsCardContent(
                     state: state,
                     isFetching: model.weather.isFetching,
-                    refresh: refresh
+                    refresh: refresh,
+                    open: openSheet
                 )
 
                 // Reserve every real state at the current Dynamic Type before
@@ -541,26 +548,38 @@ private struct SendConditionsCard: View {
                 SendConditionsCardContent(
                     state: .empty,
                     isFetching: true,
-                    refresh: {}
+                    refresh: {},
+                    open: openSheet
                 )
                 .hidden()
                 .accessibilityHidden(true)
                 SendConditionsCardContent(
                     state: .failed,
                     isFetching: true,
-                    refresh: {}
+                    refresh: {},
+                    open: openSheet
                 )
                 .hidden()
                 .accessibilityHidden(true)
                 SendConditionsCardContent(
                     state: .populated(SendConditionsCardContent.layoutReservation),
                     isFetching: true,
-                    refresh: {}
+                    refresh: {},
+                    open: openSheet
                 )
                 .hidden()
                 .accessibilityHidden(true)
             }
         }
+        .sheet(isPresented: $showSendConditions, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            SendConditionsDetailSheet()
+                .onAppear { Haptics.shared.sheetPresented() }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Send Conditions")
+        .accessibilityHint("Opens Send Conditions details.")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { openSheet() }
         .task {
             // Silent refresh when a reading already exists; a cold first run
             // waits for the Check tap so the location prompt is user-initiated.
@@ -598,31 +617,30 @@ private struct SendConditionsCardContent: View {
     let state: State
     let isFetching: Bool
     let refresh: () -> Void
+    let open: () -> Void
 
     /// Percentile-first framing (SL-91): a hot-climate day that's good FOR
     /// HERE reads green even when the absolute score is low.
     private func label(for conditions: SendConditions) -> SendConditionsLabel {
-        if let percentile = conditions.percentile {
-            return SendConditionsScore.percentileLabel(percentile)
-        }
-        return conditions.label
+        SendConditionsScore.displayLabel(for: conditions)
     }
 
     private func color(for conditions: SendConditions) -> Color {
-        if let percentile = conditions.percentile {
-            if percentile >= 75 { return SendmeterStyle.optimal }
-            if percentile >= 40 { return SendmeterStyle.caution }
-            return SendmeterStyle.alert
-        }
-        if conditions.score >= 55 { return SendmeterStyle.optimal }
-        if conditions.score >= 35 { return SendmeterStyle.caution }
-        return SendmeterStyle.alert
+        SendConditionsScore.colorBand(for: conditions).color
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                SectionLabel("Send Conditions", systemImage: "cloud.sun")
+                HStack(spacing: 6) {
+                    SectionLabel("Send Conditions", systemImage: "cloud.sun")
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+                .hapticTap()
+                .onTapGesture(perform: open)
                 Spacer()
                 if isFetching {
                     ProgressView()
@@ -638,6 +656,9 @@ private struct SendConditionsCardContent: View {
         switch state {
         case .populated(let conditions):
             populatedContent(conditions)
+                .contentShape(Rectangle())
+                .hapticTap()
+                .onTapGesture(perform: open)
         case .failed:
             failedContent
         case .empty:

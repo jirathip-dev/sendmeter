@@ -36,6 +36,19 @@ public enum SendmeterStyle {
     }
 }
 
+public extension SendConditionsColorBand {
+    /// Semantic native color for a Send Conditions score/percentile band —
+    /// shared by the summary card and detail sheet so their badges cannot
+    /// drift (web `percentileColor` / `sendScoreColor` hue families).
+    var color: Color {
+        switch self {
+        case .optimal: return SendmeterStyle.optimal
+        case .caution: return SendmeterStyle.caution
+        case .alert: return SendmeterStyle.alert
+        }
+    }
+}
+
 public extension Color {
     init(hex: String) {
         let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
