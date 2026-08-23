@@ -36,7 +36,7 @@ in `docs/native-swift-rewrite.md`.
 
 ```text
 SwiftUI application
-├── Sources/Core       Pure models, metrics, force curve, protocol, queue, and state engines
+├── Sources/Core       Pure models, metrics, force curve, protocol, queue, state engines, and account-scoped local read cache (GRDB/SQLite, #747)
 ├── Sources/Data       Supabase auth and typed PostgREST repositories
 ├── Sources/Platform   CoreBluetooth, HealthKit, and WatchConnectivity
 ├── Sources/Features   Native product screens

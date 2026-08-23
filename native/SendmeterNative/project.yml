@@ -29,6 +29,15 @@ packages:
     path: ../../ios/App/SendLogWatchCore
   SendLogHealthCore:
     path: ../../native-plugins/sendlog-health-core
+  # #747 slice 1: Xcode needs this project-level remote package reference so
+  # SendmeterCore's SwiftPM GRDB dependency can resolve. The app target
+  # intentionally does NOT link GRDB directly: exposing the product to the app
+  # made the app-wide type checker time out in ActivityMixBar.swift.
+  # LocalCacheStore uses `@_implementationOnly import GRDB`, and the app links
+  # it through SendmeterCore's transitive product.
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    exactVersion: 7.9.0
 targets:
   SendmeterNative:
     type: application

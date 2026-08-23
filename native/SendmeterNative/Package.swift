@@ -21,14 +21,18 @@ let package = Package(
         // readiness core the shipped plugin shares — SendmeterCore maps its
         // triggers to the same `SyncTrigger` and consults the same policy
         // rather than reimplementing either.
-        .package(path: "../../native-plugins/sendlog-health-core")
+        .package(path: "../../native-plugins/sendlog-health-core"),
+        // #747: remote GRDB pin — the package identity is GRDB.swift (derived
+        // from the URL), so target dependencies must use `package: "GRDB.swift"`.
+        .package(url: "https://github.com/groue/GRDB.swift", exact: "7.9.0")
     ],
     targets: [
         .target(
             name: "SendmeterCore",
             dependencies: [
                 "SendLogWatchCore",
-                .product(name: "SendLogHealthCore", package: "sendlog-health-core")
+                .product(name: "SendLogHealthCore", package: "sendlog-health-core"),
+                .product(name: "GRDB", package: "GRDB.swift")
             ],
             // #649: ChartTheme.swift lives at Sources/App/ChartTheme.swift
             // (the issue's placement, next to DesignSystem.swift) but must be
@@ -47,7 +51,7 @@ let package = Package(
         ),
         .testTarget(
             name: "SendmeterCoreTests",
-            dependencies: ["SendmeterCore", "SendLogWatchCore"],
+            dependencies: ["SendmeterCore", "SendLogWatchCore", .product(name: "GRDB", package: "GRDB.swift")],
             path: "Tests/SendmeterCoreTests",
             resources: [.copy("Fixtures")]
         ),
