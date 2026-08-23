@@ -324,4 +324,170 @@ final class ZoneMixTests: XCTestCase {
         XCTAssertNil(preset.targetKilograms)
         XCTAssertNil(preset.targetPercentage)
     }
+
+    // MARK: #750 — load-aware performed zone
+
+    private func customPreset(
+        holdSeconds: Int = 7,
+        targetKilograms: Double? = nil,
+        protocolMode: ForceProtocolMode = .hold
+    ) -> TindeqPreset {
+        TindeqPreset(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000000AA")!,
+            name: "Custom",
+            holdSeconds: holdSeconds,
+            repetitions: 1,
+            sets: 1,
+            restBetweenRepetitionsSeconds: 60,
+            restBetweenSetsSeconds: 60,
+            targetKilograms: targetKilograms,
+            protocolMode: protocolMode
+        )
+    }
+
+    private func band(_ kilograms: Double) -> ForceTargetBand {
+        ForceTargetBand(
+            kilograms: kilograms,
+            lowKilograms: kilograms - 2,
+            highKilograms: kilograms + 2
+        )
+    }
+
+    func testClassifyZoneLoadedMirrorsWebLoadAwareThresholds() {
+        let refs = ZoneCurveInput(cf: 10, maxForce: 40, wPrime: 3)
+        XCTAssertEqual(ZoneMix.classifyZoneLoaded(durationSeconds: 5, targetKilograms: 36, references: refs), .power)
+        XCTAssertEqual(ZoneMix.classifyZoneLoaded(durationSeconds: 10, targetKilograms: 34, references: refs), .strength)
+        XCTAssertEqual(ZoneMix.classifyZoneLoaded(durationSeconds: 7, targetKilograms: 24, references: refs), .powerEndurance)
+        XCTAssertEqual(ZoneMix.classifyZoneLoaded(durationSeconds: 25, targetKilograms: 24, references: refs), .endurance)
+        XCTAssertEqual(ZoneMix.classifyZoneLoaded(durationSeconds: 5, targetKilograms: 10, references: refs), .endurance)
+        XCTAssertEqual(ZoneMix.classifyZoneLoaded(durationSeconds: 7, targetKilograms: nil, references: refs), .powerEndurance)
+        XCTAssertEqual(ZoneMix.classifyZoneLoaded(durationSeconds: 7, targetKilograms: 36, references: nil), .powerEndurance)
+        XCTAssertNil(ZoneMix.classifyZoneLoaded(durationSeconds: 0.9, targetKilograms: 36, references: refs))
+    }
+
+    func testPerformedQualityUsesSetHoldAndResolvedTarget() {
+        let preset = customPreset(holdSeconds: 7, targetKilograms: 36)
+        let refs = ZoneCurveInput(cf: 10, maxForce: 40, wPrime: 3)
+        XCTAssertEqual(
+            ZoneMix.performedQuality(
+                preset: preset,
+                targetBand: band(36),
+                references: refs,
+                setNumber: 1
+            ),
+            .strength
+        )
+    }
+
+    func testPerformedQualityUsesHoldForRequestedSet() {
+        var preset = customPreset(holdSeconds: 5, targetKilograms: 34)
+        preset.holdSecondsBySet = [5, 12, 25]
+        let refs = ZoneCurveInput(cf: 10, maxForce: 40, wPrime: 3)
+        XCTAssertEqual(
+            ZoneMix.performedQuality(
+                preset: preset,
+                targetBand: band(34),
+                references: refs,
+                setNumber: 1
+            ),
+            .strength
+        )
+        XCTAssertEqual(
+            ZoneMix.performedQuality(
+                preset: preset,
+                targetBand: band(34),
+                references: refs,
+                setNumber: 3
+            ),
+            .endurance
+        )
+    }
+
+    func testRecordingZoneFreeHasNoPresetOrDefaultFallback() {
+        let preset = customPreset(holdSeconds: 7, targetKilograms: 36)
+        let refs = ZoneCurveInput(cf: 10, maxForce: 40, wPrime: 3)
+        XCTAssertNil(
+            ZoneMix.recordingZone(
+                for: .free,
+                preset: preset,
+                targetBand: band(36),
+                references: refs
+            )
+        )
+    }
+
+    func testRecordingZoneSuggestedZoneFollowsQuality() {
+        let refs = ZoneCurveInput(cf: 10, maxForce: 40, wPrime: 3)
+        for quality in ZoneQuality.allCases {
+            XCTAssertEqual(
+                ZoneMix.recordingZone(
+                    for: .suggestedZone(quality),
+                    preset: nil,
+                    targetBand: nil,
+                    references: refs
+                ),
+                ZoneMix.recordedZone(for: quality)
+            )
+        }
+    }
+
+    func testRecordingZoneSuggestedMaintenanceKeepsMaintenanceZone() {
+        for zone in [RecordedZone.warmup, .prehab] {
+            XCTAssertEqual(
+                ZoneMix.recordingZone(
+                    for: .suggestedMaintenance(zone),
+                    preset: nil,
+                    targetBand: nil,
+                    references: nil
+                ),
+                zone
+            )
+        }
+    }
+
+    func testRecordingZoneSavedPresetFollowsPerformedQuality() {
+        let preset = customPreset(holdSeconds: 7, targetKilograms: 36)
+        let refs = ZoneCurveInput(cf: 10, maxForce: 40, wPrime: 3)
+        XCTAssertEqual(
+            ZoneMix.recordingZone(
+                for: .savedPreset(preset.id),
+                preset: preset,
+                targetBand: band(36),
+                references: refs
+            ),
+            .strength
+        )
+    }
+
+    func testRecordingZoneMovementIsDurationOnlyWithoutStaticRefs() {
+        let movement = ZoneMix.movementPreset()
+        let refs = ZoneCurveInput(cf: 10, maxForce: 40, wPrime: 3)
+        XCTAssertEqual(
+            ZoneMix.recordingZone(
+                for: .movement,
+                preset: movement,
+                targetBand: nil,
+                references: refs
+            ),
+            .endurance
+        )
+    }
+
+    func testRecordingZoneReverseActionUsesResolvedTargetLikeWeb() {
+        let preset = customPreset(
+            holdSeconds: 7,
+            targetKilograms: 36,
+            protocolMode: .reverseAction
+        )
+        let refs = ZoneCurveInput(cf: 10, maxForce: 40, wPrime: 3)
+        XCTAssertEqual(
+            ZoneMix.recordingZone(
+                for: .savedPreset(preset.id),
+                preset: preset,
+                targetBand: band(36),
+                references: refs
+            ),
+            .strength
+        )
+    }
 }

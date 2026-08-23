@@ -113,6 +113,65 @@ public enum ZoneMix {
         return .endurance
     }
 
+    /// Load-aware zone classification (#750, port of the web's
+    /// `classifyZoneLoaded`): a protocol hold classifies on duration AND its
+    /// resolved load once both are available, so a 7s hold at 85% of max
+    /// force reads as Strength rather than being re-bucketed as Power
+    /// Endurance from duration alone. Falls back to duration-only when there
+    /// is no resolved load or no max-force reference to compare it against.
+    public static func classifyZoneLoaded(
+        durationSeconds: Double,
+        targetKilograms: Double?,
+        references: ZoneCurveInput?
+    ) -> ZoneQuality? {
+        guard durationSeconds >= 1 else { return nil }
+        guard let targetKilograms,
+              targetKilograms.isFinite,
+              targetKilograms > 0,
+              let maxForce = references?.maxForce,
+              maxForce.isFinite,
+              maxForce > 0 else {
+            return classifyZone(durationSeconds: durationSeconds)
+        }
+
+        if let cf = references?.cf, cf.isFinite, cf > 0, targetKilograms <= cf {
+            return .endurance
+        }
+        if targetKilograms >= 0.9 * maxForce, durationSeconds <= 6 {
+            return .power
+        }
+        if targetKilograms >= 0.8 * maxForce, durationSeconds <= 20 {
+            return .strength
+        }
+        if durationSeconds <= 20 {
+            return .powerEndurance
+        }
+        return .endurance
+    }
+
+    /// The zone a hold saved from `preset` was performed under
+    /// (#750, port of the web's `performedQuality`). A recommended protocol
+    /// states its zone elsewhere; a saved/movement preset has no declared
+    /// quality, so it uses the load-aware classifier with the preset's
+    /// per-set hold and resolved target band.
+    public static func performedQuality(
+        preset: TindeqPreset?,
+        targetBand: ForceTargetBand?,
+        references: ZoneCurveInput?,
+        setNumber: Int
+    ) -> RecordedZone? {
+        guard let preset else { return nil }
+        let holdSeconds = Double(preset.holdSeconds(forSet: setNumber))
+        guard let quality = classifyZoneLoaded(
+            durationSeconds: holdSeconds,
+            targetKilograms: targetBand?.kilograms,
+            references: references
+        ) else {
+            return nil
+        }
+        return recordedZone(for: quality)
+    }
+
     /// The zone a recording belongs to: the zone it was performed under wins
     /// regardless of duration; only a recording WITHOUT one is inferred from
     /// duration (web `recordingZone`). Native's recorded zones map onto the
@@ -461,9 +520,10 @@ extension ZoneMix {
     /// sibling of the web's `buildZoneSelection(...).protocol`, derived from
     /// the SAME `zoneProtocols` table the balance divisor reads, so a
     /// prescription change can never silently drift the two apart (#653 review
-    /// finding 11). The caller sets this as the selected preset AND stamps the
-    /// Force metadata `zone` with `recordedZone(for:)` so a recording saved
-    /// under the run carries the quality it was performed under.
+    /// finding 11). The caller sets this as the selected preset; the save-time
+    /// zone then comes from `recordingZone(for: .suggestedZone(zone))` so a
+    /// recording saved under the run carries the quality it was performed
+    /// under, with no standalone zone setting involved.
     public static func zonePreset(for zone: ZoneQuality) -> TindeqPreset {
         let prescription = zoneProtocols[zone] ?? ZoneProtocol(
             holdSeconds: 5,
@@ -614,6 +674,35 @@ extension ZoneMix {
         case .endurance: return .endurance
         }
     }
+
+    /// The save-time zone for the currently armed recording-context selection
+    /// (#750). There is deliberately no persisted/standalone zone fallback:
+    /// a suggestion states its own zone, a saved/movement preset is
+    /// classified from its resolved protocol, and a free pull records nil.
+    public static func recordingZone(
+        for selection: ForceProtocolSelection,
+        preset: TindeqPreset?,
+        targetBand: ForceTargetBand?,
+        references: ZoneCurveInput?,
+        setNumber: Int = 1
+    ) -> RecordedZone? {
+        switch selection {
+        case .free:
+            return nil
+        case .suggestedZone(let quality):
+            return recordedZone(for: quality)
+        case .suggestedMaintenance(let zone):
+            return zone
+        case .movement, .savedPreset:
+            return performedQuality(
+                preset: preset,
+                targetBand: targetBand,
+                references: references,
+                setNumber: setNumber
+            )
+        }
+    }
+
     /// TIE_BAND_SETS (web `zoneHistory.ts`): zones within this many sets of
     /// the true minimum are treated as tied candidates for the curve bias to
     /// break.

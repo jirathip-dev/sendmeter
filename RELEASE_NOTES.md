@@ -41,6 +41,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native Force: Exercise and Side are now compact, selectable chips inside Recording context, with a reveal-all `+N` chip and an inline add-exercise field; the redundant standalone Zone picker is gone, and the zone saved with a pull now comes only from the armed protocol.
 - Native app: returning to the app now refreshes your training data only when it's stale or when the live sync channel is down, instead of re-fetching every table on each foreground — so switching apps costs less radio and battery, while a pull-to-refresh still reloads everything.
 - Native Force: the Recording-context protocol picker is colour-coded like the web (Power orange, Strength gold, Pow End lavender, Endurance blue, Warm-up purple, Prehab neutral), and Free hold / Suggested / Saved are mutually exclusive. Training balance (this exercise, sets not sessions, Focus Next) now sits in the same picker.
 - Apple Watch Force: free holds are now always armed — connecting the gauge arms it, a pull starts a rep, and released-to-slack saves and re-arms automatically. The separate "Arm hands-free" control, the "Hands-free mode" chip and the manual "Free hold" button are gone, and the measuring screen's control is now a single "Save now" (ends one rep). A guided protocol is an explicit screen that suspends free hold while it runs, and the screen shows a persistent mode line (Free hold · armed / Free hold · recording / Repeaters · set 2/5).
