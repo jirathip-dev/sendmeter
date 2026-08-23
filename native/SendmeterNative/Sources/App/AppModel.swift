@@ -277,6 +277,8 @@ public final class AppModel: ObservableObject {
     /// #708: owns the Manual workout rest deadline outside the fullscreen
     /// presentation so minimize/background transitions cannot suspend it.
     public let manualWorkoutRest: ManualWorkoutRestScheduler
+    /// #763: lock-screen Live Activity mirror of the Manual workout.
+    public let manualWorkoutActivity: ManualWorkoutActivityManager
     /// #672: the Force tab's hot, feature-scoped observable state. Kept as a
     /// dedicated object (not an `@Published` on `AppModel`) so a force-stream
     /// publish no longer invalidates History/Dashboard/Settings bodies.
@@ -505,6 +507,7 @@ public final class AppModel: ObservableObject {
         self.guidedActivity = GuidedProtocolActivityManager()
         self.gaugeSessionSaveGate = GaugeSessionSaveGate()
         self.manualWorkoutRest = ManualWorkoutRestScheduler()
+        self.manualWorkoutActivity = .shared
         self.forceModel = ForceModel()
         self.keepAwake = KeepAwakeCoordinator { active in
             await MainActor.run {
@@ -983,6 +986,7 @@ public final class AppModel: ObservableObject {
     /// → the stranded card is retired even if no phase change fires.
     public func reconcileStrandedActivitiesAtLaunch() {
         guidedActivity.reconcileOrphans()
+        manualWorkoutActivity.reconcileOrphans()
     }
 
     public func becameActive() async {
@@ -991,6 +995,7 @@ public final class AppModel: ObservableObject {
         // the in-process teardown, and relaunch is the only chance to retire
         // the card. No-op while a run is in progress.
         guidedActivity.reconcileOrphans()
+        manualWorkoutActivity.reconcileOrphans()
         guard authSession != nil else { return }
         await relayValidSessionToWatch(guaranteed: false)
         await drainQueue()
@@ -1881,6 +1886,7 @@ public final class AppModel: ObservableObject {
     public func scenePhaseChanged(_ phase: ScenePhase) {
         manualWorkoutRest.scenePhaseChanged(phase)
         if phase == .active {
+            NotificationCenter.default.post(name: .manualWorkoutActivityAction, object: nil)
             updateKeepAwake()
             // #671: resume the display-rate flush driver for a live stream
             // (recording/armed) torn down on backgrounding.
@@ -5627,6 +5633,8 @@ public final class AppModel: ObservableObject {
         invalidateTagCurveCache()
         handsFree.handleDisconnected()
         manualWorkoutRest.stop()
+        manualWorkoutActivity.end(immediate: true)
+        manualWorkoutActivity.discardPendingEvents()
         keepAwakeRelease?()
         keepAwakeRelease = nil
         // The mirror must not survive an account change even without an

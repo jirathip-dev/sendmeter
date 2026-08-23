@@ -70,14 +70,22 @@ struct WorkoutView: View {
                 .environmentObject(model)
                 .onAppear { Haptics.shared.sheetPresented() }
             }
+            .onReceive(
+                NotificationCenter.default.publisher(for: .manualWorkoutActivityAction)
+            ) { _ in
+                drainManualWorkoutActions()
+            }
             .onAppear {
+                drainManualWorkoutActions()
                 model.manualWorkoutRest.update(engine: engine, restTarget: restTarget)
             }
             .onChange(of: engine) { newEngine in
                 model.manualWorkoutRest.update(engine: newEngine, restTarget: restTarget)
+                model.manualWorkoutActivity.sync(engine: newEngine, restTarget: restTarget)
             }
             .onChange(of: storedRestTarget) { _ in
                 model.manualWorkoutRest.update(engine: engine, restTarget: restTarget)
+                model.manualWorkoutActivity.sync(engine: engine, restTarget: restTarget)
             }
             .task {
                 guard !hasResolvedPersistedRun else { return }
@@ -195,6 +203,7 @@ struct WorkoutView: View {
             startedAt: Date()
         )
         engine = newEngine
+        model.manualWorkoutActivity.start(engine: newEngine, restTarget: restTarget)
         model.manualWorkoutRest.update(engine: newEngine, restTarget: restTarget)
         showManualWorkout = true
         Task { await model.manualWorkoutRest.requestNotificationPermissionIfNeeded() }
@@ -217,6 +226,8 @@ struct WorkoutView: View {
             // warning pattern, never the accepted tick.
             Haptics.shared.playGesture(.medium)
             model.manualWorkoutRest.stop()
+            model.manualWorkoutActivity.end(immediate: true)
+            model.manualWorkoutActivity.discardPendingEvents()
             showManualWorkout = false
             self.engine = nil
             let saveID = UUID()
@@ -240,6 +251,32 @@ struct WorkoutView: View {
 
     private var restTarget: Int {
         ManualWorkoutRest.validatedTarget(storedRestTarget)
+    }
+
+    /// Replay lock-screen intent taps into the authoritative engine. The
+    /// event identity keeps a stale event from replaying into a newer workout;
+    /// the engine's own guards make duplicates/no-ops safe. If the workout is
+    /// gone, the whole queue is discarded.
+    private func drainManualWorkoutActions() {
+        let events = model.manualWorkoutActivity.drainPendingEvents(
+            forWorkoutStartedAt: engine?.draft.startedAt
+        )
+        guard var current = engine else { return }
+        for event in events {
+            do {
+                switch event.action {
+                case .beginBoulder:
+                    try current.startAttempt(at: event.at)
+                case .endBoulder:
+                    _ = try current.endAttempt(at: event.at)
+                }
+            } catch {
+                // Already applied/replayed or no longer valid — ignore.
+            }
+        }
+        guard current != engine else { return }
+        engine = current
+        model.manualWorkoutActivity.refresh(engine: current, restTarget: restTarget)
     }
 }
 
