@@ -19,6 +19,13 @@ public extension EnvironmentValues {
 /// a shared tick on touch-down, cancels after the web tap slop (a scroll that
 /// starts on a control stays silent), and settles on lift. The one-tick
 /// tracker is Core (`StructuralHapticTracker`); this modifier only feeds it.
+///
+/// System `Menu` rows are rendered outside the SwiftUI view hierarchy, so a
+/// row cannot carry `.hapticTap` directly. Menu triggers opt in with it and
+/// each row action calls `Haptics.shared.playGesture(_:)`, which keeps
+/// trigger + row selection to one tick within the settled-gesture window. If
+/// a menu is held open longer than that window, the row selection is
+/// necessarily a separate gesture and produces its own tick.
 public struct HapticTapModifier: ViewModifier {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.hapticTapMuted) private var muted

@@ -91,6 +91,7 @@ struct ForceProgressCard: View {
                         forceCurve: forceCurve,
                         hasLoadedRecordings: hasLoadedRecordings
                     )
+                    .onAppear { Haptics.shared.sheetPresented() }
                 case .movement:
                     MovementDetailView(
                         recordings: recordings,
@@ -98,6 +99,7 @@ struct ForceProgressCard: View {
                         selectedSide: selectedSide,
                         hasLoadedRecordings: hasLoadedRecordings
                     )
+                    .onAppear { Haptics.shared.sheetPresented() }
                 }
             }
             .presentationDetents([.large])

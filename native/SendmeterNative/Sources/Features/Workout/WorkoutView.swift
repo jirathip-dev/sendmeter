@@ -68,6 +68,7 @@ struct WorkoutView: View {
                     onEnd: finishWorkout
                 )
                 .environmentObject(model)
+                .onAppear { Haptics.shared.sheetPresented() }
             }
             .onAppear {
                 model.manualWorkoutRest.update(engine: engine, restTarget: restTarget)

@@ -104,6 +104,7 @@ struct ZoneFocusCard: View {
                     recommendation: recommendation,
                     curveInput: curveInput
                 )
+                .onAppear { Haptics.shared.sheetPresented() }
             }
         }
     }

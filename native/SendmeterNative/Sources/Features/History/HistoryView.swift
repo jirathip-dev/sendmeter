@@ -1212,15 +1212,22 @@ private struct TrashView: View {
                             }
                             Spacer()
                             Menu {
-                                Button { Task { await model.restoreSession(session) } } label: {
+                                Button {
+                                    Haptics.shared.playGesture(.light)
+                                    Task { await model.restoreSession(session) }
+                                } label: {
                                     Label("Restore", systemImage: "arrow.uturn.backward")
                                 }
-                                Button(role: .destructive) { sessionToPurge = session } label: {
+                                Button(role: .destructive) {
+                                    Haptics.shared.playGesture(.medium)
+                                    sessionToPurge = session
+                                } label: {
                                     Label("Delete Permanently", systemImage: "trash.slash")
                                 }
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                             }
+                            .hapticTap()
                         }
                     }
                 } else {
@@ -1234,15 +1241,22 @@ private struct TrashView: View {
                             }
                             Spacer()
                             Menu {
-                                Button { Task { await model.restoreRecording(recording) } } label: {
+                                Button {
+                                    Haptics.shared.playGesture(.light)
+                                    Task { await model.restoreRecording(recording) }
+                                } label: {
                                     Label("Restore", systemImage: "arrow.uturn.backward")
                                 }
-                                Button(role: .destructive) { recordingToPurge = recording } label: {
+                                Button(role: .destructive) {
+                                    Haptics.shared.playGesture(.medium)
+                                    recordingToPurge = recording
+                                } label: {
                                     Label("Delete Permanently", systemImage: "trash.slash")
                                 }
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                             }
+                            .hapticTap()
                         }
                     }
                 }

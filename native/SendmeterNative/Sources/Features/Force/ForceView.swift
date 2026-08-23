@@ -1690,6 +1690,7 @@ struct ForceView: View {
                             clearGuidedSession(guidedSession)
                         }
                     )
+                    .onAppear { Haptics.shared.sheetPresented() }
                 } else {
                     Color.clear
                 }
@@ -3118,13 +3119,23 @@ private struct ForceProtocolLibraryCard: View {
                             }
                             .hapticButtonStyle(.plain)
                             Menu {
-                                Button { run(preset) } label: { Label("Run", systemImage: "play.fill") }
-                                Button { edit(preset) } label: { Label("Edit", systemImage: "pencil") }
-                                Button(role: .destructive) { delete(preset) } label: { Label("Delete", systemImage: "trash") }
+                                Button {
+                                    Haptics.shared.playGesture(.light)
+                                    run(preset)
+                                } label: { Label("Run", systemImage: "play.fill") }
+                                Button {
+                                    Haptics.shared.playGesture(.light)
+                                    edit(preset)
+                                } label: { Label("Edit", systemImage: "pencil") }
+                                Button(role: .destructive) {
+                                    Haptics.shared.playGesture(.medium)
+                                    delete(preset)
+                                } label: { Label("Delete", systemImage: "trash") }
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                                     .font(.title3)
                             }
+                            .hapticTap()
                         }
                         if preset.id != presets.last?.id { Divider() }
                     }
