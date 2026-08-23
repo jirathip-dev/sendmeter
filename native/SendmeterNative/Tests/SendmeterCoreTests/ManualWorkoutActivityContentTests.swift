@@ -69,6 +69,30 @@ final class ManualWorkoutActivityContentTests: XCTestCase {
         XCTAssertEqual(snapshot.restTargetSeconds, 60)
     }
 
+    func testRestTargetChangeMidRestUpdatesSnapshotTargetOnly() throws {
+        let start = Date(timeIntervalSince1970: 4_500)
+        var engine = PhoneWorkoutEngine(accountUserID: UUID(), phase: .capacity, startedAt: start)
+        try engine.startAttempt(at: start.addingTimeInterval(5))
+        _ = try engine.endAttempt(at: start.addingTimeInterval(15))
+
+        let before = ManualWorkoutActivitySnapshot(
+            engine: engine,
+            restTarget: 60,
+            now: start.addingTimeInterval(30)
+        )
+        let after = ManualWorkoutActivitySnapshot(
+            engine: engine,
+            restTarget: 120,
+            now: start.addingTimeInterval(30)
+        )
+
+        XCTAssertEqual(before.phase, .resting)
+        XCTAssertEqual(before.restTargetSeconds, 60)
+        XCTAssertEqual(after.phase, .resting)
+        XCTAssertEqual(after.restTargetSeconds, 120)
+        XCTAssertEqual(after.phaseStartedAt, start.addingTimeInterval(15))
+    }
+
     func testIntentApplicationTransitionsNativelyAndIsIdempotent() {
         let start = Date(timeIntervalSince1970: 5_000)
         var snapshot = ManualWorkoutActivitySnapshot(
@@ -79,27 +103,104 @@ final class ManualWorkoutActivityContentTests: XCTestCase {
         )
 
         snapshot = snapshot.applying(
-            ManualWorkoutActivityEvent(action: .beginBoulder, at: start.addingTimeInterval(5))
+            ManualWorkoutActivityEvent(
+                workoutStartedAt: start,
+                action: .beginBoulder,
+                at: start.addingTimeInterval(5)
+            )
         )
         XCTAssertEqual(snapshot.phase, .climbing)
         XCTAssertEqual(snapshot.phaseStartedAt, start.addingTimeInterval(5))
         XCTAssertEqual(snapshot.boulderCount, 0)
 
         let duplicate = snapshot.applying(
-            ManualWorkoutActivityEvent(action: .beginBoulder, at: start.addingTimeInterval(6))
+            ManualWorkoutActivityEvent(
+                workoutStartedAt: start,
+                action: .beginBoulder,
+                at: start.addingTimeInterval(6)
+            )
         )
         XCTAssertEqual(duplicate, snapshot)
 
         snapshot = snapshot.applying(
-            ManualWorkoutActivityEvent(action: .endBoulder, at: start.addingTimeInterval(30))
+            ManualWorkoutActivityEvent(
+                workoutStartedAt: start,
+                action: .endBoulder,
+                at: start.addingTimeInterval(30)
+            )
         )
         XCTAssertEqual(snapshot.phase, .resting)
         XCTAssertEqual(snapshot.phaseStartedAt, start.addingTimeInterval(30))
         XCTAssertEqual(snapshot.boulderCount, 1)
 
         let duplicateStop = snapshot.applying(
-            ManualWorkoutActivityEvent(action: .endBoulder, at: start.addingTimeInterval(31))
+            ManualWorkoutActivityEvent(
+                workoutStartedAt: start,
+                action: .endBoulder,
+                at: start.addingTimeInterval(31)
+            )
         )
         XCTAssertEqual(duplicateStop, snapshot)
+    }
+
+    func testStaleQueuedEventsAreDroppedForNewWorkout() {
+        let oldStart = Date(timeIntervalSince1970: 6_000)
+        let newStart = Date(timeIntervalSince1970: 7_000)
+        let oldEvent = ManualWorkoutActivityEvent(
+            workoutStartedAt: oldStart,
+            action: .beginBoulder,
+            at: oldStart.addingTimeInterval(10)
+        )
+        let currentEvent = ManualWorkoutActivityEvent(
+            workoutStartedAt: newStart,
+            action: .beginBoulder,
+            at: newStart.addingTimeInterval(10)
+        )
+
+        let filtered = ManualWorkoutActivityDrain.matching(
+            [oldEvent, currentEvent],
+            workoutStartedAt: newStart
+        )
+
+        XCTAssertEqual(filtered, [currentEvent])
+        XCTAssertFalse(oldEvent.matches(workoutStartedAt: newStart))
+    }
+
+    func testQueuedEventIdentitySurvivesUserDefaultsCodableRoundTrip() throws {
+        let startedAt = Date(timeIntervalSince1970: 6_500)
+        let event = ManualWorkoutActivityEvent(
+            workoutStartedAt: startedAt,
+            action: .endBoulder,
+            at: startedAt.addingTimeInterval(30)
+        )
+
+        let data = try JSONEncoder().encode(event)
+        let decoded = try JSONDecoder().decode(ManualWorkoutActivityEvent.self, from: data)
+
+        XCTAssertEqual(decoded.workoutStartedAt, startedAt)
+        XCTAssertTrue(decoded.matches(workoutStartedAt: startedAt))
+    }
+
+    func testReconcileGuardProtectsActiveWorkoutFromOrphanSweep() {
+        let activeWorkout = Date(timeIntervalSince1970: 8_000)
+
+        XCTAssertTrue(
+            ManualWorkoutActivityReconcileGuard.shouldReconcile(
+                isActive: false,
+                activeWorkoutStartedAt: nil
+            )
+        )
+        XCTAssertFalse(
+            ManualWorkoutActivityReconcileGuard.shouldReconcile(
+                isActive: false,
+                activeWorkoutStartedAt: activeWorkout
+            )
+        )
+        XCTAssertFalse(
+            ManualWorkoutActivityReconcileGuard.shouldReconcile(
+                isActive: true,
+                activeWorkoutStartedAt: nil
+            )
+        )
     }
 }

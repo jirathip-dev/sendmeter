@@ -18,12 +18,45 @@ public enum ManualWorkoutActivityAction: String, Codable, Equatable, Sendable {
 }
 
 public struct ManualWorkoutActivityEvent: Codable, Equatable, Sendable {
+    public let workoutStartedAt: Date
     public let action: ManualWorkoutActivityAction
     public let at: Date
 
-    public init(action: ManualWorkoutActivityAction, at: Date) {
+    public init(workoutStartedAt: Date, action: ManualWorkoutActivityAction, at: Date) {
+        self.workoutStartedAt = workoutStartedAt
         self.action = action
         self.at = at
+    }
+
+    public func matches(workoutStartedAt: Date) -> Bool {
+        self.workoutStartedAt == workoutStartedAt
+    }
+}
+
+/// Filters queued lock-screen actions to the workout that owns them. A stale
+/// event from a previous workout must never replay into the next one.
+public enum ManualWorkoutActivityDrain {
+    public static func matching(
+        _ events: [ManualWorkoutActivityEvent],
+        workoutStartedAt: Date
+    ) -> [ManualWorkoutActivityEvent] {
+        events.filter { $0.matches(workoutStartedAt: workoutStartedAt) }
+    }
+}
+
+/// Decides whether a launch/foreground sweep may end manual workout
+/// activities. The in-memory active-workout marker is set by
+/// `ManualWorkoutActivityManager.start` and cleared by `end`, so a live
+/// workout is protected even if ActivityKit has temporarily dropped the
+/// in-process activity handle. The manual engine itself is `@State` and never
+/// persisted, so after a relaunch there is by definition no live workout to
+/// protect and the sweep may retire stranded cards.
+public enum ManualWorkoutActivityReconcileGuard {
+    public static func shouldReconcile(
+        isActive: Bool,
+        activeWorkoutStartedAt: Date?
+    ) -> Bool {
+        !isActive && activeWorkoutStartedAt == nil
     }
 }
 

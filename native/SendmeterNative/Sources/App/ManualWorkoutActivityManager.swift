@@ -15,6 +15,11 @@ public extension Notification.Name {
 /// equivalent of the Capacitor `WorkoutLiveActivity` +
 /// `LiveActivityManager.startWorkout/updateWorkout/endWorkout`.
 ///
+/// A guided-force Live Activity and a manual-workout Live Activity use
+/// separate Attributes types, so the two cards intentionally coexist:
+/// `GuidedProtocolActivityManager` owns the guided card and this manager owns
+/// the manual one. Neither sweeps the other's activity type.
+///
 /// The pure snapshot/action mapping lives in SendmeterCore
 /// (`ManualWorkoutActivityContent`); this manager is the thin ActivityKit
 /// adapter. It starts on workout begin, pushes ONLY on state transitions
@@ -39,6 +44,7 @@ public final class ManualWorkoutActivityManager {
     private let defaults: UserDefaults
     private var activity: Activity<ManualWorkoutActivityAttributes>?
     private var lastState: ManualWorkoutActivityAttributes.ContentState?
+    private var activeWorkoutStartedAt: Date?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -50,6 +56,7 @@ public final class ManualWorkoutActivityManager {
     /// one is already active or Live Activities are unavailable.
     public func start(engine: PhoneWorkoutEngine, restTarget: Int) {
         guard activity == nil, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        activeWorkoutStartedAt = engine.draft.startedAt
         let snapshot = ManualWorkoutActivitySnapshot(engine: engine, restTarget: restTarget)
         let state = makeContentState(snapshot)
         let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(12 * 3600))
@@ -63,6 +70,7 @@ public final class ManualWorkoutActivityManager {
         } catch {
             activity = nil
             lastState = nil
+            activeWorkoutStartedAt = nil
         }
     }
 
@@ -93,6 +101,7 @@ public final class ManualWorkoutActivityManager {
     /// Take the activity down. `immediate` for finish/cancel; a lingering
     /// dismissal would show a stale card for the system's default window.
     public func end(immediate: Bool = true) {
+        activeWorkoutStartedAt = nil
         lastState = nil
         guard let activity else { return }
         self.activity = nil
@@ -107,7 +116,16 @@ public final class ManualWorkoutActivityManager {
     /// Single entry point for BoulderIntent/StopIntent. Applies the transition
     /// to the card natively and queues it for the engine replay.
     public func handleAction(_ action: ManualWorkoutActivityAction, at date: Date = Date()) {
-        appendPendingEvent(ManualWorkoutActivityEvent(action: action, at: date))
+        guard let workoutStartedAt = activeWorkoutStartedAt
+            ?? activity?.attributes.startedAt
+            ?? Activity<ManualWorkoutActivityAttributes>.activities.first?.attributes.startedAt
+        else { return }
+        let event = ManualWorkoutActivityEvent(
+            workoutStartedAt: workoutStartedAt,
+            action: action,
+            at: date
+        )
+        appendPendingEvent(event)
         let currentState = lastState
             ?? activity?.content.state
             ?? Activity<ManualWorkoutActivityAttributes>.activities.first?.content.state
@@ -119,7 +137,7 @@ public final class ManualWorkoutActivityManager {
                 boulderCount: currentState.boulderCount
             )
             let updatedSnapshot = snapshot.applying(
-                ManualWorkoutActivityEvent(action: action, at: date)
+                event
             )
             let updatedState = makeContentState(updatedSnapshot)
             if updatedState != currentState {
@@ -131,12 +149,16 @@ public final class ManualWorkoutActivityManager {
     }
 
     /// Read + clear the queued lock-screen actions atomically. WorkoutView
-    /// replays these into `PhoneWorkoutEngine`; duplicates are rejected by
-    /// the engine's existing guards.
-    public func drainPendingEvents() -> [ManualWorkoutActivityEvent] {
+    /// replays only events for the current workout into `PhoneWorkoutEngine`;
+    /// duplicates and stale-workout events are dropped.
+    public func drainPendingEvents(
+        forWorkoutStartedAt startedAt: Date?
+    ) -> [ManualWorkoutActivityEvent] {
         let data = defaults.array(forKey: Self.pendingActionsKey) as? [Data] ?? []
         defaults.removeObject(forKey: Self.pendingActionsKey)
-        return data.compactMap { try? JSONDecoder().decode(ManualWorkoutActivityEvent.self, from: $0) }
+        guard let startedAt else { return [] }
+        let events = data.compactMap { try? JSONDecoder().decode(ManualWorkoutActivityEvent.self, from: $0) }
+        return ManualWorkoutActivityDrain.matching(events, workoutStartedAt: startedAt)
     }
 
     public func discardPendingEvents() {
@@ -147,7 +169,10 @@ public final class ManualWorkoutActivityManager {
     /// a force-quit or jetsam. Called on launch/foreground when no Manual
     /// workout is in progress.
     public func reconcileOrphans() {
-        guard !isActive else { return }
+        guard ManualWorkoutActivityReconcileGuard.shouldReconcile(
+            isActive: isActive,
+            activeWorkoutStartedAt: activeWorkoutStartedAt
+        ) else { return }
         let activities = Activity<ManualWorkoutActivityAttributes>.activities
         guard !activities.isEmpty else { return }
         lastState = nil

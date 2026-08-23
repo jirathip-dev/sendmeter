@@ -254,10 +254,13 @@ struct WorkoutView: View {
     }
 
     /// Replay lock-screen intent taps into the authoritative engine. The
-    /// engine's own guards make duplicates/no-ops safe; if the workout is
-    /// gone, stale queued events are discarded.
+    /// event identity keeps a stale event from replaying into a newer workout;
+    /// the engine's own guards make duplicates/no-ops safe. If the workout is
+    /// gone, the whole queue is discarded.
     private func drainManualWorkoutActions() {
-        let events = model.manualWorkoutActivity.drainPendingEvents()
+        let events = model.manualWorkoutActivity.drainPendingEvents(
+            forWorkoutStartedAt: engine?.draft.startedAt
+        )
         guard var current = engine else { return }
         for event in events {
             do {
