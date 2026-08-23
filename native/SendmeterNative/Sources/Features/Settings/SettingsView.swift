@@ -489,6 +489,32 @@ struct SettingsView: View {
         }
     }
 
+    private var cacheSyncStatusText: String {
+        if model.queuedWriteCount + model.pendingCacheWriteCount == 0 {
+            return "Synced"
+        }
+        if model.queuedWriteCount == 0 {
+            return "\(model.pendingCacheWriteCount) unsynced"
+        }
+        if model.pendingCacheWriteCount == 0 {
+            return "\(model.queuedWriteCount) queued"
+        }
+        return "\(model.queuedWriteCount) queued, \(model.pendingCacheWriteCount) unsynced"
+    }
+
+    private var cacheSyncExplanation: String {
+        if model.pendingCacheWriteCount == 0 {
+            let verb = model.queuedWriteCount == 1 ? "is" : "are"
+            return "\(model.queuedWriteCount) queued upload\(model.queuedWriteCount == 1 ? "" : "s") \(verb) kept on this iPhone and will retry automatically."
+        }
+        let changes = "\(model.pendingCacheWriteCount) unconfirmed local change\(model.pendingCacheWriteCount == 1 ? "" : "s")"
+        if model.queuedWriteCount == 0 {
+            return "\(changes) is kept on this iPhone and preserved on the next refresh rather than being hidden as clean."
+        }
+        let uploads = "\(model.queuedWriteCount) queued upload\(model.queuedWriteCount == 1 ? " is" : "s are")"
+        return "\(changes) and \(uploads) kept on this iPhone. Queue entries retry automatically; cache-only changes are preserved on the next refresh rather than being hidden as clean."
+    }
+
     // MARK: About & Support
 
     private var aboutSupportSection: some View {
@@ -506,12 +532,14 @@ struct SettingsView: View {
                 Label("Pending uploads", systemImage: "externaldrive.badge.icloud")
                 Spacer()
                 StatusPill(
-                    model.queuedWriteCount == 0 ? "Synced" : "\(model.queuedWriteCount) queued",
-                    color: model.queuedWriteCount == 0 ? SendmeterStyle.optimal : SendmeterStyle.caution
+                    cacheSyncStatusText,
+                    color: model.queuedWriteCount + model.pendingCacheWriteCount == 0
+                        ? SendmeterStyle.optimal
+                        : SendmeterStyle.caution
                 )
             }
-            if model.queuedWriteCount > 0 {
-                Text("Queued data is already durable on this iPhone. It will retry automatically and is scoped to the signed-in account.")
+            if model.queuedWriteCount + model.pendingCacheWriteCount > 0 {
+                Text(cacheSyncExplanation)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button {

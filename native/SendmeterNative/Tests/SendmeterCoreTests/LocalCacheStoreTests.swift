@@ -589,7 +589,7 @@ final class LocalCacheStoreTests: XCTestCase {
         )
     }
 
-    func testConfirmServerDeleteRemembersNeverCachedKey() throws {
+    func testConfirmServerDeleteDoesNotCreateRowForNeverCachedKey() throws {
         let store = try makeStore()
         let base = Date(timeIntervalSince1970: 1_700_000_000)
 
@@ -602,7 +602,12 @@ final class LocalCacheStoreTests: XCTestCase {
         )
         XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
 
-        // A stale refresh upsert cannot resurrect the never-cached tombstone.
+        // Confirmation is an ack for a local row that was already pending in
+        // the cache; it must not synthesize a tombstone for a key that was
+        // never written. That is what makes a late ack harmless after
+        // `deleteAccount` purges the account. The refresh path owns server
+        // tombstones via `markDeletedServer` (see
+        // `testServerDeleteRemembersNeverCachedKey`).
         try store.upsertServer(
             makeSession(id: entityA),
             accountUserID: accountA,
@@ -610,7 +615,49 @@ final class LocalCacheStoreTests: XCTestCase {
             entityID: entityA.uuidString,
             updatedAt: base.addingTimeInterval(1)
         )
+        XCTAssertEqual(
+            try store.loadOne(
+                Session.self,
+                accountUserID: accountA,
+                entityType: .sessions,
+                entityID: entityA.uuidString
+            ),
+            makeSession(id: entityA)
+        )
+    }
+
+    func testConfirmServerUpsertDoesNotCreateRowForNeverCachedKey() throws {
+        let store = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try store.confirmServerUpsert(
+            makeSession(id: entityA, date: "confirmed"),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(2),
+            confirmingLocalRevision: 0
+        )
         XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
+
+        // The confirmation is only an ack for a local pending row, so a later
+        // refresh is free to adopt the server row again.
+        try store.upsertServer(
+            makeSession(id: entityA),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1)
+        )
+        XCTAssertEqual(
+            try store.loadOne(
+                Session.self,
+                accountUserID: accountA,
+                entityType: .sessions,
+                entityID: entityA.uuidString
+            ),
+            makeSession(id: entityA)
+        )
     }
 
     func testLoadOneResultReportsInvalidPayloadAndLoadOneReturnsNil() throws {

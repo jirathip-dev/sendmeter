@@ -1,0 +1,452 @@
+import Foundation
+
+/// The full read snapshot held by `AppModel`'s `@Published` collections.
+///
+/// This is the cache's typed boundary: the app target loads one of these
+/// before the first network call, and a remote refresh reconciles another one
+/// through the same entity IDs used by `LocalCacheStore`.
+public struct CachedWorkspaceSnapshot: Equatable, Sendable {
+    public var sessions: [Session] = []
+    public var settings: UserSettings?
+    public var phasePeriods: [PhasePeriod] = []
+    public var healthMetrics: [HealthMetric] = []
+    public var recordings: [TindeqRecording] = []
+    public var presets: [TindeqPreset] = []
+    public var routines: [RoutinePreset] = []
+    public var workouts: [WorkoutListItem] = []
+    public var tagMetadata: [TagMetadata] = []
+
+    public init(
+        sessions: [Session] = [],
+        settings: UserSettings? = nil,
+        phasePeriods: [PhasePeriod] = [],
+        healthMetrics: [HealthMetric] = [],
+        recordings: [TindeqRecording] = [],
+        presets: [TindeqPreset] = [],
+        routines: [RoutinePreset] = [],
+        workouts: [WorkoutListItem] = [],
+        tagMetadata: [TagMetadata] = []
+    ) {
+        self.sessions = sessions
+        self.settings = settings
+        self.phasePeriods = phasePeriods
+        self.healthMetrics = healthMetrics
+        self.recordings = recordings
+        self.presets = presets
+        self.routines = routines
+        self.workouts = workouts
+        self.tagMetadata = tagMetadata
+    }
+}
+
+/// A thin hydration seam so `AppModel`'s cache-open/read failure policy can be
+/// tested without instantiating the app target.
+///
+/// Returns `nil` when no cache is available (open failed), and throws when a
+/// configured cache cannot be read. `AppModel` treats both the same way: it
+/// continues with the existing network-only path and records a diagnostic.
+public enum CacheHydrator {
+    public static func load(
+        workspace: CachedWorkspace?,
+        accountUserID: UUID
+    ) throws -> CachedWorkspaceSnapshot? {
+        try workspace?.load(accountUserID: accountUserID)
+    }
+}
+
+/// Stable cache row identities for the nine read entities.
+///
+/// These must agree with the entity ids already used by
+/// `LocalCacheStoreTests` and with the rows produced by `CachedWorkspace`.
+public enum CacheEntityID {
+    public static let settings = "settings"
+
+    public static func session(_ session: Session) -> String {
+        session.id.uuidString
+    }
+
+    public static func phasePeriod(_ period: PhasePeriod) -> String {
+        period.id.uuidString
+    }
+
+    public static func healthMetric(_ metric: HealthMetric) -> String {
+        metric.date
+    }
+
+    public static func recording(_ recording: TindeqRecording) -> String {
+        recording.id.uuidString
+    }
+
+    public static func preset(_ preset: TindeqPreset) -> String {
+        preset.id.uuidString
+    }
+
+    public static func routine(_ routine: RoutinePreset) -> String {
+        routine.id.uuidString
+    }
+
+    public static func workout(_ workout: WorkoutListItem) -> String {
+        workout.id.uuidString
+    }
+
+    public static func tagMetadata(_ metadata: TagMetadata) -> String {
+        metadata.name
+    }
+}
+
+/// Typed facade over `LocalCacheStore` for the app read path.
+///
+/// The store itself remains opaque and account-scoped. This layer adds the
+/// nine-entity snapshot shape plus a full-replace server reconciliation that
+/// deliberately uses `upsertServer`/`markDeletedServer`, so an unconfirmed
+/// local row survives a remote refresh.
+public struct CachedWorkspace: @unchecked Sendable {
+    /// Read tables whose optimistic writes are not replayed by `DurableQueue`
+    /// after process death. Their rows must never be silently treated as clean
+    /// server state; AppModel surfaces them as unsynced instead.
+    public static let directWriteEntityTypes: Set<LocalCacheEntityType> = [
+        .settings,
+        .phasePeriods,
+        .healthMetrics,
+        .presets,
+        .routinePresets,
+        .tagMetadata,
+    ]
+
+    public let store: LocalCacheStore
+
+    public init(store: LocalCacheStore) {
+        self.store = store
+    }
+
+    public func load(accountUserID: UUID) throws -> CachedWorkspaceSnapshot {
+        CachedWorkspaceSnapshot(
+            sessions: try store.loadAll(
+                Session.self,
+                accountUserID: accountUserID,
+                entityType: .sessions
+            ),
+            settings: try store.loadOne(
+                UserSettings.self,
+                accountUserID: accountUserID,
+                entityType: .settings,
+                entityID: CacheEntityID.settings
+            ),
+            phasePeriods: try store.loadAll(
+                PhasePeriod.self,
+                accountUserID: accountUserID,
+                entityType: .phasePeriods
+            ),
+            healthMetrics: try store.loadAll(
+                HealthMetric.self,
+                accountUserID: accountUserID,
+                entityType: .healthMetrics
+            ),
+            recordings: try store.loadAll(
+                TindeqRecording.self,
+                accountUserID: accountUserID,
+                entityType: .recordings
+            ),
+            presets: try store.loadAll(
+                TindeqPreset.self,
+                accountUserID: accountUserID,
+                entityType: .presets
+            ),
+            routines: try store.loadAll(
+                RoutinePreset.self,
+                accountUserID: accountUserID,
+                entityType: .routinePresets
+            ),
+            workouts: try store.loadAll(
+                WorkoutListItem.self,
+                accountUserID: accountUserID,
+                entityType: .workoutsAndAttempts
+            ),
+            tagMetadata: try store.loadAll(
+                TagMetadata.self,
+                accountUserID: accountUserID,
+                entityType: .tagMetadata
+            )
+        )
+    }
+
+    /// Reconciles one authoritative remote snapshot into the account cache.
+    ///
+    /// Present rows are upserted as server refresh rows. Rows that are no
+    /// longer present are tombstoned as server deletes. Both operations
+    /// refuse to overwrite a pending local row, so an offline optimistic write
+    /// cannot be lost by a foreground refresh.
+    public func reconcileServer(
+        _ remote: CachedWorkspaceSnapshot,
+        accountUserID: UUID,
+        updatedAt: Date = Date()
+    ) throws {
+        try reconcile(
+            remote.sessions,
+            accountUserID: accountUserID,
+            entityType: .sessions,
+            entityID: CacheEntityID.session,
+            updatedAt: updatedAt
+        )
+        try reconcile(
+            remote.settings.map { [$0] } ?? [],
+            accountUserID: accountUserID,
+            entityType: .settings,
+            entityID: { _ in CacheEntityID.settings },
+            updatedAt: updatedAt
+        )
+        try reconcile(
+            remote.phasePeriods,
+            accountUserID: accountUserID,
+            entityType: .phasePeriods,
+            entityID: CacheEntityID.phasePeriod,
+            updatedAt: updatedAt
+        )
+        try reconcile(
+            remote.healthMetrics,
+            accountUserID: accountUserID,
+            entityType: .healthMetrics,
+            entityID: CacheEntityID.healthMetric,
+            updatedAt: updatedAt
+        )
+        try reconcile(
+            remote.recordings,
+            accountUserID: accountUserID,
+            entityType: .recordings,
+            entityID: CacheEntityID.recording,
+            updatedAt: updatedAt
+        )
+        try reconcile(
+            remote.presets,
+            accountUserID: accountUserID,
+            entityType: .presets,
+            entityID: CacheEntityID.preset,
+            updatedAt: updatedAt
+        )
+        try reconcile(
+            remote.routines,
+            accountUserID: accountUserID,
+            entityType: .routinePresets,
+            entityID: CacheEntityID.routine,
+            updatedAt: updatedAt
+        )
+        try reconcile(
+            remote.workouts,
+            accountUserID: accountUserID,
+            entityType: .workoutsAndAttempts,
+            entityID: CacheEntityID.workout,
+            updatedAt: updatedAt
+        )
+        try reconcile(
+            remote.tagMetadata,
+            accountUserID: accountUserID,
+            entityType: .tagMetadata,
+            entityID: CacheEntityID.tagMetadata,
+            updatedAt: updatedAt
+        )
+    }
+
+    /// Reconciles only the slices that a realtime event asked to refresh.
+    ///
+    /// Unlike `reconcileServer`, this never tombstones an unrequested slice:
+    /// one event (for example a new recording) may arrive while another
+    /// account/device is still mid-refresh on a different table. The store's
+    /// pending guard still protects local rows within each reconciled slice.
+    public func reconcileSlices(
+        _ remote: CachedWorkspaceSnapshot,
+        accountUserID: UUID,
+        slices: Set<ReconcileSlice>,
+        updatedAt: Date = Date()
+    ) throws {
+        if slices.contains(.sessions) {
+            try reconcile(
+                remote.sessions,
+                accountUserID: accountUserID,
+                entityType: .sessions,
+                entityID: CacheEntityID.session,
+                updatedAt: updatedAt
+            )
+        }
+        if slices.contains(.recordings) {
+            try reconcile(
+                remote.recordings,
+                accountUserID: accountUserID,
+                entityType: .recordings,
+                entityID: CacheEntityID.recording,
+                updatedAt: updatedAt
+            )
+        }
+        if slices.contains(.workouts) {
+            try reconcile(
+                remote.workouts,
+                accountUserID: accountUserID,
+                entityType: .workoutsAndAttempts,
+                entityID: CacheEntityID.workout,
+                updatedAt: updatedAt
+            )
+        }
+        if slices.contains(.health) {
+            try reconcile(
+                remote.healthMetrics,
+                accountUserID: accountUserID,
+                entityType: .healthMetrics,
+                entityID: CacheEntityID.healthMetric,
+                updatedAt: updatedAt
+            )
+        }
+    }
+
+    @discardableResult
+    public func upsertLocal<T: Encodable>(
+        _ value: T,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String
+    ) throws -> Int {
+        try store.upsertLocal(
+            value,
+            accountUserID: accountUserID,
+            entityType: entityType,
+            entityID: entityID
+        )
+    }
+
+    public func confirmServerUpsert<T: Encodable>(
+        _ value: T,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String,
+        updatedAt: Date = Date(),
+        confirmingLocalRevision: Int
+    ) throws {
+        try store.confirmServerUpsert(
+            value,
+            accountUserID: accountUserID,
+            entityType: entityType,
+            entityID: entityID,
+            updatedAt: updatedAt,
+            confirmingLocalRevision: confirmingLocalRevision
+        )
+    }
+
+    @discardableResult
+    public func markDeletedLocal(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String
+    ) throws -> Int {
+        try store.markDeletedLocal(
+            accountUserID: accountUserID,
+            entityType: entityType,
+            entityID: entityID
+        )
+    }
+
+    public func confirmServerDelete(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String,
+        updatedAt: Date = Date(),
+        confirmingLocalRevision: Int
+    ) throws {
+        try store.confirmServerDelete(
+            accountUserID: accountUserID,
+            entityType: entityType,
+            entityID: entityID,
+            updatedAt: updatedAt,
+            confirmingLocalRevision: confirmingLocalRevision
+        )
+    }
+
+    public func upsertServer<T: Encodable>(
+        _ value: T,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String,
+        updatedAt: Date = Date()
+    ) throws {
+        try store.upsertServer(
+            value,
+            accountUserID: accountUserID,
+            entityType: entityType,
+            entityID: entityID,
+            updatedAt: updatedAt
+        )
+    }
+
+    public func localRevision(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String
+    ) throws -> Int? {
+        try store.localRevision(
+            accountUserID: accountUserID,
+            entityType: entityType,
+            entityID: entityID
+        )
+    }
+
+    public func pendingEntityIDs(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        includingDeleted: Bool = false
+    ) throws -> [String] {
+        try store.pendingEntityIDs(
+            accountUserID: accountUserID,
+            entityType: entityType,
+            includingDeleted: includingDeleted
+        )
+    }
+
+    /// Number of unconfirmed direct-write rows (including hidden deletes) for
+    /// an account. These rows are preserved by reconcile but have no durable
+    /// replay yet, so AppModel reports them to the UI as unsynced rather than
+    /// pretending they were saved.
+    public func pendingDirectWriteCount(accountUserID: UUID) throws -> Int {
+        var count = 0
+        for entityType in Self.directWriteEntityTypes {
+            count += try store.pendingEntityIDs(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                includingDeleted: true
+            ).count
+        }
+        return count
+    }
+
+    private func reconcile<T: Encodable>(
+        _ remoteValues: [T],
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: (T) -> String,
+        updatedAt: Date
+    ) throws {
+        let remoteIDs = Set(remoteValues.map(entityID))
+        for value in remoteValues {
+            try store.upsertServer(
+                value,
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: entityID(value),
+                updatedAt: updatedAt
+            )
+        }
+        let cachedIDs = try store.activeEntityIDs(
+            accountUserID: accountUserID,
+            entityType: entityType
+        )
+        let pendingIDs = Set(try store.pendingEntityIDs(
+            accountUserID: accountUserID,
+            entityType: entityType
+        ))
+        for cachedID in cachedIDs
+            where !remoteIDs.contains(cachedID) && !pendingIDs.contains(cachedID) {
+            try store.markDeletedServer(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: cachedID,
+                updatedAt: updatedAt
+            )
+        }
+    }
+}

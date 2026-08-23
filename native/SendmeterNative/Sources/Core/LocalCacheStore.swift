@@ -13,7 +13,7 @@ import Foundation
 /// cache payload is opaque Codable JSON chosen by the app layer (slice 2), and
 /// the store only reasons about the row identity, so the grouping is a cache
 /// bucket rather than a concrete model constraint.
-public enum LocalCacheEntityType: String, Codable, CaseIterable, Sendable {
+public enum LocalCacheEntityType: String, Codable, CaseIterable, Hashable, Sendable {
     case sessions
     case settings
     case phasePeriods
@@ -323,6 +323,82 @@ public struct LocalCacheStore: @unchecked Sendable {
         try loadOneResult(type, accountUserID: accountUserID, entityType: entityType, entityID: entityID).value
     }
 
+    /// Returns every non-deleted entity id for one account + entity type.
+    ///
+    /// Used by full-replace reconcile to discover rows that the authoritative
+    /// remote snapshot no longer contains. Like every other read here, the
+    /// lookup is account-scoped so one account's reconcile can never tombstone
+    /// another account's rows.
+    public func activeEntityIDs(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws -> [String] {
+        return try dbQueue.read { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                    SELECT entity_id FROM cache_rows
+                    WHERE account_user_id = ? AND entity_type = ? AND deleted_at IS NULL
+                    ORDER BY entity_id
+                    """,
+                arguments: [Self.accountIDString(accountUserID), entityType.rawValue]
+            )
+        }
+    }
+
+    /// Returns every non-deleted, still-pending entity id for one account +
+    /// entity type.
+    ///
+    /// The cache owns the durable pending marker; this lets the app restore its
+    /// in-memory optimistic overlays on cold start even before the durable
+    /// queue has been read. Tombstoned rows are intentionally omitted by
+    /// default: a pending delete should not reappear as an editable row. Pass
+    /// `includingDeleted` when the caller needs the full pending set (for
+    /// diagnostics/unsynced-write counting), including hidden deletes.
+    public func pendingEntityIDs(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        includingDeleted: Bool = false
+    ) throws -> [String] {
+        let deletedClause = includingDeleted ? "" : " AND deleted_at IS NULL"
+        return try dbQueue.read { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                    SELECT entity_id FROM cache_rows
+                    WHERE account_user_id = ? AND entity_type = ?
+                      AND pending = 1\(deletedClause)
+                    ORDER BY entity_id
+                    """,
+                arguments: [Self.accountIDString(accountUserID), entityType.rawValue]
+            )
+        }
+    }
+
+    /// Reads the monotonic local revision for one account + entity, if any.
+    ///
+    /// After a relaunch the caller cannot rely on the revision returned by the
+    /// in-memory `upsertLocal`/`markDeletedLocal` call, so the upload
+    /// confirmation must re-read the current revision before applying the
+    /// server ack. Tombstoned rows retain their revision, so this also works
+    /// for a pending delete that has been hidden from `loadAll`.
+    public func localRevision(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String
+    ) throws -> Int? {
+        try dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT local_revision FROM cache_rows
+                    WHERE account_user_id = ? AND entity_type = ? AND entity_id = ?
+                    """,
+                arguments: [Self.accountIDString(accountUserID), entityType.rawValue, entityID]
+            )
+        }
+    }
+
     // MARK: - Writes
 
     /// Optimistically upserts one locally-produced payload for an account +
@@ -361,7 +437,9 @@ public struct LocalCacheStore: @unchecked Sendable {
     /// the server state and clears `pending` **only** while that revision still
     /// matches; if a newer local edit bumped the revision while the upload was
     /// in flight, the confirmation is a no-op so the newer edit survives with
-    /// its `pending` flag intact.
+    /// its `pending` flag intact. It is also a no-op when the row no longer
+    /// exists (for example after `deleteAccount` purges it), so a late ack can
+    /// never recreate cache state for a purged account.
     public func confirmServerUpsert<T: Encodable>(
         _ value: T,
         accountUserID: UUID,
@@ -515,42 +593,21 @@ public struct LocalCacheStore: @unchecked Sendable {
                 let confirming = confirmingLocalRevision ?? 0
                 try db.execute(
                     sql: """
-                        INSERT INTO cache_rows
-                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
-                        VALUES (?, ?, ?, ?, NULL, ?, 'server', 0, 0)
-                        ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
-                            payload = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN excluded.payload
-                                ELSE cache_rows.payload
-                            END,
-                            deleted_at = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN NULL
-                                ELSE cache_rows.deleted_at
-                            END,
-                            updated_at = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN excluded.updated_at
-                                ELSE cache_rows.updated_at
-                            END,
-                            write_origin = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 'server'
-                                ELSE cache_rows.write_origin
-                            END,
-                            pending = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 0
-                                ELSE cache_rows.pending
-                            END,
-                            local_revision = cache_rows.local_revision
+                        UPDATE cache_rows SET
+                            payload = ?,
+                            deleted_at = NULL,
+                            updated_at = ?,
+                            write_origin = 'server',
+                            pending = 0
+                        WHERE account_user_id = ? AND entity_type = ? AND entity_id = ?
+                          AND pending = 1 AND local_revision = ?
                         """,
                     arguments: [
+                        payload,
+                        incoming,
                         Self.accountIDString(accountUserID),
                         entityType.rawValue,
                         entityID,
-                        payload,
-                        incoming,
-                        confirming,
-                        confirming,
-                        confirming,
-                        confirming,
                         confirming
                     ]
                 )
@@ -593,7 +650,9 @@ public struct LocalCacheStore: @unchecked Sendable {
     /// `pending` **only** while that revision still matches; if a newer local
     /// edit bumped the revision while the upload was in flight, the
     /// confirmation is a no-op so the newer edit survives with its `pending`
-    /// flag intact.
+    /// flag intact. It is also a no-op when the row no longer exists (for
+    /// example after `deleteAccount`), so a late delete ack cannot recreate
+    /// cache state for a purged account.
     public func confirmServerDelete(
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
@@ -737,42 +796,21 @@ public struct LocalCacheStore: @unchecked Sendable {
                 let confirming = confirmingLocalRevision ?? 0
                 try db.execute(
                     sql: """
-                        INSERT INTO cache_rows
-                            (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
-                        VALUES (?, ?, ?, '{}', ?, ?, 'server', 0, 0)
-                        ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
-                            payload = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN excluded.payload
-                                ELSE cache_rows.payload
-                            END,
-                            deleted_at = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN excluded.deleted_at
-                                ELSE cache_rows.deleted_at
-                            END,
-                            updated_at = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN excluded.updated_at
-                                ELSE cache_rows.updated_at
-                            END,
-                            write_origin = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 'server'
-                                ELSE cache_rows.write_origin
-                            END,
-                            pending = CASE
-                                WHEN cache_rows.pending = 1 AND cache_rows.local_revision = ? THEN 0
-                                ELSE cache_rows.pending
-                            END,
-                            local_revision = cache_rows.local_revision
+                        UPDATE cache_rows SET
+                            payload = '{}',
+                            deleted_at = ?,
+                            updated_at = ?,
+                            write_origin = 'server',
+                            pending = 0
+                        WHERE account_user_id = ? AND entity_type = ? AND entity_id = ?
+                          AND pending = 1 AND local_revision = ?
                         """,
                     arguments: [
+                        incoming,
+                        incoming,
                         Self.accountIDString(accountUserID),
                         entityType.rawValue,
                         entityID,
-                        incoming,
-                        incoming,
-                        confirming,
-                        confirming,
-                        confirming,
-                        confirming,
                         confirming
                     ]
                 )

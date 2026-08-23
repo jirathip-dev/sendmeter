@@ -150,6 +150,11 @@ public struct FreePullContext: Sendable, Equatable {
 
 private typealias TagCurveKey = TagCurveCacheKey
 
+private struct CacheEntityIdentity: Hashable {
+    let entityType: LocalCacheEntityType
+    let entityID: String
+}
+
 @MainActor
 public final class AppModel: ObservableObject {
     @Published public private(set) var bootState: AppBootState = .loading
@@ -201,6 +206,11 @@ public final class AppModel: ObservableObject {
     @Published private(set) var passkeys: [PasskeyListItem] = []
     @Published public private(set) var isRefreshing = false
     @Published public private(set) var queuedWriteCount = 0
+    /// Unconfirmed cache rows for direct writes that have no durable replay
+    /// after process death (presets, routines, phase/settings, tag metadata).
+    /// Kept separate from `queuedWriteCount` so Settings can label them as
+    /// unsynced rather than as automatically retried queue work.
+    @Published public private(set) var pendingCacheWriteCount = 0
     @Published public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
     /// #675: entries the server has permanently rejected — retained on device,
     /// excluded from every automatic retry, and recoverable only by the
@@ -326,6 +336,11 @@ public final class AppModel: ObservableObject {
     }
 
     private let queue: DurableQueue<PendingWrite>?
+    private let cachedWorkspace: CachedWorkspace?
+    /// Set when the local cache file opens or first reads. Kept separate from
+    /// the queue's own diagnostics because a cache failure must degrade to the
+    /// network-only path without looking like an auth failure.
+    private var cacheOpenFailureReported = false
     private var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
     private var pendingRecordings = PendingRecordingOverlay()
@@ -520,17 +535,42 @@ public final class AppModel: ObservableObject {
         // from the account — the native app keeps them on-device.
         self.tagSideModes = TagSideModeStore.allStoredModes()
 
+        // #747 review note: LocalCacheStore init opens GRDB and runs migrations
+        // synchronously on the main actor during AppModel init. This is on the
+        // launch path and is acceptable for slice 2, but should be profiled on
+        // device and deferred off the main actor if cold-start cost matters.
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first?.appendingPathComponent("SendmeterNative", isDirectory: true)
         if let support {
+            do {
+                try FileManager.default.createDirectory(
+                    at: support,
+                    withIntermediateDirectories: true
+                )
+                let store = try LocalCacheStore(
+                    databaseURL: support.appendingPathComponent(
+                        "local-cache.sqlite",
+                        isDirectory: false
+                    )
+                )
+                cachedWorkspace = CachedWorkspace(store: store)
+            } catch {
+                cachedWorkspace = nil
+                cacheOpenFailureReported = true
+                self.auth.recordAuthEvent(
+                    .failure,
+                    detail: "Local cache unavailable: \(error.localizedDescription)"
+                )
+            }
             self.queue = try? DurableQueue(
                 directoryURL: support,
                 filename: "pending-writes.json",
                 breadcrumbLimit: 10
             )
         } else {
+            cachedWorkspace = nil
             self.queue = nil
         }
 
@@ -737,14 +777,62 @@ public final class AppModel: ObservableObject {
     }
 
     public func setTagHidden(name: String, hidden: Bool) async {
-        await perform {
-            try await self.repository.setTagHidden(name: name, hidden: hidden)
-            if let index = self.tagMetadata.firstIndex(where: { $0.name == name }) {
-                self.tagMetadata[index] = TagMetadata(name: name, hidden: hidden)
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let previous = tagMetadata.first { $0.name == name }
+        let optimistic = TagMetadata(name: name, hidden: hidden)
+        if let index = tagMetadata.firstIndex(where: { $0.name == name }) {
+            tagMetadata[index] = optimistic
+        } else {
+            tagMetadata.append(optimistic)
+        }
+        let optimisticRevision = cacheUpsertLocal(
+            optimistic,
+            accountUserID: userID,
+            entityType: .tagMetadata,
+            entityID: CacheEntityID.tagMetadata(optimistic)
+        )
+        do {
+            try await repository.setTagHidden(name: name, hidden: hidden)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            cacheConfirmServerUpsert(
+                optimistic,
+                accountUserID: userID,
+                entityType: .tagMetadata,
+                entityID: CacheEntityID.tagMetadata(optimistic),
+                confirmingLocalRevision: optimisticRevision
+            )
+            toastMessage = hidden ? "Hid “\(name)”" : "Showing “\(name)”"
+        } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            tagMetadata.removeAll { $0.name == name }
+            if let previous {
+                cacheConfirmServerUpsert(
+                    previous,
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    entityID: CacheEntityID.tagMetadata(previous),
+                    confirmingLocalRevision: optimisticRevision
+                )
+                tagMetadata.append(previous)
             } else {
-                self.tagMetadata.append(TagMetadata(name: name, hidden: hidden))
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    entityID: CacheEntityID.tagMetadata(optimistic),
+                    confirmingLocalRevision: optimisticRevision
+                )
             }
-            self.toastMessage = hidden ? "Hid “\(name)”" : "Showing “\(name)”"
+            surface(error)
         }
     }
 
@@ -770,26 +858,171 @@ public final class AppModel: ObservableObject {
     /// the old name; the recording list is refetched after (its tags are
     /// the source of truth for counts).
     public func renameTag(oldName: String, newName: String) async {
-        let merged = tagEntries.contains { $0.name == newName.trimmingCharacters(in: .whitespacesAndNewlines) }
-        await perform {
-            try await self.repository.renameTag(oldName: oldName, newName: newName)
-            // #720: move the device-local side mode with the tag. On a merge
-            // into an existing tag, the surviving row's mode wins (matching the
-            // registry's hidden-state merge contract).
-            let old = oldName.trimmingCharacters(in: .whitespacesAndNewlines)
-            let next = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let mode = self.tagSideModes[old], !old.isEmpty, old != next {
-                if self.tagSideModes[next] == nil {
-                    self.tagSideModes[next] = mode
-                    TagSideModeStore.store(mode, for: next)
-                }
-                self.tagSideModes.removeValue(forKey: old)
-                TagSideModeStore.remove(for: old)
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let old = oldName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !old.isEmpty, !next.isEmpty else { return }
+        let previousRecordings = recordings
+        let previousMetadata = tagMetadata
+        let merged = tagEntries.contains { $0.name == next }
+        let nextMetadata = previousMetadata.first { $0.name == next }
+            ?? TagMetadata(name: next, hidden: false)
+        let optimisticRecordings = recordings.map { recording in
+            var updated = recording
+            if recording.tag == old {
+                updated.tag = next
             }
-            self.toastMessage = merged
-                ? "Merged into “\(newName.trimmingCharacters(in: .whitespacesAndNewlines))”"
-                : "Renamed to “\(newName.trimmingCharacters(in: .whitespacesAndNewlines))”"
-            await self.refreshAll(showSpinner: false)
+            return updated
+        }
+        let optimisticMetadata = previousMetadata
+            .filter { $0.name != old }
+            .filter { $0.name != next } + [nextMetadata]
+        var recordingRevisions: [UUID: Int] = [:]
+        var metadataRevisions: [String: Int] = [:]
+        var oldMetadataDeleteRevision: Int?
+        recordings = optimisticRecordings
+        tagMetadata = optimisticMetadata
+        for recording in optimisticRecordings where recording.tag == next {
+            if let revision = cacheUpsertLocal(
+                recording,
+                accountUserID: userID,
+                entityType: .recordings,
+                entityID: CacheEntityID.recording(recording)
+            ) {
+                recordingRevisions[recording.id] = revision
+            }
+        }
+        for metadata in optimisticMetadata {
+            if let revision = cacheUpsertLocal(
+                metadata,
+                accountUserID: userID,
+                entityType: .tagMetadata,
+                entityID: CacheEntityID.tagMetadata(metadata)
+            ) {
+                metadataRevisions[metadata.name] = revision
+            }
+        }
+        if old != next {
+            oldMetadataDeleteRevision = cacheMarkDeletedLocal(
+                accountUserID: userID,
+                entityType: .tagMetadata,
+                entityID: old
+            )
+        }
+        let previousSideMode = tagSideModes[old]
+        if let mode = previousSideMode, old != next {
+            if tagSideModes[next] == nil {
+                tagSideModes[next] = mode
+                TagSideModeStore.store(mode, for: next)
+            }
+            tagSideModes.removeValue(forKey: old)
+            TagSideModeStore.remove(for: old)
+        }
+        do {
+            try await repository.renameTag(oldName: old, newName: next)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            // The server is authoritative, but confirming the optimistic copy
+            // first lets the follow-up refresh adopt the returned state even if
+            // the network drops before that fetch completes.
+            for recording in optimisticRecordings where recording.tag == next {
+                cacheConfirmServerUpsert(
+                    recording,
+                    accountUserID: userID,
+                    entityType: .recordings,
+                    entityID: CacheEntityID.recording(recording),
+                    confirmingLocalRevision: recordingRevisions[recording.id]
+                )
+            }
+            for metadata in optimisticMetadata {
+                let revision = metadataRevisions[metadata.name]
+                cacheConfirmServerUpsert(
+                    metadata,
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    entityID: CacheEntityID.tagMetadata(metadata),
+                    confirmingLocalRevision: revision
+                )
+            }
+            if old != next {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    entityID: old,
+                    confirmingLocalRevision: oldMetadataDeleteRevision
+                )
+            }
+            await refreshAll(showSpinner: false)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            toastMessage = merged
+                ? "Merged into “\(next)”"
+                : "Renamed to “\(next)”"
+        } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            recordings = previousRecordings
+            tagMetadata = previousMetadata
+            for recording in previousRecordings where recordingRevisions[recording.id] != nil {
+                cacheConfirmServerUpsert(
+                    recording,
+                    accountUserID: userID,
+                    entityType: .recordings,
+                    entityID: CacheEntityID.recording(recording),
+                    confirmingLocalRevision: recordingRevisions[recording.id]
+                )
+            }
+            for metadata in previousMetadata where metadataRevisions[metadata.name] != nil {
+                cacheConfirmServerUpsert(
+                    metadata,
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    entityID: CacheEntityID.tagMetadata(metadata),
+                    confirmingLocalRevision: metadataRevisions[metadata.name]
+                )
+            }
+            if let oldMetadataDeleteRevision {
+                if let oldMetadata = previousMetadata.first(where: { $0.name == old }) {
+                    cacheConfirmServerUpsert(
+                        oldMetadata,
+                        accountUserID: userID,
+                        entityType: .tagMetadata,
+                        entityID: CacheEntityID.tagMetadata(oldMetadata),
+                        confirmingLocalRevision: oldMetadataDeleteRevision
+                    )
+                } else {
+                    cacheConfirmServerDelete(
+                        accountUserID: userID,
+                        entityType: .tagMetadata,
+                        entityID: old,
+                        confirmingLocalRevision: oldMetadataDeleteRevision
+                    )
+                }
+            }
+            if !previousMetadata.contains(where: { $0.name == next }),
+               let newMetadataRevision = metadataRevisions[next] {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    entityID: next,
+                    confirmingLocalRevision: newMetadataRevision
+                )
+            }
+            if let mode = previousSideMode {
+                tagSideModes[old] = mode
+                TagSideModeStore.store(mode, for: old)
+            }
+            surface(error)
         }
     }
 
@@ -1123,10 +1356,387 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Local cache (#747)
+
+    /// Publish the account's cached read snapshot before any network call.
+    ///
+    /// A cache failure is deliberately swallowed here and never crashes the
+    /// auth/bootstrap path: `refreshAll` continues with the existing
+    /// network-only behavior and the failure is visible in the Settings
+    /// diagnostics ring.
+    private func hydrateCachedWorkspace(accountUserID: UUID) {
+        do {
+            guard let snapshot = try CacheHydrator.load(
+                workspace: cachedWorkspace,
+                accountUserID: accountUserID
+            ) else { return }
+            sessions = snapshot.sessions
+            hasLoadedSessions = !snapshot.sessions.isEmpty
+            if let cachedSettings = snapshot.settings {
+                settings = cachedSettings
+            }
+            phasePeriods = snapshot.phasePeriods
+            healthMetrics = snapshot.healthMetrics
+            recordings = snapshot.recordings
+            presets = snapshot.presets
+            routines = snapshot.routines
+            workouts = snapshot.workouts
+            tagMetadata = snapshot.tagMetadata
+            // Pending rows are the cache's durable optimistic overlay. Rebuild
+            // the in-memory overlays before the first remote merge so a
+            // pending item cannot be dropped when `refreshAll` replaces the
+            // published collections with the authoritative snapshot.
+            pendingSessions = Dictionary(
+                uniqueKeysWithValues: snapshot.sessions
+                    .filter(\.pending)
+                    .map { ($0.id, $0) }
+            )
+            let pendingRecordingIDs = try cachedWorkspace?.pendingEntityIDs(
+                accountUserID: accountUserID,
+                entityType: .recordings
+            ) ?? []
+            pendingRecordings = PendingRecordingOverlay()
+            let recordingsByID = Dictionary(
+                uniqueKeysWithValues: snapshot.recordings.map { ($0.id, $0) }
+            )
+            for pendingID in pendingRecordingIDs {
+                guard let id = UUID(uuidString: pendingID),
+                      let recording = recordingsByID[id] else { continue }
+                pendingRecordings.insert(recording, accountUserID: accountUserID)
+            }
+            forceModel.hasLoadedRecordings = !snapshot.recordings.isEmpty
+            publishForceProgressInputMutation(.recordings)
+            refreshPendingCacheWriteCount(accountUserID: accountUserID)
+        } catch {
+            recordCacheFailure("cache read", error)
+        }
+    }
+
+    /// Reconcile a completed authoritative remote fetch into the cache.
+    ///
+    /// Uses `CachedWorkspace.reconcileServer`, which adopts clean server rows,
+    /// tombstones rows absent from the fetched snapshot, and deliberately
+    /// leaves pending local rows untouched.
+    private func reconcileCachedWorkspace(
+        _ remote: CachedWorkspaceSnapshot,
+        accountUserID: UUID
+    ) {
+        guard let cachedWorkspace else { return }
+        do {
+            try cachedWorkspace.reconcileServer(
+                remote,
+                accountUserID: accountUserID
+            )
+        } catch {
+            recordCacheFailure("cache reconcile", error)
+        }
+    }
+
+    /// Re-adopts the reconciled cache values for the collections that do not
+    /// carry their own in-memory optimistic overlays.
+    ///
+    /// Sessions and recordings deliberately stay on `mergeSessions` /
+    /// `mergeRecordings`, which also restore RPE/editor overlays and durable
+    /// queue rows. The remaining entities only have the cache as their durable
+    /// local row, so this is the final authority after an authoritative refresh.
+    private func applyCachedNonOverlayLists(accountUserID: UUID) {
+        guard let cachedWorkspace else { return }
+        do {
+            let snapshot = try cachedWorkspace.load(accountUserID: accountUserID)
+            if let cachedSettings = snapshot.settings {
+                settings = cachedSettings
+            }
+            phasePeriods = snapshot.phasePeriods
+            healthMetrics = snapshot.healthMetrics
+            presets = snapshot.presets
+            routines = snapshot.routines
+            workouts = snapshot.workouts
+            tagMetadata = snapshot.tagMetadata
+            refreshPendingCacheWriteCount(accountUserID: accountUserID)
+        } catch {
+            recordCacheFailure("cache publish", error)
+        }
+    }
+
+    /// Reconciles only the slices requested by one realtime flush. This is
+    /// the realtime counterpart to `reconcileCachedWorkspace`: a targeted
+    /// fetch never tombstones slices it did not request.
+    private func reconcileCachedSlices(
+        _ remote: CachedWorkspaceSnapshot,
+        accountUserID: UUID,
+        slices: Set<ReconcileSlice>
+    ) {
+        guard let cachedWorkspace else { return }
+        do {
+            try cachedWorkspace.reconcileSlices(
+                remote,
+                accountUserID: accountUserID,
+                slices: slices
+            )
+        } catch {
+            recordCacheFailure("cache slice reconcile", error)
+        }
+    }
+
+    @discardableResult
+    private func cacheUpsertLocal<T: Encodable>(
+        _ value: T,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String
+    ) -> Int? {
+        guard let cachedWorkspace else { return nil }
+        do {
+            let revision = try cachedWorkspace.upsertLocal(
+                value,
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: entityID
+            )
+            if CachedWorkspace.directWriteEntityTypes.contains(entityType) {
+                refreshPendingCacheWriteCount(accountUserID: accountUserID)
+            }
+            return revision
+        } catch {
+            recordCacheFailure("cache local upsert", error)
+            return nil
+        }
+    }
+
+    private func cacheUpsertServer<T: Encodable>(
+        _ value: T,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String,
+        updatedAt: Date = Date()
+    ) {
+        guard let cachedWorkspace else { return }
+        do {
+            try cachedWorkspace.upsertServer(
+                value,
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: entityID,
+                updatedAt: updatedAt
+            )
+        } catch {
+            recordCacheFailure("cache server upsert", error)
+        }
+    }
+
+    @discardableResult
+    private func cacheMarkDeletedLocal(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String
+    ) -> Int? {
+        guard let cachedWorkspace else { return nil }
+        do {
+            let revision = try cachedWorkspace.markDeletedLocal(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: entityID
+            )
+            if CachedWorkspace.directWriteEntityTypes.contains(entityType) {
+                refreshPendingCacheWriteCount(accountUserID: accountUserID)
+            }
+            return revision
+        } catch {
+            recordCacheFailure("cache local delete", error)
+            return nil
+        }
+    }
+
+    private func cacheConfirmServerUpsert<T: Encodable>(
+        _ value: T,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String,
+        confirmingLocalRevision: Int? = nil
+    ) {
+        guard let cachedWorkspace else { return }
+        do {
+            let revision = try confirmingLocalRevision ?? cachedWorkspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: entityID
+            )
+            // A confirmation is only an ack for a row that was written to the
+            // cache by this device. If the local write never landed (or the
+            // account was purged), do not synthesize a row here: a late ack
+            // must never recreate purged account state, and a missing cache
+            // row is repopulated by the next authoritative refresh.
+            guard let revision else { return }
+            try cachedWorkspace.confirmServerUpsert(
+                value,
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: entityID,
+                confirmingLocalRevision: revision
+            )
+            if CachedWorkspace.directWriteEntityTypes.contains(entityType) {
+                refreshPendingCacheWriteCount(accountUserID: accountUserID)
+            }
+        } catch {
+            recordCacheFailure("cache confirmation", error)
+        }
+    }
+
+    private func cacheConfirmServerDelete(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String,
+        confirmingLocalRevision: Int? = nil
+    ) {
+        guard let cachedWorkspace else { return }
+        do {
+            let revision = try confirmingLocalRevision ?? cachedWorkspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: entityID
+            )
+            guard let revision else { return }
+            try cachedWorkspace.confirmServerDelete(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: entityID,
+                confirmingLocalRevision: revision
+            )
+            if CachedWorkspace.directWriteEntityTypes.contains(entityType) {
+                refreshPendingCacheWriteCount(accountUserID: accountUserID)
+            }
+        } catch {
+            recordCacheFailure("cache delete confirmation", error)
+        }
+    }
+
+    /// The cache rows an uploaded payload can confirm. Captured before the
+    /// first network await so a newer local edit that arrives while the
+    /// request is suspended cannot be acknowledged by the older response.
+    private func cacheConfirmationTargets(
+        for payload: PendingWrite
+    ) -> [CacheEntityIdentity] {
+        switch payload {
+        case let .session(session):
+            return [
+                CacheEntityIdentity(
+                    entityType: .sessions,
+                    entityID: session.id.uuidString
+                )
+            ]
+        case let .sessionDelete(deletePayload):
+            return [
+                CacheEntityIdentity(
+                    entityType: .sessions,
+                    entityID: deletePayload.sessionID.uuidString
+                )
+            ]
+        case let .recording(recordingPayload):
+            return [
+                CacheEntityIdentity(
+                    entityType: .recordings,
+                    entityID: recordingPayload.id.uuidString
+                )
+            ]
+        case let .recordingEdit(editPayload):
+            return [
+                CacheEntityIdentity(
+                    entityType: .recordings,
+                    entityID: editPayload.recordingID.uuidString
+                )
+            ]
+        case let .sessionRPEEdit(edit):
+            guard let sessionID = edit.sessionID else { return [] }
+            return [
+                CacheEntityIdentity(
+                    entityType: .sessions,
+                    entityID: sessionID.uuidString
+                )
+            ]
+        case let .recordingDelete(deletePayload):
+            var targets = [
+                CacheEntityIdentity(
+                    entityType: .recordings,
+                    entityID: deletePayload.recordingID.uuidString
+                )
+            ]
+            if let sessionID = deletePayload.sessionID {
+                targets.append(
+                    CacheEntityIdentity(
+                        entityType: .sessions,
+                        entityID: sessionID.uuidString
+                    )
+                )
+            }
+            return targets
+        case let .workout(draft):
+            return [
+                CacheEntityIdentity(
+                    entityType: .sessions,
+                    entityID: draft.sessionID.uuidString
+                )
+            ]
+        }
+    }
+
+    private func cacheConfirmationRevisions(
+        for payload: PendingWrite,
+        accountUserID: UUID
+    ) -> [CacheEntityIdentity: Int] {
+        guard let cachedWorkspace else { return [:] }
+        var revisions: [CacheEntityIdentity: Int] = [:]
+        for target in cacheConfirmationTargets(for: payload) {
+            if let revision = try? cachedWorkspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: target.entityType,
+                entityID: target.entityID
+            ) {
+                revisions[target] = revision
+            }
+        }
+        return revisions
+    }
+
+    private func cacheConfirmationRevision(
+        _ revisions: [CacheEntityIdentity: Int],
+        entityType: LocalCacheEntityType,
+        entityID: String
+    ) -> Int? {
+        revisions[
+            CacheEntityIdentity(
+                entityType: entityType,
+                entityID: entityID
+            )
+        ]
+    }
+
+    private func recordCacheFailure(_ operation: String, _ error: Error) {
+        guard !cacheOpenFailureReported else { return }
+        cacheOpenFailureReported = true
+        auth.recordAuthEvent(
+            .failure,
+            detail: "Local cache \(operation): \(error.localizedDescription)"
+        )
+    }
+
+    private func refreshPendingCacheWriteCount(accountUserID: UUID) {
+        guard let cachedWorkspace else { return }
+        do {
+            pendingCacheWriteCount = try cachedWorkspace.pendingDirectWriteCount(
+                accountUserID: accountUserID
+            )
+        } catch {
+            recordCacheFailure("cache pending count", error)
+        }
+    }
+
     // MARK: Loading
 
     public func refreshAll(showSpinner: Bool = true) async {
         guard let userID = currentUserID else { return }
+        // Cold-start / account-switch path: render the account's local
+        // snapshot before any network request starts.
+        hydrateCachedWorkspace(accountUserID: userID)
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
@@ -1219,6 +1829,20 @@ public final class AppModel: ObservableObject {
                 tagMetadata = fetchedTags
             }
             guard publishedTags else { return }
+            reconcileCachedWorkspace(
+                CachedWorkspaceSnapshot(
+                    sessions: fetchedSessions,
+                    settings: fetchedSettings,
+                    phasePeriods: fetchedPeriods,
+                    healthMetrics: fetchedHealth,
+                    recordings: fetchedRecordings,
+                    presets: fetchedPresets,
+                    routines: fetchedRoutines,
+                    workouts: fetchedWorkouts,
+                    tagMetadata: fetchedTags
+                ),
+                accountUserID: userID
+            )
             await restorePendingWrites(
                 accountFetch: accountFetch,
                 userID: userID,
@@ -1229,6 +1853,12 @@ public final class AppModel: ObservableObject {
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) {
+                // The cache is the reconciled source after a full refresh:
+                // re-adopt it so a pending local preset/routine/settings/tag
+                // row is not hidden by the remote snapshot in the published
+                // collections (sessions/recordings keep their richer overlays
+                // below).
+                applyCachedNonOverlayLists(accountUserID: userID)
                 mergeSessions(remote: fetchedSessions)
                 // This is the explicit authoritative refresh boundary. A
                 // server sample blob can change without metadata changing, so
@@ -1258,6 +1888,10 @@ public final class AppModel: ObservableObject {
             warmTagCurvesIfMissing(capturedBy: accountFetch)
         } catch {
             if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
+                // Some slices may have already been published before the
+                // failure. Put the last-known cache snapshot back so a partial
+                // fetch cannot hide a pending local write.
+                applyCachedNonOverlayLists(accountUserID: userID)
                 surface(error)
             }
         }
@@ -1372,6 +2006,12 @@ public final class AppModel: ObservableObject {
             rpeConfirmed: rpeConfirmed,
             groupID: groupID
         )
+        cacheUpsertLocal(
+            pending,
+            accountUserID: userID,
+            entityType: .sessions,
+            entityID: CacheEntityID.session(pending)
+        )
         pendingSessions[id] = pending
         mergeSessions(remote: sessions.filter { !$0.pending })
         let item = DurableQueueItem(
@@ -1386,22 +2026,130 @@ public final class AppModel: ObservableObject {
                 )
             )
         )
-        return await enqueueAndUpload(item)
+        let enqueued = await enqueueAndUpload(item)
+        if !enqueued {
+            _ = cacheMarkDeletedLocal(
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: id.uuidString
+            )
+        }
+        return enqueued
     }
 
     public func updateSession(_ session: SendmeterCore.Session) async {
-        await perform {
-            let saved = try await self.repository.updateSession(session)
-            self.replaceSession(saved)
-            self.toastMessage = "Session updated."
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let previous = sessions.first { $0.id == session.id }
+        var optimistic = session
+        optimistic.pending = true
+        optimistic.rejected = false
+        optimistic.accountUserID = userID
+        pendingSessions[session.id] = optimistic
+        mergeSessions(remote: sessions.filter { !$0.pending })
+        let optimisticRevision = cacheUpsertLocal(
+            optimistic,
+            accountUserID: userID,
+            entityType: .sessions,
+            entityID: CacheEntityID.session(optimistic)
+        )
+        do {
+            let saved = try await repository.updateSession(session)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            pendingSessions.removeValue(forKey: session.id)
+            cacheConfirmServerUpsert(
+                saved,
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: CacheEntityID.session(saved),
+                confirmingLocalRevision: optimisticRevision
+            )
+            replaceSession(saved)
+            toastMessage = "Session updated."
+        } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            pendingSessions.removeValue(forKey: session.id)
+            if let previous {
+                cacheConfirmServerUpsert(
+                    previous,
+                    accountUserID: userID,
+                    entityType: .sessions,
+                    entityID: CacheEntityID.session(previous),
+                    confirmingLocalRevision: optimisticRevision
+                )
+                replaceSession(previous)
+            } else {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .sessions,
+                    entityID: CacheEntityID.session(optimistic),
+                    confirmingLocalRevision: optimisticRevision
+                )
+                sessions.removeAll { $0.id == session.id }
+            }
+            surface(error)
         }
     }
 
     public func deleteSession(_ session: SendmeterCore.Session) async {
-        await perform {
-            try await self.repository.softDeleteSession(id: session.id)
-            self.sessions.removeAll { $0.id == session.id }
-            self.toastMessage = "Session moved to Trash."
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let previous = sessions.first { $0.id == session.id }
+        pendingSessions.removeValue(forKey: session.id)
+        sessions.removeAll { $0.id == session.id }
+        let deleteRevision = cacheMarkDeletedLocal(
+            accountUserID: userID,
+            entityType: .sessions,
+            entityID: CacheEntityID.session(session)
+        )
+        do {
+            try await repository.softDeleteSession(id: session.id)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            cacheConfirmServerDelete(
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: CacheEntityID.session(session),
+                confirmingLocalRevision: deleteRevision
+            )
+            toastMessage = "Session moved to Trash."
+        } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if let previous {
+                cacheConfirmServerUpsert(
+                    previous,
+                    accountUserID: userID,
+                    entityType: .sessions,
+                    entityID: CacheEntityID.session(previous),
+                    confirmingLocalRevision: deleteRevision
+                )
+                replaceSession(previous)
+            } else {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .sessions,
+                    entityID: CacheEntityID.session(session),
+                    confirmingLocalRevision: deleteRevision
+                )
+            }
+            surface(error)
         }
     }
 
@@ -1428,6 +2176,11 @@ public final class AppModel: ObservableObject {
         pendingSessions.removeValue(forKey: sessionID)
         sessions.removeAll { $0.id == sessionID }
         mergeSessions(remote: sessions.filter { !$0.pending })
+        _ = cacheMarkDeletedLocal(
+            accountUserID: accountUserID,
+            entityType: .sessions,
+            entityID: sessionID.uuidString
+        )
 
         // The intent gets its own queue identity. Reusing the session insert's
         // id would let an in-flight insert remove the delete intent when both
@@ -1461,6 +2214,27 @@ public final class AppModel: ObservableObject {
                 pendingSessions[sessionID] = pendingSessionBeforeUndo
             }
             mergeSessions(remote: sessions.filter { !$0.pending })
+            if let pendingSessionBeforeUndo {
+                cacheUpsertLocal(
+                    pendingSessionBeforeUndo,
+                    accountUserID: accountUserID,
+                    entityType: .sessions,
+                    entityID: sessionID.uuidString
+                )
+            } else if let sessionBeforeUndo {
+                cacheConfirmServerUpsert(
+                    sessionBeforeUndo,
+                    accountUserID: accountUserID,
+                    entityType: .sessions,
+                    entityID: sessionID.uuidString
+                )
+            } else {
+                _ = cacheMarkDeletedLocal(
+                    accountUserID: accountUserID,
+                    entityType: .sessions,
+                    entityID: sessionID.uuidString
+                )
+            }
             // The delete never became durable, so a refresh is the final
             // authority when the insert may have completed while Undo was
             // attempting to persist its intent. The local restoration above
@@ -1473,16 +2247,34 @@ public final class AppModel: ObservableObject {
     }
 
     public func restoreSession(_ session: SendmeterCore.Session) async {
+        guard let userID = currentUserID else { return }
         await perform {
             try await self.repository.restoreSession(id: session.id)
+            self.cacheConfirmServerUpsert(
+                session,
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: CacheEntityID.session(session)
+            )
             self.deletedSessions.removeAll { $0.id == session.id }
             await self.refreshAll(showSpinner: false)
         }
     }
 
     public func purgeSession(_ session: SendmeterCore.Session) async {
+        guard let userID = currentUserID else { return }
+        _ = cacheMarkDeletedLocal(
+            accountUserID: userID,
+            entityType: .sessions,
+            entityID: CacheEntityID.session(session)
+        )
         await perform {
             try await self.repository.purgeSession(id: session.id)
+            self.cacheConfirmServerDelete(
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: CacheEntityID.session(session)
+            )
             self.deletedSessions.removeAll { $0.id == session.id }
         }
     }
@@ -1491,17 +2283,182 @@ public final class AppModel: ObservableObject {
 
     public func switchPhase(to phase: PhaseID) async {
         guard let userID = currentUserID else { return }
-        await perform {
-            let result = try await self.repository.switchPhase(
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let previousPeriods = phasePeriods
+        let previousSettings = settings
+        let today = LocalDateSupport.string(from: Date())
+        let preview = localPhaseTransition(
+            periods: previousPeriods,
+            newPhase: phase,
+            today: today
+        )
+        var periodUpsertRevisions: [UUID: Int] = [:]
+        var periodDeleteRevisions: [UUID: Int] = [:]
+        var settingsRevision: Int?
+        phasePeriods = preview.periods
+        settings = preview.settings
+        let previewIDs = Set(preview.periods.map(\.id))
+        for period in previousPeriods where !previewIDs.contains(period.id) {
+            if let revision = cacheMarkDeletedLocal(
+                accountUserID: userID,
+                entityType: .phasePeriods,
+                entityID: period.id.uuidString
+            ) {
+                periodDeleteRevisions[period.id] = revision
+            }
+        }
+        for period in preview.periods {
+            if let revision = cacheUpsertLocal(
+                period,
+                accountUserID: userID,
+                entityType: .phasePeriods,
+                entityID: period.id.uuidString
+            ) {
+                periodUpsertRevisions[period.id] = revision
+            }
+        }
+        settingsRevision = cacheUpsertLocal(
+            preview.settings,
+            accountUserID: userID,
+            entityType: .settings,
+            entityID: CacheEntityID.settings
+        )
+        do {
+            let result = try await repository.switchPhase(
                 to: phase,
-                currentPeriods: self.phasePeriods,
-                today: LocalDateSupport.string(from: Date()),
+                currentPeriods: previousPeriods,
+                today: today,
                 userID: userID
             )
-            self.phasePeriods = result.periods
-            self.settings = result.settings
-            self.toastMessage = "Training Block changed to \(PhaseCatalog.definition(for: phase).name)."
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            let serverIDs = Set(result.periods.map(\.id))
+            // A same-day switch back deletes the open period from the preview,
+            // so it is not in `preview.periods`; confirm its pending tombstone
+            // from the server response too, otherwise it stays counted as an
+            // unconfirmed local change forever.
+            for period in previousPeriods where !serverIDs.contains(period.id) {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    entityID: period.id.uuidString,
+                    confirmingLocalRevision: periodDeleteRevisions[period.id]
+                        ?? periodUpsertRevisions[period.id]
+                )
+            }
+            for period in preview.periods where !serverIDs.contains(period.id) {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    entityID: period.id.uuidString,
+                    confirmingLocalRevision: periodUpsertRevisions[period.id]
+                )
+            }
+            for period in result.periods {
+                cacheConfirmServerUpsert(
+                    period,
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    entityID: CacheEntityID.phasePeriod(period),
+                    confirmingLocalRevision: periodUpsertRevisions[period.id]
+                )
+            }
+            cacheConfirmServerUpsert(
+                result.settings,
+                accountUserID: userID,
+                entityType: .settings,
+                entityID: CacheEntityID.settings,
+                confirmingLocalRevision: settingsRevision
+            )
+            phasePeriods = result.periods
+            settings = result.settings
+            toastMessage = "Training Block changed to \(PhaseCatalog.definition(for: phase).name)."
+        } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            for period in preview.periods where !previousPeriods.contains(where: { $0.id == period.id }) {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    entityID: period.id.uuidString,
+                    confirmingLocalRevision: periodUpsertRevisions[period.id]
+                )
+            }
+            for period in previousPeriods {
+                cacheConfirmServerUpsert(
+                    period,
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    entityID: CacheEntityID.phasePeriod(period),
+                    confirmingLocalRevision: periodUpsertRevisions[period.id]
+                        ?? periodDeleteRevisions[period.id]
+                )
+            }
+            cacheConfirmServerUpsert(
+                previousSettings,
+                accountUserID: userID,
+                entityType: .settings,
+                entityID: CacheEntityID.settings,
+                confirmingLocalRevision: settingsRevision
+            )
+            phasePeriods = previousPeriods
+            settings = previousSettings
+            surface(error)
         }
+    }
+
+    private func localPhaseTransition(
+        periods: [PhasePeriod],
+        newPhase: PhaseID,
+        today: String
+    ) -> (periods: [PhasePeriod], settings: UserSettings) {
+        var result = periods
+        for mutation in PhaseTransitionPlanner.plan(
+            periods: periods,
+            newPhase: newPhase,
+            today: today
+        ).mutations {
+            switch mutation {
+            case let .create(phase, startedOn):
+                result.insert(
+                    PhasePeriod(id: UUID(), phase: phase, startedOn: startedOn, endedOn: nil),
+                    at: 0
+                )
+            case let .delete(periodID):
+                result.removeAll { $0.id == periodID }
+            case let .updatePhase(periodID, phase):
+                if let index = result.firstIndex(where: { $0.id == periodID }) {
+                    result[index].phase = phase
+                }
+            case let .close(periodID, endedOn):
+                if let index = result.firstIndex(where: { $0.id == periodID }) {
+                    result[index].endedOn = endedOn
+                }
+            case let .reopen(periodID):
+                if let index = result.firstIndex(where: { $0.id == periodID }) {
+                    result[index].endedOn = nil
+                }
+            case let .updateSettings(phase, startedOn):
+                // Settings are derived from the resulting open period below,
+                // exactly as the repository does after its own fetch.
+                _ = (phase, startedOn)
+            }
+        }
+        let open = result.first(where: { $0.endedOn == nil })
+        return (
+            result,
+            UserSettings(
+                currentPhase: open?.phase ?? newPhase,
+                phaseStartDate: open?.startedOn ?? today
+            )
+        )
     }
 
     // MARK: Workout
@@ -1509,6 +2466,12 @@ public final class AppModel: ObservableObject {
     public func saveWorkout(_ draft: WorkoutDraft) async {
         guard let userID = currentUserID, draft.accountUserID == userID else { return }
         let pending = pendingSession(from: draft)
+        cacheUpsertLocal(
+            pending,
+            accountUserID: userID,
+            entityType: .sessions,
+            entityID: CacheEntityID.session(pending)
+        )
         pendingSessions[pending.id] = pending
         mergeSessions(remote: sessions.filter { !$0.pending })
         let item = DurableQueueItem(
@@ -1522,6 +2485,11 @@ public final class AppModel: ObservableObject {
             LostRecordingStore.note(reason: "workout", in: .standard)
             pendingSessions.removeValue(forKey: draft.sessionID)
             mergeSessions(remote: sessions.filter { !$0.pending })
+            _ = cacheMarkDeletedLocal(
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: draft.sessionID.uuidString
+            )
         }
     }
 
@@ -1729,6 +2697,12 @@ public final class AppModel: ObservableObject {
             completionStatus: completionStatus
         )
         let optimistic = pendingRecording(from: recording)
+        cacheUpsertLocal(
+            optimistic,
+            accountUserID: userID,
+            entityType: .recordings,
+            entityID: CacheEntityID.recording(optimistic)
+        )
         let savedKey = TagCurveKey(
             tag: recording.tag,
             modality: GaugeSessionRPE.modality(of: optimistic)
@@ -1767,6 +2741,11 @@ public final class AppModel: ObservableObject {
             // notice IS the out-loud reporting (no Sentry in this target);
             // `surfaceLostRecordingNoticeIfAny` shows it on next foreground.
             LostRecordingStore.note(reason: lossReason, in: .standard)
+            _ = cacheMarkDeletedLocal(
+                accountUserID: userID,
+                entityType: .recordings,
+                entityID: recording.id.uuidString
+            )
             removePendingRecording(for: recording.id, accountUserID: userID)
             removePendingCurveSamples(for: recording.id)
             invalidateTagCurveKeys([savedKey])
@@ -2536,6 +3515,23 @@ public final class AppModel: ObservableObject {
             ?? recordingEditCoordinator.nextEditorOrderingKey(now: editCreatedAt)
 
         applyPendingRecordingEdit(edit)
+        if let optimisticRecording = recordings.first(where: { $0.id == recording.id }) {
+            cacheUpsertLocal(
+                optimisticRecording,
+                accountUserID: userID,
+                entityType: .recordings,
+                entityID: CacheEntityID.recording(optimisticRecording)
+            )
+        }
+        if let sessionID = edit.sessionID,
+           let optimisticSession = sessions.first(where: { $0.id == sessionID }) {
+            cacheUpsertLocal(
+                optimisticSession,
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: CacheEntityID.session(optimisticSession)
+            )
+        }
         let metadataEdit = RecordingEdit(
             recordingID: edit.recordingID,
             tag: edit.tag,
@@ -2584,6 +3580,20 @@ public final class AppModel: ObservableObject {
                 previousRecording: previousRecording,
                 previousSession: previousSession
             )
+            cacheConfirmServerUpsert(
+                previousRecording,
+                accountUserID: userID,
+                entityType: .recordings,
+                entityID: CacheEntityID.recording(previousRecording)
+            )
+            if let previousSession {
+                cacheConfirmServerUpsert(
+                    previousSession,
+                    accountUserID: userID,
+                    entityType: .sessions,
+                    entityID: CacheEntityID.session(previousSession)
+                )
+            }
         } else {
             let metadataResult = await upload(metadataItem, capturedBy: accountFetch)
             guard accountFetch.canApply(
@@ -2768,6 +3778,19 @@ public final class AppModel: ObservableObject {
                 }
             }
             let before = recordings
+            _ = cacheMarkDeletedLocal(
+                accountUserID: userID,
+                entityType: .recordings,
+                entityID: CacheEntityID.recording(recording)
+            )
+            if let previousSessionBase {
+                cacheUpsertLocal(
+                    previousSessionBase,
+                    accountUserID: userID,
+                    entityType: .sessions,
+                    entityID: CacheEntityID.session(previousSessionBase)
+                )
+            }
             recordings.removeAll { $0.id == recording.id }
             publishForceProgressRecordingMutationIfNeeded(before: before, after: recordings)
             invalidateTagCurveKeys([key])
@@ -2876,6 +3899,20 @@ public final class AppModel: ObservableObject {
                 }
             }
             replaceRecording(previousRecording)
+            cacheConfirmServerUpsert(
+                previousRecording,
+                accountUserID: userID,
+                entityType: .recordings,
+                entityID: CacheEntityID.recording(previousRecording)
+            )
+            if let previousSessionBase {
+                cacheConfirmServerUpsert(
+                    previousSessionBase,
+                    accountUserID: userID,
+                    entityType: .sessions,
+                    entityID: CacheEntityID.session(previousSessionBase)
+                )
+            }
             await refreshTagCurvesForRPE(
                 keys: [key],
                 capturedBy: accountFetch
@@ -2996,6 +4033,12 @@ public final class AppModel: ObservableObject {
                 accountEpoch: accountEpoch,
                 capturedBy: accountFetch
             ) else { return }
+            cacheConfirmServerUpsert(
+                recording,
+                accountUserID: userID,
+                entityType: .recordings,
+                entityID: CacheEntityID.recording(recording)
+            )
             deletedRecordings.removeAll { $0.id == recording.id }
             await refreshAll(showSpinner: false)
             guard accountFetch.canApply(
@@ -3018,13 +4061,29 @@ public final class AppModel: ObservableObject {
     }
 
     public func purgeRecording(_ recording: TindeqRecording) async {
-        await perform {
-            try await self.repository.purgeRecording(id: recording.id)
-            self.deletedRecordings.removeAll { $0.id == recording.id }
+        guard let userID = currentUserID else { return }
+        _ = cacheMarkDeletedLocal(
+            accountUserID: userID,
+            entityType: .recordings,
+            entityID: CacheEntityID.recording(recording)
+        )
+        do {
+            try await repository.purgeRecording(id: recording.id)
+            cacheConfirmServerDelete(
+                accountUserID: userID,
+                entityType: .recordings,
+                entityID: CacheEntityID.recording(recording)
+            )
+            deletedRecordings.removeAll { $0.id == recording.id }
+        } catch {
+            // Keep the optimistic tombstone on failure: purge is a terminal
+            // intent and the queued delete path already owns retrying it.
+            surface(error)
         }
     }
 
     public func linkRecordings(_ recordings: [TindeqRecording], to session: SendmeterCore.Session) async {
+        guard let userID = currentUserID else { return }
         let unlinked = recordings.filter { $0.groupID == nil }
         guard !unlinked.isEmpty else { return }
         await perform {
@@ -3040,6 +4099,12 @@ public final class AppModel: ObservableObject {
                 for recording in unlinked {
                     if let index = self.recordings.firstIndex(where: { $0.id == recording.id }) {
                         self.recordings[index].groupID = result.groupID
+                        self.cacheUpsertServer(
+                            self.recordings[index],
+                            accountUserID: userID,
+                            entityType: .recordings,
+                            entityID: CacheEntityID.recording(self.recordings[index])
+                        )
                     }
                 }
                 if let index = self.sessions.firstIndex(where: { $0.id == session.id }),
@@ -3047,6 +4112,12 @@ public final class AppModel: ObservableObject {
                     var updated = self.sessions[index]
                     updated.groupID = result.groupID
                     self.sessions[index] = updated
+                    self.cacheUpsertServer(
+                        updated,
+                        accountUserID: userID,
+                        entityType: .sessions,
+                        entityID: CacheEntityID.session(updated)
+                    )
                 }
             }
             self.toastMessage = "Force recordings linked."
@@ -3065,18 +4136,45 @@ public final class AppModel: ObservableObject {
     /// no orphan window. Returns false (and surfaces the error) when the
     /// selection or a write fails, so the view keeps the ticked rows.
     public func createSessionFromRecordings(_ recordings: [TindeqRecording]) async -> Bool {
-        guard currentUserID != nil else { return false }
+        guard let userID = currentUserID else { return false }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         guard let plan = SelectionSessionPlanner.plan(
             recordings: recordings,
             phase: settings.currentPhase
         ) else { return false }
+        let sessionID = UUID()
+        let optimistic = pendingSession(
+            id: sessionID,
+            draft: plan.draft,
+            accountUserID: userID
+        )
+        let optimisticRevision = cacheUpsertLocal(
+            optimistic,
+            accountUserID: userID,
+            entityType: .sessions,
+            entityID: CacheEntityID.session(optimistic)
+        )
+        pendingSessions[sessionID] = optimistic
+        mergeSessions(remote: sessions.filter { !$0.pending })
+        var serverInsertedSession: SendmeterCore.Session?
         do {
-            let sessionID = UUID()
             let saved = try await repository.insertSession(plan.draft, id: sessionID)
+            serverInsertedSession = saved
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return false }
             let result = try await repository.linkRecordingsToSession(
                 sessionID: sessionID,
                 recordingIDs: plan.recordingIDs
             )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return false }
             if let result {
                 var updated = saved
                 updated.groupID = result.groupID
@@ -3087,52 +4185,285 @@ public final class AppModel: ObservableObject {
                 for recordingID in plan.recordingIDs {
                     if let index = recordings.firstIndex(where: { $0.id == recordingID }) {
                         self.recordings[index].groupID = result.groupID
+                        cacheUpsertServer(
+                            self.recordings[index],
+                            accountUserID: userID,
+                            entityType: .recordings,
+                            entityID: CacheEntityID.recording(self.recordings[index])
+                        )
                     }
                 }
             } else {
                 replaceSession(saved)
             }
+            let finalSession = result.map { updated -> SendmeterCore.Session in
+                var value = saved
+                value.groupID = updated.groupID
+                if let minutes = updated.durationMinutes {
+                    value.durationMinutes = minutes
+                }
+                return value
+            } ?? saved
+            cacheConfirmServerUpsert(
+                finalSession,
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: CacheEntityID.session(finalSession),
+                confirmingLocalRevision: optimisticRevision
+            )
+            pendingSessions.removeValue(forKey: sessionID)
             toastMessage = "Session created from recordings"
             return true
         } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                if let serverInsertedSession {
+                    pendingSessions.removeValue(forKey: sessionID)
+                    cacheConfirmServerUpsert(
+                        serverInsertedSession,
+                        accountUserID: userID,
+                        entityType: .sessions,
+                        entityID: CacheEntityID.session(serverInsertedSession),
+                        confirmingLocalRevision: optimisticRevision
+                    )
+                    replaceSession(serverInsertedSession)
+                } else {
+                    pendingSessions.removeValue(forKey: sessionID)
+                    mergeSessions(remote: sessions.filter { !$0.pending })
+                    cacheConfirmServerDelete(
+                        accountUserID: userID,
+                        entityType: .sessions,
+                        entityID: sessionID.uuidString,
+                        confirmingLocalRevision: optimisticRevision
+                    )
+                }
+            }
             surface(error)
             return false
         }
     }
 
     public func savePreset(_ preset: TindeqPreset, isNew: Bool) async {
-        await perform {
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let previous = presets.first { $0.id == preset.id }
+        let optimisticRevision = cacheUpsertLocal(
+            preset,
+            accountUserID: userID,
+            entityType: .presets,
+            entityID: CacheEntityID.preset(preset)
+        )
+        presets.removeAll { $0.id == preset.id }
+        presets.insert(preset, at: 0)
+        do {
             let saved = try await (isNew
-                ? self.repository.insertPreset(preset)
-                : self.repository.updatePreset(preset))
-            self.presets.removeAll { $0.id == saved.id }
-            self.presets.insert(saved, at: 0)
+                ? repository.insertPreset(preset)
+                : repository.updatePreset(preset))
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            cacheConfirmServerUpsert(
+                saved,
+                accountUserID: userID,
+                entityType: .presets,
+                entityID: CacheEntityID.preset(saved),
+                confirmingLocalRevision: optimisticRevision
+            )
+            presets.removeAll { $0.id == saved.id }
+            presets.insert(saved, at: 0)
+        } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            presets.removeAll { $0.id == preset.id }
+            if let previous {
+                cacheConfirmServerUpsert(
+                    previous,
+                    accountUserID: userID,
+                    entityType: .presets,
+                    entityID: CacheEntityID.preset(previous),
+                    confirmingLocalRevision: optimisticRevision
+                )
+                presets.insert(previous, at: 0)
+            } else {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .presets,
+                    entityID: CacheEntityID.preset(preset),
+                    confirmingLocalRevision: optimisticRevision
+                )
+            }
+            surface(error)
         }
     }
 
     public func deletePreset(_ preset: TindeqPreset) async {
-        await perform {
-            try await self.repository.deletePreset(id: preset.id)
-            self.presets.removeAll { $0.id == preset.id }
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let previous = presets.first { $0.id == preset.id }
+        presets.removeAll { $0.id == preset.id }
+        let deleteRevision = cacheMarkDeletedLocal(
+            accountUserID: userID,
+            entityType: .presets,
+            entityID: CacheEntityID.preset(preset)
+        )
+        do {
+            try await repository.deletePreset(id: preset.id)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            cacheConfirmServerDelete(
+                accountUserID: userID,
+                entityType: .presets,
+                entityID: CacheEntityID.preset(preset),
+                confirmingLocalRevision: deleteRevision
+            )
+        } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if let previous {
+                cacheConfirmServerUpsert(
+                    previous,
+                    accountUserID: userID,
+                    entityType: .presets,
+                    entityID: CacheEntityID.preset(previous),
+                    confirmingLocalRevision: deleteRevision
+                )
+                presets.insert(previous, at: 0)
+            } else {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .presets,
+                    entityID: CacheEntityID.preset(preset),
+                    confirmingLocalRevision: deleteRevision
+                )
+            }
+            surface(error)
         }
     }
 
     // MARK: Routines
 
     public func saveRoutine(_ routine: RoutinePreset, isNew: Bool) async {
-        await perform {
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let previous = routines.first { $0.id == routine.id }
+        let optimisticRevision = cacheUpsertLocal(
+            routine,
+            accountUserID: userID,
+            entityType: .routinePresets,
+            entityID: CacheEntityID.routine(routine)
+        )
+        routines.removeAll { $0.id == routine.id }
+        routines.insert(routine, at: 0)
+        do {
             let saved = try await (isNew
-                ? self.repository.insertRoutine(routine)
-                : self.repository.updateRoutine(routine))
-            self.routines.removeAll { $0.id == saved.id }
-            self.routines.insert(saved, at: 0)
+                ? repository.insertRoutine(routine)
+                : repository.updateRoutine(routine))
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            cacheConfirmServerUpsert(
+                saved,
+                accountUserID: userID,
+                entityType: .routinePresets,
+                entityID: CacheEntityID.routine(saved),
+                confirmingLocalRevision: optimisticRevision
+            )
+            routines.removeAll { $0.id == saved.id }
+            routines.insert(saved, at: 0)
+        } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            routines.removeAll { $0.id == routine.id }
+            if let previous {
+                cacheConfirmServerUpsert(
+                    previous,
+                    accountUserID: userID,
+                    entityType: .routinePresets,
+                    entityID: CacheEntityID.routine(previous),
+                    confirmingLocalRevision: optimisticRevision
+                )
+                routines.insert(previous, at: 0)
+            } else {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .routinePresets,
+                    entityID: CacheEntityID.routine(routine),
+                    confirmingLocalRevision: optimisticRevision
+                )
+            }
+            surface(error)
         }
     }
 
     public func deleteRoutine(_ routine: RoutinePreset) async {
-        await perform {
-            try await self.repository.deleteRoutine(id: routine.id)
-            self.routines.removeAll { $0.id == routine.id }
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let previous = routines.first { $0.id == routine.id }
+        routines.removeAll { $0.id == routine.id }
+        let deleteRevision = cacheMarkDeletedLocal(
+            accountUserID: userID,
+            entityType: .routinePresets,
+            entityID: CacheEntityID.routine(routine)
+        )
+        do {
+            try await repository.deleteRoutine(id: routine.id)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            cacheConfirmServerDelete(
+                accountUserID: userID,
+                entityType: .routinePresets,
+                entityID: CacheEntityID.routine(routine),
+                confirmingLocalRevision: deleteRevision
+            )
+        } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if let previous {
+                cacheConfirmServerUpsert(
+                    previous,
+                    accountUserID: userID,
+                    entityType: .routinePresets,
+                    entityID: CacheEntityID.routine(previous),
+                    confirmingLocalRevision: deleteRevision
+                )
+                routines.insert(previous, at: 0)
+            } else {
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .routinePresets,
+                    entityID: CacheEntityID.routine(routine),
+                    confirmingLocalRevision: deleteRevision
+                )
+            }
+            surface(error)
         }
     }
 
@@ -3232,7 +4563,41 @@ public final class AppModel: ObservableObject {
                     freshlyComputed: fresh,
                     allowReadinessOverwrite: allowOverwrite
                 )
-                try await repository.upsertHealthMetric(plan.upsertMetric, userID: userID)
+                let previousToday = healthMetrics.first { $0.date == fresh.date }
+                let optimisticRevision = cacheUpsertLocal(
+                    plan.relayMetric,
+                    accountUserID: userID,
+                    entityType: .healthMetrics,
+                    entityID: CacheEntityID.healthMetric(plan.relayMetric)
+                )
+                do {
+                    try await repository.upsertHealthMetric(plan.upsertMetric, userID: userID)
+                } catch {
+                    if let previousToday {
+                        cacheConfirmServerUpsert(
+                            previousToday,
+                            accountUserID: userID,
+                            entityType: .healthMetrics,
+                            entityID: CacheEntityID.healthMetric(previousToday),
+                            confirmingLocalRevision: optimisticRevision
+                        )
+                    } else {
+                        cacheConfirmServerDelete(
+                            accountUserID: userID,
+                            entityType: .healthMetrics,
+                            entityID: CacheEntityID.healthMetric(plan.relayMetric),
+                            confirmingLocalRevision: optimisticRevision
+                        )
+                    }
+                    throw error
+                }
+                cacheConfirmServerUpsert(
+                    plan.relayMetric,
+                    accountUserID: userID,
+                    entityType: .healthMetrics,
+                    entityID: CacheEntityID.healthMetric(plan.relayMetric),
+                    confirmingLocalRevision: optimisticRevision
+                )
                 healthMetrics.removeAll { $0.date == fresh.date }
                 healthMetrics.insert(plan.relayMetric, at: 0)
                 watch.publishReadiness(plan.relayMetric)
@@ -3261,9 +4626,27 @@ public final class AppModel: ObservableObject {
 
     public func deleteAccount() async {
         guard let userID = currentUserID else { return }
+        // Invalidate the current account generation before the remote delete so
+        // an upload already suspended on this account cannot confirm into the
+        // cache after it is purged. Existing upload tasks keep their old
+        // `AccountScopedFetch` and will fail the post-await guard, so a purge
+        // cannot be re-populated by an in-flight ack.
+        let purgeBoundary = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch &+ 1
+        )
+        accountEpoch = purgeBoundary.accountEpoch
         await perform {
             try await self.repository.deleteAccount()
             try await self.queue?.discardAll(accountUserID: userID, reason: "account-deleted")
+            if let cachedWorkspace = self.cachedWorkspace {
+                do {
+                    try cachedWorkspace.store.deleteAccount(userID)
+                } catch {
+                    self.recordCacheFailure("cache delete account", error)
+                }
+            }
+            self.pendingCacheWriteCount = 0
             try await self.auth.signOut()
         }
     }
@@ -3794,6 +5177,14 @@ public final class AppModel: ObservableObject {
             return UploadResult(uploaded: false, failure: nil)
         }
         var item = currentItem
+        // Capture the local revisions before the switch's first network await.
+        // The cache row is the durable source after a relaunch; a newer local
+        // edit made while this request is in flight bumps the row again, so
+        // acknowledging with this captured value is what keeps it pending.
+        let cacheRevisions = cacheConfirmationRevisions(
+            for: item.payload,
+            accountUserID: item.accountUserID
+        )
         let isTerminalDelete: Bool = if case .recordingDelete = item.payload {
             true
         } else {
@@ -3810,6 +5201,7 @@ public final class AppModel: ObservableObject {
         let result: UploadResult
         do {
             var sessionReceipt: SessionLogReceipt?
+            var savedSession: SendmeterCore.Session?
             var finishedSessionInsertID: UUID?
             var completedDeleteReceipt: SessionLogReceipt?
             var suppressSavedToast = false
@@ -3850,7 +5242,21 @@ public final class AppModel: ObservableObject {
                     } else {
                         pendingSessions.removeValue(forKey: payload.id)
                         replaceSession(saved)
+                        savedSession = saved
                     }
+                }
+                if let savedSession {
+                    cacheConfirmServerUpsert(
+                        savedSession,
+                        accountUserID: item.accountUserID,
+                        entityType: .sessions,
+                        entityID: CacheEntityID.session(savedSession),
+                        confirmingLocalRevision: cacheConfirmationRevision(
+                            cacheRevisions,
+                            entityType: .sessions,
+                            entityID: savedSession.id.uuidString
+                        )
+                    )
                 }
             case let .sessionDelete(deletePayload):
                 suppressSavedToast = true
@@ -3898,6 +5304,16 @@ public final class AppModel: ObservableObject {
                     return UploadResult(uploaded: false, failure: nil)
                 }
                 completedDeleteReceipt = receipt
+                cacheConfirmServerDelete(
+                    accountUserID: item.accountUserID,
+                    entityType: .sessions,
+                    entityID: deletePayload.sessionID.uuidString,
+                    confirmingLocalRevision: cacheConfirmationRevision(
+                        cacheRevisions,
+                        entityType: .sessions,
+                        entityID: deletePayload.sessionID.uuidString
+                    )
+                )
             case let .recording(recording):
                 let saved = try await self.repository.insertRecording(recording)
                 let oldKey = TagCurveKey(
@@ -3915,6 +5331,17 @@ public final class AppModel: ObservableObject {
                         accountUserID: item.accountUserID
                     )
                     replaceRecording(saved)
+                    cacheConfirmServerUpsert(
+                        saved,
+                        accountUserID: item.accountUserID,
+                        entityType: .recordings,
+                        entityID: CacheEntityID.recording(saved),
+                        confirmingLocalRevision: cacheConfirmationRevision(
+                            cacheRevisions,
+                            entityType: .recordings,
+                            entityID: saved.id.uuidString
+                        )
+                    )
                 }
                 guard publishedRecording else {
                     return UploadResult(uploaded: false, failure: nil)
@@ -3986,6 +5413,17 @@ public final class AppModel: ObservableObject {
                 ) && metadataIsCurrent {
                     pendingRecordingEdits.removeValue(forKey: edit.recordingID)
                     replaceRecording(savedRecording)
+                    cacheConfirmServerUpsert(
+                        savedRecording,
+                        accountUserID: item.accountUserID,
+                        entityType: .recordings,
+                        entityID: CacheEntityID.recording(savedRecording),
+                        confirmingLocalRevision: cacheConfirmationRevision(
+                            cacheRevisions,
+                            entityType: .recordings,
+                            entityID: savedRecording.id.uuidString
+                        )
+                    )
                 }
             case let .sessionRPEEdit(edit):
                 guard let sessionID = edit.sessionID,
@@ -4031,6 +5469,17 @@ public final class AppModel: ObservableObject {
                     pendingSessionRPEEdits.removeValue(forKey: sessionID)
                     pendingSessionRPEBases.removeValue(forKey: sessionID)
                     replaceSession(savedSession)
+                    cacheConfirmServerUpsert(
+                        savedSession,
+                        accountUserID: item.accountUserID,
+                        entityType: .sessions,
+                        entityID: CacheEntityID.session(savedSession),
+                        confirmingLocalRevision: cacheConfirmationRevision(
+                            cacheRevisions,
+                            entityType: .sessions,
+                            entityID: savedSession.id.uuidString
+                        )
+                    )
                 }
             case let .recordingDelete(delete):
                 suppressSavedToast = true
@@ -4171,6 +5620,17 @@ public final class AppModel: ObservableObject {
                         ) {
                             replaceSession(restoredSession)
                         }
+                        cacheConfirmServerUpsert(
+                            restoredSession,
+                            accountUserID: item.accountUserID,
+                            entityType: .sessions,
+                            entityID: CacheEntityID.session(restoredSession),
+                            confirmingLocalRevision: cacheConfirmationRevision(
+                                cacheRevisions,
+                                entityType: .sessions,
+                                entityID: restoredSession.id.uuidString
+                            )
+                        )
                     case .skipAlreadyApplied:
                         break
                     case .skipSuperseded:
@@ -4224,6 +5684,16 @@ public final class AppModel: ObservableObject {
                             userInfo: [NSLocalizedDescriptionKey: "Recording delete completion was not durable."]
                         )
                     }
+                    cacheConfirmServerDelete(
+                        accountUserID: item.accountUserID,
+                        entityType: .recordings,
+                        entityID: delete.recordingID.uuidString,
+                        confirmingLocalRevision: cacheConfirmationRevision(
+                            cacheRevisions,
+                            entityType: .recordings,
+                            entityID: delete.recordingID.uuidString
+                        )
+                    )
                 }
                 }
             case let .workout(draft):
@@ -4234,6 +5704,17 @@ public final class AppModel: ObservableObject {
                 ) {
                     pendingSessions.removeValue(forKey: draft.sessionID)
                     replaceSession(saved)
+                    cacheConfirmServerUpsert(
+                        saved,
+                        accountUserID: item.accountUserID,
+                        entityType: .sessions,
+                        entityID: CacheEntityID.session(saved),
+                        confirmingLocalRevision: cacheConfirmationRevision(
+                            cacheRevisions,
+                            entityType: .sessions,
+                            entityID: saved.id.uuidString
+                        )
+                    )
                 }
                 guard publishedWorkout else {
                     return UploadResult(uploaded: false, failure: nil)
@@ -4748,8 +6229,8 @@ public final class AppModel: ObservableObject {
     }
 
     private func refreshQueueCount(for accountFetch: AccountScopedFetch? = nil) async {
-        guard let userID = currentUserID, let queue else {
-            guard accountFetch == nil else { return }
+        guard let userID = currentUserID else {
+            pendingCacheWriteCount = 0
             queuedWriteCount = 0
             queueBreadcrumbs = []
             quarantinedWrites = nil
@@ -4760,9 +6241,19 @@ public final class AppModel: ObservableObject {
             accountEpoch: self.accountEpoch
         )
         guard fetch.canApply(to: userID, accountEpoch: self.accountEpoch) else { return }
-        let count = await queue.count(for: userID)
-        let breadcrumbs = await queue.breadcrumbs(for: userID)
-        let quarantined = await queue.quarantinedItems(for: userID).map { $0.summary() }
+        let count: Int
+        let breadcrumbs: [QueueBreadcrumb]
+        let quarantined: [QuarantinedWrite]?
+        if let queue {
+            count = await queue.count(for: userID)
+            breadcrumbs = await queue.breadcrumbs(for: userID)
+            quarantined = await queue.quarantinedItems(for: userID).map { $0.summary() }
+        } else {
+            count = 0
+            breadcrumbs = []
+            quarantined = nil
+        }
+        refreshPendingCacheWriteCount(accountUserID: userID)
         _ = fetch.publishIfCurrent(
             to: currentUserID,
             accountEpoch: self.accountEpoch
@@ -4977,6 +6468,11 @@ public final class AppModel: ObservableObject {
         do {
             if slices.contains(.sessions) {
                 let fetchedSessions = try await repository.fetchSessions(accountUserID: userID)
+                reconcileCachedSlices(
+                    CachedWorkspaceSnapshot(sessions: fetchedSessions),
+                    accountUserID: userID,
+                    slices: [.sessions]
+                )
                 let publishedSessions = accountFetch.publishIfCurrent(
                     to: currentUserID,
                     accountEpoch: accountEpoch
@@ -4987,6 +6483,11 @@ public final class AppModel: ObservableObject {
             }
             if slices.contains(.recordings) {
                 let fetchedRecordings = try await repository.fetchRecordings()
+                reconcileCachedSlices(
+                    CachedWorkspaceSnapshot(recordings: fetchedRecordings),
+                    accountUserID: userID,
+                    slices: [.recordings]
+                )
                 let publishedRecordings = accountFetch.publishIfCurrent(
                     to: currentUserID,
                     accountEpoch: accountEpoch
@@ -4999,6 +6500,11 @@ public final class AppModel: ObservableObject {
             }
             if slices.contains(.workouts) {
                 let fetchedWorkouts = try await repository.fetchWorkouts()
+                reconcileCachedSlices(
+                    CachedWorkspaceSnapshot(workouts: fetchedWorkouts),
+                    accountUserID: userID,
+                    slices: [.workouts]
+                )
                 let publishedWorkouts = accountFetch.publishIfCurrent(
                     to: currentUserID,
                     accountEpoch: accountEpoch
@@ -5009,6 +6515,11 @@ public final class AppModel: ObservableObject {
             }
             if slices.contains(.health) {
                 let fetchedHealth = try await repository.fetchHealthMetrics()
+                reconcileCachedSlices(
+                    CachedWorkspaceSnapshot(healthMetrics: fetchedHealth),
+                    accountUserID: userID,
+                    slices: [.health]
+                )
                 let publishedHealth = accountFetch.publishIfCurrent(
                     to: currentUserID,
                     accountEpoch: accountEpoch
@@ -5585,6 +7096,10 @@ public final class AppModel: ObservableObject {
 
     private func resetAccountState() {
         accountEpoch &+= 1
+        // A cache failure is account-scoped for diagnostics: the next account
+        // should be able to report its own open/read/reconcile failure even if
+        // the previous account already suppressed one.
+        cacheOpenFailureReported = false
         publishForceProgressInputMutation(.accountReset)
         refreshingOwner = nil
         isRefreshing = false
@@ -5624,6 +7139,7 @@ public final class AppModel: ObservableObject {
         // account transition must not let the returning A duplicate a request
         // that is still suspended for A. B can proceed through its own key.
         queuedWriteCount = 0
+        pendingCacheWriteCount = 0
         queueBreadcrumbs = []
         quarantinedWrites = nil
         gaugeSessionTracker.reset()
