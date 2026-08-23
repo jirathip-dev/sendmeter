@@ -5,5 +5,6 @@ import WidgetKit
 struct SendmeterNativeWidgetsBundle: WidgetBundle {
     var body: some Widget {
         GuidedProtocolLiveActivity()
+        ManualWorkoutLiveActivity()
     }
 }

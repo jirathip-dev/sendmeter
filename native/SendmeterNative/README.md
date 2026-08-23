@@ -31,6 +31,10 @@ in `docs/native-swift-rewrite.md`.
   current segment counts down natively, the Dynamic Island tap deep-links to
   the Force tab, and the card is kept in sync through stage changes, Skip
   Stage, hold-end peaks, and run completion
+- Lock-screen Live Activity mirror for manual phone workouts (#763): the
+  CLIMBING/RESTING timer ticks natively, the Dynamic Island tap deep-links to
+  the Workout tab, Stop/Boulder actions route back into the engine, and the
+  card ends on finish, cancel, or relaunch
 
 ## Architecture
 
@@ -48,10 +52,12 @@ SwiftUI application
 `Sources/Shared` + `Sources/Widgets` compile into a second product target —
 `SendmeterNativeWidgets`, a WidgetKit app-extension embedded in the app
 bundle — in the same XcodeGen project. The extension renders the guided
-protocol's lock-screen Live Activity; it shares `GuidedProtocolActivityAttributes`
-(from `Sources/Shared`) with the app and intentionally has no SendmeterCore
+protocol and manual-workout lock-screen Live Activities; it shares
+`GuidedProtocolActivityAttributes` and `ManualWorkoutActivityAttributes` (from
+`Sources/Shared`) with the app and intentionally has no SendmeterCore
 dependency: the app pushes the `ContentState` and the widget renders it
-(`Sources/App/GuidedProtocolActivityManager.swift` owns the activity).
+(`Sources/App/GuidedProtocolActivityManager.swift` and
+`Sources/App/ManualWorkoutActivityManager.swift` own the activities).
 
 The reusable `SendmeterCore` package has no iOS UI dependency and is tested on
 Linux and macOS. The application target uses local packages already maintained
