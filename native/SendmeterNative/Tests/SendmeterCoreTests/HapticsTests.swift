@@ -129,6 +129,112 @@ final class HapticsTests: XCTestCase {
         XCTAssertNil(RefusedActionHaptics.cue(tappableAndRefused: false))
     }
 
+    // MARK: Structural vocabulary (#752)
+
+    func testStructuralCueParity() {
+        XCTAssertEqual(StructuralHaptics.cue(level: .normal), .light)
+        XCTAssertEqual(StructuralHaptics.cue(level: .confirm), .medium)
+        XCTAssertEqual(StructuralHaptics.cue(level: .refused), .warning)
+        XCTAssertNil(StructuralHaptics.cue(level: .normal, isEnabled: false))
+        XCTAssertNil(StructuralHaptics.cue(level: .confirm, isEnabled: false))
+        XCTAssertNil(StructuralHaptics.cue(level: .refused, isEnabled: false))
+    }
+
+    // MARK: Structural gesture tracker (#752)
+
+    func testStructuralTrackerSpendsExactlyOneTickPerGesture() {
+        var tracker = StructuralHapticTracker()
+        tracker.begin(cue: .light, nowMs: 1_000)
+        XCTAssertEqual(tracker.claim(nowMs: 1_010), .light)
+        XCTAssertNil(tracker.claim(nowMs: 1_020))
+        XCTAssertNil(tracker.complete(nowMs: 1_030))
+    }
+
+    func testStructuralTrackerCancelKeepsGestureSilent() {
+        var tracker = StructuralHapticTracker()
+        tracker.begin(cue: .light, nowMs: 1_000)
+        tracker.cancel()
+        XCTAssertNil(tracker.claim(nowMs: 1_010))
+        XCTAssertNil(tracker.complete(nowMs: 1_020))
+    }
+
+    func testStructuralTrackerIgnoresStaleGesture() {
+        var tracker = StructuralHapticTracker()
+        tracker.begin(cue: .light, nowMs: 1_000)
+        XCTAssertNil(tracker.claim(nowMs: 3_000))
+    }
+
+    func testStructuralTrackerRearmsOnFreshGesture() {
+        var tracker = StructuralHapticTracker()
+        tracker.begin(cue: .light, nowMs: 1_000)
+        _ = tracker.claim(nowMs: 1_010)
+        tracker.begin(cue: .medium, nowMs: 3_000)
+        XCTAssertEqual(tracker.claim(nowMs: 3_010), .medium)
+    }
+
+    func testStructuralTrackerAllowsLongHoldToComplete() {
+        var tracker = StructuralHapticTracker()
+        tracker.begin(cue: .light, nowMs: 1_000)
+        XCTAssertEqual(tracker.complete(nowMs: 10_000), .light)
+    }
+
+    func testStructuralTrackerConsumesSettledCueOnce() {
+        var tracker = StructuralHapticTracker()
+        tracker.begin(cue: .light, nowMs: 1_000)
+        _ = tracker.complete(nowMs: 1_010)
+        XCTAssertEqual(
+            tracker.consumeSettled(
+                nowMs: 1_050,
+                withinMs: StructuralHapticTracker.dismissalDuplicateWindowMs
+            ),
+            .light
+        )
+        XCTAssertNil(
+            tracker.consumeSettled(
+                nowMs: 1_060,
+                withinMs: StructuralHapticTracker.dismissalDuplicateWindowMs
+            )
+        )
+    }
+
+    func testStructuralTrackerSettledCueExpires() {
+        var tracker = StructuralHapticTracker()
+        tracker.begin(cue: .light, nowMs: 1_000)
+        _ = tracker.complete(nowMs: 1_010)
+        XCTAssertNil(
+            tracker.consumeSettled(
+                nowMs: 1_500,
+                withinMs: StructuralHapticTracker.dismissalDuplicateWindowMs
+            )
+        )
+    }
+
+    func testStructuralTrackerDuplicateDismissalWindow() {
+        var tracker = StructuralHapticTracker()
+        tracker.begin(cue: .light, nowMs: 1_000)
+        _ = tracker.complete(nowMs: 1_010)
+        XCTAssertTrue(
+            tracker.wasSettled(
+                nowMs: 1_300,
+                withinMs: StructuralHapticTracker.dismissalDuplicateWindowMs
+            )
+        )
+        XCTAssertFalse(
+            tracker.wasSettled(
+                nowMs: 1_500,
+                withinMs: StructuralHapticTracker.dismissalDuplicateWindowMs
+            )
+        )
+    }
+
+    func testStructuralTrackerNilCueDoesNotArmGesture() {
+        var tracker = StructuralHapticTracker()
+        tracker.begin(cue: nil, nowMs: 1_000)
+        XCTAssertFalse(tracker.hasPendingGesture)
+        XCTAssertNil(tracker.claim(nowMs: 1_010))
+        XCTAssertNil(tracker.complete(nowMs: 1_020))
+    }
+
     // MARK: Sheet gate — one tick per gesture, freshness window
 
     func testSheetGateSpendsExactlyOneTickPerGesture() {

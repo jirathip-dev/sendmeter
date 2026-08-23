@@ -220,6 +220,7 @@ struct ContributionHeatmapView: View {
                 height: 7 * cellSize + 6 * gap
             )
             .contentShape(Rectangle())
+            .hapticTapMuted()
             .gesture(
                 SpatialTapGesture()
                     .onEnded { value in
@@ -311,7 +312,7 @@ struct ContributionHeatmapView: View {
     private func select(_ date: String?) {
         if SelectionHaptics.valueChanged(tickedDate, date) {
             tickedDate = date
-            Haptics.shared.play(.selection)
+            Haptics.shared.playGesture(.selection)
         }
         selectedDate = date
     }

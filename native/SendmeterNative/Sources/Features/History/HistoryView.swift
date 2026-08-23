@@ -154,15 +154,15 @@ struct HistoryView: View {
                 }
             }
             .refreshable { await model.refreshAll(showSpinner: false) }
-            .sheet(item: $editingSession) { session in
+            .sheet(item: $editingSession, onDismiss: { Haptics.shared.sheetDismissed() }) { session in
                 SessionEditorSheet(session: session)
                     .onAppear { Haptics.shared.sheetPresented() }
             }
-            .sheet(isPresented: $showingTrash) {
+            .sheet(isPresented: $showingTrash, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 TrashView()
                     .onAppear { Haptics.shared.sheetPresented() }
             }
-            .sheet(isPresented: $assignOpen) {
+            .sheet(isPresented: $assignOpen, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 SelectionAssignSheet(recordings: selectedRecordings)
                     .onAppear { Haptics.shared.sheetPresented() }
             }
@@ -394,7 +394,7 @@ struct HistoryView: View {
             } label: {
                 row
             }
-            .buttonStyle(.plain)
+            .hapticButtonStyle(.plain)
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) { delete(session) } label: {
                     Label("Trash", systemImage: "trash")
@@ -418,7 +418,7 @@ struct HistoryView: View {
             } label: {
                 row
             }
-            .buttonStyle(.plain)
+            .hapticButtonStyle(.plain)
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) { delete(session) } label: {
                     Label("Trash", systemImage: "trash")
@@ -438,13 +438,13 @@ struct HistoryView: View {
     private func delete(_ session: SendmeterCore.Session) {
         // #656: a confirmed destructive action fires the medium tick once per
         // gesture (the swipe-action trash tap or the confirmation dialog's).
-        Haptics.shared.play(.medium)
+        Haptics.shared.playGesture(.medium)
         Task { await model.deleteSession(session) }
     }
 
     private func delete(_ recording: TindeqRecording) {
         // #656: see `delete(_ session:)`.
-        Haptics.shared.play(.medium)
+        Haptics.shared.playGesture(.medium)
         Task { await model.deleteRecording(recording) }
     }
 
@@ -462,7 +462,7 @@ struct HistoryView: View {
                 toggleTick: { toggleSelect(recording.id) }
             )
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) { delete(recording) } label: {
                 Label("Trash", systemImage: "trash")
@@ -513,7 +513,7 @@ struct HistoryView: View {
                     } label: {
                         if retryingUploads { ProgressView() } else { Text("Retry") }
                     }
-                    .buttonStyle(.bordered)
+                    .hapticButtonStyle(.bordered)
                     .disabled(retryingUploads)
                 }
                 .padding(12)
@@ -630,7 +630,7 @@ struct HistoryView: View {
                             Text(creating ? "Creating…" : "New session (\(selectedIDs.count))")
                         }
                     }
-                    .buttonStyle(PrimaryActionButtonStyle())
+                    .hapticButtonStyle(PrimaryActionButtonStyle())
                     .disabled(creating)
                     if !tindeqSessions.isEmpty {
                         Button {
@@ -639,11 +639,11 @@ struct HistoryView: View {
                             Haptics.shared.tap()
                             assignOpen = true
                         } label: { Text("Assign…") }
-                            .buttonStyle(.bordered)
+                            .hapticButtonStyle(.bordered)
                             .disabled(creating)
                     }
                     Button { selectedIDs = [] } label: { Text("Cancel") }
-                        .buttonStyle(.bordered)
+                        .hapticButtonStyle(.bordered)
                         .disabled(creating)
                 }
             }
@@ -731,7 +731,7 @@ private struct HistoryRecordingRow: View {
                         .font(.title3)
                         .foregroundStyle(ticked ? SendmeterStyle.primary : .secondary)
                 }
-                .buttonStyle(.plain)
+                .hapticButtonStyle(.plain)
                 .accessibilityLabel(ticked ? "Untick recording" : "Tick recording")
             }
             Image(systemName: recording.protocolMode == .reverseAction ? "arrow.left.and.right.circle.fill" : "waveform.path.ecg")
@@ -787,7 +787,7 @@ private struct HistoryFilterChip: View {
                     in: Capsule()
                 )
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
         .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }
@@ -979,7 +979,7 @@ struct ForceRecordingDetailView: View {
                                 Text("Save Changes")
                             }
                         }
-                        .buttonStyle(PrimaryActionButtonStyle())
+                        .hapticButtonStyle(PrimaryActionButtonStyle())
                         .disabled(isSaving)
                     }
                 }
@@ -1043,7 +1043,7 @@ struct ForceRecordingDetailView: View {
                     )
                     .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.bordered)
+                .hapticButtonStyle(.bordered)
                 .disabled(recording.groupID != nil)
             }
             .padding()
@@ -1054,7 +1054,7 @@ struct ForceRecordingDetailView: View {
         .task {
             await loadSamples()
         }
-        .sheet(isPresented: $showingLinkSheet) {
+        .sheet(isPresented: $showingLinkSheet, onDismiss: { Haptics.shared.sheetDismissed() }) {
             LinkRecordingSheet(recordings: [recording])
                 .onAppear { Haptics.shared.sheetPresented() }
         }
@@ -1129,7 +1129,7 @@ private struct LinkRecordingSheet: View {
                             .font(.caption)
                     }
                 }
-                .buttonStyle(.plain)
+                .hapticButtonStyle(.plain)
             }
             .navigationTitle(recordings.count > 1 ? "Assign \(recordings.count) recordings" : "Link to Session")
             .navigationBarTitleDisplayMode(.inline)
@@ -1168,7 +1168,7 @@ private struct SelectionAssignSheet: View {
                         }
                     }
                 }
-                .buttonStyle(.plain)
+                .hapticButtonStyle(.plain)
             }
             .navigationTitle("Assign \(recordings.count) recording\(recordings.count == 1 ? "" : "s")")
             .navigationBarTitleDisplayMode(.inline)
@@ -1212,15 +1212,22 @@ private struct TrashView: View {
                             }
                             Spacer()
                             Menu {
-                                Button { Task { await model.restoreSession(session) } } label: {
+                                Button {
+                                    Haptics.shared.playGesture(.light)
+                                    Task { await model.restoreSession(session) }
+                                } label: {
                                     Label("Restore", systemImage: "arrow.uturn.backward")
                                 }
-                                Button(role: .destructive) { sessionToPurge = session } label: {
+                                Button(role: .destructive) {
+                                    Haptics.shared.playGesture(.medium)
+                                    sessionToPurge = session
+                                } label: {
                                     Label("Delete Permanently", systemImage: "trash.slash")
                                 }
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                             }
+                            .hapticTap()
                         }
                     }
                 } else {
@@ -1234,15 +1241,22 @@ private struct TrashView: View {
                             }
                             Spacer()
                             Menu {
-                                Button { Task { await model.restoreRecording(recording) } } label: {
+                                Button {
+                                    Haptics.shared.playGesture(.light)
+                                    Task { await model.restoreRecording(recording) }
+                                } label: {
                                     Label("Restore", systemImage: "arrow.uturn.backward")
                                 }
-                                Button(role: .destructive) { recordingToPurge = recording } label: {
+                                Button(role: .destructive) {
+                                    Haptics.shared.playGesture(.medium)
+                                    recordingToPurge = recording
+                                } label: {
                                     Label("Delete Permanently", systemImage: "trash.slash")
                                 }
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                             }
+                            .hapticTap()
                         }
                     }
                 }
@@ -1275,7 +1289,7 @@ private struct TrashView: View {
                     recordingToPurge = nil
                     // #656: a confirmed destructive action fires the medium
                     // tick once per gesture.
-                    Haptics.shared.play(.medium)
+                    Haptics.shared.playGesture(.medium)
                     Task {
                         if let session { await model.purgeSession(session) }
                         if let recording { await model.purgeRecording(recording) }

@@ -84,6 +84,7 @@ struct ZoneFocusCard: View {
                 .accessibilityLabel("Training balance for \(exercise), last four weeks")
                 .accessibilityHint("Opens the training balance detail")
                 .accessibilityAction { detailOpen = true }
+                .hapticTap()
                 .onTapGesture { detailOpen = true }
 
                 FocusNextButton(
@@ -93,7 +94,7 @@ struct ZoneFocusCard: View {
                     arm: { onPick(recommendation.zone) }
                 )
             }
-            .sheet(isPresented: $detailOpen) {
+            .sheet(isPresented: $detailOpen, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 TrainingBalanceDetailView(
                     recordings: recordings,
                     exercise: exercise,
@@ -103,6 +104,7 @@ struct ZoneFocusCard: View {
                     recommendation: recommendation,
                     curveInput: curveInput
                 )
+                .onAppear { Haptics.shared.sheetPresented() }
             }
         }
     }
@@ -208,7 +210,7 @@ private struct FocusNextButton: View {
                     .stroke(color.opacity(0.28), lineWidth: 1)
             )
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
         .disabled(disabled)
         .accessibilityLabel("Focus next: \(recommendation.zone.label)")
         .accessibilityValue(recommendation.reason)

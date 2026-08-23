@@ -81,7 +81,7 @@ struct LoginView: View {
                                     Text(mode.rawValue)
                                 }
                             }
-                            .buttonStyle(PrimaryActionButtonStyle())
+                            .hapticButtonStyle(PrimaryActionButtonStyle())
                             .disabled(email.isEmpty || password.count < 6 || isWorking)
 
                             Divider()
@@ -92,7 +92,7 @@ struct LoginView: View {
                                 Label("Sign in with Passkey", systemImage: "person.badge.key.fill")
                                     .frame(maxWidth: .infinity, minHeight: 44)
                             }
-                            .buttonStyle(.bordered)
+                            .hapticButtonStyle(.bordered)
 
                             // #631: native Sign in with Apple — same
                             // nonce contract as the web: the identity

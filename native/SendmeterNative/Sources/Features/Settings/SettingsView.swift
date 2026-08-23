@@ -66,15 +66,15 @@ struct SettingsView: View {
                     self.tindeqLowBattery = model.tindeq.lowBattery
                 }
             }
-            .sheet(isPresented: $showingBlocks) {
+            .sheet(isPresented: $showingBlocks, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 PhasesView()
                     .onAppear { Haptics.shared.sheetPresented() }
             }
-            .sheet(isPresented: $showingExercises) {
+            .sheet(isPresented: $showingExercises, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 TagManagerView()
                     .onAppear { Haptics.shared.sheetPresented() }
             }
-            .sheet(isPresented: $showingDeleteAccount) {
+            .sheet(isPresented: $showingDeleteAccount, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 DeleteAccountSheet()
                     .onAppear { Haptics.shared.sheetPresented() }
             }
@@ -86,7 +86,7 @@ struct SettingsView: View {
                 Button("Sign Out", role: .destructive) {
                     // #656: a confirmed destructive action carries the medium
                     // tick — once per gesture (the dialog's confirm tap).
-                    Haptics.shared.play(.medium)
+                    Haptics.shared.playGesture(.medium)
                     model.resolveSignOutRemainder(.signOut)
                 }
                 Button("Stay Signed In", role: .cancel) {
@@ -120,7 +120,7 @@ struct SettingsView: View {
                         // #656: a confirmed destructive action carries the
                         // medium tick — once per gesture (the dialog's
                         // confirm tap).
-                        Haptics.shared.play(.medium)
+                        Haptics.shared.playGesture(.medium)
                         removingPasskeyIDs.insert(passkey.id)
                         Task {
                             await model.removePasskey(passkey.id)
@@ -235,7 +235,7 @@ struct SettingsView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .buttonStyle(.plain)
+            .hapticButtonStyle(SwiftUI.PlainButtonStyle())
             // #631: the exercise tag registry (SL-92) — rename a tag across
             // every recording, or hide it from the Force picker + History
             // list, without deleting anything.
@@ -254,7 +254,7 @@ struct SettingsView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .buttonStyle(.plain)
+            .hapticButtonStyle(SwiftUI.PlainButtonStyle())
             LabeledContent("Sessions", value: "\(model.sessions.count)")
             LabeledContent("Force recordings", value: "\(model.recordings.count)")
             LabeledContent("Guided protocols", value: "\(model.presets.count)")
@@ -452,7 +452,7 @@ struct SettingsView: View {
                 // `signOut()` is in flight), so the #222 "disabled fires
                 // nothing" rule does not apply; the remainder dialog's tick
                 // is an additional confirm only when the queue left writes.
-                Haptics.shared.play(.medium)
+                Haptics.shared.playGesture(.medium)
                 Task { await model.signOut() }
             } label: {
                 Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
@@ -484,7 +484,7 @@ struct SettingsView: View {
                 } label: {
                     Image(systemName: "trash")
                 }
-                .buttonStyle(.borderless)
+                .hapticButtonStyle(SwiftUI.BorderlessButtonStyle())
             }
         }
     }
@@ -631,14 +631,14 @@ struct SettingsView: View {
                 } label: {
                     Text("Retry")
                 }
-                .buttonStyle(.bordered)
+                .hapticButtonStyle(SwiftUI.BorderedButtonStyle())
                 .disabled(retryingQuarantined)
                 Button(role: .destructive) {
                     discardConfirmation = item
                 } label: {
                     Text("Discard")
                 }
-                .buttonStyle(.bordered)
+                .hapticButtonStyle(SwiftUI.BorderedButtonStyle())
                 .disabled(retryingQuarantined)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -759,7 +759,7 @@ private struct DeleteAccountSheet: View {
                     Button(role: .destructive) {
                         // #656: the confirmed destructive action fires the
                         // medium tick once per gesture.
-                        Haptics.shared.play(.medium)
+                        Haptics.shared.playGesture(.medium)
                         deleting = true
                         Task {
                             await model.deleteAccount()

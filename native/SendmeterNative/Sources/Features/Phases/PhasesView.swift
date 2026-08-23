@@ -172,7 +172,10 @@ private struct CurrentBlockCard: View {
                 HStack(spacing: 12) {
                     Menu {
                         ForEach(PhaseCatalog.all.filter { $0.id != phase.id }) { candidate in
-                            Button(candidate.name) { onPropose(candidate.id) }
+                            Button(candidate.name) {
+                                Haptics.shared.playGesture(.light)
+                                onPropose(candidate.id)
+                            }
                         }
                     } label: {
                         Label("Change block", systemImage: "arrow.triangle.2.circlepath")
@@ -182,6 +185,7 @@ private struct CurrentBlockCard: View {
                             .background(SendmeterStyle.phaseColor(phase.id).opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .foregroundStyle(SendmeterStyle.phaseColor(phase.id))
                     }
+                    .hapticTap()
 
                     if let next = phase.id.nextLogical {
                         Button("End block") { onPropose(next) }
@@ -230,7 +234,7 @@ private struct GuidanceCard: View {
                 }
                 if guidance.state == .considerNext, let next = guidance.nextPhase {
                     Button("Review \(PhaseCatalog.definition(for: next).name)") { onReview(next) }
-                        .buttonStyle(.borderedProminent)
+                        .hapticButtonStyle(.borderedProminent)
                         .tint(SendmeterStyle.phaseColor(next))
                 }
             }
@@ -340,7 +344,7 @@ private struct PhaseSelectionCard: View {
                 }
                 if !isCurrent {
                     Button("Start \(phase.name) Block", action: select)
-                        .buttonStyle(.borderedProminent)
+                        .hapticButtonStyle(.borderedProminent)
                         .tint(SendmeterStyle.phaseColor(phase.id))
                 }
             }

@@ -62,7 +62,7 @@ struct ActivityMixBar: View {
                                         height: hitTargetHeight
                                     )
                             }
-                            .buttonStyle(.plain)
+                            .hapticButtonStyle(.plain)
                             .frame(
                                 width: total * CGFloat(activity.percentage) / 100,
                                 height: hitTargetHeight
@@ -86,6 +86,7 @@ struct ActivityMixBar: View {
                     Color.clear
                         .frame(width: total, height: hitTargetHeight)
                         .contentShape(Rectangle())
+                        .hapticTapMuted()
                         .gesture(
                             SpatialTapGesture()
                                 .onEnded { value in
@@ -172,7 +173,7 @@ struct ActivityMixBar: View {
     private func setSelection(_ index: Int?) {
         if SelectionHaptics.valueChanged(tickedIndex, index) {
             tickedIndex = index
-            Haptics.shared.play(.selection)
+            Haptics.shared.playGesture(.selection)
         }
         selectedIndex = index
     }

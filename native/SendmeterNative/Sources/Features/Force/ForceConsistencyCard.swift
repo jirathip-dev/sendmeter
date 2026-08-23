@@ -124,7 +124,7 @@ struct ForceConsistencyCard: View {
                         )
                 )
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
         .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 

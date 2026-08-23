@@ -175,7 +175,7 @@ struct SessionDetailView: View {
                     } label: {
                         sessionRecordingRow(recording)
                     }
-                    .buttonStyle(.plain)
+                    .hapticButtonStyle(.plain)
                 }
             }
         }

@@ -671,6 +671,7 @@ private struct GuidedGlassButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .hapticTap(structuralHapticLevel)
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, 10)
@@ -681,6 +682,10 @@ private struct GuidedGlassButtonStyle: ButtonStyle {
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
     }
+}
+
+extension GuidedGlassButtonStyle: StructuralHapticStyle {
+    var structuralHapticLevel: HapticTapLevel { .normal }
 }
 
 private struct GuidedForceProtocolView: View {
@@ -818,7 +823,7 @@ private struct GuidedForceProtocolView: View {
                 Image(systemName: "chevron.down")
                     .font(.headline.weight(.bold))
             }
-            .buttonStyle(GuidedGlassButtonStyle(tint: .primary))
+            .hapticButtonStyle(GuidedGlassButtonStyle(tint: .primary))
             .accessibilityLabel("Minimize guided protocol")
             .accessibilityHint("The protocol keeps running and can be resumed from the Force tab")
 
@@ -837,7 +842,7 @@ private struct GuidedForceProtocolView: View {
             Spacer(minLength: 4)
 
             Button("End", action: endSession)
-                .buttonStyle(GuidedGlassButtonStyle(tint: SendmeterStyle.alert))
+                .hapticButtonStyle(GuidedGlassButtonStyle(tint: SendmeterStyle.alert))
                 .accessibilityHint("Save the current pull if needed and end this protocol")
                 .disabled(session.isAdvancing || session.isPausing)
         }
@@ -1026,7 +1031,7 @@ private struct GuidedForceProtocolView: View {
                             : (session.run.isPaused ? "play.fill" : "pause.fill")
                     )
                 }
-                .buttonStyle(GuidedGlassButtonStyle(tint: SendmeterStyle.caution))
+                .hapticButtonStyle(GuidedGlassButtonStyle(tint: SendmeterStyle.caution))
                 .disabled(session.isPausing)
                 .accessibilityHint(session.run.isPaused ? "Resume the hold timer" : "Pause and save the active pull")
             }
@@ -1037,7 +1042,7 @@ private struct GuidedForceProtocolView: View {
                 } label: {
                     Label("Skip", systemImage: "forward.fill")
                 }
-                .buttonStyle(GuidedGlassButtonStyle(tint: .primary))
+                .hapticButtonStyle(GuidedGlassButtonStyle(tint: .primary))
                 .disabled(session.isAdvancing || session.isPausing)
                 .accessibilityHint("Skip this guided phase")
             }
@@ -1067,7 +1072,7 @@ private struct GuidedForceProtocolView: View {
             .frame(width: layout.actionDiameter, height: layout.actionDiameter)
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
         .disabled(session.isAdvancing || session.isPausing)
         .accessibilityLabel(
             session.run.isComplete || session.interrupted
@@ -1597,7 +1602,7 @@ struct ForceView: View {
                         delete: { preset in
                             // #656 (review F14): deleting a protocol preset is
                             // a confirm/destructive action — medium tick.
-                            Haptics.shared.play(.medium)
+                            Haptics.shared.playGesture(.medium)
                             Task { await model.deletePreset(preset) }
                         },
                         disabled: guidedSessionIsActive || guidedLaunchInFlight
@@ -1665,15 +1670,15 @@ struct ForceView: View {
                 guard !guidedMinimizeRequested else { return }
                 teardownGuidedSessionIfNeeded()
             }
-            .sheet(item: $editingPreset) { preset in
+            .sheet(item: $editingPreset, onDismiss: { Haptics.shared.sheetDismissed() }) { preset in
                 ForcePresetEditor(preset: preset, isNew: false)
                     .onAppear { Haptics.shared.sheetPresented() }
             }
-            .sheet(isPresented: $creatingPreset) {
+            .sheet(isPresented: $creatingPreset, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 ForcePresetEditor(preset: Self.defaultPreset(), isNew: true)
                     .onAppear { Haptics.shared.sheetPresented() }
             }
-            .fullScreenCover(isPresented: $guidedFullscreenPresented) {
+            .fullScreenCover(isPresented: $guidedFullscreenPresented, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 if let guidedSession {
                     GuidedForceProtocolView(
                         session: guidedSession,
@@ -1685,6 +1690,7 @@ struct ForceView: View {
                             clearGuidedSession(guidedSession)
                         }
                     )
+                    .onAppear { Haptics.shared.sheetPresented() }
                 } else {
                     Color.clear
                 }
@@ -1701,7 +1707,7 @@ struct ForceView: View {
     /// #222 rule, where a genuinely disabled control gets no cue at all.
     private func refuseAction(_ message: String) {
         model.errorMessage = message
-        Haptics.shared.play(RefusedActionHaptics.cue(tappableAndRefused: true))
+        Haptics.shared.playGesture(RefusedActionHaptics.cue(tappableAndRefused: true))
     }
 
     private func registerGuidedTeardown(for session: GuidedForceProtocolSession) {
@@ -2061,12 +2067,12 @@ private struct GuidedForceResumeCard: View {
                 }
                 Spacer(minLength: 8)
                 Button("Resume", action: onResume)
-                    .buttonStyle(.borderedProminent)
+                    .hapticButtonStyle(.borderedProminent)
                     .controlSize(.regular)
                     .disabled(session.isAdvancing || session.isPausing)
                     .accessibilityHint("Reopen the guided protocol without stopping it")
                 Button("End", role: .destructive, action: onEnd)
-                    .buttonStyle(.bordered)
+                    .hapticButtonStyle(.bordered)
                     .disabled(session.isAdvancing || session.isPausing)
                     .accessibilityHint("Save the current pull if needed and end this protocol")
             }
@@ -2204,13 +2210,13 @@ private struct ForceDeviceCard: View {
                             .font(.subheadline.weight(.semibold))
                         HStack {
                             Button("Save Recovered Pull", action: saveRecovered)
-                                .buttonStyle(.borderedProminent)
+                                .hapticButtonStyle(.borderedProminent)
                                 .disabled(savingSummary || guidedSessionActive)
                             Button("Discard", role: .destructive) {
                                 discardIsRecovered = true
                                 showingDiscardConfirmation = true
                             }
-                            .buttonStyle(.bordered)
+                            .hapticButtonStyle(.bordered)
                             .disabled(savingSummary || guidedSessionActive)
                         }
                     }
@@ -2222,13 +2228,13 @@ private struct ForceDeviceCard: View {
                             .font(.subheadline.weight(.semibold))
                         HStack {
                             Button("Save Completed Pull", action: saveCompleted)
-                                .buttonStyle(.borderedProminent)
+                                .hapticButtonStyle(.borderedProminent)
                                 .disabled(savingSummary || guidedSessionActive)
                             Button("Discard", role: .destructive) {
                                 discardIsRecovered = false
                                 showingDiscardConfirmation = true
                             }
-                            .buttonStyle(.bordered)
+                            .hapticButtonStyle(.bordered)
                             .disabled(savingSummary || guidedSessionActive)
                         }
                     }
@@ -2241,7 +2247,7 @@ private struct ForceDeviceCard: View {
             Button("Discard", role: .destructive) {
                 // #656: a confirmed destructive action fires the medium tick
                 // once per gesture.
-                Haptics.shared.play(.medium)
+                Haptics.shared.playGesture(.medium)
                 if discardIsRecovered { discardRecovered() }
                 else { discardCompleted() }
             }
@@ -2265,7 +2271,7 @@ private struct ForceDeviceCard: View {
             } label: {
                 Label("Connect Progressor", systemImage: "antenna.radiowaves.left.and.right")
             }
-            .buttonStyle(PrimaryActionButtonStyle())
+            .hapticButtonStyle(PrimaryActionButtonStyle())
         case .scanning, .connecting:
             HStack {
                 ProgressView()
@@ -2286,7 +2292,7 @@ private struct ForceDeviceCard: View {
                         Button(action: stopAndSave) {
                             Label("Stop & Save", systemImage: "stop.fill")
                         }
-                        .buttonStyle(PrimaryActionButtonStyle())
+                        .hapticButtonStyle(PrimaryActionButtonStyle())
                     }
                 } else if handsFreeArmed {
                     VStack(spacing: 8) {
@@ -2296,22 +2302,22 @@ private struct ForceDeviceCard: View {
                         Button("Cancel", role: .destructive) {
                             // #656 (review F14): disarming hands-free is a
                             // destructive action — medium tick.
-                            Haptics.shared.play(.medium)
+                            Haptics.shared.playGesture(.medium)
                             cancelArm()
                         }
-                        .buttonStyle(.bordered)
+                        .hapticButtonStyle(.bordered)
                     }
                 } else if handsFreeEnabled {
                     Button(action: armHandsFree) {
                         Label("Arm Hands-free", systemImage: "scope")
                     }
-                    .buttonStyle(PrimaryActionButtonStyle())
+                    .hapticButtonStyle(PrimaryActionButtonStyle())
                     .disabled(device.hasUnsavedRecording)
                 } else {
                     Button(action: start) {
                         Label("Start Pull", systemImage: "play.fill")
                     }
-                    .buttonStyle(PrimaryActionButtonStyle())
+                    .hapticButtonStyle(PrimaryActionButtonStyle())
                     .disabled(device.hasUnsavedRecording)
                 }
                 if device.hasUnsavedRecording {
@@ -2326,16 +2332,16 @@ private struct ForceDeviceCard: View {
                     } label: {
                         Label("Tare", systemImage: "scalemass")
                     }
-                    .buttonStyle(.bordered)
+                    .hapticButtonStyle(.bordered)
                     Button {
                         do { try device.refreshBattery() } catch { }
                     } label: {
                         Label("Battery", systemImage: "battery.100percent")
                     }
-                    .buttonStyle(.bordered)
+                    .hapticButtonStyle(.bordered)
                     Spacer()
                     Button("Disconnect", role: .destructive) { device.disconnect() }
-                        .buttonStyle(.borderless)
+                        .hapticButtonStyle(.borderless)
                 }
 
                 Toggle(isOn: $handsFreeEnabled) {
@@ -2356,7 +2362,7 @@ private struct ForceDeviceCard: View {
                     Label("Stop & Save", systemImage: "stop.fill")
                 }
             }
-            .buttonStyle(PrimaryActionButtonStyle())
+            .hapticButtonStyle(PrimaryActionButtonStyle())
             .disabled(savingSummary)
         }
     }
@@ -2629,7 +2635,7 @@ private struct ForceMetadataCard: View {
                                 )
                                 .accessibilityLabel("New exercise")
                             Button("Add", action: commitDraft)
-                                .buttonStyle(.borderedProminent)
+                                .hapticButtonStyle(.borderedProminent)
                                 .disabled(locked || trimmedDraft.isEmpty)
                                 .accessibilityLabel("Add exercise")
                         }
@@ -2855,7 +2861,7 @@ private struct ForceMetadataCard: View {
                         )
                 )
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
         .disabled(locked)
         .accessibilityAddTraits(active ? [.isSelected] : [])
         .accessibilityLabel(Text(accessibilityLabel ?? label))
@@ -2887,7 +2893,7 @@ private struct ForceMetadataCard: View {
                         .stroke(color.opacity(active ? 0 : 0.35), lineWidth: 1)
                 )
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
         .disabled(disabled)
         .accessibilityAddTraits(active ? [.isSelected] : [])
         .accessibilityLabel(label)
@@ -3098,7 +3104,7 @@ private struct ForceProtocolLibraryCard: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Button("Create Protocol", action: create)
-                        .buttonStyle(.bordered)
+                        .hapticButtonStyle(.bordered)
                 } else {
                     ForEach(presets) { preset in
                         HStack(spacing: 12) {
@@ -3111,15 +3117,25 @@ private struct ForceProtocolLibraryCard: View {
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .buttonStyle(.plain)
+                            .hapticButtonStyle(.plain)
                             Menu {
-                                Button { run(preset) } label: { Label("Run", systemImage: "play.fill") }
-                                Button { edit(preset) } label: { Label("Edit", systemImage: "pencil") }
-                                Button(role: .destructive) { delete(preset) } label: { Label("Delete", systemImage: "trash") }
+                                Button {
+                                    Haptics.shared.playGesture(.light)
+                                    run(preset)
+                                } label: { Label("Run", systemImage: "play.fill") }
+                                Button {
+                                    Haptics.shared.playGesture(.light)
+                                    edit(preset)
+                                } label: { Label("Edit", systemImage: "pencil") }
+                                Button(role: .destructive) {
+                                    Haptics.shared.playGesture(.medium)
+                                    delete(preset)
+                                } label: { Label("Delete", systemImage: "trash") }
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                                     .font(.title3)
                             }
+                            .hapticTap()
                         }
                         if preset.id != presets.last?.id { Divider() }
                     }

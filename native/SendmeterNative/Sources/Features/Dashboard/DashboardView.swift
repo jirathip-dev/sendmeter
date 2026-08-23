@@ -62,11 +62,11 @@ struct DashboardView: View {
                 // blank, never fabricated.
                 await model.silentHealthRefresh(trigger: .appear)
             }
-            .sheet(isPresented: $showLog) {
+            .sheet(isPresented: $showLog, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 LogSessionSheet()
                     .onAppear { Haptics.shared.sheetPresented() }
             }
-            .sheet(isPresented: $showPhases) {
+            .sheet(isPresented: $showPhases, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 PhasesView()
                     .onAppear { Haptics.shared.sheetPresented() }
             }
@@ -295,7 +295,7 @@ private struct PhaseCard: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
     }
 }
 
