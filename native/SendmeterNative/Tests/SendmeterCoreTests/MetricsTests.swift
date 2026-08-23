@@ -4,6 +4,19 @@ import XCTest
 final class MetricsTests: XCTestCase {
     private let bangkok = TimeZone(identifier: "Asia/Bangkok")!
 
+    private func session(_ date: String, _ load: Double) -> Session {
+        Session(
+            id: UUID(),
+            date: date,
+            type: "board",
+            typeLabel: "Board Climbing",
+            durationMinutes: 60,
+            rpe: 6,
+            load: load,
+            phase: .strength
+        )
+    }
+
     func testACWRStatusThresholdsMatchProductContract() {
         XCTAssertEqual(TrainingMetrics.acwrStatus(nil), .noData)
         XCTAssertEqual(TrainingMetrics.acwrStatus(0.69), .underTraining)
@@ -49,6 +62,46 @@ final class MetricsTests: XCTestCase {
         XCTAssertEqual(data.chronic, 1_260, accuracy: 0.0001)
         XCTAssertNotNil(data.ratio)
         XCTAssertGreaterThan(data.ratio!, 1)
+    }
+
+    /// #770: the weekly bars and delta chip compare generated Gregorian
+    /// `YYYY-MM-DD` window keys against `session.date`. A legacy Buddhist
+    /// date or ISO-timestamp date must normalize to the same day and land in
+    /// the correct week's total, exactly like `TrainingLoad.dailyLoads`.
+    func testWeeklyLoadsNormalizeLegacyAndTimestampDates() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-06-14", timeZone: bangkok))
+        let weeks = TrainingMetrics.weeklyLoads(
+            sessions: [
+                session("2569-06-11", 100),
+                session("2026-06-11T00:00:00Z", 200)
+            ],
+            referenceDate: reference,
+            timeZone: bangkok
+        )
+
+        XCTAssertEqual(weeks.map(\.label), ["3w", "2w", "1w", "Now"])
+        XCTAssertEqual(weeks.last?.total, 300)
+        XCTAssertEqual(weeks.dropLast().map(\.total), [0, 0, 0])
+    }
+
+    /// The sweep found the same raw `session.date` comparison in
+    /// `computeACWR`; both the acute/chronic windows and the EWMA state must
+    /// include a legacy session instead of dropping it.
+    func testComputeACWRWindowIncludesLegacySessionDates() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-06-14", timeZone: bangkok))
+        let data = TrainingMetrics.computeACWR(
+            sessions: [
+                session("2569-06-11", 100),
+                session("2026-06-11T00:00:00Z", 200),
+                session("2026-06-11", 300)
+            ],
+            referenceDate: reference,
+            timeZone: bangkok
+        )
+
+        XCTAssertEqual(data.acute, 600)
+        XCTAssertEqual(data.chronic, 150)
+        XCTAssertNotNil(data.ratio)
     }
 
     func testPhaseAgeUsesCanonicalOpenPeriod() {

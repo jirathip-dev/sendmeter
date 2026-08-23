@@ -102,6 +102,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Training Load: the Daily Load heatmap no longer renders all-gray when a session is dated up to a week ahead — a future-dated session no longer inflates the color scale, which was washing real load days down to the faintest level.
 - Native Training Load: the Daily Load heatmap no longer renders training days nearly gray when one unusually large past day dominates the intensity scale — the scale stays anchored to the typical load, so real days keep their activity hue and visible shading.
 - Native Training Load: the Daily Load heatmap no longer treats a trained day as rest when its stored date arrives as a timestamp or an old Buddhist-era date — session dates are normalized to the same local calendar day the heatmap uses for its lookup.
+- Native Training Load: weekly bars and the delta chip no longer drop sessions whose stored date arrives as a timestamp or an old Buddhist-era date — session dates are normalized to the same local calendar day the load windows use.
 - Native Dashboard: the ACWR projection chart's `Now` marker no longer collides with an early crossing weekday label; the current ratio remains visible in the Dashboard's ACWR cards.
 - Native Dashboard: Send Conditions and Training Block cards now keep the same height while weather data loads or changes state, eliminating the row's layout jump.
 - Native: switching accounts during a refresh or Force save no longer lets data from the previous account appear in the new account.
