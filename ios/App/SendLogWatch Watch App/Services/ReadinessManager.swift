@@ -172,6 +172,10 @@ final class ReadinessManager {
             }
         }
 
+        // Contract: `result.errorMessage` is rendered verbatim in the watch UI.
+        // The phone-side producer must supply user-facing copy (for example via
+        // `ErrorText.message(for:)`), never `error.localizedDescription`, so a
+        // future producer cannot leak raw diagnostics into readiness errors.
         switch result.status {
         case .success:
             syncState = result.freshness == .fresh ? .fresh : .cached
@@ -303,7 +307,7 @@ final class ReadinessManager {
                     Task { @MainActor in
                         guard let self else { return }
                         self.queueFallback(request)
-                        self.errorMsg = error.localizedDescription
+                        self.errorMsg = ErrorText.message(for: .readinessUnavailable)
                     }
                 }
             )

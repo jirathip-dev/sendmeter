@@ -529,7 +529,10 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
 
         try await waitUntil { await sessions.count() == 1 }
         XCTAssertTrue(RecordingLossNotice.consume())
-        XCTAssertEqual(manager.errorMsg, "Interrupted force rep was not saved — recovery state was missing.")
+        XCTAssertEqual(
+            manager.errorMsg,
+            ErrorText.message(for: .repNotSavedOnWatch)
+        )
         let loggedSessions = await sessions.snapshot()
         let logged = try XCTUnwrap(loggedSessions.first)
         XCTAssertEqual(logged.groupId, groupId)
@@ -556,9 +559,15 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         try await waitUntil { !manager.saving }
         let recordingCount = await recordings.count()
         XCTAssertEqual(recordingCount, 1)
-        XCTAssertEqual(manager.savedMsg, "Recovered rep was not saved")
+        XCTAssertEqual(
+            manager.savedMsg,
+            ErrorText.message(for: .repNotSavedOnWatch)
+        )
         XCTAssertFalse(manager.savedMsg?.localizedCaseInsensitiveContains("pull") ?? true)
-        XCTAssertEqual(manager.errorMsg, "Rep not saved — couldn't write to the watch.")
+        XCTAssertEqual(
+            manager.errorMsg,
+            ErrorText.message(for: .repNotSavedOnWatch)
+        )
         XCTAssertTrue(RecordingLossNotice.consume())
     }
 

@@ -240,12 +240,12 @@ struct WorkoutView: View {
                 isSaving = false
             }
         } catch WorkoutEngineError.emptyWorkout {
-            model.errorMessage = "Record at least one attempt before finishing the Manual workout."
+            model.errorMessage = UserFacingError.message(for: .missingAttempt)
             // #222: the Finish button is deliberately kept clickable so the
             // tap can say why — a refused finish must not feel accepted.
             Haptics.shared.playGesture(RefusedActionHaptics.cue(tappableAndRefused: true))
         } catch {
-            model.errorMessage = error.localizedDescription
+            model.errorMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -380,7 +380,7 @@ private struct ActiveWorkoutCard: View {
                                 }
                                 self.engine = copy
                             } catch {
-                                model.errorMessage = error.localizedDescription
+                                model.errorMessage = UserFacingError.message(for: error)
                             }
                         } label: {
                             Label(

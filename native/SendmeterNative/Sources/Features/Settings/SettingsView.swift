@@ -32,6 +32,9 @@ struct SettingsView: View {
     /// A set (not a single `UUID?`) so finishing one removal can't clear
     /// another row's in-flight state (review F-blocking race on #712).
     @State private var removingPasskeyIDs: Set<UUID> = []
+    /// #758/#757: raw diagnostic details stay behind an explicit support gate.
+    /// Normal rows above show only friendly copy; expanding this is opt-in.
+    @State private var showingTechnicalDiagnostics = false
 
     var body: some View {
         NavigationStack {
@@ -560,7 +563,7 @@ struct SettingsView: View {
             if let breadcrumb = model.queueBreadcrumbs.first {
                 LabeledContent("Most recent recovery", value: breadcrumb.leftQueueAt.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
-                Text("\(breadcrumb.reason) · \(breadcrumb.attempts) failed attempt\(breadcrumb.attempts == 1 ? "" : "s")")
+                Text("\(UserFacingError.message(forQueueBreadcrumbReason: breadcrumb.reason)) · \(breadcrumb.attempts) failed attempt\(breadcrumb.attempts == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -618,7 +621,89 @@ struct SettingsView: View {
                     authEventRow(entry)
                 }
             }
+            if hasTechnicalDiagnostics {
+                Button {
+                    showingTechnicalDiagnostics.toggle()
+                } label: {
+                    Label(
+                        showingTechnicalDiagnostics ? "Hide technical details" : "Show technical details",
+                        systemImage: "doc.text.magnifyingglass"
+                    )
+                }
+                .font(.caption)
+                if showingTechnicalDiagnostics {
+                    rawDiagnosticsSection
+                }
+            }
         }
+    }
+
+    private var hasTechnicalDiagnostics: Bool {
+        model.authEventLog.contains { $0.detail != nil }
+            || model.quarantinedWrites?.contains {
+                $0.rejection.code != nil || !$0.rejection.detail.isEmpty
+            } == true
+    }
+
+    /// The opt-in technical details for support. This is the only normal-path
+    /// surface that may show raw server codes and diagnostics (#758 AC 3);
+    /// the inline rows above intentionally stay friendly.
+    private var rawDiagnosticsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let quarantined = model.quarantinedWrites {
+                let rawQuarantined = quarantined.filter {
+                    $0.rejection.code != nil || !$0.rejection.detail.isEmpty
+                }
+                if !rawQuarantined.isEmpty {
+                    healthSubheader(
+                        "Rejected-upload diagnostics",
+                        systemImage: "externaldrive.badge.exclamationmark"
+                    )
+                    ForEach(rawQuarantined) { item in
+                        quarantineDiagnosticsRow(item)
+                    }
+                }
+            }
+            let rawAuthEvents = model.authEventLog.reversed().filter { $0.detail != nil }
+            if !rawAuthEvents.isEmpty {
+                healthSubheader("Auth diagnostics", systemImage: "key")
+                ForEach(rawAuthEvents) { entry in
+                    authDiagnosticsRow(entry)
+                }
+            }
+        }
+    }
+
+    private func quarantineDiagnosticsRow(_ item: QuarantinedWrite) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(item.kind) · \(item.rejection.at.formatted(date: .abbreviated, time: .shortened))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let code = item.rejection.code {
+                LabeledContent("Server code", value: code)
+                    .font(.caption)
+            }
+            if !item.rejection.detail.isEmpty {
+                Text(item.rejection.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func authDiagnosticsRow(_ entry: AuthEventEntry) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(authCategoryTitle(entry.category)) · \(entry.occurredAt.formatted(date: .abbreviated, time: .shortened))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let detail = entry.detail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     /// #675: one quarantined item — its kind + when it was rejected, and the
@@ -639,16 +724,10 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if let code = item.rejection.code {
-                LabeledContent("Server code", value: code)
-                    .font(.caption)
-            }
-            if !item.rejection.detail.isEmpty {
-                Text(item.rejection.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
+            Text(UserFacingError.message(for: item.rejection))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
             HStack {
                 Button {
                     retryingQuarantined = true
@@ -688,7 +767,11 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if let detail = entry.detail {
+            if entry.category == .failure, let detail = entry.detail {
+                Text(UserFacingError.message(forDiagnosticDetail: detail))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let detail = entry.detail {
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)

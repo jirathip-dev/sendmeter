@@ -2903,7 +2903,7 @@ public final class AppModel: ObservableObject {
         guard expectedScope == nil || accountScope == expectedScope else { return }
         toastMessage = ok
             ? "Gauge session logged to history"
-            : "Couldn't log gauge session"
+            : "Couldn\u{2019}t log gauge session. Try again."
     }
 
     /// #628: a guided protocol's run owns the disconnect-triggered session
@@ -2992,7 +2992,7 @@ public final class AppModel: ObservableObject {
             try tindeq.armHandsFree()
         } catch {
             handsFree.handleDisconnected()
-            errorMessage = error.localizedDescription
+            errorMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -3040,7 +3040,7 @@ public final class AppModel: ObservableObject {
             } else if outcome.shouldDisarmHandsFree {
                 handsFree.disarm()
                 if outcome.shouldReportHandsFreeFailure {
-                    errorMessage = "Hands-free pull couldn't be saved."
+                    errorMessage = UserFacingError.message(for: .saveFailed)
                 }
             }
         }
@@ -3092,7 +3092,7 @@ public final class AppModel: ObservableObject {
             // `saveForceSummaryOutcome` already recorded the durable loss
             // under `ForceDisconnectSalvage.lossReason`; say so out loud too.
             clearForceRecordingLock()
-            errorMessage = "Recovered pull couldn't be saved."
+            errorMessage = UserFacingError.message(for: .saveFailed)
         case .stale:
             // The account no longer owns the active model — signing out or a
             // mid-save epoch change. Not a persistence failure (no loss to
@@ -4775,7 +4775,7 @@ public final class AppModel: ObservableObject {
         // necessarily a full disk, so claiming a cause ("device storage was
         // full", the web's copy) would be a guess.
         let label = "\(notice.count) item\(notice.count == 1 ? "" : "s")"
-        toastMessage = "\(label) couldn't be saved"
+        toastMessage = "\(label) couldn\u{2019}t be saved."
     }
     // MARK: Offline queue
 
@@ -7262,6 +7262,6 @@ public final class AppModel: ObservableObject {
     }
 
     private func surface(_ error: Error) {
-        errorMessage = error.localizedDescription
+        errorMessage = UserFacingError.message(for: error)
     }
 }

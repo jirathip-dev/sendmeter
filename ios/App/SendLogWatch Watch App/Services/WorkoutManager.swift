@@ -505,7 +505,7 @@ final class WorkoutManager: NSObject {
                 phaseSince: start, restTargetS: restTargetS
             )
         } catch {
-            errorMsg = error.localizedDescription
+            errorMsg = ErrorText.message(for: .workoutStartFailed)
         }
     }
 
@@ -866,7 +866,7 @@ final class WorkoutManager: NSObject {
             try await builder.finishWorkout() // saves the workout to Health
         } catch {
             // Health save failure shouldn't lose the climbing data
-            errorMsg = error.localizedDescription
+            errorMsg = ErrorText.message(for: .workoutHealthSaveFailed)
         }
 
         let attempts = detector.finalize()
@@ -1492,7 +1492,7 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
             // over whatever workout is actually running by the time this
             // Task resumes on MainActor.
             guard workoutSession === self.session else { return }
-            self.errorMsg = error.localizedDescription
+            self.errorMsg = ErrorText.message(for: .workoutFailed)
         }
     }
 }

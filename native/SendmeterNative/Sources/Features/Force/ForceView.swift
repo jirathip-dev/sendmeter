@@ -220,7 +220,7 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
             return
         }
         guard enqueued else {
-            model.errorMessage = "Could not save the partial pull before pausing."
+            model.errorMessage = UserFacingError.message(for: .saveFailed)
             interrupted = true
             // The save failure is terminal. Claim that state before the
             // cleanup await so a ticker continuation cannot advance the work
@@ -372,7 +372,7 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
             workMeasurementReady = true
             return true
         } catch {
-            model.errorMessage = error.localizedDescription
+            model.errorMessage = UserFacingError.message(for: error)
             interrupted = true
             model.guidedActivity.end(immediate: true)
             Task { [weak self] in await self?.teardown() }
@@ -493,7 +493,7 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
                 if enqueued {
                     model.tindeq.clearCompletedRecording()
                 } else {
-                    model.errorMessage = "Could not save the partial pull."
+                    model.errorMessage = UserFacingError.message(for: .saveFailed)
                     interrupted = true
                 }
             }
@@ -1760,7 +1760,7 @@ struct ForceView: View {
             return
         }
         guard !model.tindeq.hasUnsavedRecording else {
-            refuseAction("Save or discard the previous pull before starting another.")
+            refuseAction(UserFacingError.message(for: .previousRecordingUnfinished))
             return
         }
         do {
@@ -1771,7 +1771,7 @@ struct ForceView: View {
             model.lockForceRecordingContext(model.freePullContext)
             try model.tindeq.startMeasuring()
         } catch {
-            refuseAction(error.localizedDescription)
+            refuseAction(UserFacingError.message(for: error))
         }
     }
 
@@ -1783,11 +1783,11 @@ struct ForceView: View {
             return
         }
         guard !model.tindeq.hasUnsavedRecording else {
-            refuseAction("Save or discard the previous pull before starting another.")
+            refuseAction(UserFacingError.message(for: .previousRecordingUnfinished))
             return
         }
         guard model.tindeq.status == .connected else {
-            refuseAction("Connect the Progressor before arming hands-free.")
+            refuseAction(UserFacingError.message(for: .progressorNotConnected))
             return
         }
         publishFreePullContext()
@@ -1957,11 +1957,11 @@ struct ForceView: View {
             return
         }
         guard !model.tindeq.hasUnsavedRecording else {
-            refuseAction("Save or discard the previous pull before starting a guided protocol.")
+            refuseAction(UserFacingError.message(for: .previousRecordingUnfinished))
             return
         }
         guard model.tindeq.status == .connected else {
-            refuseAction("Connect the Progressor before starting a guided protocol.")
+            refuseAction(UserFacingError.message(for: .progressorNotConnected))
             return
         }
         // #653: only a persisted user preset keeps the recording-context
@@ -2321,7 +2321,7 @@ private struct ForceDeviceCard: View {
                     .disabled(device.hasUnsavedRecording)
                 }
                 if device.hasUnsavedRecording {
-                    Text("Save or discard the previous pull before starting another.")
+                    Text(UserFacingError.message(for: .previousRecordingUnfinished))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)

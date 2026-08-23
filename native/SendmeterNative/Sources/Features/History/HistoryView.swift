@@ -1100,7 +1100,7 @@ struct ForceRecordingDetailView: View {
         do {
             samples = try await model.repository.fetchRecordingSamples(id: recording.id)
         } catch {
-            model.errorMessage = error.localizedDescription
+            model.errorMessage = UserFacingError.message(for: error)
         }
     }
 }

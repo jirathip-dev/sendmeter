@@ -143,7 +143,7 @@ public final class HealthKitService: ObservableObject {
                 respiratoryRate: inputs.respRateBpm
             )
         } catch {
-            lastError = error.localizedDescription
+            lastError = UserFacingError.message(for: error)
             throw error
         }
     }
@@ -349,7 +349,7 @@ private struct SleepDay {
     var remHours: Double = 0
 }
 
-public enum HealthKitError: Error, LocalizedError {
+public enum HealthKitError: Error, LocalizedError, FriendlyErrorClassifying {
     case authorizationDenied
     case typeUnavailable(String)
 
@@ -359,6 +359,13 @@ public enum HealthKitError: Error, LocalizedError {
             return "Apple Health access was not granted."
         case let .typeUnavailable(type):
             return "Apple Health type is unavailable: \(type)"
+        }
+    }
+
+    public var friendlyErrorClass: FriendlyErrorClass {
+        switch self {
+        case .authorizationDenied: return .healthPermissionDenied
+        case .typeUnavailable: return .healthUnavailable
         }
     }
 }

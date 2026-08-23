@@ -368,7 +368,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     }
 }
 
-public enum BluetoothError: Error, LocalizedError {
+public enum BluetoothError: Error, LocalizedError, FriendlyErrorClassifying {
     case notReady
     case unsavedRecording
     case serviceMissing
@@ -382,6 +382,14 @@ public enum BluetoothError: Error, LocalizedError {
         case .characteristicMissing: return "Progressor force characteristics were not found."
         }
     }
+
+    public var friendlyErrorClass: FriendlyErrorClass {
+        switch self {
+        case .notReady: return .progressorNotConnected
+        case .unsavedRecording: return .previousRecordingUnfinished
+        case .serviceMissing, .characteristicMissing: return .progressorUnrecognized
+        }
+    }
 }
 
 extension TindeqBluetooth: CBCentralManagerDelegate {
@@ -393,7 +401,9 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
             case .unsupported, .unauthorized:
                 resetConnection(status: .unavailable)
             case .poweredOff:
-                resetConnection(status: .interrupted("Bluetooth is off"))
+                resetConnection(
+                    status: .interrupted(UserFacingError.message(for: .progressorUnavailable))
+                )
             default:
                 status = .idle
             }
@@ -431,7 +441,9 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
         error: Error?
     ) {
         Task { @MainActor in
-            resetConnection(status: .interrupted(error?.localizedDescription ?? "Could not connect"))
+            resetConnection(
+                status: .interrupted(UserFacingError.message(for: .progressorConnectFailed))
+            )
         }
     }
 
@@ -452,8 +464,9 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
             isRecording = false
             handsFreeArmed = false
             wasHandsFreeRecording = false
-            let message = error?.localizedDescription ?? "Progressor disconnected"
-            resetConnection(status: .interrupted(message))
+            resetConnection(
+                status: .interrupted(UserFacingError.message(for: .progressorDisconnected))
+            )
         }
     }
 }
@@ -462,13 +475,17 @@ extension TindeqBluetooth: CBPeripheralDelegate {
     nonisolated public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         Task { @MainActor in
             if let error {
-                resetConnection(status: .interrupted(error.localizedDescription))
+                resetConnection(
+                    status: .interrupted(UserFacingError.message(for: .progressorConnectFailed))
+                )
                 return
             }
             guard let service = peripheral.services?.first(where: {
                 $0.uuid == CBUUID(string: TindeqProtocolConstants.serviceUUID)
             }) else {
-                resetConnection(status: .interrupted(BluetoothError.serviceMissing.localizedDescription))
+                resetConnection(
+                    status: .interrupted(UserFacingError.message(for: .progressorUnrecognized))
+                )
                 return
             }
             peripheral.discoverCharacteristics(
@@ -488,7 +505,9 @@ extension TindeqBluetooth: CBPeripheralDelegate {
     ) {
         Task { @MainActor in
             if let error {
-                resetConnection(status: .interrupted(error.localizedDescription))
+                resetConnection(
+                    status: .interrupted(UserFacingError.message(for: .progressorConnectFailed))
+                )
                 return
             }
             notifyCharacteristic = service.characteristics?.first(where: {
@@ -498,7 +517,9 @@ extension TindeqBluetooth: CBPeripheralDelegate {
                 $0.uuid == CBUUID(string: TindeqProtocolConstants.controlCharacteristicUUID)
             })
             guard let notifyCharacteristic, controlCharacteristic != nil else {
-                resetConnection(status: .interrupted(BluetoothError.characteristicMissing.localizedDescription))
+                resetConnection(
+                    status: .interrupted(UserFacingError.message(for: .progressorUnrecognized))
+                )
                 return
             }
             peripheral.setNotifyValue(true, for: notifyCharacteristic)
