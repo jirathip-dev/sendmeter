@@ -5,6 +5,26 @@ public enum TrainingMetrics {
     public static let chronicSpanDays = 28
     public static let ewmaLookbackDays = 90
 
+    /// Sessions with `date` normalized through `LocalDateSupport.canonicalDayKey`.
+    /// A legacy Buddhist-calendar key or timestamp-formatted date must not make a
+    /// session miss the generated Gregorian `YYYY-MM-DD` window used by the weekly
+    /// bars, delta chip, and ACWR (#754, #770). Invalid dates are dropped, matching
+    /// `TrainingLoad.dailyLoads`.
+    private static func canonicalSessions(
+        _ sessions: [Session],
+        timeZone: TimeZone
+    ) -> [Session] {
+        sessions.compactMap { session in
+            guard let date = LocalDateSupport.canonicalDayKey(
+                session.date,
+                timeZone: timeZone
+            ) else { return nil }
+            var normalized = session
+            normalized.date = date
+            return normalized
+        }
+    }
+
     public static func acwrStatus(_ ratio: Double?) -> ACWRStatus {
         guard let ratio else { return .noData }
         if ratio < 0.7 { return .underTraining }
@@ -47,7 +67,8 @@ public enum TrainingMetrics {
         referenceDate: Date = Date(),
         timeZone: TimeZone = .current
     ) -> EWMALoadState? {
-        let loadByDate = Dictionary(grouping: sessions, by: \Session.date)
+        let normalizedSessions = canonicalSessions(sessions, timeZone: timeZone)
+        let loadByDate = Dictionary(grouping: normalizedSessions, by: \Session.date)
             .mapValues { $0.reduce(0) { $0 + $1.load } }
 
         var dailyLoads: [Double] = []
@@ -75,15 +96,16 @@ public enum TrainingMetrics {
         let acuteStart = LocalDateSupport.daysAgo(6, from: referenceDate, timeZone: timeZone)
         let chronicStart = LocalDateSupport.daysAgo(27, from: referenceDate, timeZone: timeZone)
 
-        let acute = sessions
+        let normalizedSessions = canonicalSessions(sessions, timeZone: timeZone)
+        let acute = normalizedSessions
             .filter { $0.date >= acuteStart && $0.date <= today }
             .reduce(0) { $0 + $1.load }
-        let chronic = sessions
+        let chronic = normalizedSessions
             .filter { $0.date >= chronicStart && $0.date <= today }
             .reduce(0) { $0 + $1.load } / 4.0
 
         let state = ewmaLoadState(
-            sessions: sessions,
+            sessions: normalizedSessions,
             referenceDate: referenceDate,
             timeZone: timeZone
         )
@@ -118,7 +140,8 @@ public enum TrainingMetrics {
         referenceDate: Date = Date(),
         timeZone: TimeZone = .current
     ) -> [WeeklyLoad] {
-        [3, 2, 1, 0].map { weekBack in
+        let normalizedSessions = canonicalSessions(sessions, timeZone: timeZone)
+        return [3, 2, 1, 0].map { weekBack in
             let start = LocalDateSupport.daysAgo(
                 weekBack * 7 + 6,
                 from: referenceDate,
@@ -129,7 +152,7 @@ public enum TrainingMetrics {
                 from: referenceDate,
                 timeZone: timeZone
             )
-            let total = sessions
+            let total = normalizedSessions
                 .filter { $0.date >= start && $0.date <= end }
                 .reduce(0) { $0 + $1.load }
             return WeeklyLoad(label: weekBack == 0 ? "Now" : "\(weekBack)w", total: total)
