@@ -57,7 +57,6 @@ struct AcwrProjectionCard: View {
 
                 if let projection {
                     chart(projection)
-                        .frame(height: 150)
                     Text(headline(projection))
                         .font(.subheadline)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -113,6 +112,7 @@ struct AcwrProjectionCard: View {
         return Group {
             if #available(iOS 17, *) {
                 baseChart(projection)
+                    .frame(height: 150)
                     .chartXSelection(value: $selectedScrubX)
                     .hapticTapMuted()
                     .onChange(of: selectedScrubX) { _ in
@@ -144,6 +144,7 @@ struct AcwrProjectionCard: View {
                     .accessibilityProjectionChartDescriptor(projection)
             } else {
                 baseChart(projection)
+                    .frame(height: 150)
                     .hapticTapMuted()
                     .accessibilityLabel("Projected ACWR over the next seven days")
                     .accessibilityValue(accessibilitySummary(projection))
