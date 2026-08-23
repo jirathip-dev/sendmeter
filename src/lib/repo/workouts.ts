@@ -28,6 +28,7 @@ export async function fetchRoutinePresets(): Promise<RoutinePreset[]> {
     await supabase
       .from("routine_presets")
       .select(ROUTINE_COLS)
+      .is("deleted_at", null)
       .order("created_at", { ascending: false }),
   );
   return data as RoutineRow[];
@@ -62,7 +63,12 @@ export async function updateRoutinePreset(
 }
 
 export async function deleteRoutinePreset(id: string): Promise<void> {
-  unwrap(await supabase.from("routine_presets").delete().eq("id", id));
+  unwrap(
+    await supabase
+      .from("routine_presets")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id),
+  );
 }
 
 const WORKOUT_DETAIL_COLS =

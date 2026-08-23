@@ -3,9 +3,9 @@ import SendmeterCore
 
 // MARK: - Shared backend models
 
-private let sessionColumns = "id,date,type,type_label,duration_min,rpe,rpe_confirmed,load,note,phase,group_id,workout_source"
-private let recordingColumns = "id,deleted_at,recorded_at,duration_ms,peak_kg,avg_kg,sample_count,note,tag,side,group_id,protocol_run_id,set_no,zone,source,external_load_kg,outcome,planned_duration_ms,actual_duration_ms,rep_no,protocol_mode,target_kg,target_low_kg,target_high_kg,cadence_out_s,cadence_return_s,cadence_markers,set_metrics,setup_note,capacity_evidence,completed_reps,completion_status"
-private let presetColumns = "id,name,hold_s,holds_s,reps,sets,rest_reps_s,rest_sets_s,target_kg,target_pct,pct_basis,pct_step,target_curve,alternate_sides,protocol_mode,cadence_out_s,cadence_return_s,tolerance_mode,tolerance_value,prepare_s,setup_note,capacity_evidence"
+private let sessionColumns = "id,date,type,type_label,duration_min,rpe,rpe_confirmed,load,note,phase,group_id,workout_source,updated_at,deleted_at"
+private let recordingColumns = "id,deleted_at,updated_at,recorded_at,duration_ms,peak_kg,avg_kg,sample_count,note,tag,side,group_id,protocol_run_id,set_no,zone,source,external_load_kg,outcome,planned_duration_ms,actual_duration_ms,rep_no,protocol_mode,target_kg,target_low_kg,target_high_kg,cadence_out_s,cadence_return_s,cadence_markers,set_metrics,setup_note,capacity_evidence,completed_reps,completion_status"
+private let presetColumns = "id,name,hold_s,holds_s,reps,sets,rest_reps_s,rest_sets_s,target_kg,target_pct,pct_basis,pct_step,target_curve,alternate_sides,protocol_mode,cadence_out_s,cadence_return_s,tolerance_mode,tolerance_value,prepare_s,setup_note,capacity_evidence,deleted_at,updated_at"
 
 private struct LiveWorkoutRow: Decodable {
     let workoutID: UUID
@@ -78,6 +78,10 @@ private struct SessionRow: Decodable {
     let phase: String
     let groupID: UUID?
     let workoutSource: String?
+    // The phone-workout RPC returns the pre-column set, so this must remain
+    // optional even though table/delta fetches always select the column.
+    let updatedAt: Date?
+    let deletedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id, date, type, rpe, load, note, phase
@@ -86,6 +90,8 @@ private struct SessionRow: Decodable {
         case rpeConfirmed = "rpe_confirmed"
         case groupID = "group_id"
         case workoutSource = "workout_source"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
     }
 
     func model(accountUserID: UUID? = nil, pending: Bool = false) -> Session {
@@ -185,7 +191,7 @@ private struct SettingsRow: Codable {
     let userID: UUID?
     let currentPhase: String
     let phaseStartDate: String
-    let updatedAt: Date?
+    let updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
         case userID = "user_id"
@@ -200,11 +206,15 @@ private struct PhasePeriodRow: Codable {
     let phase: String
     let startedOn: String
     let endedOn: String?
+    let updatedAt: Date
+    let deletedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id, phase
         case startedOn = "started_on"
         case endedOn = "ended_on"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
     }
 
     var model: PhasePeriod {
@@ -250,6 +260,7 @@ private struct HealthMetricRow: Codable {
     let sleepREMHours: Double?
     let bodyMassKg: Double?
     let respiratoryRate: Double?
+    let updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
         case date, readiness, zone
@@ -261,6 +272,7 @@ private struct HealthMetricRow: Codable {
         case sleepREMHours = "sleep_rem_hours"
         case bodyMassKg = "body_mass_kg"
         case respiratoryRate = "resp_rate_bpm"
+        case updatedAt = "updated_at"
     }
 
     var model: HealthMetric {
@@ -346,6 +358,7 @@ private struct SetMetricsRow: Codable {
 private struct RecordingRow: Decodable {
     let id: UUID
     let deletedAt: String?
+    let updatedAt: Date
     let recordedAt: Date
     let durationMilliseconds: Int
     let peakKilograms: Double?
@@ -380,6 +393,7 @@ private struct RecordingRow: Decodable {
     enum CodingKeys: String, CodingKey {
         case id, note, tag, side, zone, source, outcome
         case deletedAt = "deleted_at"
+        case updatedAt = "updated_at"
         case recordedAt = "recorded_at"
         case durationMilliseconds = "duration_ms"
         case peakKilograms = "peak_kg"
@@ -608,6 +622,8 @@ private struct PresetRow: Codable {
     let prepareSeconds: Int?
     let setupNote: String?
     let capacityEvidence: Bool?
+    let deletedAt: Date?
+    let updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
         case id, name, sets
@@ -630,6 +646,8 @@ private struct PresetRow: Codable {
         case prepareSeconds = "prepare_s"
         case setupNote = "setup_note"
         case capacityEvidence = "capacity_evidence"
+        case deletedAt = "deleted_at"
+        case updatedAt = "updated_at"
     }
 
     var model: TindeqPreset {
@@ -735,6 +753,15 @@ private struct RoutineRow: Codable {
     let id: UUID
     let name: String
     let steps: [RoutineStep]
+    let deletedAt: Date?
+    let updatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, steps
+        case deletedAt = "deleted_at"
+        case updatedAt = "updated_at"
+    }
+
     var model: RoutinePreset { RoutinePreset(id: id, name: name, steps: steps) }
 }
 
@@ -757,6 +784,7 @@ private struct WorkoutListRow: Decodable {
     let rpeConfirmed: Double?
     let rpePredicted: Double?
     let source: String
+    let updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
         case id, source
@@ -771,6 +799,7 @@ private struct WorkoutListRow: Decodable {
         case attemptsDetected = "attempts_detected"
         case rpeConfirmed = "rpe_confirmed"
         case rpePredicted = "rpe_predicted"
+        case updatedAt = "updated_at"
     }
 
     var model: WorkoutListItem {
@@ -892,6 +921,12 @@ private struct RenameTagRPC: Encodable {
 private struct TagMetadataRow: Decodable {
     let name: String
     let hidden: Bool
+    let updatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case name, hidden
+        case updatedAt = "updated_at"
+    }
 }
 
 private struct TagHiddenUpsert: Encodable {
@@ -971,7 +1006,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             path: "rest/v1/health_metrics",
             method: .get,
             queryItems: [
-                URLQueryItem(name: "select", value: "date,readiness,zone,computed_at,hrv_sdnn_ms,resting_hr,sleep_hours,sleep_deep_hours,sleep_rem_hours,body_mass_kg,resp_rate_bpm"),
+                URLQueryItem(name: "select", value: "date,readiness,zone,computed_at,hrv_sdnn_ms,resting_hr,sleep_hours,sleep_deep_hours,sleep_rem_hours,body_mass_kg,resp_rate_bpm,updated_at"),
                 URLQueryItem(name: "date", value: "eq.\(today)")
             ]
         )
@@ -1152,7 +1187,8 @@ public final class SendmeterRepository: @unchecked Sendable {
             path: "rest/v1/phase_periods",
             method: .get,
             queryItems: [
-                URLQueryItem(name: "select", value: "id,phase,started_on,ended_on"),
+                URLQueryItem(name: "select", value: "id,phase,started_on,ended_on,updated_at,deleted_at"),
+                URLQueryItem(name: "deleted_at", value: "is.null"),
                 URLQueryItem(name: "order", value: "started_on.desc,created_at.desc")
             ]
         )
@@ -1183,10 +1219,10 @@ public final class SendmeterRepository: @unchecked Sendable {
                     prefer: "return=minimal"
                 )
             case let .delete(periodID):
-                try await transport.requestVoid(
-                    path: "rest/v1/phase_periods",
-                    method: .delete,
-                    queryItems: [URLQueryItem(name: "id", value: "eq.\(periodID.uuidString.lowercased())")]
+                try await patchVoid(
+                    table: "phase_periods",
+                    id: periodID,
+                    payload: SoftDeletePayload(deletedAt: Date())
                 )
             case let .updatePhase(periodID, phase):
                 try await patchVoid(
@@ -1229,7 +1265,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             path: "rest/v1/health_metrics",
             method: .get,
             queryItems: [
-                URLQueryItem(name: "select", value: "date,readiness,zone,computed_at,hrv_sdnn_ms,resting_hr,sleep_hours,sleep_deep_hours,sleep_rem_hours,body_mass_kg,resp_rate_bpm"),
+                URLQueryItem(name: "select", value: "date,readiness,zone,computed_at,hrv_sdnn_ms,resting_hr,sleep_hours,sleep_deep_hours,sleep_rem_hours,body_mass_kg,resp_rate_bpm,updated_at"),
                 URLQueryItem(name: "order", value: "date.desc"),
                 URLQueryItem(name: "limit", value: String(max(1, limit)))
             ]
@@ -1484,7 +1520,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             path: "rest/v1/tindeq_tags",
             method: .get,
             queryItems: [
-                URLQueryItem(name: "select", value: "name,hidden"),
+                URLQueryItem(name: "select", value: "name,hidden,updated_at"),
                 URLQueryItem(name: "order", value: "name.asc")
             ]
         )
@@ -1535,6 +1571,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             method: .get,
             queryItems: [
                 URLQueryItem(name: "select", value: presetColumns),
+                URLQueryItem(name: "deleted_at", value: "is.null"),
                 URLQueryItem(name: "order", value: "created_at.desc")
             ]
         )
@@ -1571,10 +1608,10 @@ public final class SendmeterRepository: @unchecked Sendable {
     }
 
     public func deletePreset(id: UUID) async throws {
-        try await transport.requestVoid(
-            path: "rest/v1/tindeq_presets",
-            method: .delete,
-            queryItems: [URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())")]
+        try await patchVoid(
+            table: "tindeq_presets",
+            id: id,
+            payload: SoftDeletePayload(deletedAt: Date())
         )
     }
 
@@ -1585,7 +1622,8 @@ public final class SendmeterRepository: @unchecked Sendable {
             path: "rest/v1/routine_presets",
             method: .get,
             queryItems: [
-                URLQueryItem(name: "select", value: "id,name,steps"),
+                URLQueryItem(name: "select", value: "id,name,steps,updated_at,deleted_at"),
+                URLQueryItem(name: "deleted_at", value: "is.null"),
                 URLQueryItem(name: "order", value: "created_at.desc")
             ]
         )
@@ -1599,7 +1637,7 @@ public final class SendmeterRepository: @unchecked Sendable {
         let result: OneOrMany<RoutineRow> = try await transport.request(
             path: "rest/v1/routine_presets",
             method: .post,
-            queryItems: [URLQueryItem(name: "select", value: "id,name,steps")],
+            queryItems: [URLQueryItem(name: "select", value: "id,name,steps,updated_at,deleted_at")],
             body: body,
             prefer: "return=representation"
         )
@@ -1616,7 +1654,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             method: .patch,
             queryItems: [
                 URLQueryItem(name: "id", value: "eq.\(routine.id.uuidString.lowercased())"),
-                URLQueryItem(name: "select", value: "id,name,steps")
+                URLQueryItem(name: "select", value: "id,name,steps,updated_at,deleted_at")
             ],
             body: body,
             prefer: "return=representation"
@@ -1626,10 +1664,10 @@ public final class SendmeterRepository: @unchecked Sendable {
     }
 
     public func deleteRoutine(id: UUID) async throws {
-        try await transport.requestVoid(
-            path: "rest/v1/routine_presets",
-            method: .delete,
-            queryItems: [URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())")]
+        try await patchVoid(
+            table: "routine_presets",
+            id: id,
+            payload: SoftDeletePayload(deletedAt: Date())
         )
     }
 
@@ -1638,7 +1676,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             path: "rest/v1/climb_workouts",
             method: .get,
             queryItems: [
-                URLQueryItem(name: "select", value: "id,session_id,started_at,ended_at,avg_hr,max_hr,active_kcal,elevation_gain_m,attempts_confirmed,attempts_detected,rpe_confirmed,rpe_predicted,source"),
+                URLQueryItem(name: "select", value: "id,session_id,started_at,ended_at,avg_hr,max_hr,active_kcal,elevation_gain_m,attempts_confirmed,attempts_detected,rpe_confirmed,rpe_predicted,source,updated_at"),
                 URLQueryItem(name: "order", value: "started_at.desc"),
                 URLQueryItem(name: "limit", value: String(max(1, limit)))
             ]
@@ -1736,6 +1774,202 @@ public final class SendmeterRepository: @unchecked Sendable {
         return row.model(accountUserID: draft.accountUserID)
     }
 
+    // MARK: Incremental deltas (#747 slice 3)
+
+    public func fetchSessionDelta(
+        since cursor: String?,
+        accountUserID: UUID? = nil
+    ) async throws -> RemoteEntityDelta<Session> {
+        let rows: [SessionRow] = try await transport.request(
+            path: "rest/v1/sessions",
+            method: .get,
+            queryItems: deltaQueryItems(cursor: cursor, select: sessionColumns)
+        )
+        return makeDelta(
+            rows: rows,
+            entityID: { $0.id.uuidString },
+            value: { $0.model(accountUserID: accountUserID) },
+            isDeleted: { $0.deletedAt != nil },
+            updatedAt: { $0.updatedAt ?? .distantPast }
+        )
+    }
+
+    public func fetchSettingsDelta(
+        since cursor: String?
+    ) async throws -> RemoteEntityDelta<UserSettings> {
+        let rows: [SettingsRow] = try await transport.request(
+            path: "rest/v1/user_settings",
+            method: .get,
+            queryItems: deltaQueryItems(
+                cursor: cursor,
+                select: "user_id,current_phase,phase_start_date,updated_at"
+            )
+        )
+        return makeDelta(
+            rows: rows,
+            entityID: { _ in CacheEntityID.settings },
+            value: {
+                UserSettings(currentPhase: PhaseID(rawValue: $0.currentPhase) ?? .capacity, phaseStartDate: $0.phaseStartDate)
+            },
+            isDeleted: { _ in false },
+            updatedAt: { $0.updatedAt }
+        )
+    }
+
+    public func fetchPhasePeriodDelta(
+        since cursor: String?
+    ) async throws -> RemoteEntityDelta<PhasePeriod> {
+        let rows: [PhasePeriodRow] = try await transport.request(
+            path: "rest/v1/phase_periods",
+            method: .get,
+            queryItems: deltaQueryItems(
+                cursor: cursor,
+                select: "id,phase,started_on,ended_on,updated_at,deleted_at"
+            )
+        )
+        return makeDelta(
+            rows: rows,
+            entityID: { $0.id.uuidString },
+            value: { $0.model },
+            isDeleted: { $0.deletedAt != nil },
+            updatedAt: { $0.updatedAt }
+        )
+    }
+
+    public func fetchHealthMetricDelta(
+        since cursor: String?,
+        limit: Int = 60
+    ) async throws -> RemoteEntityDelta<HealthMetric> {
+        // First sync keeps the historical 60-row display window. Once a
+        // cursor exists, fetch every change: a bulk upsert stamps many rows
+        // with the same `now()` timestamp, and paging by count with a strict
+        // `updated_at > cursor` filter would permanently skip the rows that
+        // share the cursor's timestamp.
+        var queryItems = deltaQueryItems(
+            cursor: cursor,
+            select: "date,readiness,zone,computed_at,hrv_sdnn_ms,resting_hr,sleep_hours,sleep_deep_hours,sleep_rem_hours,body_mass_kg,resp_rate_bpm,updated_at",
+            order: cursor == nil ? "date.desc" : "updated_at.asc"
+        )
+        if cursor == nil {
+            queryItems.append(URLQueryItem(name: "limit", value: String(max(1, limit))))
+        }
+        let rows: [HealthMetricRow] = try await transport.request(
+            path: "rest/v1/health_metrics",
+            method: .get,
+            queryItems: queryItems
+        )
+        return makeDelta(
+            rows: rows,
+            entityID: { $0.date },
+            value: { $0.model },
+            isDeleted: { _ in false },
+            updatedAt: { $0.updatedAt }
+        )
+    }
+
+    public func fetchRecordingDelta(
+        since cursor: String?
+    ) async throws -> RemoteEntityDelta<TindeqRecording> {
+        let rows: [RecordingRow] = try await transport.request(
+            path: "rest/v1/tindeq_recordings",
+            method: .get,
+            queryItems: deltaQueryItems(cursor: cursor, select: recordingColumns)
+        )
+        return makeDelta(
+            rows: rows,
+            entityID: { $0.id.uuidString },
+            value: { $0.model },
+            isDeleted: { $0.deletedAt != nil },
+            updatedAt: { $0.updatedAt }
+        )
+    }
+
+    public func fetchPresetDelta(
+        since cursor: String?
+    ) async throws -> RemoteEntityDelta<TindeqPreset> {
+        let rows: [PresetRow] = try await transport.request(
+            path: "rest/v1/tindeq_presets",
+            method: .get,
+            queryItems: deltaQueryItems(cursor: cursor, select: presetColumns)
+        )
+        return makeDelta(
+            rows: rows,
+            entityID: { $0.id.uuidString },
+            value: { $0.model },
+            isDeleted: { $0.deletedAt != nil },
+            updatedAt: { $0.updatedAt }
+        )
+    }
+
+    public func fetchRoutineDelta(
+        since cursor: String?
+    ) async throws -> RemoteEntityDelta<RoutinePreset> {
+        let rows: [RoutineRow] = try await transport.request(
+            path: "rest/v1/routine_presets",
+            method: .get,
+            queryItems: deltaQueryItems(
+                cursor: cursor,
+                select: "id,name,steps,updated_at,deleted_at"
+            )
+        )
+        return makeDelta(
+            rows: rows,
+            entityID: { $0.id.uuidString },
+            value: { $0.model },
+            isDeleted: { $0.deletedAt != nil },
+            updatedAt: { $0.updatedAt }
+        )
+    }
+
+    public func fetchWorkoutDelta(
+        since cursor: String?,
+        limit: Int = 30
+    ) async throws -> RemoteEntityDelta<WorkoutListItem> {
+        // Same timestamp-collision rule as `fetchHealthMetricDelta`: only the
+        // first/full sync keeps the display limit, while a cursor-bounded
+        // fetch must see every changed row.
+        var queryItems = deltaQueryItems(
+            cursor: cursor,
+            select: "id,session_id,started_at,ended_at,avg_hr,max_hr,active_kcal,elevation_gain_m,attempts_confirmed,attempts_detected,rpe_confirmed,rpe_predicted,source,updated_at",
+            order: cursor == nil ? "started_at.desc" : "updated_at.asc"
+        )
+        if cursor == nil {
+            queryItems.append(URLQueryItem(name: "limit", value: String(max(1, limit))))
+        }
+        let rows: [WorkoutListRow] = try await transport.request(
+            path: "rest/v1/climb_workouts",
+            method: .get,
+            queryItems: queryItems
+        )
+        return makeDelta(
+            rows: rows,
+            entityID: { $0.id.uuidString },
+            value: { $0.model },
+            isDeleted: { _ in false },
+            updatedAt: { $0.updatedAt }
+        )
+    }
+
+    public func fetchTagMetadataDelta(
+        since cursor: String?
+    ) async throws -> RemoteEntityDelta<TagMetadata> {
+        let rows: [TagMetadataRow] = try await transport.request(
+            path: "rest/v1/tindeq_tags",
+            method: .get,
+            queryItems: deltaQueryItems(
+                cursor: cursor,
+                select: "name,hidden,updated_at"
+            )
+        )
+        return makeDelta(
+            rows: rows,
+            entityID: { $0.name },
+            value: { TagMetadata(name: $0.name, hidden: $0.hidden) },
+            isDeleted: { _ in false },
+            updatedAt: { $0.updatedAt }
+        )
+    }
+
     // MARK: Account
 
     public func deleteAccount() async throws {
@@ -1769,6 +2003,46 @@ public final class SendmeterRepository: @unchecked Sendable {
             queryItems: queryItems,
             body: body,
             prefer: "return=minimal"
+        )
+    }
+
+    private func deltaQueryItems(
+        cursor: String?,
+        select: String,
+        order: String = "updated_at.asc"
+    ) -> [URLQueryItem] {
+        var queryItems = [
+            URLQueryItem(name: "select", value: select),
+            URLQueryItem(name: "order", value: order)
+        ]
+        if let cursor {
+            queryItems.append(URLQueryItem(name: "updated_at", value: "gt.\(cursor)"))
+        }
+        return queryItems
+    }
+
+    private func makeDelta<Row, Value: Sendable>(
+        rows: [Row],
+        entityID: (Row) -> String,
+        value: (Row) -> Value,
+        isDeleted: (Row) -> Bool,
+        updatedAt: (Row) -> Date
+    ) -> RemoteEntityDelta<Value> {
+        let changes = rows.map { row in
+            RemoteEntityChange(
+                entityID: entityID(row),
+                value: isDeleted(row) ? nil : value(row),
+                updatedAt: updatedAt(row)
+            )
+        }
+        let activeValues = rows
+            .filter { !isDeleted($0) }
+            .map(value)
+        let cursor = rows.map(updatedAt).max().map(LocalCacheStore.syncCursorString)
+        return RemoteEntityDelta(
+            changes: changes,
+            activeValues: activeValues,
+            cursor: cursor
         )
     }
 }

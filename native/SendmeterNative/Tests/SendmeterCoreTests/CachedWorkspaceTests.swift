@@ -705,6 +705,380 @@ final class CachedWorkspaceTests: XCTestCase {
         )
     }
 
+    func testDeltaReconcileAdoptsActiveRowsAndAdvancesCursor() throws {
+        let workspace = try makeWorkspace()
+        let remote = session(sessionID, date: "delta", accountID: accountA)
+        let updated = Date(timeIntervalSince1970: 2_000_000_000)
+        let delta = RemoteEntityDelta(
+            changes: [
+                RemoteEntityChange(
+                    entityID: sessionID.uuidString,
+                    value: remote,
+                    updatedAt: updated
+                )
+            ],
+            activeValues: [remote],
+            cursor: LocalCacheStore.syncCursorString(from: updated)
+        )
+
+        try workspace.reconcileDelta(
+            delta,
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [remote])
+        XCTAssertEqual(
+            try workspace.cursor(accountUserID: accountA, entityType: .sessions),
+            delta.cursor
+        )
+    }
+
+    func testDeltaTombstoneAdoptionRemovesActiveCacheRow() throws {
+        let workspace = try makeWorkspace()
+        let old = session(sessionID, date: "old", accountID: accountA)
+        try workspace.upsertServer(
+            old,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: sessionID.uuidString,
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let deletedAt = Date(timeIntervalSince1970: 2_000_000_000)
+        let delta: RemoteEntityDelta<Session> = RemoteEntityDelta(
+            changes: [
+                RemoteEntityChange(
+                    entityID: sessionID.uuidString,
+                    value: nil,
+                    updatedAt: deletedAt
+                )
+            ],
+            activeValues: [],
+            cursor: LocalCacheStore.syncCursorString(from: deletedAt)
+        )
+        try workspace.reconcileDelta(
+            delta,
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertTrue(try workspace.load(accountUserID: accountA).sessions.isEmpty)
+    }
+
+    func testDeltaUpsertReplacesCachedRowEvenWhenCachedTimestampIsNewer() throws {
+        let workspace = try makeWorkspace()
+        let cached = session(sessionID, date: "cached", accountID: accountA)
+        let incoming = session(sessionID, date: "incoming", accountID: accountA)
+        try workspace.upsertServer(
+            cached,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: sessionID.uuidString,
+            updatedAt: Date(timeIntervalSince1970: 4_000_000_000)
+        )
+        let deltaAt = Date(timeIntervalSince1970: 3_000_000_000)
+
+        try workspace.reconcileDelta(
+            RemoteEntityDelta<Session>(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: sessionID.uuidString,
+                        value: incoming,
+                        updatedAt: deltaAt
+                    )
+                ],
+                activeValues: [incoming],
+                cursor: LocalCacheStore.syncCursorString(from: deltaAt)
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [incoming])
+    }
+
+    func testDeltaTombstoneReplacesActiveRowEvenWhenCachedTimestampIsNewer() throws {
+        let workspace = try makeWorkspace()
+        let cached = session(sessionID, date: "cached", accountID: accountA)
+        try workspace.upsertServer(
+            cached,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: sessionID.uuidString,
+            updatedAt: Date(timeIntervalSince1970: 4_000_000_000)
+        )
+        let deltaAt = Date(timeIntervalSince1970: 3_000_000_000)
+
+        try workspace.reconcileDelta(
+            RemoteEntityDelta<Session>(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: sessionID.uuidString,
+                        value: nil,
+                        updatedAt: deltaAt
+                    )
+                ],
+                activeValues: [],
+                cursor: LocalCacheStore.syncCursorString(from: deltaAt)
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertTrue(try workspace.load(accountUserID: accountA).sessions.isEmpty)
+    }
+
+    func testDeltaReconcileDoesNotTombstoneUnlistedRows() throws {
+        let workspace = try makeWorkspace()
+        let unchanged = session(otherSessionID, date: "unchanged", accountID: accountA)
+        let changed = session(sessionID, date: "changed", accountID: accountA)
+        try workspace.reconcileServer(
+            CachedWorkspaceSnapshot(sessions: [unchanged, changed]),
+            accountUserID: accountA
+        )
+        let updated = Date(timeIntervalSince1970: 2_000_000_000)
+
+        try workspace.reconcileDelta(
+            RemoteEntityDelta<Session>(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: sessionID.uuidString,
+                        value: changed,
+                        updatedAt: updated
+                    )
+                ],
+                activeValues: [changed],
+                cursor: LocalCacheStore.syncCursorString(from: updated)
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        let loaded = try workspace.load(accountUserID: accountA).sessions
+        XCTAssertEqual(Set(loaded.map(\.id)), Set([sessionID, otherSessionID]))
+    }
+
+    func testPendingRowSurvivesDeltaReconcile() throws {
+        let workspace = try makeWorkspace()
+        let local = session(sessionID, date: "local", accountID: accountA)
+        _ = try workspace.upsertLocal(
+            local,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: sessionID.uuidString
+        )
+        let updated = Date(timeIntervalSince1970: 2_000_000_000)
+
+        try workspace.reconcileDelta(
+            RemoteEntityDelta(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: sessionID.uuidString,
+                        value: session(sessionID, date: "server", accountID: accountA),
+                        updatedAt: updated
+                    )
+                ],
+                activeValues: [session(sessionID, date: "server", accountID: accountA)],
+                cursor: LocalCacheStore.syncCursorString(from: updated)
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [local])
+        XCTAssertEqual(
+            try Self.pendingFlag(
+                in: workspace,
+                accountUserID: accountA,
+                entityID: sessionID.uuidString
+            ),
+            1
+        )
+    }
+
+    func testPendingRowSurvivesAuthoritativeDeltaTombstone() throws {
+        let workspace = try makeWorkspace()
+        let local = session(sessionID, date: "local", accountID: accountA)
+        _ = try workspace.upsertLocal(
+            local,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: sessionID.uuidString
+        )
+        let deltaAt = Date(timeIntervalSince1970: 3_000_000_000)
+
+        try workspace.reconcileDelta(
+            RemoteEntityDelta<Session>(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: sessionID.uuidString,
+                        value: nil,
+                        updatedAt: deltaAt
+                    )
+                ],
+                activeValues: [],
+                cursor: LocalCacheStore.syncCursorString(from: deltaAt)
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [local])
+        XCTAssertEqual(
+            try Self.pendingFlag(
+                in: workspace,
+                accountUserID: accountA,
+                entityID: sessionID.uuidString
+            ),
+            1
+        )
+    }
+
+    func testDeltaCursorDoesNotAdvanceWhenAnyChangeFails() throws {
+        let workspace = try makeWorkspace()
+        try workspace.setCursor(
+            "old-cursor",
+            accountUserID: accountA,
+            entityType: .presets
+        )
+        let delta = RemoteEntityDelta(
+            changes: [
+                RemoteEntityChange(
+                    entityID: "bad",
+                    value: BrokenDeltaValue(),
+                    updatedAt: Date(timeIntervalSince1970: 2)
+                )
+            ],
+            activeValues: [],
+            cursor: "new-cursor"
+        )
+
+        XCTAssertThrowsError(
+            try workspace.reconcileDelta(
+                delta,
+                accountUserID: accountA,
+                entityType: .presets
+            )
+        )
+        XCTAssertEqual(
+            try workspace.cursor(accountUserID: accountA, entityType: .presets),
+            "old-cursor"
+        )
+    }
+
+    func testAccountIsolationForDeltasAndCursors() throws {
+        let workspace = try makeWorkspace()
+        let remote = session(sessionID, accountID: accountA)
+        let updated = Date(timeIntervalSince1970: 2_000_000_000)
+        try workspace.reconcileDelta(
+            RemoteEntityDelta(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: sessionID.uuidString,
+                        value: remote,
+                        updatedAt: updated
+                    )
+                ],
+                activeValues: [remote],
+                cursor: LocalCacheStore.syncCursorString(from: updated)
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertTrue(try workspace.load(accountUserID: accountB).sessions.isEmpty)
+        XCTAssertNil(try workspace.cursor(accountUserID: accountB, entityType: .sessions))
+        XCTAssertNotNil(try workspace.cursor(accountUserID: accountA, entityType: .sessions))
+    }
+
+    func testFirstSyncFullReconcileTombstonesAbsentRowsAndPersistsCursor() throws {
+        let workspace = try makeWorkspace()
+        let stale = session(sessionID, date: "stale", accountID: accountA)
+        try workspace.reconcileServer(
+            CachedWorkspaceSnapshot(sessions: [stale]),
+            accountUserID: accountA
+        )
+        let current = session(otherSessionID, date: "current", accountID: accountA)
+        let updated = Date(timeIntervalSince1970: 2_000_000_000)
+
+        try workspace.reconcileServerDelta(
+            RemoteEntityDelta(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: otherSessionID.uuidString,
+                        value: current,
+                        updatedAt: updated
+                    )
+                ],
+                activeValues: [current],
+                cursor: LocalCacheStore.syncCursorString(from: updated)
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [current])
+        XCTAssertEqual(
+            try workspace.cursor(accountUserID: accountA, entityType: .sessions),
+            LocalCacheStore.syncCursorString(from: updated)
+        )
+    }
+
+    func testDeltaFullReconcilePreservesPendingRowsAbsentFromSnapshot() throws {
+        let workspace = try makeWorkspace()
+        let pending = session(sessionID, date: "pending", accountID: accountA)
+        _ = try workspace.upsertLocal(
+            pending,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: sessionID.uuidString
+        )
+        let current = session(otherSessionID, date: "current", accountID: accountA)
+        let updated = Date(timeIntervalSince1970: 2_000_000_000)
+
+        try workspace.reconcileServerDelta(
+            RemoteEntityDelta(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: otherSessionID.uuidString,
+                        value: current,
+                        updatedAt: updated
+                    )
+                ],
+                activeValues: [current],
+                cursor: LocalCacheStore.syncCursorString(from: updated)
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertEqual(
+            Set(try workspace.load(accountUserID: accountA).sessions.map(\.id)),
+            Set([sessionID, otherSessionID])
+        )
+        XCTAssertEqual(
+            try Self.pendingFlag(
+                in: workspace,
+                accountUserID: accountA,
+                entityID: sessionID.uuidString
+            ),
+            1
+        )
+    }
+
+    func testCursorResetForcesNextFullRefresh() throws {
+        let workspace = try makeWorkspace()
+        try workspace.setCursor(
+            "cursor",
+            accountUserID: accountA,
+            entityType: .tagMetadata
+        )
+
+        try workspace.resetCursor(accountUserID: accountA, entityType: .tagMetadata)
+
+        XCTAssertNil(try workspace.cursor(accountUserID: accountA, entityType: .tagMetadata))
+    }
+
     private static func pendingFlag(
         in workspace: CachedWorkspace,
         accountUserID: UUID,
@@ -727,5 +1101,14 @@ final class CachedWorkspaceTests: XCTestCase {
             throw XCTSkip("Expected non-nil value")
         }
         return value
+    }
+}
+
+private struct BrokenDeltaValue: Encodable {
+    func encode(to encoder: Encoder) throws {
+        throw EncodingError.invalidValue(
+            "broken",
+            EncodingError.Context(codingPath: [], debugDescription: "broken")
+        )
     }
 }

@@ -53,10 +53,15 @@ SwiftUI application
 any remote fetch, so a cold start renders the last-known sessions, recordings,
 workouts, presets, routines, phase periods, health rows, settings, and tag
 metadata immediately. Successful full and realtime-slice refreshes reconcile
-through the same cache, while user-initiated creates/edits/deletes are written
-optimistically and confirmed only when the matching server revision still wins;
-a cache open/read failure degrades to the existing network-only path and is
-reported in the auth diagnostics ring.
+through the same cache. Foreground refreshes ask each cache entity for only the
+rows changed after its persisted `updated_at` cursor, apply active changes and
+soft-delete tombstones as a single batch, and advance the cursor only after the
+cache write succeeds; the first sync after install or cache rebuild still does
+a full hydration so a missing or reset cursor can never strand older rows.
+Realtime slices continue through the same reconcile path. User-initiated
+creates/edits/deletes are written optimistically and confirmed only when the
+matching server revision still wins; a cache open/read failure degrades to the
+existing network-only path and is reported in the auth diagnostics ring.
 
 `Sources/Shared` + `Sources/Widgets` compile into a second product target —
 `SendmeterNativeWidgets`, a WidgetKit app-extension embedded in the app

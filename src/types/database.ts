@@ -266,26 +266,32 @@ export type Database = {
       phase_periods: {
         Row: {
           created_at: string
+          deleted_at: string | null
           ended_on: string | null
           id: string
           phase: string
           started_on: string
+          updated_at: string
           user_id: string
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           ended_on?: string | null
           id?: string
           phase: string
           started_on: string
+          updated_at?: string
           user_id?: string
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           ended_on?: string | null
           id?: string
           phase?: string
           started_on?: string
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -293,23 +299,29 @@ export type Database = {
       routine_presets: {
         Row: {
           created_at: string
+          deleted_at: string | null
           id: string
           name: string
           steps: Json
+          updated_at: string
           user_id: string
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           id?: string
           name?: string
           steps: Json
+          updated_at?: string
           user_id?: string
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           id?: string
           name?: string
           steps?: Json
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -375,6 +387,7 @@ export type Database = {
           cadence_out_s: number
           cadence_return_s: number
           created_at: string
+          deleted_at: string | null
           hold_s: number
           holds_s: number[] | null
           id: string
@@ -393,6 +406,7 @@ export type Database = {
           target_pct: number | null
           tolerance_mode: string
           tolerance_value: number
+          updated_at: string
           user_id: string
         }
         Insert: {
@@ -401,6 +415,7 @@ export type Database = {
           cadence_out_s?: number
           cadence_return_s?: number
           created_at?: string
+          deleted_at?: string | null
           hold_s: number
           holds_s?: number[] | null
           id?: string
@@ -419,6 +434,7 @@ export type Database = {
           target_pct?: number | null
           tolerance_mode?: string
           tolerance_value?: number
+          updated_at?: string
           user_id?: string
         }
         Update: {
@@ -427,6 +443,7 @@ export type Database = {
           cadence_out_s?: number
           cadence_return_s?: number
           created_at?: string
+          deleted_at?: string | null
           hold_s?: number
           holds_s?: number[] | null
           id?: string
@@ -445,6 +462,7 @@ export type Database = {
           target_pct?: number | null
           tolerance_mode?: string
           tolerance_value?: number
+          updated_at?: string
           user_id?: string
         }
         Relationships: []

@@ -695,6 +695,117 @@ public struct LocalCacheStore: @unchecked Sendable {
         )
     }
 
+    /// Upserts one server payload from a cursor-bounded delta.
+    ///
+    /// A delta fetch is authoritative for every row it returns: the row was
+    /// selected because its `updated_at` crossed the persisted cursor, so it
+    /// must replace the cached server state even if an earlier local
+    /// confirmation or realtime refresh happened to store a later device-side
+    /// timestamp. Pending local rows are still protected.
+    public func upsertDeltaServer<T: Encodable>(
+        _ value: T,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String,
+        updatedAt: Date
+    ) throws {
+        let json = try JSONEncoder().encode(value)
+        guard let payload = String(data: json, encoding: .utf8) else {
+            throw LocalCacheError.invalidJSON
+        }
+        let incoming = Self.timestamp(updatedAt)
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO cache_rows
+                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                    VALUES (?, ?, ?, ?, NULL, ?, 'server', 0, 0)
+                    ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
+                        payload = CASE
+                            WHEN cache_rows.pending = 1 THEN cache_rows.payload
+                            ELSE excluded.payload
+                        END,
+                        deleted_at = CASE
+                            WHEN cache_rows.pending = 1 THEN cache_rows.deleted_at
+                            ELSE excluded.deleted_at
+                        END,
+                        updated_at = CASE
+                            WHEN cache_rows.pending = 1 THEN cache_rows.updated_at
+                            ELSE excluded.updated_at
+                        END,
+                        write_origin = CASE
+                            WHEN cache_rows.pending = 1 THEN cache_rows.write_origin
+                            ELSE 'server'
+                        END,
+                        pending = CASE
+                            WHEN cache_rows.pending = 1 THEN 1
+                            ELSE 0
+                        END,
+                        local_revision = cache_rows.local_revision
+                    """,
+                arguments: [
+                    Self.accountIDString(accountUserID),
+                    entityType.rawValue,
+                    entityID,
+                    payload,
+                    incoming
+                ]
+            )
+        }
+    }
+
+    /// Soft-deletes one server entity from a cursor-bounded delta.
+    ///
+    /// Same authoritative semantics as `upsertDeltaServer`: the row is in the
+    /// delta because the server explicitly tombstoned it after the cursor, so
+    /// a locally-confirmed timestamp must not keep a stale active row alive.
+    public func markDeletedDeltaServer(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String,
+        updatedAt: Date
+    ) throws {
+        let incoming = Self.timestamp(updatedAt)
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO cache_rows
+                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                    VALUES (?, ?, ?, '{}', ?, ?, 'server', 0, 0)
+                    ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
+                        payload = CASE
+                            WHEN cache_rows.pending = 1 THEN cache_rows.payload
+                            ELSE excluded.payload
+                        END,
+                        deleted_at = CASE
+                            WHEN cache_rows.pending = 1 THEN cache_rows.deleted_at
+                            ELSE excluded.deleted_at
+                        END,
+                        updated_at = CASE
+                            WHEN cache_rows.pending = 1 THEN cache_rows.updated_at
+                            ELSE excluded.updated_at
+                        END,
+                        write_origin = CASE
+                            WHEN cache_rows.pending = 1 THEN cache_rows.write_origin
+                            ELSE 'server'
+                        END,
+                        pending = CASE
+                            WHEN cache_rows.pending = 1 THEN 1
+                            ELSE 0
+                        END,
+                        local_revision = cache_rows.local_revision
+                    """,
+                arguments: [
+                    Self.accountIDString(accountUserID),
+                    entityType.rawValue,
+                    entityID,
+                    incoming,
+                    incoming
+                ]
+            )
+        }
+    }
+
     private func writeTombstone(
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
@@ -875,6 +986,26 @@ public struct LocalCacheStore: @unchecked Sendable {
         }
     }
 
+    /// Deletes the sync cursor for one account + entity type.
+    ///
+    /// Used when an entity has a hard-delete path that deltas cannot observe
+    /// (for example the rename-tag registry) and the next refresh must be a
+    /// full reconcile instead of continuing from the previous cursor.
+    public func deleteCursor(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    DELETE FROM sync_cursors
+                    WHERE account_user_id = ? AND entity_type = ?
+                    """,
+                arguments: [Self.accountIDString(accountUserID), entityType.rawValue]
+            )
+        }
+    }
+
     // MARK: - Helpers
 
     /// Returns whether `table` has a column named `name`. Used to make the
@@ -888,6 +1019,14 @@ public struct LocalCacheStore: @unchecked Sendable {
     }
 
     private static func accountIDString(_ id: UUID) -> String { id.uuidString }
+
+    /// Formats a server timestamp exactly as the store's fixed-width UTC
+    /// microsecond cursor strings. Repository delta fetches use the same
+    /// formatter so a cursor written by the cache round-trips through
+    /// PostgREST without precision drift.
+    public static func syncCursorString(from date: Date) -> String {
+        timestamp(date)
+    }
 
     private static func timestamp(_ date: Date = Date()) -> String {
         // Postgres timestamptz carries microseconds. The store never parses

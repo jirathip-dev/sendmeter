@@ -958,6 +958,19 @@ public final class AppModel: ObservableObject {
                     confirmingLocalRevision: oldMetadataDeleteRevision
                 )
             }
+            // The rename RPC hard-deletes the stale registry row and does not
+            // create the new one unless it already existed. Deltas cannot
+            // observe that, so force a full tag reconcile before refreshing.
+            if let cachedWorkspace {
+                do {
+                    try cachedWorkspace.resetCursor(
+                        accountUserID: userID,
+                        entityType: .tagMetadata
+                    )
+                } catch {
+                    recordCacheFailure("cache cursor reset", error)
+                }
+            }
             await refreshAll(showSpinner: false)
             guard accountFetch.canApply(
                 to: currentUserID,
@@ -1412,23 +1425,48 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    /// Reconcile a completed authoritative remote fetch into the cache.
-    ///
-    /// Uses `CachedWorkspace.reconcileServer`, which adopts clean server rows,
-    /// tombstones rows absent from the fetched snapshot, and deliberately
-    /// leaves pending local rows untouched.
-    private func reconcileCachedWorkspace(
-        _ remote: CachedWorkspaceSnapshot,
-        accountUserID: UUID
+    /// Applies one entity refresh to the cache: a full snapshot on first sync
+    /// or after a cursor reset, or a cursor-bounded delta otherwise. Cache
+    /// errors are recorded and non-fatal, matching the cold-start read policy.
+    private func reconcileEntityRefresh<T: Encodable>(
+        _ delta: RemoteEntityDelta<T>,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        fullSnapshot: CachedWorkspaceSnapshot?
     ) {
         guard let cachedWorkspace else { return }
         do {
-            try cachedWorkspace.reconcileServer(
-                remote,
-                accountUserID: accountUserID
+            if fullSnapshot != nil {
+                try cachedWorkspace.reconcileServerDelta(
+                    delta,
+                    accountUserID: accountUserID,
+                    entityType: entityType
+                )
+            } else {
+                try cachedWorkspace.reconcileDelta(
+                    delta,
+                    accountUserID: accountUserID,
+                    entityType: entityType
+                )
+            }
+        } catch {
+            recordCacheFailure("cache entity reconcile", error)
+        }
+    }
+
+    private func cacheCursor(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) -> String? {
+        guard let cachedWorkspace else { return nil }
+        do {
+            return try cachedWorkspace.cursor(
+                accountUserID: accountUserID,
+                entityType: entityType
             )
         } catch {
-            recordCacheFailure("cache reconcile", error)
+            recordCacheFailure("cache cursor read", error)
+            return nil
         }
     }
 
@@ -1459,8 +1497,8 @@ public final class AppModel: ObservableObject {
     }
 
     /// Reconciles only the slices requested by one realtime flush. This is
-    /// the realtime counterpart to `reconcileCachedWorkspace`: a targeted
-    /// fetch never tombstones slices it did not request.
+    /// the realtime counterpart to the full-refresh path: a targeted fetch
+    /// never tombstones slices it did not request.
     private func reconcileCachedSlices(
         _ remote: CachedWorkspaceSnapshot,
         accountUserID: UUID,
@@ -1737,6 +1775,15 @@ public final class AppModel: ObservableObject {
         // Cold-start / account-switch path: render the account's local
         // snapshot before any network request starts.
         hydrateCachedWorkspace(accountUserID: userID)
+        let sessionCursor = cacheCursor(accountUserID: userID, entityType: .sessions)
+        let settingsCursor = cacheCursor(accountUserID: userID, entityType: .settings)
+        let phaseCursor = cacheCursor(accountUserID: userID, entityType: .phasePeriods)
+        let healthCursor = cacheCursor(accountUserID: userID, entityType: .healthMetrics)
+        let recordingCursor = cacheCursor(accountUserID: userID, entityType: .recordings)
+        let presetCursor = cacheCursor(accountUserID: userID, entityType: .presets)
+        let routineCursor = cacheCursor(accountUserID: userID, entityType: .routinePresets)
+        let workoutCursor = cacheCursor(accountUserID: userID, entityType: .workoutsAndAttempts)
+        let tagCursor = cacheCursor(accountUserID: userID, entityType: .tagMetadata)
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
@@ -1761,111 +1808,151 @@ public final class AppModel: ObservableObject {
         }
         do {
             let today = LocalDateSupport.string(from: Date())
-            async let remoteSessions = repository.fetchSessions(accountUserID: userID)
-            async let remoteSettings = repository.fetchSettings(userID: userID, today: today)
-            async let remotePeriods = repository.fetchPhasePeriods()
-            async let remoteHealth = repository.fetchHealthMetrics()
-            async let remoteRecordings = repository.fetchRecordings()
-            async let remotePresets = repository.fetchPresets()
-            async let remoteRoutines = repository.fetchRoutinePresets()
-            async let remoteWorkouts = repository.fetchWorkouts()
-            async let remoteTags = repository.fetchTagMetadata()
+            async let remoteSessions = repository.fetchSessionDelta(
+                since: sessionCursor,
+                accountUserID: userID
+            )
+            async let remoteSettings = repository.fetchSettingsDelta(since: settingsCursor)
+            async let remotePeriods = repository.fetchPhasePeriodDelta(since: phaseCursor)
+            async let remoteHealth = repository.fetchHealthMetricDelta(since: healthCursor)
+            async let remoteRecordings = repository.fetchRecordingDelta(since: recordingCursor)
+            async let remotePresets = repository.fetchPresetDelta(since: presetCursor)
+            async let remoteRoutines = repository.fetchRoutineDelta(since: routineCursor)
+            async let remoteWorkouts = repository.fetchWorkoutDelta(since: workoutCursor)
+            async let remoteTags = repository.fetchTagMetadataDelta(since: tagCursor)
 
             let fetchedSessions = try await remoteSessions
             let fetchedRecordings = try await remoteRecordings
-            let fetchedSettings = try await remoteSettings
-            let publishedSettings = accountFetch.publishIfCurrent(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) {
-                settings = fetchedSettings
+            var fetchedSettings = try await remoteSettings
+            if settingsCursor == nil, fetchedSettings.activeValues.isEmpty {
+                // First sync with no settings row: keep the historical
+                // create-default behavior, then read the stamped timestamp so
+                // the next refresh can go incremental.
+                _ = try await repository.fetchSettings(userID: userID, today: today)
+                let settingsAfterUpsert = try await repository.fetchSettingsDelta(since: nil)
+                if settingsAfterUpsert.activeValues.isEmpty {
+                    fetchedSettings = RemoteEntityDelta(
+                        changes: [],
+                        activeValues: [UserSettings(currentPhase: .capacity, phaseStartDate: today)],
+                        cursor: nil
+                    )
+                } else {
+                    fetchedSettings = settingsAfterUpsert
+                }
             }
-            guard publishedSettings else { return }
             let fetchedPeriods = try await remotePeriods
-            let publishedPeriods = accountFetch.publishIfCurrent(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) {
-                phasePeriods = fetchedPeriods
-            }
-            guard publishedPeriods else { return }
             let fetchedHealth = try await remoteHealth
-            let publishedHealth = accountFetch.publishIfCurrent(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) {
-                healthMetrics = fetchedHealth
-            }
-            guard publishedHealth else { return }
             let fetchedPresets = try await remotePresets
-            let publishedPresets = accountFetch.publishIfCurrent(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) {
-                presets = fetchedPresets
-            }
-            guard publishedPresets else { return }
             let fetchedRoutines = try await remoteRoutines
-            let publishedRoutines = accountFetch.publishIfCurrent(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) {
-                routines = fetchedRoutines
-            }
-            guard publishedRoutines else { return }
             let fetchedWorkouts = try await remoteWorkouts
-            let publishedWorkouts = accountFetch.publishIfCurrent(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) {
-                workouts = fetchedWorkouts
-            }
-            guard publishedWorkouts else { return }
             let fetchedTags = try await remoteTags
-            let publishedTags = accountFetch.publishIfCurrent(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) {
-                tagMetadata = fetchedTags
+
+            guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+                return
             }
-            guard publishedTags else { return }
-            reconcileCachedWorkspace(
-                CachedWorkspaceSnapshot(
-                    sessions: fetchedSessions,
-                    settings: fetchedSettings,
-                    phasePeriods: fetchedPeriods,
-                    healthMetrics: fetchedHealth,
-                    recordings: fetchedRecordings,
-                    presets: fetchedPresets,
-                    routines: fetchedRoutines,
-                    workouts: fetchedWorkouts,
-                    tagMetadata: fetchedTags
-                ),
-                accountUserID: userID
+            reconcileEntityRefresh(
+                fetchedSessions,
+                accountUserID: userID,
+                entityType: .sessions,
+                fullSnapshot: sessionCursor == nil
+                    ? CachedWorkspaceSnapshot(sessions: fetchedSessions.activeValues)
+                    : nil
             )
+            reconcileEntityRefresh(
+                fetchedSettings,
+                accountUserID: userID,
+                entityType: .settings,
+                fullSnapshot: settingsCursor == nil
+                    ? CachedWorkspaceSnapshot(settings: fetchedSettings.activeValues.first)
+                    : nil
+            )
+            reconcileEntityRefresh(
+                fetchedPeriods,
+                accountUserID: userID,
+                entityType: .phasePeriods,
+                fullSnapshot: phaseCursor == nil
+                    ? CachedWorkspaceSnapshot(phasePeriods: fetchedPeriods.activeValues)
+                    : nil
+            )
+            reconcileEntityRefresh(
+                fetchedHealth,
+                accountUserID: userID,
+                entityType: .healthMetrics,
+                fullSnapshot: healthCursor == nil
+                    ? CachedWorkspaceSnapshot(healthMetrics: fetchedHealth.activeValues)
+                    : nil
+            )
+            reconcileEntityRefresh(
+                fetchedRecordings,
+                accountUserID: userID,
+                entityType: .recordings,
+                fullSnapshot: recordingCursor == nil
+                    ? CachedWorkspaceSnapshot(recordings: fetchedRecordings.activeValues)
+                    : nil
+            )
+            reconcileEntityRefresh(
+                fetchedPresets,
+                accountUserID: userID,
+                entityType: .presets,
+                fullSnapshot: presetCursor == nil
+                    ? CachedWorkspaceSnapshot(presets: fetchedPresets.activeValues)
+                    : nil
+            )
+            reconcileEntityRefresh(
+                fetchedRoutines,
+                accountUserID: userID,
+                entityType: .routinePresets,
+                fullSnapshot: routineCursor == nil
+                    ? CachedWorkspaceSnapshot(routines: fetchedRoutines.activeValues)
+                    : nil
+            )
+            reconcileEntityRefresh(
+                fetchedWorkouts,
+                accountUserID: userID,
+                entityType: .workoutsAndAttempts,
+                fullSnapshot: workoutCursor == nil
+                    ? CachedWorkspaceSnapshot(workouts: fetchedWorkouts.activeValues)
+                    : nil
+            )
+            reconcileEntityRefresh(
+                fetchedTags,
+                accountUserID: userID,
+                entityType: .tagMetadata,
+                fullSnapshot: tagCursor == nil
+                    ? CachedWorkspaceSnapshot(tagMetadata: fetchedTags.activeValues)
+                    : nil
+            )
+
+            let publishedSnapshot = try? cachedWorkspace?.load(accountUserID: userID)
+            let publishedSessions = publishedSnapshot?.sessions
+                ?? fetchedSessions.activeValues
+            let publishedRecordings = publishedSnapshot?.recordings
+                ?? fetchedRecordings.activeValues
+            let publishedSessionIDs = Set(publishedSessions.map(\.id))
+            let publishedRecordingIDs = Set(publishedRecordings.map(\.id))
             await restorePendingWrites(
                 accountFetch: accountFetch,
                 userID: userID,
-                remoteSessionIDs: Set(fetchedSessions.map(\.id)),
-                remoteRecordingIDs: Set(fetchedRecordings.map(\.id))
+                remoteSessionIDs: publishedSessionIDs,
+                remoteRecordingIDs: publishedRecordingIDs
             )
             let publishedLists = accountFetch.publishIfCurrent(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) {
-                // The cache is the reconciled source after a full refresh:
-                // re-adopt it so a pending local preset/routine/settings/tag
-                // row is not hidden by the remote snapshot in the published
-                // collections (sessions/recordings keep their richer overlays
-                // below).
+                // The cache is the reconciled source after either a full or a
+                // delta refresh: re-adopt it so a pending local
+                // preset/routine/settings/tag row is not hidden by the remote
+                // snapshot in the published collections (sessions/recordings
+                // keep their richer overlays below).
                 applyCachedNonOverlayLists(accountUserID: userID)
-                mergeSessions(remote: fetchedSessions)
+                mergeSessions(remote: publishedSessions)
                 // This is the explicit authoritative refresh boundary. A
                 // server sample blob can change without metadata changing, so
                 // refreshAll is allowed to invalidate every fit; realtime
                 // rep reconciliation below stays key-scoped.
                 invalidateTagCurveCache()
-                mergeRecordings(remote: fetchedRecordings)
+                mergeRecordings(remote: publishedRecordings)
                 // The sample rows are fetched later by the curve request and
                 // may have changed without any recording metadata change.
                 // Publish this authoritative refresh boundary so a scoped
