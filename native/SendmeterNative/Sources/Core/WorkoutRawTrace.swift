@@ -125,6 +125,34 @@ public enum WorkoutRawTrace {
         return zip(runs, budgets).map { downsample($0, maxPoints: $1) }
     }
 
+    /// The nearest actual HR sample for a scrubbed position, but only when
+    /// that position is inside a rendered run's span (#755). A sensor gap
+    /// between runs therefore returns nil instead of borrowing a reading from
+    /// the other side of the gap; a long run still uses a real measured value
+    /// rather than interpolating one.
+    public static func selectedSample(
+        at t: Double,
+        inRuns runs: [[WorkoutHrSample]]
+    ) -> WorkoutHrSample? {
+        guard t.isFinite else { return nil }
+        var nearest: WorkoutHrSample?
+        var nearestDistance = Double.infinity
+        for run in runs {
+            guard let first = run.first, let last = run.last else { continue }
+            let runLow = min(first.t, last.t)
+            let runHigh = max(first.t, last.t)
+            guard t >= runLow, t <= runHigh else { continue }
+            for sample in run where sample.hr != nil {
+                let distance = abs(sample.t - t)
+                if distance < nearestDistance {
+                    nearest = sample
+                    nearestDistance = distance
+                }
+            }
+        }
+        return nearest
+    }
+
     /// Whether a series has enough valid samples for the HR chart — the web's
     /// `< 2` guard (a line needs at least two points; the chart renders
     /// nothing below that).
