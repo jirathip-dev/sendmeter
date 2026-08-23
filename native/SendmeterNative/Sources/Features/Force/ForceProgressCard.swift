@@ -80,7 +80,7 @@ struct ForceProgressCard: View {
                 movementTile(movementProgress)
             }
         }
-        .sheet(item: $detail) { detail in
+        .sheet(item: $detail, onDismiss: { Haptics.shared.sheetDismissed() }) { detail in
             Group {
                 switch detail {
                 case .staticCapacity:
@@ -236,7 +236,7 @@ struct ForceProgressCard: View {
                     .stroke(color.opacity(0.24), lineWidth: 1)
             )
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
         .accessibilityLabel(
             selectedTag.map { "\(accessibilityLabel), \($0)" } ?? accessibilityLabel
         )

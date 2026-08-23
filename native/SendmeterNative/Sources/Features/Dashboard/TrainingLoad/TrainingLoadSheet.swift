@@ -238,6 +238,7 @@ private struct WeeklyBarsView: View {
                     // above remains the accessible element.
                     Color.clear
                         .contentShape(Rectangle())
+                        .hapticTapMuted()
                         .gesture(
                             SpatialTapGesture()
                                 .onEnded { value in
@@ -330,7 +331,7 @@ private struct WeeklyBarsView: View {
     private func setSelection(_ index: Int?) {
         if SelectionHaptics.valueChanged(tickedIndex, index) {
             tickedIndex = index
-            Haptics.shared.play(.selection)
+            Haptics.shared.playGesture(.selection)
         }
         selectedIndex = index
     }

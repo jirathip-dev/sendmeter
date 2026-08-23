@@ -32,15 +32,51 @@ public final class Haptics {
     public static let shared = Haptics()
 
     private var gestureGate = HapticGestureGate()
+    private var structuralTracker = StructuralHapticTracker()
+    private var structuralDefaultSettlement: (cue: HapticCue, generation: Int)?
+    private var structuralSettlementGeneration = 0
     private var impacts: [UIImpactFeedbackGenerator.FeedbackStyle: UIImpactFeedbackGenerator] = [:]
     private var notification: UINotificationFeedbackGenerator?
     private var selection: UISelectionFeedbackGenerator?
     private init() {}
 
+    /// A structural button/card touch started. Mirrors the web delegated
+    /// pointer-down: it arms one shared tick, but nothing fires until the
+    /// gesture settles or another consumer claims it.
+    public func beginTap(cue: HapticCue? = .light) {
+        cancelStructuralDefault()
+        gestureGate.reset()
+        structuralTracker.begin(cue: cue, nowMs: nowMilliseconds())
+    }
+
+    /// The touch turned into a scroll/drag (past the web tap slop), so the
+    /// gesture must not produce feedback.
+    public func cancelTap() {
+        structuralTracker.cancel()
+    }
+
+    /// A structural button/card touch lifted. If an explicit action haptic
+    /// already claimed this gesture, this is a no-op; otherwise it settles the
+    /// structural cue once per gesture.
+    public func completeTap() {
+        guard let cue = structuralTracker.complete(nowMs: nowMilliseconds()) else { return }
+        scheduleStructuralDefault(cue)
+    }
+
     /// A user-initiated tap landed on a control that presents a sheet/full-
     /// screen. Arms the gate so that surface's presentation can spend the
     /// tick. Nothing fires here — a sheet presented later does.
     public func tap() {
+        // The structural tracker owns the button gesture when a haptic-aware
+        // style/modifier is present. Don't re-arm the legacy gate on top of it.
+        guard !structuralTracker.hasPendingGesture else { return }
+        // If the button action runs after the structural gesture has already
+        // settled, the delayed default tick owns the feedback. Preserve that
+        // instead of arming a second sheet tick on the same touch.
+        guard !structuralTracker.wasSettled(
+            nowMs: nowMilliseconds(),
+            withinMs: StructuralHapticTracker.dismissalDuplicateWindowMs
+        ) else { return }
         gestureGate.tap(nowMs: nowMilliseconds())
     }
 
@@ -48,13 +84,83 @@ public final class Haptics {
     /// armed the gate within the freshness window and no other consumer has
     /// spent this gesture's tick.
     public func sheetPresented() {
-        guard gestureGate.claim(nowMs: nowMilliseconds()) else { return }
-        play(.light)
+        let now = nowMilliseconds()
+        if let cue = structuralTracker.claim(nowMs: now) {
+            cancelStructuralDefault()
+            fire(cue)
+            return
+        }
+        guard gestureGate.claim(nowMs: now) else { return }
+        fire(.light)
+    }
+
+    /// A sheet/fullscreen was dismissed. Backdrop taps and drag-to-close have
+    /// no SwiftUI control behind them, so this is the one place that settles a
+    /// dismissal tick; a close button that already settled its gesture is
+    /// suppressed by the duplicate window.
+    public func sheetDismissed() {
+        let now = nowMilliseconds()
+        if let cue = structuralTracker.claim(nowMs: now) {
+            cancelStructuralDefault()
+            fire(cue)
+            return
+        }
+        guard !structuralTracker.wasSettled(
+            nowMs: now,
+            withinMs: StructuralHapticTracker.dismissalDuplicateWindowMs
+        ) else {
+            return
+        }
+        structuralTracker.begin(cue: .light, nowMs: now)
+        _ = structuralTracker.claim(
+            nowMs: now,
+            requireGestureWithinMs: .infinity
+        )
+        fire(.light)
+    }
+
+    /// An explicit confirm/destructive/refused cue that belongs to a pointer
+    /// gesture. If the structural tracker has a pending tap, this claims it so
+    /// the light/default structure can't also fire; otherwise it starts and
+    /// settles a gesture itself so a sheet dismiss on the same action is
+    /// recognized as one tick.
+    public func playGesture(_ cue: HapticCue?) {
+        guard let cue else { return }
+        let now = nowMilliseconds()
+        if structuralTracker.claim(nowMs: now) != nil {
+            cancelStructuralDefault()
+            fire(cue)
+            return
+        }
+        if structuralTracker.consumeSettled(
+            nowMs: now,
+            withinMs: StructuralHapticTracker.dismissalDuplicateWindowMs
+        ) != nil {
+            cancelStructuralDefault()
+            fire(cue)
+            return
+        }
+        guard !structuralTracker.wasSettled(
+            nowMs: now,
+            withinMs: StructuralHapticTracker.dismissalDuplicateWindowMs
+        ) else {
+            return
+        }
+        structuralTracker.begin(cue: cue, nowMs: now)
+        _ = structuralTracker.claim(
+            nowMs: now,
+            requireGestureWithinMs: .infinity
+        )
+        fire(cue)
     }
 
     /// Plays a cue. Never throws, never blocks.
     public func play(_ cue: HapticCue?) {
         guard let cue else { return }
+        fire(cue)
+    }
+
+    private func fire(_ cue: HapticCue) {
         switch cue {
         case .light:
             impact(.light)
@@ -69,7 +175,7 @@ public final class Haptics {
         case .error:
             notificationGenerator().notificationOccurred(.error)
         case let .pattern(pattern):
-            play(pattern: pattern)
+            fire(pattern: pattern)
         }
     }
 
@@ -77,6 +183,36 @@ public final class Haptics {
     /// fire-and-forget task. The first tick is synchronous so the buzz begins
     /// with the gesture; later ticks are spaced by `Task.sleep`.
     public func play(pattern: HapticPattern) {
+        fire(pattern: pattern)
+    }
+
+    /// Delays a structural default tick one UI turn so a Button action (which
+    /// may run after the structural `onEnded`) can promote the gesture to its
+    /// explicit medium/warning/selection cue first. The tracker keeps the
+    /// settled cue until the delayed tick fires, so a late action can still
+    /// consume it instead of adding a second tick.
+    private func scheduleStructuralDefault(_ cue: HapticCue) {
+        structuralSettlementGeneration += 1
+        let generation = structuralSettlementGeneration
+        structuralDefaultSettlement = (cue: cue, generation: generation)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard structuralDefaultSettlement?.generation == generation,
+                  structuralDefaultSettlement?.cue == cue else { return }
+            structuralDefaultSettlement = nil
+            _ = structuralTracker.consumeSettled(
+                nowMs: nowMilliseconds(),
+                withinMs: .infinity
+            )
+            fire(cue)
+        }
+    }
+
+    private func cancelStructuralDefault() {
+        structuralDefaultSettlement = nil
+    }
+
+    private func fire(pattern: HapticPattern) {
         switch pattern {
         case let .single(milliseconds):
             // The web's single-buzz vocabulary distinguishes by DURATION (hold

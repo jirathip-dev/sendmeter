@@ -49,11 +49,11 @@ struct AcwrStatusCard: View {
         .accessibilityHint("Opens training load details.")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { openTrainingLoad() }
-        .sheet(isPresented: $showTrainingLoad) {
+        .sheet(isPresented: $showTrainingLoad, onDismiss: { Haptics.shared.sheetDismissed() }) {
             TrainingLoadSheet()
                 .onAppear { Haptics.shared.sheetPresented() }
         }
-        .sheet(isPresented: $showInfo) {
+        .sheet(isPresented: $showInfo, onDismiss: { Haptics.shared.sheetDismissed() }) {
             AcwrStatusCardInfoSheet()
                 .onAppear { Haptics.shared.sheetPresented() }
         }
@@ -79,6 +79,7 @@ struct AcwrStatusCard: View {
                 .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
+        .hapticTap()
         .onTapGesture(perform: openTrainingLoad)
     }
 
@@ -91,7 +92,7 @@ struct AcwrStatusCard: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
         .accessibilityLabel("About ACWR")
         .accessibilityHint("Opens an explanation of how ACWR is calculated.")
     }
@@ -132,6 +133,7 @@ struct AcwrStatusCard: View {
             footer
         }
         .contentShape(Rectangle())
+        .hapticTap()
         .onTapGesture(perform: openTrainingLoad)
     }
 

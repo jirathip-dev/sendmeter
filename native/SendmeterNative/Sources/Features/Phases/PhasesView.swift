@@ -230,7 +230,7 @@ private struct GuidanceCard: View {
                 }
                 if guidance.state == .considerNext, let next = guidance.nextPhase {
                     Button("Review \(PhaseCatalog.definition(for: next).name)") { onReview(next) }
-                        .buttonStyle(.borderedProminent)
+                        .hapticButtonStyle(.borderedProminent)
                         .tint(SendmeterStyle.phaseColor(next))
                 }
             }
@@ -340,7 +340,7 @@ private struct PhaseSelectionCard: View {
                 }
                 if !isCurrent {
                     Button("Start \(phase.name) Block", action: select)
-                        .buttonStyle(.borderedProminent)
+                        .hapticButtonStyle(.borderedProminent)
                         .tint(SendmeterStyle.phaseColor(phase.id))
                 }
             }

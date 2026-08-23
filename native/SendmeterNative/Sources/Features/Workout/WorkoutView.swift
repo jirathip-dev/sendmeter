@@ -48,15 +48,15 @@ struct WorkoutView: View {
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Workout")
-            .sheet(isPresented: $showRoutineEditor) {
+            .sheet(isPresented: $showRoutineEditor, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 RoutineEditorSheet()
                     .onAppear { Haptics.shared.sheetPresented() }
             }
-            .sheet(item: $runningRoutine) { presentation in
+            .sheet(item: $runningRoutine, onDismiss: { Haptics.shared.sheetDismissed() }) { presentation in
                 RoutineRunnerSheet(presentation: presentation)
                     .onAppear { Haptics.shared.sheetPresented() }
             }
-            .fullScreenCover(isPresented: $showManualWorkout) {
+            .fullScreenCover(isPresented: $showManualWorkout, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 ManualWorkoutFullscreen(
                     engine: $engine,
                     isSaving: isSaving,
@@ -214,7 +214,7 @@ struct WorkoutView: View {
             // #656 (re-review): the accepted medium tick fires only once the
             // finish is real — an empty-workout refusal below must play the
             // warning pattern, never the accepted tick.
-            Haptics.shared.play(.medium)
+            Haptics.shared.playGesture(.medium)
             model.manualWorkoutRest.stop()
             showManualWorkout = false
             self.engine = nil
@@ -231,7 +231,7 @@ struct WorkoutView: View {
             model.errorMessage = "Record at least one attempt before finishing the Manual workout."
             // #222: the Finish button is deliberately kept clickable so the
             // tap can say why — a refused finish must not feel accepted.
-            Haptics.shared.play(RefusedActionHaptics.cue(tappableAndRefused: true))
+            Haptics.shared.playGesture(RefusedActionHaptics.cue(tappableAndRefused: true))
         } catch {
             model.errorMessage = error.localizedDescription
         }
@@ -290,7 +290,7 @@ private struct StartWorkoutCard: View {
                         .multilineTextAlignment(.center)
                 }
                 Button("Start Manual workout", action: start)
-                    .buttonStyle(PrimaryActionButtonStyle())
+                    .hapticButtonStyle(PrimaryActionButtonStyle())
             }
         }
     }
@@ -329,7 +329,7 @@ private struct ActiveWorkoutCard: View {
                             Label("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right")
                                 .frame(maxWidth: .infinity, minHeight: 40)
                         }
-                        .buttonStyle(.bordered)
+                        .hapticButtonStyle(.bordered)
                         .accessibilityHint("Resume the immersive Manual workout timer")
 
                         Button {
@@ -350,7 +350,7 @@ private struct ActiveWorkoutCard: View {
                                 systemImage: isAttempting ? "stop.fill" : "play.fill"
                             )
                         }
-                        .buttonStyle(PrimaryActionButtonStyle())
+                        .hapticButtonStyle(PrimaryActionButtonStyle())
                         .tint(isAttempting ? SendmeterStyle.alert : SendmeterStyle.primary)
 
                         HStack {
@@ -376,7 +376,7 @@ private struct ActiveWorkoutCard: View {
                             }
                             .frame(maxWidth: .infinity, minHeight: 44)
                         }
-                        .buttonStyle(.bordered)
+                        .hapticButtonStyle(.bordered)
                         .disabled(isSaving)
                     }
                 }
@@ -460,7 +460,7 @@ private struct RoutineLibraryCard: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Button("Create Routine", action: edit)
-                        .buttonStyle(.bordered)
+                        .hapticButtonStyle(.bordered)
                 } else {
                     ForEach(model.routines) { routine in
                         Button { run(routine) } label: {
@@ -476,7 +476,7 @@ private struct RoutineLibraryCard: View {
                                     .font(.title2)
                             }
                         }
-                        .buttonStyle(.plain)
+                        .hapticButtonStyle(.plain)
                         if routine.id != model.routines.last?.id { Divider() }
                     }
                 }
@@ -545,15 +545,15 @@ private struct RoutineRunnerSheet: View {
                         Button("Log Routine & Close") {
                             closeRoutine()
                         }
-                        .buttonStyle(PrimaryActionButtonStyle())
+                        .hapticButtonStyle(PrimaryActionButtonStyle())
                     } else {
                         HStack {
                             Button(run.isPaused ? "Resume" : "Pause") {
                                 togglePause(at: context.date)
                             }
-                            .buttonStyle(.bordered)
+                            .hapticButtonStyle(.bordered)
                             Button("Skip") { skip(at: context.date) }
-                                .buttonStyle(.bordered)
+                                .hapticButtonStyle(.bordered)
                         }
                     }
                     Spacer()
@@ -697,7 +697,7 @@ private struct RoutineEditorSheet: View {
                             Button(role: .destructive) {
                                 // #656: a confirmed destructive action fires
                                 // the medium tick once per gesture.
-                                Haptics.shared.play(.medium)
+                                Haptics.shared.playGesture(.medium)
                                 steps.removeAll { $0.id == step.id }
                             } label: { Label("Delete", systemImage: "trash") }
                         }

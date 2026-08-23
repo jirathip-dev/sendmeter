@@ -123,6 +123,120 @@ public enum RefusedActionHaptics {
     }
 }
 
+/// The structural tap vocabulary (#752) — the native analogue of the web's
+/// `data-haptic` values (`haptics.ts`). A normal interactive control gets the
+/// light tick; a confirm/destructive action gets medium; a deliberately
+/// clickable-but-refused control gets warning; a genuinely disabled control is
+/// filtered out before it reaches the tracker.
+public enum HapticTapLevel: Equatable, Sendable {
+    case normal
+    case confirm
+    case refused
+}
+
+public enum StructuralHaptics {
+    public static func cue(level: HapticTapLevel, isEnabled: Bool = true) -> HapticCue? {
+        guard isEnabled else { return nil }
+        switch level {
+        case .normal:
+            return .light
+        case .confirm:
+            return .medium
+        case .refused:
+            return .warning
+        }
+    }
+}
+
+/// One tick per pointer gesture (#752) — the pure version of the web's
+/// `createGestureTracker` (`tapHaptics.ts`). SwiftUI buttons don't expose a
+/// DOM event path, so the App layer calls `begin`/`complete` around a touch
+/// and every consumer (the button itself, an explicit confirm haptic, sheet
+/// presentation, sheet dismissal) claims the same pending cue exactly once.
+public struct StructuralHapticTracker: Sendable {
+    /// Mirror of the web `TAP_SLOP_PX`.
+    public static let tapSlopPx: Double = 10
+    /// Mirror of the web `GESTURE_FRESH_MS`.
+    public static let gestureFreshnessMs: Double = 1_500
+    /// A close-button tick and the sheet's `onDismiss` arrive close together;
+    /// this window lets the dismissal hook see the same gesture as already
+    /// settled instead of adding a second tick.
+    public static let dismissalDuplicateWindowMs: Double = 400
+
+    private var pendingCue: HapticCue?
+    private var pendingStartMs: Double?
+    private var settledAtMs: Double?
+    private var settledCue: HapticCue?
+    private var settled = false
+
+    public init() {}
+
+    public mutating func begin(cue: HapticCue?, nowMs: Double) {
+        pendingCue = cue
+        pendingStartMs = cue == nil ? nil : nowMs
+        settledAtMs = nil
+        settledCue = nil
+        settled = false
+    }
+
+    public mutating func cancel() {
+        pendingCue = nil
+        pendingStartMs = nil
+    }
+
+    public mutating func claim(
+        nowMs: Double,
+        requireGestureWithinMs: Double = StructuralHapticTracker.gestureFreshnessMs
+    ) -> HapticCue? {
+        guard let cue = pendingCue,
+              let pendingStartMs,
+              !settled,
+              nowMs - pendingStartMs <= requireGestureWithinMs
+        else {
+            return nil
+        }
+        settled = true
+        settledAtMs = nowMs
+        settledCue = cue
+        pendingCue = nil
+        self.pendingStartMs = nil
+        return cue
+    }
+
+    /// Completes a button/card tap. This intentionally ignores the freshness
+    /// window: the user is physically holding the touch when this is called,
+    /// so a long press must still settle once they lift.
+    public mutating func complete(nowMs: Double) -> HapticCue? {
+        claim(
+            nowMs: nowMs,
+            requireGestureWithinMs: .infinity
+        )
+    }
+
+    public var hasPendingGesture: Bool {
+        pendingCue != nil
+    }
+
+    /// Claims the default cue a completed button gesture settled on. This lets
+    /// an explicit confirm/refused/selection action upgrade the same gesture
+    /// even when SwiftUI runs the Button action after the structural
+    /// `onEnded`, without allowing a second tick.
+    public mutating func consumeSettled(
+        nowMs: Double,
+        withinMs: Double
+    ) -> HapticCue? {
+        guard let settledCue, let settledAtMs else { return nil }
+        guard nowMs - settledAtMs <= withinMs else { return nil }
+        self.settledCue = nil
+        return settledCue
+    }
+
+    public func wasSettled(nowMs: Double, withinMs: Double) -> Bool {
+        guard let settledAtMs else { return false }
+        return nowMs - settledAtMs <= withinMs
+    }
+}
+
 /// Sheet-mount tick gate — the web's `createGestureTracker` + `claim(...)`
 /// (`GESTURE_FRESH_MS`): a sheet ticks only when a tap armed it within the
 /// freshness window, and one tap spends exactly one tick. A sheet that appears

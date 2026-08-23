@@ -90,7 +90,7 @@ struct ManualWorkoutFullscreen: View {
                     .font(.headline.weight(.semibold))
                     .frame(width: 44, height: 44)
             }
-            .buttonStyle(GlassWorkoutButtonStyle())
+            .hapticButtonStyle(GlassWorkoutButtonStyle())
             .accessibilityLabel("Minimize manual workout")
             .accessibilityHint("Keeps the workout running in the Workout tab")
 
@@ -114,7 +114,7 @@ struct ManualWorkoutFullscreen: View {
                     .padding(.horizontal, 16)
                     .frame(minHeight: 44)
             }
-            .buttonStyle(GlassWorkoutButtonStyle(tint: SendmeterStyle.alert))
+            .hapticButtonStyle(GlassWorkoutButtonStyle(tint: SendmeterStyle.alert))
             .disabled(isSaving)
             .accessibilityLabel("End manual workout")
             .accessibilityHint("Saves the completed workout and opens it in History")
@@ -182,7 +182,7 @@ struct ManualWorkoutFullscreen: View {
                 let selected = restTarget == target
                 Button {
                     onRestTargetChange(target)
-                    Haptics.shared.play(.selection)
+                    Haptics.shared.playGesture(.selection)
                 } label: {
                     Text(formatDuration(TimeInterval(target)))
                         .font(.caption.weight(.bold).monospacedDigit())
@@ -195,7 +195,7 @@ struct ManualWorkoutFullscreen: View {
                             in: Capsule()
                         )
                 }
-                .buttonStyle(.plain)
+                .hapticButtonStyle(.plain)
                 .accessibilityLabel("Rest target \(formatDuration(TimeInterval(target)))")
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
@@ -241,7 +241,7 @@ struct ManualWorkoutFullscreen: View {
             .frame(width: diameter, height: diameter)
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .hapticButtonStyle(.plain)
         .accessibilityLabel(snapshot.phase == .climbing ? "Done boulder" : "Start boulder")
         .accessibilityHint(snapshot.phase == .climbing ? "Stops the current attempt" : "Starts a new attempt")
     }
@@ -255,10 +255,10 @@ struct ManualWorkoutFullscreen: View {
                 _ = try copy.endAttempt(at: Date())
             }
             engine = copy
-            Haptics.shared.play(.medium)
+            Haptics.shared.playGesture(.medium)
         } catch {
             model.errorMessage = error.localizedDescription
-            Haptics.shared.play(RefusedActionHaptics.cue(tappableAndRefused: true))
+            Haptics.shared.playGesture(RefusedActionHaptics.cue(tappableAndRefused: true))
         }
     }
 
@@ -341,6 +341,7 @@ private struct GlassWorkoutButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .hapticTap(structuralHapticLevel)
             .foregroundStyle(tint)
             .background(.ultraThinMaterial, in: Capsule())
             .overlay(Capsule().stroke(tint.opacity(0.18), lineWidth: 1))
@@ -348,4 +349,8 @@ private struct GlassWorkoutButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
+}
+
+extension GlassWorkoutButtonStyle: StructuralHapticStyle {
+    var structuralHapticLevel: HapticTapLevel { .normal }
 }

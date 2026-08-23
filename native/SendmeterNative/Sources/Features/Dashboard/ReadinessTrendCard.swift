@@ -144,6 +144,7 @@ struct ReadinessTrendCard: View {
             baseChart
                 .frame(height: 170)
                 .chartXSelection(value: $selectedDate)
+                .hapticTapMuted()
                 .onChange(of: selectedDate) { _ in
                     // #656: scrub tick — once per value change (the day under
                     // the finger), never per drag frame. A second pass over
@@ -155,7 +156,7 @@ struct ReadinessTrendCard: View {
                     if let selected {
                         if SelectionHaptics.valueChanged(tickedDay, selected) {
                             tickedDay = selected
-                            Haptics.shared.play(.selection)
+                            Haptics.shared.playGesture(.selection)
                         }
                     } else {
                         tickedDay = nil
@@ -181,6 +182,7 @@ struct ReadinessTrendCard: View {
         } else {
             baseChart
                 .frame(height: 170)
+                .hapticTapMuted()
                 .accessibilityLabel("Fourteen-day readiness trend")
                 .accessibilityValue(selected.map(accessibilityText) ?? "")
                 .accessibilityReadinessChartDescriptor(snapshot.days)

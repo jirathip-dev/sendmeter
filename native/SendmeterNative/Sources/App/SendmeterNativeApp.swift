@@ -12,6 +12,7 @@ struct SendmeterNativeApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .buttonStyle(StructuralDefaultButtonStyle())
                 .environmentObject(model)
                 .environmentObject(model.forceModel)
                 .environmentObject(theme)

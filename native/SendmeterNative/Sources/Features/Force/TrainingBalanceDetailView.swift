@@ -315,7 +315,7 @@ private struct ZoneBreakdownPanel: View {
                     Text("\(expandedZones.contains(zone) ? "▾" : "▸") \(entry.holds.count) hold\(entry.holds.count == 1 ? "" : "s")")
                         .font(.caption2)
                 }
-                .buttonStyle(.plain)
+                .hapticButtonStyle(.plain)
                 .padding(.leading, 15)
                 if expandedZones.contains(zone) {
                     holdList(entry.holds)

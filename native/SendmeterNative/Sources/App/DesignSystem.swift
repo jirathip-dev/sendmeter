@@ -149,6 +149,7 @@ public struct MetricValue: View {
 public struct PrimaryActionButtonStyle: ButtonStyle {
     public func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .hapticTap(structuralHapticLevel)
             .font(.headline)
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, minHeight: 48)
@@ -159,6 +160,10 @@ public struct PrimaryActionButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
+}
+
+extension PrimaryActionButtonStyle: StructuralHapticStyle {
+    public var structuralHapticLevel: HapticTapLevel { .normal }
 }
 
 public struct StatusPill: View {
@@ -196,7 +201,7 @@ public struct ErrorBanner: View {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.bold))
             }
-            .buttonStyle(.plain)
+            .hapticButtonStyle(.plain)
         }
         .padding(12)
         .background(SendmeterStyle.alert.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
@@ -259,7 +264,7 @@ public struct AppToast: View {
                     action.perform()
                 }
                 .font(.subheadline.weight(.bold))
-                .buttonStyle(.bordered)
+                .hapticButtonStyle(.bordered)
                 .tint(SendmeterStyle.primary)
             }
         }
