@@ -1122,7 +1122,6 @@ struct ForceView: View {
     @EnvironmentObject private var forceModel: ForceModel
     @AppStorage("sendmeter.native.force.tag") private var tag = ""
     @AppStorage("sendmeter.native.force.side") private var sideValue = ""
-    @AppStorage("sendmeter.native.force.zone") private var zoneValue = ""
     /// #628: the persisted hands-free toggle — the web's
     /// `sendmeter:gauge-hands-free` AppStorage equivalent.
     @AppStorage("sendmeter.native.force.hands-free") private var handsFreeEnabled = false
@@ -1190,16 +1189,6 @@ struct ForceView: View {
         if normalized != side { side = normalized }
     }
 
-    /// The persisted zone pick (the metadata card's "Zone" picker). Deliberately
-    /// separate from the Focus-Next arm: arming a recommendation never writes
-    /// this, so clearing the arm never leaves a stale persisted zone stamp on
-    /// unrelated presets or free pulls (#653 review finding 5). The arm's own
-    /// zone is derived from the armed preset at save time instead.
-    private var zone: RecordedZone? {
-        get { RecordedZone(rawValue: zoneValue) }
-        nonmutating set { zoneValue = newValue?.rawValue ?? "" }
-    }
-
     private var selectedPreset: TindeqPreset? {
         if let selectedPresetID {
             return model.presets.first(where: { $0.id == selectedPresetID })
@@ -1207,10 +1196,10 @@ struct ForceView: View {
         return zoneArmedPreset ?? movementArmedPreset
     }
 
-    /// The single-armed selection for the metadata card (#710/#711): free hold,
-    /// a suggested zone/maintenance protocol, the resisted-movement suggestion,
-    /// or a saved user preset. Exactly one mode is armed at a time (web
-    /// `withZoneSelected`/`withPresetSelected`).
+    /// The single-armed selection for the recording-context card (#710/#711):
+    /// free hold, a suggested zone/maintenance protocol, the resisted-movement
+    /// suggestion, or a saved user preset. Exactly one mode is armed at a time
+    /// (web `withZoneSelected`/`withPresetSelected`).
     private var selectedSelection: ForceProtocolSelection {
         if let selectedPresetID {
             return .savedPreset(selectedPresetID)
@@ -1251,9 +1240,9 @@ struct ForceView: View {
         return model.recordings.filter { $0.groupID == groupID }.count
     }
 
-    /// The force-curve signal for the Focus-Next tie-break: the cached static
-    /// fit for the active tag, if any. Scoped to the tag (both sides) like the
-    /// card, matching the web's model for the zone pick.
+    /// The force-curve signal for the Focus-Next tie-break and saved-preset
+    /// zone derivation: the cached static fit for the active tag, if any.
+    /// Scoped to the tag (both sides) like the card.
     private var zoneCurve: ZoneCurveInput? {
         let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else { return nil }
@@ -1262,6 +1251,17 @@ struct ForceView: View {
                 && $0.modality == "static"
         }) else { return nil }
         return ZoneCurveInput(curve)
+    }
+
+    /// The set-1 target band used for the save-time zone (#750). Prefer the
+    /// effective recorded side; if the plan only carries per-hand targets
+    /// (alternating with no raw hand chosen), fall back to the first hand.
+    private var recordingZoneTargetBand: ForceTargetBand? {
+        if let band = selectedTargetPlan.band(forSet: 1, side: recordedSide) {
+            return band
+        }
+        let firstHand: TindeqSide = side == .right ? .right : .left
+        return selectedTargetPlan.band(forSet: 1, side: firstHand)
     }
 
     /// The native analysis card uses the same all-sides static curve that is
@@ -1289,18 +1289,20 @@ struct ForceView: View {
         progressSide == nil ? forceCurve : sideScopedForceCurve
     }
 
-    /// The zone stamped onto recordings saved under the current selection:
-    /// the armed suggestion wins (a guided run's holds carry the zone they
-    /// were performed under as a fact — #653 review finding 1), otherwise the
-    /// persisted metadata picker's zone. Never persisted itself.
+    /// The zone stamped onto recordings saved under the current selection
+    /// (#750). The armed protocol is the only source: a suggested quality or
+    /// maintenance protocol states its zone outright, a saved/movement preset
+    /// is classified from its set-1 resolved protocol (duration-only when no
+    /// load/reference exists), and a free pull records nil. There is no
+    /// persisted or standalone zone fallback.
     private var recordingZone: RecordedZone? {
-        if let armedZoneQuality {
-            return ZoneMix.recordedZone(for: armedZoneQuality)
-        }
-        if let armedMaintenanceZone {
-            return armedMaintenanceZone
-        }
-        return zone
+        ZoneMix.recordingZone(
+            for: selectedSelection,
+            preset: selectedPreset,
+            targetBand: recordingZoneTargetBand,
+            references: zoneCurve,
+            setNumber: 1
+        )
     }
 
     private var guidedSessionIsActive: Bool {
@@ -1319,8 +1321,8 @@ struct ForceView: View {
     }
 
     /// #710: the maintenance zones (Warm-up/Prehab) whose guided protocol has a
-    /// usable reference right now — passed to the picker so an unavailable chip
-    /// is disabled (web `!warmupT`/`!prehabT`).
+    /// usable reference right now — passed to the recording-context card so an
+    /// unavailable chip is disabled (web `!warmupT`/`!prehabT`).
     private var armableMaintenanceZones: Set<RecordedZone> {
         Set([RecordedZone.warmup, .prehab].filter {
             ZoneMix.maintenancePreset(for: $0, model: zoneCurve, personalRecord: personalRecordForTag) != nil
@@ -1328,8 +1330,8 @@ struct ForceView: View {
     }
 
     /// #653/#710/#711: apply a single-armed selection. Focus Next (recommended
-    /// zone) and the RECORDING CONTEXT picker both route through here, so the
-    /// mutually-exclusive Free / Suggested / Movement / Saved invariant is
+    /// zone) and the recording-context selection both route through here, so
+    /// the mutually-exclusive Free / Suggested / Movement / Saved invariant is
     /// decided by the pure reducer `ForceProtocolPicker.next` and applied in
     /// one place. Arming is just a selection — the connection/unsaved-recording
     /// guard belongs to Start, not the pick.
@@ -1387,7 +1389,7 @@ struct ForceView: View {
         applySelection(.suggestedZone(zone))
     }
 
-    /// #711: the RECORDING CONTEXT target-tap. Extracted out of the SwiftUI
+    /// #711: the recording-context target-tap. Extracted out of the SwiftUI
     /// `onSelectTarget` closure — the combined type-check of that modifier
     /// chain was too expensive to compile in reasonable time on CI. Applies
     /// the pure single-armed reducer (`ForceProtocolPicker.next`) then
@@ -1413,8 +1415,6 @@ struct ForceView: View {
     private var recordingContextCard: some View {
         let sideBinding: Binding<TindeqSide> =
             Binding(get: { side }, set: { side = $0 })
-        let zoneBinding: Binding<RecordedZone?> =
-            Binding(get: { zone }, set: { zone = $0 })
         let movementSummary: String? = measurementMode == .movement
             ? selectedPreset.map { protocolSummary($0) }
             : nil
@@ -1423,8 +1423,14 @@ struct ForceView: View {
         let showBalanceHint: Bool =
             !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !isReverseActionTarget
-        let balanceIsLocked: Bool =
+        // #750: lock the whole recording context for the same run window the
+        // web uses (`runActive`): a live free pull, an armed/measuring
+        // hands-free loop, an interrupted rep awaiting recovery, or a guided
+        // session. The focused chip/input `.disabled` calls then report that
+        // lock to VoiceOver instead of relying only on the parent modifier.
+        let contextLocked: Bool =
             model.tindeq.status == .measuring
+            || model.tindeq.interruptedRecording != nil
             || model.handsFree.isArmed
             || model.handsFree.isMeasuring
             || guidedControlsLocked
@@ -1433,7 +1439,6 @@ struct ForceView: View {
             tag: $tag,
             side: sideBinding,
             sideMode: sideMode,
-            zone: zoneBinding,
             selectedTarget: selectedSelection,
             onSelectTarget: handleSelectTarget,
             presets: model.presets,
@@ -1445,11 +1450,12 @@ struct ForceView: View {
             exercise: tag,
             curveInput: zoneCurve,
             showsBalance: showBalanceHint,
-            balanceLocked: balanceIsLocked,
+            balanceLocked: contextLocked,
             onPickFocusNext: armRecommendedZone,
-            measurementMode: measurementMode
+            measurementMode: measurementMode,
+            locked: contextLocked
         )
-        .disabled(guidedControlsLocked)
+        .disabled(contextLocked)
     }
 
     /// #711: the armed preset's concise summary (web `protocolSummary`).
@@ -1494,8 +1500,8 @@ struct ForceView: View {
                         // the native equivalent of the web's Start-with-an-
                         // armed-protocol opening the guided timer. With nothing
                         // armed it stays a free pull. `launch` correctly keeps
-                        // the picker in sync for a user preset and clears a
-                        // suggested arm for a saved one.
+                        // the recording-context selection in sync for a user
+                        // preset and clears a suggested arm for a saved one.
                         start: {
                             if let preset = selectedPreset {
                                 launch(preset)
@@ -1622,7 +1628,6 @@ struct ForceView: View {
             // hands-free loop can never persist a stale/forbidden side.
             .onChange(of: recordedSide) { _ in publishFreePullContext() }
             .onChange(of: side) { _ in publishFreePullContext() }
-            .onChange(of: zone) { _ in publishFreePullContext() }
             .onChange(of: selectedPresetID) { _ in publishFreePullContext() }
             .onChange(of: zoneArmedPreset) { _ in publishFreePullContext() }
             .onChange(of: movementArmedPreset) { _ in publishFreePullContext() }
@@ -1802,7 +1807,7 @@ struct ForceView: View {
             side: recordedSide,
             zone: recordingZone,
             preset: selectedPreset,
-            targetBand: selectedTargetPlan.band(forSet: 1, side: recordedSide)
+            targetBand: recordingZoneTargetBand
         )
     }
 
@@ -1823,7 +1828,8 @@ struct ForceView: View {
         // "· Recovered" suffix on the tag — the note is what History shows,
         // matching the watch's `salvageInterruptedRecording`. When no lock
         // exists the recovery is saved honestly untagged/unspecified — never
-        // re-derived from the live pickers (web #298 "never a fallback").
+        // re-derived from the live tag/side controls (web #298 "never a
+        // fallback").
         let attribution = model.forceRecordingLock.map {
             ForceDisconnectSalvage.Attribution(tag: $0.tag, side: $0.side)
         } ?? .empty
@@ -1836,7 +1842,7 @@ struct ForceView: View {
         // rule: a decision never reads captured state after an `await`).
         let savedZone = recordingZone
         let savedPreset = selectedPreset
-        let savedTargetBand = selectedTargetPlan.band(forSet: 1, side: savedSide)
+        let savedTargetBand = recordingZoneTargetBand
         Task {
             let enqueued = await model.saveForceSummary(
                 summary,
@@ -1937,10 +1943,10 @@ struct ForceView: View {
             refuseAction("Connect the Progressor before starting a guided protocol.")
             return
         }
-        // #653: only a persisted user preset keeps the metadata picker in
-        // sync; a transient Focus-Next zone preset is not in `model.presets`,
-        // so it must not clobber `selectedPresetID` (which would read back
-        // as "Free pull" and clear the zone arm).
+        // #653: only a persisted user preset keeps the recording-context
+        // selection in sync; a transient Focus-Next zone preset is not in
+        // `model.presets`, so it must not clobber `selectedPresetID` (which
+        // would read back as "Free pull" and clear the zone arm).
         if model.presets.contains(where: { $0.id == preset.id }) {
             // A user preset and a suggested arm are mutually exclusive
             // (#653 review finding 3, #710): launching a user preset clears
@@ -1952,7 +1958,8 @@ struct ForceView: View {
         }
         let launchTag = tag
         let launchSide = side
-        let launchZone = recordingZone
+        let launchSelection = selectedSelection
+        let launchZoneCurve = zoneCurve
         let launchHandsFreeEnabled = handsFreeEnabled
         let launchAccountScope = model.accountScope
         let startSide: TindeqSide = launchSide == .right ? .right : .left
@@ -1975,6 +1982,15 @@ struct ForceView: View {
             }
             selectedTargetPlan = plan
             resolvingTargets = false
+            let launchTargetSide: TindeqSide =
+                plan.band(forSet: 1, side: launchSide) != nil ? launchSide : startSide
+            let launchZone = ZoneMix.recordingZone(
+                for: launchSelection,
+                preset: preset,
+                targetBand: plan.band(forSet: 1, side: launchTargetSide),
+                references: launchZoneCurve,
+                setNumber: 1
+            )
             let session = GuidedForceProtocolSession(
                 model: model,
                 preset: preset,
@@ -2369,12 +2385,23 @@ private struct ForceDeviceCard: View {
 
 private struct ForceMetadataCard: View {
     @Environment(\.colorScheme) private var scheme
+    /// #750: compact chip editing state, kept card-local like Capacitor's
+    /// `TagSideEditor` (add-new row and reveal-all are UI ephemera, not
+    /// recording context).
+    @State private var addingTag = false
+    @State private var showAllTags = false
+    @State private var draftTag = ""
+    @FocusState private var newTagFocused: Bool
     @Binding var tag: String
     @Binding var side: TindeqSide
     /// #720: the active exercise's side-applicability policy. The card only
     /// offers the sides the policy allows — never a hardcoded mode→options map.
     let sideMode: ExerciseSideMode
-    @Binding var zone: RecordedZone?
+    /// #750: explicit disabled state so VoiceOver and Dynamic Type report
+    /// chips/inputs as disabled during any live run window (free measuring,
+    /// hands-free armed/measuring, interrupted recovery, or guided), not
+    /// merely inert because the parent card is disabled.
+    let locked: Bool
     /// #710: the single-armed selection — `.free`, a suggested zone /
     /// maintenance protocol, the resisted-movement suggestion, or a saved user
     /// preset. Exactly one is active at a time (web
@@ -2386,7 +2413,7 @@ private struct ForceMetadataCard: View {
     let presets: [TindeqPreset]
     /// #631: pickable exercise names — distinct recording tags minus hidden
     /// (SL-92). Hidden tags' recordings still exist, they just leave the
-    /// default pickers.
+    /// recording-context exercise chips.
     let knownTags: [String]
     /// #710: the armed selection's display name (e.g. "Power" / "Warm-up" /
     /// a saved preset's name), shown as a "Selected:" line.
@@ -2414,7 +2441,7 @@ private struct ForceMetadataCard: View {
     let measurementMode: ForceMeasurementMode
 
     /// #711: explicit fully-typed initializer. The synthesized memberwise init
-    /// carries three `@Binding` property wrappers plus 14 `let`s, and the
+    /// carries two `@Binding` property wrappers plus 15 `let`s, and the
     /// constraint solver times out inferring it at the call site ("unable to
     /// type-check this expression in reasonable time"). Spelling out every
     /// parameter type anchors the solver so each call-site argument is matched
@@ -2423,7 +2450,7 @@ private struct ForceMetadataCard: View {
         tag: Binding<String>,
         side: Binding<TindeqSide>,
         sideMode: ExerciseSideMode,
-        zone: Binding<RecordedZone?>,
+        locked: Bool,
         selectedTarget: ForceProtocolSelection,
         onSelectTarget: @escaping (ForceProtocolSelection) -> Void,
         presets: [TindeqPreset],
@@ -2442,7 +2469,7 @@ private struct ForceMetadataCard: View {
         self._tag = tag
         self._side = side
         self.sideMode = sideMode
-        self._zone = zone
+        self.locked = locked
         self.selectedTarget = selectedTarget
         self.onSelectTarget = onSelectTarget
         self.presets = presets
@@ -2457,6 +2484,49 @@ private struct ForceMetadataCard: View {
         self.balanceLocked = balanceLocked
         self.onPickFocusNext = onPickFocusNext
         self.measurementMode = measurementMode
+    }
+
+    private var activeExercise: String {
+        tag.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedDraft: String {
+        draftTag.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// #750: pure presenter state — de-duplicated tags, active always
+    /// visible, and the `+N` reveal count (see `TagChipList` tests).
+    private var tagChips: TagChipList {
+        TagChipList(
+            allTags: knownTags,
+            activeTag: activeExercise,
+            showsAll: showAllTags
+        )
+    }
+
+    private var contextSummary: String {
+        let exercise = activeExercise.isEmpty ? "No exercise" : activeExercise
+        return "\(exercise) · Side \(sideLabel(side))"
+    }
+
+    private func sideLabel(_ value: TindeqSide) -> String {
+        value == .unspecified ? "—" : value.label
+    }
+
+    private func toggleAddingTag() {
+        addingTag.toggle()
+        if addingTag {
+            newTagFocused = true
+        }
+    }
+
+    private func commitDraft() {
+        if !trimmedDraft.isEmpty {
+            tag = trimmedDraft
+        }
+        draftTag = ""
+        addingTag = false
+        newTagFocused = false
     }
 
     private var isFree: Bool { selectedTarget == .free }
@@ -2498,36 +2568,79 @@ private struct ForceMetadataCard: View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 14) {
                 SectionLabel("Recording context", systemImage: "tag")
-                TextField("Exercise or grip, e.g. 20 mm half crimp", text: $tag)
-                    .textInputAutocapitalization(.sentences)
-                    .padding(11)
-                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                if !knownTags.isEmpty {
-                    Picker("Known exercises", selection: $tag) {
-                        Text("Type your own").tag("")
-                        ForEach(knownTags, id: \.self) { name in
-                            Text(name).tag(name)
+
+                // #750: compact glance line — the active exercise and side
+                // are still selectable via the chips below, without the old
+                // large current-exercise box.
+                Text(contextSummary)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .accessibilityElement(children: .combine)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    chipFlow {
+                        ForEach(tagChips.visibleTags, id: \.self) { name in
+                            selectorChip(
+                                name,
+                                active: name == activeExercise,
+                                action: {
+                                    tag = name == activeExercise ? "" : name
+                                }
+                            )
+                        }
+                        if tagChips.hiddenCount > 0 {
+                            selectorChip(
+                                "+\(tagChips.hiddenCount)",
+                                active: false,
+                                action: { showAllTags = true },
+                                accessibilityLabel: "Show \(tagChips.hiddenCount) more exercises"
+                            )
+                        }
+                        selectorChip(
+                            "＋",
+                            active: addingTag,
+                            action: toggleAddingTag,
+                            accessibilityLabel: addingTag
+                                ? "Cancel new exercise"
+                                : "Add exercise"
+                        )
+                    }
+
+                    if addingTag {
+                        HStack(spacing: 8) {
+                            TextField("New exercise — e.g. FDP", text: $draftTag)
+                                .textInputAutocapitalization(.sentences)
+                                .focused($newTagFocused)
+                                .submitLabel(.done)
+                                .onSubmit(commitDraft)
+                                .onAppear { newTagFocused = true }
+                                .disabled(locked)
+                                .padding(10)
+                                .background(
+                                    Color.secondary.opacity(0.08),
+                                    in: RoundedRectangle(cornerRadius: 10)
+                                )
+                                .accessibilityLabel("New exercise")
+                            Button("Add", action: commitDraft)
+                                .buttonStyle(.borderedProminent)
+                                .disabled(locked || trimmedDraft.isEmpty)
+                                .accessibilityLabel("Add exercise")
                         }
                     }
-                    .pickerStyle(.menu)
                 }
-                HStack {
-                    if sidePickerShown {
-                        Picker("Side", selection: $side) {
-                            ForEach(sideOptions) { side in
-                                Text(side.label).tag(side)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        Spacer()
-                    }
-                    Picker("Zone", selection: $zone) {
-                        Text("Not set").tag(Optional<RecordedZone>.none)
-                        ForEach(RecordedZone.allCases, id: \.self) { zone in
-                            Text(zone.displayLabel).tag(Optional(zone))
+
+                if sidePickerShown {
+                    chipFlow {
+                        ForEach(sideOptions) { option in
+                            selectorChip(
+                                sideLabel(option),
+                                active: side == option,
+                                action: { side = option }
+                            )
                         }
                     }
-                    .pickerStyle(.menu)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Side")
                 }
 
                 protocolSection
@@ -2586,7 +2699,8 @@ private struct ForceMetadataCard: View {
                 "Free hold",
                 color: .secondary,
                 active: isFree,
-                action: { onSelectTarget(.free) }
+                action: { onSelectTarget(.free) },
+                disabled: locked
             )
 
             Text("Suggested")
@@ -2602,7 +2716,8 @@ private struct ForceMetadataCard: View {
                         quality.label,
                         color: suggestionColor(suggestion),
                         active: isActive(suggestion),
-                        action: { onSelectTarget(.suggestedZone(quality)) }
+                        action: { onSelectTarget(.suggestedZone(quality)) },
+                        disabled: locked
                     )
                 }
             }
@@ -2614,7 +2729,8 @@ private struct ForceMetadataCard: View {
                         zone.displayLabel,
                         color: suggestionColor(suggestion),
                         active: isActive(suggestion),
-                        action: { onSelectTarget(.suggestedMaintenance(zone)) }
+                        action: { onSelectTarget(.suggestedMaintenance(zone)) },
+                        disabled: locked
                     )
                     .disabled(!maintenanceAvailable.contains(zone))
                 }
@@ -2630,7 +2746,8 @@ private struct ForceMetadataCard: View {
                     MovementTerminology.resistedMovement,
                     color: suggestionColor(suggestion),
                     active: isActive(suggestion),
-                    action: { onSelectTarget(.movement) }
+                    action: { onSelectTarget(.movement) },
+                    disabled: locked
                 )
             }
 
@@ -2659,7 +2776,8 @@ private struct ForceMetadataCard: View {
                             preset.name,
                             color: SendmeterStyle.primary,
                             active: selectedTarget == .savedPreset(preset.id),
-                            action: { onSelectTarget(.savedPreset(preset.id)) }
+                            action: { onSelectTarget(.savedPreset(preset.id)) },
+                            disabled: locked
                         )
                     }
                 }
@@ -2698,6 +2816,45 @@ private struct ForceMetadataCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// One neutral selector chip for exercises/sides. Active = solid primary
+    /// fill, inactive = tinted surface — the native analogue of the web
+    /// `BoxChip` selected/inactive fill states.
+    /// #750: `disabled` is called explicitly at every chip so the locked
+    /// run window is reported to VoiceOver rather than relying only on the
+    /// parent card's `.disabled`.
+    private func selectorChip(
+        _ label: String,
+        active: Bool,
+        action: @escaping () -> Void,
+        accessibilityLabel: String? = nil
+    ) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(active ? Color.white : Color.primary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    active
+                        ? SendmeterStyle.primary
+                        : Color.secondary.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(
+                            active ? Color.clear : Color.secondary.opacity(0.35),
+                            lineWidth: 1
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(locked)
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+        .accessibilityLabel(Text(accessibilityLabel ?? label))
+        .accessibilityValue(active ? "Selected" : "Not selected")
+    }
+
     /// One coloured protocol chip. Active = solid hue fill, inactive =
     /// tinted surface with a coloured label — the native analogue of the web
     /// `BoxChip` selected/inactive fill states.
@@ -2705,12 +2862,12 @@ private struct ForceMetadataCard: View {
         _ label: String,
         color: Color,
         active: Bool,
-        action: @escaping () -> Void
+        action: @escaping () -> Void,
+        disabled: Bool = false
     ) -> some View {
         Button(action: action) {
             Text(label)
                 .font(.caption.weight(.semibold))
-                .lineLimit(1)
                 .foregroundStyle(active ? Color.white : color)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
@@ -2724,6 +2881,7 @@ private struct ForceMetadataCard: View {
                 )
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
         .accessibilityAddTraits(active ? [.isSelected] : [])
         .accessibilityLabel(label)
         .accessibilityValue(active ? "Selected" : "Not selected")
