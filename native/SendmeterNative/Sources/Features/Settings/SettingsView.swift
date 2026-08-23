@@ -701,14 +701,23 @@ struct SettingsView: View {
     /// #586 review F3 (web parity): destructive actions stay spatially apart
     /// from every routine preference above, at the very bottom of the surface.
     private var dangerZoneSection: some View {
-        Section("Danger Zone") {
+        Section {
             Button(role: .destructive) {
                 // #656: a tap opening a sheet arms the presentation tick.
                 Haptics.shared.tap()
                 showingDeleteAccount = true
             } label: {
-                Label("Delete Account", systemImage: "person.crop.circle.badge.minus")
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Delete Account", systemImage: "person.crop.circle.badge.minus")
+                    Text("Permanently deletes your account and all server data. Cannot be undone.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .accessibilityHint("Opens a detailed warning before the delete step.")
+        } header: {
+            Label("Danger Zone", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(SendmeterStyle.alert)
         }
     }
 
@@ -738,42 +747,17 @@ struct SettingsView: View {
 private struct DeleteAccountSheet: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var confirmation = ""
+    @State private var gate = DeleteAccountConfirmationGate()
     @State private var deleting = false
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Label("This permanently deletes the account and server data.", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(SendmeterStyle.alert)
-                    Text("Queued writes owned by this account are removed only after the server confirms account deletion. This cannot be undone.")
-                        .font(.subheadline)
-                }
-                Section("Confirmation") {
-                    TextField("Type DELETE", text: $confirmation)
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-                }
-                Section {
-                    Button(role: .destructive) {
-                        // #656: the confirmed destructive action fires the
-                        // medium tick once per gesture.
-                        Haptics.shared.playGesture(.medium)
-                        deleting = true
-                        Task {
-                            await model.deleteAccount()
-                            deleting = false
-                            dismiss()
-                        }
-                    } label: {
-                        HStack {
-                            if deleting { ProgressView() }
-                            Text("Delete Account Permanently")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .disabled(confirmation != "DELETE" || deleting)
+            Group {
+                switch gate.stage {
+                case .warning:
+                    deleteAccountWarningStep
+                case .confirmation:
+                    deleteAccountConfirmationStep
                 }
             }
             .navigationTitle("Delete Account")
@@ -781,8 +765,119 @@ private struct DeleteAccountSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .disabled(deleting)
                 }
             }
         }
+        .interactiveDismissDisabled(deleting)
+    }
+
+    private var deleteAccountWarningStep: some View {
+        Form {
+            Section {
+                deleteAccountDangerBanner
+            }
+            Section("What this deletes") {
+                Text("Your account and every piece of data stored for it on the server: workouts, training sessions, force recordings and curves, readiness and health history, presets, routines, tags, and settings.")
+                    .font(.subheadline)
+                Text("Queued writes owned by this account are removed only after the server confirms account deletion.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Button {
+                    gate.advanceFromWarning()
+                } label: {
+                    Label("Continue to Confirmation", systemImage: "exclamationmark.triangle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .hapticButtonStyle(SwiftUI.BorderedButtonStyle())
+                .tint(SendmeterStyle.alert)
+                .accessibilityHint("Opens the separate type-to-confirm step.")
+            }
+        }
+    }
+
+    private var deleteAccountConfirmationStep: some View {
+        Form {
+            Section {
+                deleteAccountDangerBanner
+            }
+            Section("Final confirmation") {
+                Text("To continue, type \(DeleteAccountConfirmationGate.phrase) exactly. The delete button stays disabled until the phrase matches.")
+                    .font(.subheadline)
+                TextField("Type DELETE", text: Binding(
+                    get: { gate.entry },
+                    set: { gate.updateEntry($0) }
+                ))
+                .textInputAutocapitalization(.characters)
+                .autocorrectionDisabled()
+                .keyboardType(.asciiCapable)
+                .accessibilityLabel("Confirmation phrase")
+                .accessibilityHint("Type DELETE exactly to enable account deletion.")
+            }
+            Section {
+                Button {
+                    gate.backToWarning()
+                } label: {
+                    Label("Back to Warning", systemImage: "chevron.left")
+                        .frame(maxWidth: .infinity)
+                }
+                .hapticButtonStyle(SwiftUI.BorderedButtonStyle())
+                .disabled(deleting)
+                .accessibilityHint("Returns to the warning step without deleting.")
+
+                Button(role: .destructive) {
+                    // #656: the confirmed destructive action fires the
+                    // medium tick once per gesture. The control is disabled
+                    // until the exact phrase matches, so a refused or disabled
+                    // confirm can never tick.
+                    Haptics.shared.playGesture(.medium)
+                    deleting = true
+                    Task {
+                        await model.deleteAccount()
+                        deleting = false
+                        dismiss()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if deleting { ProgressView() }
+                        Label("Delete Account Permanently", systemImage: "trash.fill")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .hapticButtonStyle(SwiftUI.BorderedButtonStyle())
+                .tint(SendmeterStyle.alert)
+                .disabled(!gate.canConfirm || deleting)
+                .accessibilityHint(
+                    gate.canConfirm
+                        ? "Permanently deletes your account and all server data."
+                        : "Type DELETE exactly to enable this button."
+                )
+            }
+        }
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    private var deleteAccountDangerBanner: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title3)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("This permanently deletes your account and all server data.")
+                    .font(.subheadline.weight(.semibold))
+                Text("This cannot be undone.")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .foregroundStyle(SendmeterStyle.alert)
+        .padding(12)
+        .background(
+            SendmeterStyle.alert.opacity(0.12),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .accessibilityElement(children: .combine)
     }
 }
