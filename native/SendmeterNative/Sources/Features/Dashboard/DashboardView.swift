@@ -6,12 +6,13 @@ struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showLog = false
     @State private var showPhases = false
+    @State private var showRecovery = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    TodayDecisionCard()
+                    TodayDecisionCard(showRecovery: $showRecovery)
                     ReadinessTrendCard()
                     // #704: reserve the largest Send Conditions state before
                     // equalizing both cards to the same measured row height.
@@ -68,6 +69,10 @@ struct DashboardView: View {
             }
             .sheet(isPresented: $showPhases, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 PhasesView()
+                    .onAppear { Haptics.shared.sheetPresented() }
+            }
+            .sheet(isPresented: $showRecovery, onDismiss: { Haptics.shared.sheetDismissed() }) {
+                RecoveryInputsSheet()
                     .onAppear { Haptics.shared.sheetPresented() }
             }
         }
@@ -141,6 +146,7 @@ private struct DashboardContextRow: Layout {
 private struct TodayDecisionCard: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.colorScheme) private var scheme
+    @Binding var showRecovery: Bool
 
     private func readinessColor(_ scheme: ColorScheme) -> Color {
         guard let readiness = model.readiness?.readiness else { return .secondary }
@@ -159,60 +165,71 @@ private struct TodayDecisionCard: View {
     }
 
     var body: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    SectionLabel("Today's decision", systemImage: "sparkles")
-                    Spacer()
-                    if model.health.isSyncing {
-                        // #661: the auto-sync runs silently, but the pill says
-                        // it's in-flight — no prolonged stale flash.
-                        StatusPill("Syncing", color: SendmeterStyle.caution)
-                    } else if let zone = model.readiness?.zone {
-                        StatusPill(zone.capitalized, color: readinessColor(scheme))
-                    }
-                }
-
-                HStack(alignment: .center, spacing: 20) {
-                    if let score = model.readiness?.readiness {
-                        let color = readinessColor(scheme)
-                        ZStack {
-                            Circle()
-                                .stroke(color.opacity(0.18), lineWidth: 10)
-                            Circle()
-                                .trim(from: 0, to: CGFloat(score) / 100)
-                                .stroke(
-                                    color,
-                                    style: StrokeStyle(lineWidth: 10, lineCap: .round)
-                                )
-                                .rotationEffect(.degrees(-90))
-                            Text("\(score)")
-                                .font(.system(size: 32, weight: .bold, design: .rounded))
-                                .monospacedDigit()
+        Button {
+            // #656: a tap opening a sheet arms the presentation tick.
+            Haptics.shared.tap()
+            showRecovery = true
+        } label: {
+            SurfaceCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        SectionLabel("Today's decision", systemImage: "sparkles")
+                        Spacer()
+                        if model.health.isSyncing {
+                            // #661: the auto-sync runs silently, but the pill says
+                            // it's in-flight — no prolonged stale flash.
+                            StatusPill("Syncing", color: SendmeterStyle.caution)
+                        } else if let zone = model.readiness?.zone {
+                            StatusPill(zone.capitalized, color: readinessColor(scheme))
                         }
-                        .frame(width: 92, height: 92)
-                    } else {
-                        Image(systemName: "heart.text.square")
-                            .font(.system(size: 54))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 92, height: 92)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
                     }
 
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(recommendation)
-                            .font(.title3.weight(.semibold))
-                        Text("\(model.currentPhase.name) Training Block")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        if let ratio = model.acwr.ratio {
-                            Text("Load ratio \(ratio, format: .number.precision(.fractionLength(2))) · \(TrainingMetrics.acwrStatus(ratio).rawValue)")
-                                .font(.caption)
+                    HStack(alignment: .center, spacing: 20) {
+                        if let score = model.readiness?.readiness {
+                            let color = readinessColor(scheme)
+                            ZStack {
+                                Circle()
+                                    .stroke(color.opacity(0.18), lineWidth: 10)
+                                Circle()
+                                    .trim(from: 0, to: CGFloat(score) / 100)
+                                    .stroke(
+                                        color,
+                                        style: StrokeStyle(lineWidth: 10, lineCap: .round)
+                                    )
+                                    .rotationEffect(.degrees(-90))
+                                Text("\(score)")
+                                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                                    .monospacedDigit()
+                            }
+                            .frame(width: 92, height: 92)
+                        } else {
+                            Image(systemName: "heart.text.square")
+                                .font(.system(size: 54))
                                 .foregroundStyle(.secondary)
+                                .frame(width: 92, height: 92)
+                        }
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text(recommendation)
+                                .font(.title3.weight(.semibold))
+                            Text("\(model.currentPhase.name) Training Block")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            if let ratio = model.acwr.ratio {
+                                Text("Load ratio \(ratio, format: .number.precision(.fractionLength(2))) · \(TrainingMetrics.acwrStatus(ratio).rawValue)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
             }
         }
+        .hapticButtonStyle(.plain)
+        .accessibilityHint("Shows the raw HealthKit metrics behind today's readiness score.")
     }
 }
 
