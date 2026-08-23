@@ -187,4 +187,68 @@ final class DateSupportTests: XCTestCase {
             LocalDateSupport.dayDistance(from: "not-a-date", to: "2026-08-15", timeZone: bangkok)
         )
     }
+
+    // MARK: - canonicalDayKey
+
+    func testCanonicalDayKeyKeepsGregorianDateOnly() {
+        XCTAssertEqual(
+            LocalDateSupport.canonicalDayKey("2026-06-11", timeZone: bangkok),
+            "2026-06-11"
+        )
+    }
+
+    func testCanonicalDayKeyConvertsIsoTimestampToLocalDay() {
+        XCTAssertEqual(
+            LocalDateSupport.canonicalDayKey("2026-06-11T00:00:00Z", timeZone: bangkok),
+            "2026-06-11"
+        )
+        XCTAssertEqual(
+            LocalDateSupport.canonicalDayKey("2026-06-10T20:00:00Z", timeZone: bangkok),
+            "2026-06-11",
+            "a UTC timestamp near local midnight must land on the correct local day"
+        )
+        XCTAssertEqual(
+            LocalDateSupport.canonicalDayKey("2026-06-11T00:00:00+07:00", timeZone: bangkok),
+            "2026-06-11"
+        )
+    }
+
+    func testCanonicalDayKeyTreatsBareTimestampAsLocal() {
+        XCTAssertEqual(
+            LocalDateSupport.canonicalDayKey("2026-06-11T00:00:00", timeZone: bangkok),
+            "2026-06-11"
+        )
+        XCTAssertEqual(
+            LocalDateSupport.canonicalDayKey("2026-06-11 00:00:00", timeZone: bangkok),
+            "2026-06-11"
+        )
+    }
+
+    func testCanonicalDayKeyHonorsSpaceDelimitedTimestampOffset() {
+        XCTAssertEqual(
+            LocalDateSupport.canonicalDayKey("2026-06-10 23:00:00-05:00", timeZone: bangkok),
+            "2026-06-11",
+            "a space-delimited timestamp with an explicit offset is an instant, not a bare local time"
+        )
+        XCTAssertEqual(
+            LocalDateSupport.canonicalDayKey("2026-06-11 00:00:00+07:00", timeZone: bangkok),
+            "2026-06-11"
+        )
+    }
+
+    func testCanonicalDayKeyCorrectsLegacyBuddhistDate() {
+        XCTAssertEqual(
+            LocalDateSupport.canonicalDayKey("2569-07-12", timeZone: bangkok),
+            "2026-07-12",
+            "optimistic/cached rows from the pre-fix watch must land on the Gregorian day"
+        )
+    }
+
+    func testCanonicalDayKeyRejectsInvalidAndGarbage() {
+        XCTAssertNil(LocalDateSupport.canonicalDayKey("not-a-date", timeZone: bangkok))
+        XCTAssertNil(LocalDateSupport.canonicalDayKey("2026-02-30", timeZone: bangkok))
+        XCTAssertNil(LocalDateSupport.canonicalDayKey(" 2026-06-11", timeZone: bangkok))
+        XCTAssertNil(LocalDateSupport.canonicalDayKey("2026-06-11 garbage", timeZone: bangkok))
+        XCTAssertNil(LocalDateSupport.canonicalDayKey("2026-06-11T", timeZone: bangkok))
+    }
 }

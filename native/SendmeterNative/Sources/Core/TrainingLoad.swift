@@ -30,7 +30,13 @@ public enum TrainingLoad {
             var label: String?
         }
         var grouped: [String: Group] = [:]
-        for session in sessions where session.date >= startDate && session.date <= endDate {
+        for session in sessions {
+            guard let date = LocalDateSupport.canonicalDayKey(
+                session.date,
+                timeZone: timeZone
+            ),
+            date >= startDate && date <= endDate
+            else { continue }
             let knownLabel = SessionTypeCatalog.all.first { $0.id == session.type }?.label
             let legacy = session.typeLabel.trimmingCharacters(in: .whitespaces)
             let label = knownLabel
@@ -105,20 +111,30 @@ public enum TrainingLoad {
     // MARK: - Daily aggregation
 
     /// Per-date load + dominant activity over ALL sessions (the sheet builds
-    /// this map once; the heatmap looks up by date key). A day with several
-    /// activity types is hued by the type with the HIGHEST load — dominant,
-    /// not first; ties resolve to the first-encountered type.
-    public static func dailyLoads(sessions: [Session]) -> [String: DailyLoad] {
+    /// this map once; the heatmap looks up by date key). Keys are normalized
+    /// to the same `LocalDateSupport.string(from:timeZone:)` calendar day the
+    /// grid generates, so a noncanonical/wrong-zone `session.date` cannot make
+    /// a trained day fall through to a grey rest cell (#754 cause 1). A day
+    /// with several activity types is hued by the type with the HIGHEST load —
+    /// dominant, not first; ties resolve to the first-encountered type.
+    public static func dailyLoads(
+        sessions: [Session],
+        timeZone: TimeZone = .current
+    ) -> [String: DailyLoad] {
         var accumulated: [String: (total: Double, byType: [(type: String, load: Double)])] = [:]
         for session in sessions {
-            var entry = accumulated[session.date] ?? (total: 0, byType: [])
+            guard let date = LocalDateSupport.canonicalDayKey(
+                session.date,
+                timeZone: timeZone
+            ) else { continue }
+            var entry = accumulated[date] ?? (total: 0, byType: [])
             entry.total += session.load
             if let index = entry.byType.firstIndex(where: { $0.type == session.type }) {
                 entry.byType[index].load += session.load
             } else {
                 entry.byType.append((type: session.type, load: session.load))
             }
-            accumulated[session.date] = entry
+            accumulated[date] = entry
         }
 
         var result: [String: DailyLoad] = [:]
@@ -160,8 +176,11 @@ public enum TrainingLoad {
     }
 
     /// Builds the `weeks`×7 cell grid, oldest→newest columns, Sun–Sat rows.
-    /// `max` is the largest per-day total (min 1, so a low-load window never
-    /// divides by zero). Future cells are rendered but not selectable.
+    /// `max` is the intensity scale cap: the largest non-future per-day total,
+    /// capped at 2× the median positive load so one outlier cannot wash real
+    /// training days down to the faintest level (#754). It is at least 1 so a
+    /// low-load window never divides by zero. Future cells are rendered but
+    /// not selectable.
     public static func heatmapGrid(
         daily: [String: DailyLoad],
         today: Date,
@@ -174,7 +193,7 @@ public enum TrainingLoad {
 
         var columns: [[HeatmapCell]] = []
         columns.reserveCapacity(weeks)
-        var maximum = 0.0
+        var positiveLoads: [Double] = []
         var cursor = start
         for _ in 0..<weeks {
             var column: [HeatmapCell] = []
@@ -190,7 +209,7 @@ public enum TrainingLoad {
                 // if that row carried the largest load it would otherwise
                 // inflate `max` and compress every real past data day to level
                 // 1, reading as "all cells gray despite data" (#706).
-                if value > maximum && !isFuture { maximum = value }
+                if value > 0 && !isFuture { positiveLoads.append(value) }
                 column.append(
                     HeatmapCell(
                         date: key,
@@ -212,7 +231,23 @@ public enum TrainingLoad {
             lastCellDate == LocalDateSupport.string(from: end, timeZone: timeZone),
             "heatmap walk must end on heatmapRange's Saturday"
         )
+        let maximum = heatmapScaleMax(positiveLoads)
         return HeatmapGrid(columns: columns, max: max(1, maximum))
+    }
+
+    /// Robust upper bound for the heatmap scale (#754). A single unusually
+    /// large day must not set the raw maximum: otherwise a typical 500 AU day
+    /// against a 5,000 AU outlier lands at level 1 (0.34 alpha), which reads
+    /// as grey at the native cells' ~3.4pt size. Anchoring to 2× the median
+    /// keeps ordinary training shaded while values above the cap still clamp
+    /// to full opacity. The actual maximum is preserved when it is already
+    /// within the typical range.
+    private static func heatmapScaleMax(_ values: [Double]) -> Double {
+        let positive = values.filter { $0.isFinite && $0 > 0 }.sorted()
+        guard let actualMaximum = positive.last else { return 1 }
+        guard positive.count > 1 else { return actualMaximum }
+        let median = positive[(positive.count - 1) / 2]
+        return min(actualMaximum, median * 2)
     }
 
     // MARK: - Weekly delta
