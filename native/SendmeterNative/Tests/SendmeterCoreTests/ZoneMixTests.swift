@@ -379,6 +379,30 @@ final class ZoneMixTests: XCTestCase {
         )
     }
 
+    func testPerformedQualityUsesHoldForRequestedSet() {
+        var preset = customPreset(holdSeconds: 5, targetKilograms: 34)
+        preset.holdSecondsBySet = [5, 12, 25]
+        let refs = ZoneCurveInput(cf: 10, maxForce: 40, wPrime: 3)
+        XCTAssertEqual(
+            ZoneMix.performedQuality(
+                preset: preset,
+                targetBand: band(34),
+                references: refs,
+                setNumber: 1
+            ),
+            .strength
+        )
+        XCTAssertEqual(
+            ZoneMix.performedQuality(
+                preset: preset,
+                targetBand: band(34),
+                references: refs,
+                setNumber: 3
+            ),
+            .endurance
+        )
+    }
+
     func testRecordingZoneFreeHasNoPresetOrDefaultFallback() {
         let preset = customPreset(holdSeconds: 7, targetKilograms: 36)
         let refs = ZoneCurveInput(cf: 10, maxForce: 40, wPrime: 3)

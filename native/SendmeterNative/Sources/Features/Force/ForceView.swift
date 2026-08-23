@@ -21,7 +21,8 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
     let targetPlan: ForceTargetPlan
     let tag: String
     let fallbackSide: TindeqSide
-    let zone: RecordedZone?
+    let selection: ForceProtocolSelection
+    let references: ZoneCurveInput?
     let handsFreeEnabled: Bool
     let accountScope: NativeAccountScope
 
@@ -57,7 +58,8 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         tag: String,
         startingSide: TindeqSide,
         fallbackSide: TindeqSide,
-        zone: RecordedZone?,
+        selection: ForceProtocolSelection,
+        references: ZoneCurveInput?,
         handsFreeEnabled: Bool,
         run: ForceProtocolRun? = nil
     ) {
@@ -66,7 +68,8 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         self.targetPlan = targetPlan
         self.tag = tag
         self.fallbackSide = fallbackSide
-        self.zone = zone
+        self.selection = selection
+        self.references = references
         self.handsFreeEnabled = handsFreeEnabled
         self.accountScope = model.accountScope
         let initialRun = run ?? ForceProtocolRun(preset: preset, startingSide: startingSide)
@@ -626,13 +629,25 @@ private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         } else {
             savedTag = tag.isEmpty ? preset.name : tag
         }
+        let stageBand = targetPlan.band(forSet: stage.setNumber, side: savedSide)
+        // #750: derive the zone at each save boundary from THIS set's hold and
+        // resolved target, not the set-1 value computed at launch — a per-set
+        // ramp or varying hold list can classify later sets differently (web
+        // `performedQuality(..., seg.set)`).
+        let stageZone = ZoneMix.recordingZone(
+            for: selection,
+            preset: preset,
+            targetBand: stageBand,
+            references: references,
+            setNumber: stage.setNumber
+        )
         let enqueued = await model.saveForceSummary(
             summary,
             tag: savedTag,
             side: savedSide,
-            zone: zone,
+            zone: stageZone,
             preset: preset,
-            targetBand: targetPlan.band(forSet: stage.setNumber, side: savedSide),
+            targetBand: stageBand,
             protocolRunID: run.runID,
             setNumber: stage.setNumber,
             repetitionNumber: stage.repetitionNumber,
@@ -1439,6 +1454,7 @@ struct ForceView: View {
             tag: $tag,
             side: sideBinding,
             sideMode: sideMode,
+            locked: contextLocked,
             selectedTarget: selectedSelection,
             onSelectTarget: handleSelectTarget,
             presets: model.presets,
@@ -1452,8 +1468,7 @@ struct ForceView: View {
             showsBalance: showBalanceHint,
             balanceLocked: contextLocked,
             onPickFocusNext: armRecommendedZone,
-            measurementMode: measurementMode,
-            locked: contextLocked
+            measurementMode: measurementMode
         )
         .disabled(contextLocked)
     }
@@ -1982,15 +1997,6 @@ struct ForceView: View {
             }
             selectedTargetPlan = plan
             resolvingTargets = false
-            let launchTargetSide: TindeqSide =
-                plan.band(forSet: 1, side: launchSide) != nil ? launchSide : startSide
-            let launchZone = ZoneMix.recordingZone(
-                for: launchSelection,
-                preset: preset,
-                targetBand: plan.band(forSet: 1, side: launchTargetSide),
-                references: launchZoneCurve,
-                setNumber: 1
-            )
             let session = GuidedForceProtocolSession(
                 model: model,
                 preset: preset,
@@ -1998,7 +2004,8 @@ struct ForceView: View {
                 tag: launchTag,
                 startingSide: startSide,
                 fallbackSide: launchSide,
-                zone: launchZone,
+                selection: launchSelection,
+                references: launchZoneCurve,
                 handsFreeEnabled: launchHandsFreeEnabled
             )
             guidedSession = session
