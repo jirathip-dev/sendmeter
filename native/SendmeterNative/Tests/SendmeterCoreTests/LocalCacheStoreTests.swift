@@ -135,15 +135,15 @@ final class LocalCacheStoreTests: XCTestCase {
         let workout = makeWorkout(id: entityA)
         let tag = makeTagMetadata()
 
-        try store.upsert(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
-        try store.upsert(settings, accountUserID: accountA, entityType: .settings, entityID: "settings")
-        try store.upsert(period, accountUserID: accountA, entityType: .phasePeriods, entityID: entityA.uuidString)
-        try store.upsert(health, accountUserID: accountA, entityType: .healthMetrics, entityID: health.date)
-        try store.upsert(recording, accountUserID: accountA, entityType: .recordings, entityID: entityA.uuidString)
-        try store.upsert(preset, accountUserID: accountA, entityType: .presets, entityID: entityA.uuidString)
-        try store.upsert(routine, accountUserID: accountA, entityType: .routinePresets, entityID: entityA.uuidString)
-        try store.upsert(workout, accountUserID: accountA, entityType: .workoutsAndAttempts, entityID: entityA.uuidString)
-        try store.upsert(tag, accountUserID: accountA, entityType: .tagMetadata, entityID: tag.name)
+        try store.upsertLocal(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.upsertLocal(settings, accountUserID: accountA, entityType: .settings, entityID: "settings")
+        try store.upsertLocal(period, accountUserID: accountA, entityType: .phasePeriods, entityID: entityA.uuidString)
+        try store.upsertLocal(health, accountUserID: accountA, entityType: .healthMetrics, entityID: health.date)
+        try store.upsertLocal(recording, accountUserID: accountA, entityType: .recordings, entityID: entityA.uuidString)
+        try store.upsertLocal(preset, accountUserID: accountA, entityType: .presets, entityID: entityA.uuidString)
+        try store.upsertLocal(routine, accountUserID: accountA, entityType: .routinePresets, entityID: entityA.uuidString)
+        try store.upsertLocal(workout, accountUserID: accountA, entityType: .workoutsAndAttempts, entityID: entityA.uuidString)
+        try store.upsertLocal(tag, accountUserID: accountA, entityType: .tagMetadata, entityID: tag.name)
 
         XCTAssertEqual(
             try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions),
@@ -206,7 +206,7 @@ final class LocalCacheStoreTests: XCTestCase {
     func testLoadAllSkipsInvalidPayloadAndKeepsValidRows() throws {
         let store = try makeStore()
         let session = makeSession(id: entityA)
-        try store.upsert(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.upsertLocal(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
 
         try store.dbQueue.write { db in
             try db.execute(
@@ -225,10 +225,13 @@ final class LocalCacheStoreTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(
-            try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions),
-            [session]
+        let result = try store.loadAllResult(
+            Session.self,
+            accountUserID: accountA,
+            entityType: .sessions
         )
+        XCTAssertEqual(result.values, [session])
+        XCTAssertEqual(result.invalidEntityIDs, [entityB.uuidString])
     }
 
     // MARK: - Cross-account isolation
@@ -237,14 +240,14 @@ final class LocalCacheStoreTests: XCTestCase {
         let store = try makeStore()
         let session = makeSession(id: entityA)
 
-        try store.upsert(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.upsertLocal(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
 
         // Account B cannot read account A's row.
         XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountB, entityType: .sessions).isEmpty)
         XCTAssertNil(try store.loadOne(Session.self, accountUserID: accountB, entityType: .sessions, entityID: entityA.uuidString))
 
         // Account B's markDeleted does not hide account A's row (it scopes by account).
-        try store.markDeleted(accountUserID: accountB, entityType: .sessions, entityID: entityA.uuidString)
+        try store.markDeletedLocal(accountUserID: accountB, entityType: .sessions, entityID: entityA.uuidString)
         XCTAssertEqual(
             try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions),
             [session]
@@ -263,14 +266,14 @@ final class LocalCacheStoreTests: XCTestCase {
         let session = makeSession(id: entityA)
         let base = Date(timeIntervalSince1970: 1_700_000_000)
 
-        try store.upsert(
+        try store.upsertServer(
             session,
             accountUserID: accountA,
             entityType: .sessions,
             entityID: entityA.uuidString,
             updatedAt: base.addingTimeInterval(1)
         )
-        try store.markDeleted(
+        try store.markDeletedServer(
             accountUserID: accountA,
             entityType: .sessions,
             entityID: entityA.uuidString,
@@ -279,7 +282,7 @@ final class LocalCacheStoreTests: XCTestCase {
         XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
 
         // A stale remote row older than the tombstone must not clear it.
-        try store.upsert(
+        try store.upsertServer(
             session,
             accountUserID: accountA,
             entityType: .sessions,
@@ -289,7 +292,7 @@ final class LocalCacheStoreTests: XCTestCase {
         XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
 
         // A newer row wins and is visible again.
-        try store.upsert(
+        try store.upsertServer(
             session,
             accountUserID: accountA,
             entityType: .sessions,
@@ -307,14 +310,14 @@ final class LocalCacheStoreTests: XCTestCase {
         let session = makeSession(id: entityA)
         let base = Date(timeIntervalSince1970: 1_700_000_000)
 
-        try store.upsert(
+        try store.upsertServer(
             session,
             accountUserID: accountA,
             entityType: .sessions,
             entityID: entityA.uuidString,
             updatedAt: base.addingTimeInterval(3)
         )
-        try store.markDeleted(
+        try store.markDeletedServer(
             accountUserID: accountA,
             entityType: .sessions,
             entityID: entityA.uuidString,
@@ -327,21 +330,168 @@ final class LocalCacheStoreTests: XCTestCase {
         )
     }
 
-    func testConcurrentUpsertsRemainConsistent() throws {
+    func testServerDeleteRemembersNeverCachedKey() throws {
+        let store = try makeStore()
+        let session = makeSession(id: entityA)
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try store.markDeletedServer(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(2)
+        )
+        XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
+
+        // A stale upsert for a key the server has already deleted cannot
+        // resurrect the row.
+        try store.upsertServer(
+            session,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1)
+        )
+        XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
+
+        // A newer server write clears the tombstone.
+        try store.upsertServer(
+            session,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(3)
+        )
+        XCTAssertEqual(
+            try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions),
+            [session]
+        )
+    }
+
+    func testServerWriteReplacesLocalOriginRowRegardlessOfClock() throws {
+        let store = try makeStore()
+        let local = makeSession(id: entityA, date: "2026-08-20")
+        let server = makeSession(id: entityA, date: "2026-08-21")
+
+        try store.upsertLocal(local, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.upsertServer(
+            server,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        XCTAssertEqual(
+            try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions),
+            [server]
+        )
+    }
+
+    func testServerUpsertOnlyAcceptsNewerServerOriginRow() throws {
+        let store = try makeStore()
+        let first = makeSession(id: entityA, date: "first")
+        let stale = makeSession(id: entityA, date: "stale")
+        let newest = makeSession(id: entityA, date: "newest")
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try store.upsertServer(
+            first,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1)
+        )
+        try store.upsertServer(
+            stale,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(0.5)
+        )
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            first
+        )
+
+        try store.upsertServer(
+            newest,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(2)
+        )
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            newest
+        )
+    }
+
+    func testServerDeleteReplacesLocalOriginRow() throws {
+        let store = try makeStore()
+        let session = makeSession(id: entityA)
+        try store.upsertLocal(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+
+        try store.markDeletedServer(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+        XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
+    }
+
+    func testTimestampPreservesMicroseconds() throws {
+        let store = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let older = makeSession(id: entityA, date: "older")
+        let newer = makeSession(id: entityA, date: "newer")
+
+        try store.upsertServer(
+            older,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base
+        )
+        try store.upsertServer(
+            newer,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(0.000020)
+        )
+
+        XCTAssertEqual(
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            newer
+        )
+        let stored: String = try store.dbQueue.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT updated_at FROM cache_rows WHERE entity_id = ?",
+                arguments: [entityA.uuidString]
+            )!
+        }
+        XCTAssertEqual(stored.count, 27)
+        XCTAssertTrue(stored.hasSuffix("000020Z"))
+    }
+
+    func testConcurrentServerUpsertsSameKeyPickMaxTimestamp() throws {
         let store = try makeStore()
         let count = 40
-        let ids = (0..<count).map { _ in UUID() }
         let lock = NSLock()
         var failures: [Error] = []
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
 
         DispatchQueue.concurrentPerform(iterations: count) { index in
             do {
-                try store.upsert(
-                    self.makeSession(id: ids[index]),
+                try store.upsertServer(
+                    self.makeSession(id: self.entityA, date: String(index)),
                     accountUserID: self.accountA,
                     entityType: .sessions,
-                    entityID: ids[index].uuidString,
-                    updatedAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(index))
+                    entityID: self.entityA.uuidString,
+                    updatedAt: base.addingTimeInterval(TimeInterval(index))
                 )
             } catch {
                 lock.lock()
@@ -352,8 +502,8 @@ final class LocalCacheStoreTests: XCTestCase {
 
         XCTAssertTrue(failures.isEmpty)
         XCTAssertEqual(
-            try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).count,
-            count
+            try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString),
+            makeSession(id: entityA, date: String(count - 1))
         )
     }
 
@@ -364,8 +514,8 @@ final class LocalCacheStoreTests: XCTestCase {
         let first = makeSession(id: entityA, date: "2026-08-20")
         let second = makeSession(id: entityA, date: "2026-08-21")
 
-        try store.upsert(first, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
-        try store.upsert(second, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.upsertLocal(first, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.upsertLocal(second, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
 
         let loaded = try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions)
         XCTAssertEqual(loaded, [second])
@@ -380,15 +530,15 @@ final class LocalCacheStoreTests: XCTestCase {
         let store = try makeStore()
         let session = makeSession(id: entityA)
 
-        try store.upsert(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.upsertLocal(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
         XCTAssertEqual(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).count, 1)
 
-        try store.markDeleted(accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.markDeletedLocal(accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
         XCTAssertTrue(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).isEmpty)
         XCTAssertNil(try store.loadOne(Session.self, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString))
 
         // A fresh upsert for the same key clears the tombstone and is visible again.
-        try store.upsert(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.upsertLocal(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
         XCTAssertEqual(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions), [session])
     }
 
@@ -399,8 +549,8 @@ final class LocalCacheStoreTests: XCTestCase {
         let sessionA = makeSession(id: entityA)
         let sessionB = makeSession(id: entityB)
 
-        try store.upsert(sessionA, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
-        try store.upsert(sessionB, accountUserID: accountB, entityType: .sessions, entityID: entityB.uuidString)
+        try store.upsertLocal(sessionA, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.upsertLocal(sessionB, accountUserID: accountB, entityType: .sessions, entityID: entityB.uuidString)
         try store.setCursor("a-cursor", accountUserID: accountA, entityType: .sessions)
         try store.setCursor("b-cursor", accountUserID: accountB, entityType: .sessions)
 
@@ -443,7 +593,7 @@ final class LocalCacheStoreTests: XCTestCase {
 
         // The store still works after the repeated migrations.
         let session = makeSession(id: entityA)
-        try store.upsert(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
+        try store.upsertLocal(session, accountUserID: accountA, entityType: .sessions, entityID: entityA.uuidString)
         XCTAssertEqual(try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions), [session])
     }
 
@@ -455,5 +605,41 @@ final class LocalCacheStoreTests: XCTestCase {
         _ = try LocalCacheStore(databaseURL: url)
         // A second store on the same file must not fail the migration.
         _ = try LocalCacheStore(databaseURL: url)
+    }
+
+    func testOriginMigrationBackfillsPreexistingRowsAsLocal() throws {
+        let queue = try DatabaseQueue()
+        try queue.write { db in
+            try db.execute(sql: """
+                CREATE TABLE cache_rows (
+                    account_user_id TEXT NOT NULL,
+                    entity_type     TEXT NOT NULL,
+                    entity_id       TEXT NOT NULL,
+                    payload         TEXT NOT NULL,
+                    deleted_at      TEXT,
+                    updated_at      TEXT NOT NULL,
+                    PRIMARY KEY (account_user_id, entity_type, entity_id)
+                );
+                """)
+            try db.execute(
+                sql: """
+                    INSERT INTO cache_rows
+                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at)
+                    VALUES (?, ?, ?, '{}', NULL, '2026-08-23T00:00:00.000000Z')
+                    """,
+                arguments: [accountA.uuidString, LocalCacheEntityType.sessions.rawValue, entityA.uuidString]
+            )
+        }
+
+        _ = try LocalCacheStore(dbQueue: queue)
+
+        let origin: String = try queue.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT write_origin FROM cache_rows WHERE entity_id = ?",
+                arguments: [entityA.uuidString]
+            )!
+        }
+        XCTAssertEqual(origin, LocalCacheWriteOrigin.local.rawValue)
     }
 }
