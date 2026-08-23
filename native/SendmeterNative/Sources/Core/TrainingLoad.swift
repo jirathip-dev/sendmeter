@@ -160,8 +160,11 @@ public enum TrainingLoad {
     }
 
     /// Builds the `weeks`×7 cell grid, oldest→newest columns, Sun–Sat rows.
-    /// `max` is the largest per-day total (min 1, so a low-load window never
-    /// divides by zero). Future cells are rendered but not selectable.
+    /// `max` is the intensity scale cap: the largest non-future per-day total,
+    /// capped at 2× the median positive load so one outlier cannot wash real
+    /// training days down to the faintest level (#754). It is at least 1 so a
+    /// low-load window never divides by zero. Future cells are rendered but
+    /// not selectable.
     public static func heatmapGrid(
         daily: [String: DailyLoad],
         today: Date,
@@ -174,7 +177,7 @@ public enum TrainingLoad {
 
         var columns: [[HeatmapCell]] = []
         columns.reserveCapacity(weeks)
-        var maximum = 0.0
+        var positiveLoads: [Double] = []
         var cursor = start
         for _ in 0..<weeks {
             var column: [HeatmapCell] = []
@@ -190,7 +193,7 @@ public enum TrainingLoad {
                 // if that row carried the largest load it would otherwise
                 // inflate `max` and compress every real past data day to level
                 // 1, reading as "all cells gray despite data" (#706).
-                if value > maximum && !isFuture { maximum = value }
+                if value > 0 && !isFuture { positiveLoads.append(value) }
                 column.append(
                     HeatmapCell(
                         date: key,
@@ -212,7 +215,23 @@ public enum TrainingLoad {
             lastCellDate == LocalDateSupport.string(from: end, timeZone: timeZone),
             "heatmap walk must end on heatmapRange's Saturday"
         )
+        let maximum = heatmapScaleMax(positiveLoads)
         return HeatmapGrid(columns: columns, max: max(1, maximum))
+    }
+
+    /// Robust upper bound for the heatmap scale (#754). A single unusually
+    /// large day must not set the raw maximum: otherwise a typical 500 AU day
+    /// against a 5,000 AU outlier lands at level 1 (0.34 alpha), which reads
+    /// as grey at the native cells' ~3.4pt size. Anchoring to 2× the median
+    /// keeps ordinary training shaded while values above the cap still clamp
+    /// to full opacity. The actual maximum is preserved when it is already
+    /// within the typical range.
+    private static func heatmapScaleMax(_ values: [Double]) -> Double {
+        let positive = values.filter { $0.isFinite && $0 > 0 }.sorted()
+        guard let actualMaximum = positive.last else { return 1 }
+        guard positive.count > 1 else { return actualMaximum }
+        let median = positive[(positive.count - 1) / 2]
+        return min(actualMaximum, median * 2)
     }
 
     // MARK: - Weekly delta

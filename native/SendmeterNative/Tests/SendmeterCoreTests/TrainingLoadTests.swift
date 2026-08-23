@@ -295,6 +295,45 @@ final class TrainingLoadTests: XCTestCase {
         XCTAssertEqual(TrainingLoad.heatmapAlpha(level: 4), 1.0)
     }
 
+    /// #754: a single large PAST day can still dominate the raw max and
+    /// compress every real training day to level 1 (0.34 alpha), which reads
+    /// as grey at the tiny native cell size even though the activity hue is
+    /// correct. The scale must stay anchored to the typical load: a real
+    /// day just below the outlier must be visibly shaded, while the outlier
+    /// itself still clamps to full opacity.
+    func testHeatmapGridScaleSurvivesLargePastOutlier() {
+        let today = try! XCTUnwrap(LocalDateSupport.date(from: "2026-08-21", timeZone: bangkok))
+        var daily: [String: DailyLoad] = [:]
+
+        // 20 ordinary training days spanning 25...500 AU.
+        for offset in 0..<20 {
+            let date = LocalDateSupport.daysAgo(20 - offset, from: today, timeZone: bangkok)
+            daily[date] = DailyLoad(total: Double((offset + 1) * 25), type: "gym")
+        }
+
+        let outlierDate = LocalDateSupport.daysAgo(0, from: today, timeZone: bangkok)
+        daily[outlierDate] = DailyLoad(total: 5_000, type: "board")
+
+        let grid = TrainingLoad.heatmapGrid(daily: daily, today: today, weeks: 53, timeZone: bangkok)
+        let cellsByDate = Dictionary(uniqueKeysWithValues: grid.columns.flatMap { $0 }.map { ($0.date, $0) })
+        let ordinaryPeak = try! XCTUnwrap(
+            cellsByDate[LocalDateSupport.daysAgo(1, from: today, timeZone: bangkok)]
+        )
+        let outlier = try! XCTUnwrap(cellsByDate[outlierDate])
+
+        XCTAssertLessThan(grid.max, outlier.value, "the outlier must not set the scale")
+        XCTAssertGreaterThanOrEqual(
+            TrainingLoad.heatmapLevel(value: ordinaryPeak.value, max: grid.max),
+            2,
+            "ordinary training load must not be compressed to the faintest level"
+        )
+        XCTAssertEqual(
+            TrainingLoad.heatmapLevel(value: outlier.value, max: grid.max),
+            4,
+            "the outlier day still renders at full opacity"
+        )
+    }
+
     // MARK: - Intensity levels
 
     func testHeatmapLevelMatchesWebFormula() {
