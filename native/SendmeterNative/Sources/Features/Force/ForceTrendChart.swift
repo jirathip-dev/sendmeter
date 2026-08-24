@@ -9,6 +9,14 @@ import SwiftUI
 /// silently broadening the evidence it displays.
 struct ForceTrendChart: View {
     let recordings: [TindeqRecording]
+    /// Resolved by the Force recording context. The trend only renders the
+    /// supplied plan reference; it never infers a target from peak history.
+    let targetBand: ForceTargetBand?
+
+    init(recordings: [TindeqRecording], targetBand: ForceTargetBand? = nil) {
+        self.recordings = recordings
+        self.targetBand = targetBand
+    }
 
     @Environment(\.colorScheme) private var scheme
     @State private var selectedDate: Date?
@@ -44,7 +52,10 @@ struct ForceTrendChart: View {
     }
 
     private var chart: some View {
-        let maximum = max(1, (peaks.compactMap(\.peakKilograms).max() ?? 1) * 1.1)
+        let maximum = max(
+            1,
+            max(peaks.compactMap(\.peakKilograms).max() ?? 1, targetBand?.highKilograms ?? 0) * 1.1
+        )
         return Group {
             if #available(iOS 17, *) {
                 baseChart(maximum: maximum)
@@ -73,20 +84,31 @@ struct ForceTrendChart: View {
                     }
                     .accessibilityLabel("Static peak force trend")
                     .accessibilityValue(selected.map(accessibilityText) ?? accessibilitySummary)
-                    .accessibilityForceTrendChartDescriptor(peaks)
+                    .accessibilityForceTrendChartDescriptor(peaks, targetBand: targetBand)
             } else {
                 baseChart(maximum: maximum)
                     .frame(height: 190)
                     .hapticTapMuted()
                     .accessibilityLabel("Static peak force trend")
                     .accessibilityValue(accessibilitySummary)
-                    .accessibilityForceTrendChartDescriptor(peaks)
+                    .accessibilityForceTrendChartDescriptor(peaks, targetBand: targetBand)
             }
         }
     }
 
     private func baseChart(maximum: Double) -> some View {
         Chart {
+            if let targetBand {
+                RuleMark(y: .value("Target low", targetBand.lowKilograms))
+                    .foregroundStyle(ChartToken.optimal.color(scheme).opacity(0.42))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                RuleMark(y: .value("Target high", targetBand.highKilograms))
+                    .foregroundStyle(ChartToken.optimal.color(scheme).opacity(0.42))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                RuleMark(y: .value("Plan target", targetBand.kilograms))
+                    .foregroundStyle(ChartToken.optimal.color(scheme))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+            }
             ForEach(peaks) { recording in
                 if let peak = recording.peakKilograms {
                     AreaMark(
@@ -110,6 +132,24 @@ struct ForceTrendChart: View {
                     .foregroundStyle(ChartToken.forceSecondary.color(scheme))
                     .symbolSize(selected?.id == recording.id ? 44 : 28)
                 }
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if let targetBand {
+                Text(
+                    "Target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kg · "
+                        + "\(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1))))–"
+                        + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg"
+                )
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(ChartToken.optimal.color(scheme))
+                .padding(.leading, 4)
+                .padding(.top, 2)
+                .accessibilityLabel(
+                    "Plan target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms, "
+                        + "range \(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1)))) to "
+                        + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
+                )
             }
         }
         .chartYScale(domain: 0...maximum)
@@ -199,6 +239,7 @@ struct ForceTrendChart: View {
 
 private struct ForceTrendAccessibilityDescriptor: AXChartDescriptorRepresentable {
     let peaks: [TindeqRecording]
+    let targetBand: ForceTargetBand?
 
     func makeChartDescriptor() -> AXChartDescriptor { makeDescriptor() }
 
@@ -213,7 +254,7 @@ private struct ForceTrendAccessibilityDescriptor: AXChartDescriptorRepresentable
 
     private func makeDescriptor() -> AXChartDescriptor {
         let labels = peaks.indices.map { "Held \($0 + 1)" }
-        let yMax = max(1, peaks.compactMap(\.peakKilograms).max() ?? 1)
+        let yMax = max(1, max(peaks.compactMap(\.peakKilograms).max() ?? 1, targetBand?.highKilograms ?? 0))
         let points = peaks.enumerated().compactMap { index, recording -> AXDataPoint? in
             guard let peak = recording.peakKilograms else { return nil }
             return AXDataPoint(
@@ -224,7 +265,7 @@ private struct ForceTrendAccessibilityDescriptor: AXChartDescriptorRepresentable
         }
         return AXChartDescriptor(
             title: "Static peak force trend",
-            summary: "Peak force for each measured static hold in this evidence set.",
+            summary: summary,
             xAxis: AXCategoricalDataAxisDescriptor(title: "Held", categoryOrder: labels),
             yAxis: AXNumericDataAxisDescriptor(title: "Kilograms", range: 0...yMax, gridlinePositions: []) {
                 "\($0.formatted(.number.precision(.fractionLength(1)))) kg"
@@ -237,11 +278,26 @@ private struct ForceTrendAccessibilityDescriptor: AXChartDescriptorRepresentable
             )]
         )
     }
+
+    private var summary: String {
+        guard let targetBand else {
+            return "Peak force for each measured static hold in this evidence set."
+        }
+        return "Peak force for each measured static hold in this evidence set, with a plan target of "
+            + "\(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms from "
+            + "\(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1)))) to "
+            + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms."
+    }
 }
 
 private extension View {
-    func accessibilityForceTrendChartDescriptor(_ peaks: [TindeqRecording]) -> some View {
+    func accessibilityForceTrendChartDescriptor(
+        _ peaks: [TindeqRecording],
+        targetBand: ForceTargetBand?
+    ) -> some View {
         accessibilityElement(children: .contain)
-            .accessibilityChartDescriptor(ForceTrendAccessibilityDescriptor(peaks: peaks))
+            .accessibilityChartDescriptor(
+                ForceTrendAccessibilityDescriptor(peaks: peaks, targetBand: targetBand)
+            )
     }
 }

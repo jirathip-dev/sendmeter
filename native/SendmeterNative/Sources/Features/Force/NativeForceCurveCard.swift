@@ -13,17 +13,48 @@ struct NativeForceCurveCard: View {
     let tag: String
     let model: ForceCurveModel?
     let hasLoadedRecordings: Bool
+    /// The target is resolved once for the selected exercise/side/preset by
+    /// ForceView. This card only renders that authoritative band; it never
+    /// derives a second target from curve points.
+    let targetBand: ForceTargetBand?
 
     @Environment(\.colorScheme) private var scheme
+
+    init(
+        tag: String,
+        model: ForceCurveModel?,
+        hasLoadedRecordings: Bool,
+        targetBand: ForceTargetBand? = nil
+    ) {
+        self.tag = tag
+        self.model = model
+        self.hasLoadedRecordings = hasLoadedRecordings
+        self.targetBand = targetBand
+    }
 
     var body: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 12) {
                 SectionLabel("Force duration curve · \(tag)", systemImage: "chart.xyaxis.line")
 
+                if let targetBand {
+                    Text(
+                        "Plan target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kg · "
+                            + "range \(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1))))–"
+                            + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg"
+                    )
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(
+                        "Plan target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms, "
+                            + "range \(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1)))) to "
+                            + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
+                    )
+                }
+
                 if let model {
                     let hasConfidenceBand = (model.confidenceBand?.count ?? 0) >= 2
-                    NativeForceCurvePlot(model: model)
+                    NativeForceCurvePlot(model: model, targetBand: targetBand)
                         .frame(height: 190)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(
@@ -31,8 +62,8 @@ struct NativeForceCurveCard: View {
                                 ? "Force duration curve with 95 percent confidence band"
                                 : "Force duration curve"
                         )
-                        .accessibilityValue(accessibilityValue(for: model))
-                        .accessibilityForceCurveChartDescriptor(model)
+                        .accessibilityValue(accessibilityValue(for: model, targetBand: targetBand))
+                        .accessibilityForceCurveChartDescriptor(model, targetBand: targetBand)
 
                     HStack(spacing: 12) {
                         curveMetric("Max", value: model.maximumForceKilograms, unit: "kg")
@@ -52,6 +83,12 @@ struct NativeForceCurveCard: View {
                                 .fill(ChartToken.force.color(scheme).opacity(0.18))
                                 .frame(width: 10, height: 8)
                             Text("95% band")
+                        }
+                        if targetBand != nil {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(ChartToken.optimal.color(scheme).opacity(0.8))
+                                .frame(width: 10, height: 3)
+                            Text("Plan target")
                         }
                     }
                     .font(.caption2)
@@ -78,21 +115,30 @@ struct NativeForceCurveCard: View {
         }
     }
 
-    private func accessibilityValue(for model: ForceCurveModel) -> String {
+    private func accessibilityValue(
+        for model: ForceCurveModel,
+        targetBand: ForceTargetBand?
+    ) -> String {
         let band = model.confidenceBand
         let maximum = "Max \(model.maximumForceKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
+        let target = targetBand.map {
+            ", plan target \($0.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms, "
+                + "range \($0.lowKilograms.formatted(.number.precision(.fractionLength(1)))) to "
+                + "\($0.highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
+        } ?? ""
         guard let first = band?.first,
               let last = band?.last,
               (band?.count ?? 0) >= 2
         else {
-            return maximum
+            return maximum + target
         }
-        return "\(maximum), 95 percent confidence band from \(first.windowSeconds.formatted(.number.precision(.fractionLength(0)))) to \(last.windowSeconds.formatted(.number.precision(.fractionLength(0)))) seconds"
+        return "\(maximum), 95 percent confidence band from \(first.windowSeconds.formatted(.number.precision(.fractionLength(0)))) to \(last.windowSeconds.formatted(.number.precision(.fractionLength(0)))) seconds\(target)"
     }
 }
 
 private struct NativeForceCurvePlot: View {
     let model: ForceCurveModel
+    let targetBand: ForceTargetBand?
 
     @Environment(\.colorScheme) private var scheme
     @State private var selectedPointIndex: Int?
@@ -120,7 +166,8 @@ private struct NativeForceCurvePlot: View {
             let minimumLog = log10(minimumSeconds)
             let maximumLog = log10(maximumSeconds)
             let maximumBand = model.confidenceBand?.map(\.highKilograms).max() ?? 0
-            let maximumValue = max(10, max(model.maximumForceKilograms, maximumBand)) * 1.1
+            let maximumTarget = targetBand?.highKilograms ?? 0
+            let maximumValue = max(10, max(model.maximumForceKilograms, max(maximumBand, maximumTarget))) * 1.1
 
             func x(_ seconds: Double) -> CGFloat {
                 let fraction = (log10(max(minimumSeconds, seconds)) - minimumLog)
@@ -136,6 +183,7 @@ private struct NativeForceCurvePlot: View {
             let axisColor = ChartToken.axis.color(scheme)
             let forceColor = ChartToken.force.color(scheme)
             let secondaryColor = ChartToken.forceSecondary.color(scheme)
+            let targetColor = ChartToken.optimal.color(scheme)
 
             for index in 0...2 {
                 let lineY = topInset + plotHeight * CGFloat(index) / 2
@@ -151,6 +199,29 @@ private struct NativeForceCurvePlot: View {
                         .foregroundColor(axisColor),
                     at: CGPoint(x: leadingInset / 2, y: lineY),
                     anchor: .center
+                )
+            }
+
+            if let targetBand {
+                let upperY = y(targetBand.highKilograms)
+                let lowerY = y(targetBand.lowKilograms)
+                context.fill(
+                    Path(CGRect(
+                        x: leadingInset,
+                        y: upperY,
+                        width: plotWidth,
+                        height: max(1, lowerY - upperY)
+                    )),
+                    with: .color(targetColor.opacity(ChartToken.optimal.bandOpacity(scheme)))
+                )
+
+                var targetPath = Path()
+                targetPath.move(to: CGPoint(x: leadingInset, y: y(targetBand.kilograms)))
+                targetPath.addLine(to: CGPoint(x: size.width - trailingInset, y: y(targetBand.kilograms)))
+                context.stroke(
+                    targetPath,
+                    with: .color(targetColor.opacity(0.85)),
+                    style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])
                 )
             }
 
@@ -425,6 +496,7 @@ private struct NativeForceCurvePlot: View {
 
 private struct ForceCurveAccessibilityDescriptor: AXChartDescriptorRepresentable {
     let model: ForceCurveModel
+    let targetBand: ForceTargetBand?
 
     func makeChartDescriptor() -> AXChartDescriptor { makeDescriptor() }
 
@@ -441,7 +513,13 @@ private struct ForceCurveAccessibilityDescriptor: AXChartDescriptorRepresentable
         let labels = model.points.indices.map { index in
             "\(index + 1): \(model.points[index].windowSeconds.formatted(.number.precision(.fractionLength(0...1))))s"
         }
-        let yMax = max(model.maximumForceKilograms, model.confidenceBand?.map(\.highKilograms).max() ?? 0) * 1.1
+        let yMax = max(
+            1,
+            max(
+                model.maximumForceKilograms,
+                max(model.confidenceBand?.map(\.highKilograms).max() ?? 0, targetBand?.highKilograms ?? 0)
+            )
+        ) * 1.1
         let points = model.points.enumerated().map { index, point -> AXDataPoint in
             let bandLabel: String
             if let band = model.confidenceBand,
@@ -460,7 +538,7 @@ private struct ForceCurveAccessibilityDescriptor: AXChartDescriptorRepresentable
         }
         return AXChartDescriptor(
             title: "Force duration curve",
-            summary: "Measured force-duration curve with the fitted Hill model and 95 percent confidence band.",
+            summary: summary,
             xAxis: AXCategoricalDataAxisDescriptor(title: "Seconds", categoryOrder: labels),
             yAxis: AXNumericDataAxisDescriptor(title: "Kilograms", range: 0...yMax, gridlinePositions: []) {
                 "\($0.formatted(.number.precision(.fractionLength(1)))) kg"
@@ -473,10 +551,25 @@ private struct ForceCurveAccessibilityDescriptor: AXChartDescriptorRepresentable
             )]
         )
     }
+
+    private var summary: String {
+        guard let targetBand else {
+            return "Measured force-duration curve with the fitted Hill model and 95 percent confidence band."
+        }
+        return "Measured force-duration curve with the fitted Hill model, 95 percent confidence band, and a plan target of "
+            + "\(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms from "
+            + "\(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1)))) to "
+            + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms."
+    }
 }
 
 private extension View {
-    func accessibilityForceCurveChartDescriptor(_ model: ForceCurveModel) -> some View {
-        accessibilityChartDescriptor(ForceCurveAccessibilityDescriptor(model: model))
+    func accessibilityForceCurveChartDescriptor(
+        _ model: ForceCurveModel,
+        targetBand: ForceTargetBand?
+    ) -> some View {
+        accessibilityChartDescriptor(
+            ForceCurveAccessibilityDescriptor(model: model, targetBand: targetBand)
+        )
     }
 }

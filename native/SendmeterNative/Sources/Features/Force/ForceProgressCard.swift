@@ -13,6 +13,7 @@ struct ForceProgressCardBoundary: View, Equatable {
     let hasLoadedRecordings: Bool
     let progressRevision: UInt64
     let curveRevision: UInt64
+    let targetBand: ForceTargetBand?
 
     private var renderKey: ForceProgressCardKey {
         ForceProgressCardKey(
@@ -20,7 +21,8 @@ struct ForceProgressCardBoundary: View, Equatable {
             selectedTag: selectedTag,
             selectedSide: selectedSide?.rawValue,
             hasLoadedRecordings: hasLoadedRecordings,
-            curveRevision: curveRevision
+            curveRevision: curveRevision,
+            targetBand: targetBand
         )
     }
 
@@ -34,7 +36,8 @@ struct ForceProgressCardBoundary: View, Equatable {
             selectedTag: selectedTag,
             selectedSide: selectedSide,
             forceCurve: forceCurve,
-            hasLoadedRecordings: hasLoadedRecordings
+            hasLoadedRecordings: hasLoadedRecordings,
+            targetBand: targetBand
         )
     }
 }
@@ -50,6 +53,7 @@ struct ForceProgressCard: View {
     let selectedSide: TindeqSide?
     let forceCurve: ForceCurveModel?
     let hasLoadedRecordings: Bool
+    let targetBand: ForceTargetBand?
 
     @Environment(\.colorScheme) private var scheme
     @State private var detail: Detail?
@@ -89,7 +93,8 @@ struct ForceProgressCard: View {
                         selectedTag: selectedTag,
                         selectedSide: selectedSide,
                         forceCurve: forceCurve,
-                        hasLoadedRecordings: hasLoadedRecordings
+                        hasLoadedRecordings: hasLoadedRecordings,
+                        targetBand: targetBand
                     )
                     .onAppear { Haptics.shared.sheetPresented() }
                 case .movement:

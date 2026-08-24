@@ -98,6 +98,27 @@ final class ForceCurveEngineTests: XCTestCase {
         XCTAssertEqual(ForceCurveEngine.targetKilograms(preset: preset, references: refs, setNumber: 4), 75)
     }
 
+    func testTargetReferenceUsesTheResolvedPlanWithoutRecalculatingIt() {
+        let left = ForceTargetBand(kilograms: 20, lowKilograms: 18, highKilograms: 22)
+        let right = ForceTargetBand(kilograms: 30, lowKilograms: 27, highKilograms: 33)
+        let plan = ForceTargetPlan(targets: [
+            ForceTargetKey(setNumber: 1, side: .left): left,
+            ForceTargetKey(setNumber: 1, side: .right): right
+        ])
+
+        XCTAssertEqual(
+            plan.referenceBand(forSet: 1, selectedSide: .right, fallbackSide: .left),
+            right
+        )
+        XCTAssertEqual(
+            plan.referenceBand(forSet: 1, selectedSide: .unspecified, fallbackSide: .left),
+            left
+        )
+        XCTAssertNil(
+            plan.referenceBand(forSet: 2, selectedSide: .left, fallbackSide: .right)
+        )
+    }
+
     func testReverseActionCompletionAndMetricsDoNotInventFutureMarkers() {
         let preset = TindeqPreset(
             name: "Movement",
