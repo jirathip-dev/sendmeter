@@ -6,6 +6,176 @@ private struct TestPayload: Codable, Equatable, Sendable {
 }
 
 final class OfflineQueueTests: XCTestCase {
+    /// A positive force-editor floor is unrelated to ordinary queue writes.
+    /// All zero-order payload shapes must remain durable, and the explicit
+    /// enqueue result must say they were accepted so AppModel cannot publish a
+    /// false optimistic success.
+    func testZeroOrderingWritesSurvivePositiveEditorFloorAndRelaunch() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let editor = DurableQueueItem(
+            accountUserID: user,
+            orderingKey: 1_000,
+            terminalKey: UUID(),
+            payload: TestPayload(value: "force-editor")
+        )
+        let editorAccepted = try await queue.enqueue(editor)
+        XCTAssertTrue(editorAccepted)
+        try await queue.remove(id: editor.id, accountUserID: user, reason: "uploaded")
+        let floor = await queue.orderingFloor(for: user)
+        XCTAssertEqual(floor?.orderingKey, 1_000)
+
+        let session = DurableQueueItem(
+            accountUserID: user,
+            payload: TestPayload(value: "manual-session")
+        )
+        let workout = DurableQueueItem(
+            accountUserID: user,
+            payload: TestPayload(value: "manual-workout")
+        )
+        let recording = DurableQueueItem(
+            accountUserID: user,
+            payload: TestPayload(value: "force-recording")
+        )
+        let delete = DurableQueueItem(
+            accountUserID: user,
+            terminalKey: UUID(),
+            payload: TestPayload(value: "session-delete")
+        )
+
+        let sessionAccepted = try await queue.enqueue(session)
+        let workoutAccepted = try await queue.enqueue(workout)
+        let recordingAccepted = try await queue.enqueueIfCurrent(recording, expectedRevision: nil)
+        let deleteAccepted = try await queue.enqueueUnlessTerminalizedKeepingNewest(
+            [delete],
+            terminalKey: delete.terminalKey!,
+            accountUserID: user
+        )
+        XCTAssertTrue(sessionAccepted)
+        XCTAssertTrue(workoutAccepted)
+        XCTAssertTrue(recordingAccepted)
+        XCTAssertTrue(deleteAccepted)
+
+        let reloaded = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let values = Set((await reloaded.items(for: user, includeQuarantined: true)).map(\.payload.value))
+        XCTAssertEqual(
+            values,
+            Set(["manual-session", "manual-workout", "force-recording", "session-delete"])
+        )
+    }
+
+    /// A terminalized or stale semantic write may still be intentionally
+    /// skipped, but the ordinary enqueue API must report that skip instead of
+    /// letting AppModel claim that the write was durably queued.
+    func testEnqueueReportsTerminalizedItemWasSkipped() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let terminalKey = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let delete = DurableQueueItem(
+            accountUserID: user,
+            terminalKey: terminalKey,
+            payload: TestPayload(value: "delete")
+        )
+        let deleteInstalled = try await queue.enqueueTerminalDelete(delete, terminalKey: terminalKey)
+        XCTAssertTrue(deleteInstalled)
+        let durableDeleteSnapshot = await queue.item(id: delete.id, accountUserID: user)
+        let durableDelete = try XCTUnwrap(durableDeleteSnapshot)
+        let deleteCompleted = try await queue.completeTerminalDelete(
+            id: durableDelete.id,
+            accountUserID: user,
+            expectedRevision: durableDelete.revision,
+            terminalKey: terminalKey,
+            operationID: UUID()
+        )
+        XCTAssertTrue(deleteCompleted)
+
+        let stale = DurableQueueItem(
+            accountUserID: user,
+            terminalKey: terminalKey,
+            payload: TestPayload(value: "stale")
+        )
+        let staleAccepted = try await queue.enqueue(stale)
+        XCTAssertFalse(staleAccepted)
+        let staleItem = await queue.item(id: stale.id, accountUserID: user)
+        XCTAssertNil(staleItem)
+    }
+
+    /// Re-authentication is an immediate account-scoped recovery pass: it
+    /// bypasses backoff for active entries, leaves them durable, and still
+    /// excludes a permanently quarantined entry.
+    func testAuthRecoverySelectionBypassesBackoffWithoutDiscardingData() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let otherUser = UUID()
+        let now = Date(timeIntervalSince1970: 10_000)
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let authItem = DurableQueueItem(
+            accountUserID: user,
+            payload: TestPayload(value: "auth-parked")
+        )
+        let otherAccountItem = DurableQueueItem(
+            accountUserID: otherUser,
+            payload: TestPayload(value: "other-account")
+        )
+        try await queue.enqueue(authItem)
+        try await queue.enqueue(otherAccountItem)
+        try await queue.markFailure(
+            id: authItem.id,
+            accountUserID: user,
+            error: "expired",
+            classification: .auth,
+            now: now
+        )
+
+        let dueBeforeRecovery = await queue.items(for: user, dueAt: now)
+        XCTAssertTrue(dueBeforeRecovery.isEmpty, "ordinary recovery remains backoff-gated")
+        let recovery = await queue.items(
+            for: user,
+            dueAt: QueueUploadMode.authRecovery.revalidationDueAt(now: now)
+        )
+        XCTAssertEqual(recovery.map(\.payload.value), ["auth-parked"])
+        XCTAssertNil(recovery.first?.quarantined)
+        let otherRecovery = await queue.items(
+            for: otherUser,
+            dueAt: QueueUploadMode.authRecovery.revalidationDueAt(now: now)
+        )
+        XCTAssertTrue(otherRecovery.contains { $0.id == otherAccountItem.id })
+
+        let permanent = DurableQueueItem(
+            accountUserID: user,
+            payload: TestPayload(value: "permanent")
+        )
+        try await queue.enqueue(permanent)
+        var failureAt = now
+        for _ in 0..<3 {
+            try await queue.markFailure(
+                id: permanent.id,
+                accountUserID: user,
+                error: "rejected",
+                classification: .permanent,
+                now: failureAt
+            )
+            failureAt = failureAt.addingTimeInterval(30)
+        }
+        let recoveryAfterQuarantine = await queue.items(
+            for: user,
+            dueAt: QueueUploadMode.authRecovery.revalidationDueAt(now: failureAt)
+        )
+        XCTAssertFalse(recoveryAfterQuarantine.contains { $0.id == permanent.id })
+
+        let reloaded = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let reloadedAuthItem = await reloaded.item(id: authItem.id, accountUserID: user)
+        XCTAssertNotNil(reloadedAuthItem)
+    }
+
     func testQueueIsDurableAndAccountScoped() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

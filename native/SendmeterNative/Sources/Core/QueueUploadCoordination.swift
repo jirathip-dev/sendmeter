@@ -1,11 +1,17 @@
 import Foundation
 
-/// The reason an upload is being attempted. Sign-out deliberately bypasses
-/// ordinary backoff while retaining the automatic quarantine budget; an
-/// explicit manual retry is the only mode that does not spend that budget.
+/// The reason an upload is being attempted. Sign-out and same-account auth
+/// recovery deliberately bypass ordinary backoff while retaining the
+/// automatic quarantine budget; an explicit manual retry is the only mode
+/// that does not spend that budget.
 public enum QueueUploadMode: Equatable, Sendable {
     case automatic
     case manual
+    /// A newly valid access token is an explicit recovery boundary for the
+    /// owning account. It bypasses ordinary backoff, but still excludes
+    /// quarantined entries so an auth refresh can never silently re-arm a
+    /// payload the server permanently rejected.
+    case authRecovery
     case signOut
 
     /// The due-date filter used when a captured queue item is revalidated.
@@ -15,7 +21,7 @@ public enum QueueUploadMode: Equatable, Sendable {
         switch self {
         case .automatic:
             return now
-        case .manual, .signOut:
+        case .manual, .authRecovery, .signOut:
             return nil
         }
     }
@@ -24,6 +30,42 @@ public enum QueueUploadMode: Equatable, Sendable {
     /// bounded automatic quarantine budget. Sign-out remains automatic work.
     public var countsTowardQuarantine: Bool {
         self != .manual
+    }
+}
+
+/// The small state machine around an explicit queue Retry action. Network
+/// work itself belongs to AppModel; these decisions are pure so a retry can
+/// be tested without compiling the SwiftUI app target.
+public enum QueueRetryStep: Equatable, Sendable {
+    case waitForOwner
+    case upload
+    case stop
+}
+
+public enum QueueRetryPolicy {
+    /// Decide what to do after the durable item has been re-read. A queued
+    /// item is still eligible for a manual attempt when it is backed off; only
+    /// quarantine is terminal for this path.
+    public static func beforeUpload(
+        isClaimed: Bool,
+        hasItem: Bool,
+        isQuarantined: Bool
+    ) -> QueueRetryStep {
+        if isClaimed { return .waitForOwner }
+        guard hasItem, !isQuarantined else { return .stop }
+        return .upload
+    }
+
+    /// A successful upload or a recorded failure ends this Retry invocation.
+    /// A nil result with a newly observed owner means another producer won the
+    /// race, so the caller waits and re-reads the durable item once it settles.
+    public static func afterUpload(
+        uploaded: Bool,
+        recordedFailure: Bool,
+        ownerIsClaimed: Bool
+    ) -> QueueRetryStep {
+        if uploaded || recordedFailure { return .stop }
+        return ownerIsClaimed ? .waitForOwner : .stop
     }
 }
 

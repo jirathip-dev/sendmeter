@@ -496,12 +496,11 @@ struct SettingsView: View {
     }
 
     private var activeQueueFailureExplanation: String? {
-        guard let failure = model.latestQueuedWriteFailure,
-              let rejectionClass = failure.rejectionClass else { return nil }
-        let retryAt = failure.nextAttemptAt > Date()
-            ? " Next automatic retry: \(failure.nextAttemptAt.formatted(date: .abbreviated, time: .shortened))."
-            : " It is ready to retry now."
-        return "Last \(failure.kind.lowercased()) attempt: \(UserFacingError.message(for: rejectionClass))\(retryAt)"
+        guard let failure = model.latestQueuedWriteFailure else { return nil }
+        let reason = failure.rejectionClass.map {
+            UserFacingError.message(for: $0)
+        } ?? "The last upload attempt failed."
+        return "Last \(failure.kind.lowercased()) attempt: \(reason) The app will retry automatically; use Retry Now if needed."
     }
 
     // MARK: About & Support

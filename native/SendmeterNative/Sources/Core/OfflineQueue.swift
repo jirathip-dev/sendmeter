@@ -629,20 +629,24 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         }
     }
 
-    public func enqueue(_ item: DurableQueueItem<Payload>) throws {
+    @discardableResult
+    public func enqueue(_ item: DurableQueueItem<Payload>) throws -> Bool {
         try enqueue([item])
     }
 
     /// Enqueue a group of related writes in one durable transaction. Recording
     /// metadata and its session-RPE ordering claim use this to avoid leaving
     /// only half of an editor save on disk when persistence fails.
-    public func enqueue(_ items: [DurableQueueItem<Payload>]) throws {
+    @discardableResult
+    public func enqueue(_ items: [DurableQueueItem<Payload>]) throws -> Bool {
+        var allAccepted = true
         try transact { state in
             for item in items {
                 if let terminalKey = item.terminalKey,
                    state.terminalized.contains(where: {
                        $0.key == terminalKey && $0.accountUserID == item.accountUserID
                    }) {
+                    allAccepted = false
                     continue
                 }
                 if let index = state.items.firstIndex(where: { $0.id == item.id }) {
@@ -653,6 +657,8 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                         if Self.isNewer(item, than: state.items[index]) {
                             state.items[index] = item
                             updateOrderingFloor(for: item, in: &state)
+                        } else {
+                            allAccepted = false
                         }
                     } else {
                         state.items[index] = item
@@ -661,11 +667,13 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                     if let watermark = state.orderingWatermarks.first(where: {
                         $0.queueItemID == item.id && $0.accountUserID == item.accountUserID
                     }), !Self.isNewer(item, than: watermark) {
+                        allAccepted = false
                         continue
                     }
                     if let floor = state.orderingFloors.first(where: {
                         $0.accountUserID == item.accountUserID
-                    }), !Self.isNewer(item, than: floor) {
+                    }), !Self.passesOrderingFloor(item, floor: floor) {
+                        allAccepted = false
                         continue
                     }
                     state.items.append(item)
@@ -673,10 +681,12 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 }
             }
         }
+        return allAccepted
     }
 
     /// Atomically cancel the supplied queue identities and install a new
-    /// intent. This is used by pending-session deletion: the insert/upsert is
+    /// intent. This is used by pending-session/workout deletion: the
+    /// insert/upsert is
     /// removed in the same durable transaction as its delete intent, so a
     /// crash cannot leave only an in-memory cancellation or only a delete
     /// request. A removal is conditional on its captured revision; if a newer
@@ -763,7 +773,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 }
                 if let floor = state.orderingFloors.first(where: {
                     $0.accountUserID == item.accountUserID
-                }), !Self.isNewer(item, than: floor) {
+                }), !Self.passesOrderingFloor(item, floor: floor) {
                     return
                 }
                 state.items.append(item)
@@ -888,7 +898,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                     }
                     if let floor = state.orderingFloors.first(where: {
                         $0.accountUserID == accountUserID
-                    }), !Self.isNewer(item, than: floor) {
+                    }), !Self.passesOrderingFloor(item, floor: floor) {
                         continue
                     }
                     state.items.append(item)
@@ -1581,6 +1591,16 @@ public actor DurableQueue<Payload: Codable & Sendable> {
             return lhs.createdAt > rhs.createdAt
         }
         return lhs.revision.uuidString > rhs.revision.uuidString
+    }
+
+    /// The account-wide floor protects only semantic editor claims. Ordinary
+    /// queue writes deliberately use ordering zero and have no relationship
+    /// to a force-recording edit, so a positive floor must never reject them.
+    private static func passesOrderingFloor(
+        _ item: DurableQueueItem<Payload>,
+        floor: DurableQueueOrderingFloor
+    ) -> Bool {
+        item.orderingKey == 0 || Self.isNewer(item, than: floor)
     }
 
     private static func isNewer(

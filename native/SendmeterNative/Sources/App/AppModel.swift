@@ -1597,9 +1597,10 @@ public final class AppModel {
                     // A re-authentication can keep the same user id and
                     // therefore skip the cold bootstrap branch. It is still
                     // the recovery boundary for queue entries parked on an
-                    // expired token, so force a fresh pass with the newly
-                    // valid session.
-                    await drainQueue()
+                    // expired token, so force an account-scoped pass with the
+                    // newly valid session. Recovery bypasses backoff but does
+                    // not re-arm quarantined payloads.
+                    await drainQueue(mode: .authRecovery)
                 default:
                     break
                 }
@@ -1624,6 +1625,11 @@ public final class AppModel {
                 didBootstrapUserID = nil
                 resetAccountState()
                 await tearDownRealtime()
+            } else if session != nil {
+                // Some password-recovery flows deliver the replacement token
+                // as `.passwordRecovery` without a second `.signedIn` event.
+                // The same-account token is still a recovery boundary.
+                await drainQueue(mode: .authRecovery)
             }
         case .signedOut, .userDeleted:
             await teardownGuidedProtocolBeforeAuthRevocation()
@@ -2517,8 +2523,14 @@ public final class AppModel {
             || currentSession?.pending == true
             || pendingSessions[session.id] != nil
         if isPending {
+            let workoutSource = currentSession?.workoutSource
+                ?? pendingSessions[session.id]?.workoutSource
+                ?? session.workoutSource
+            let deleteKind: PendingSessionDeleteKind =
+                workoutSource == .phone ? .manualWorkout : .session
             await undoSession(
-                SessionLogReceipt(sessionID: session.id, accountUserID: userID)
+                SessionLogReceipt(sessionID: session.id, accountUserID: userID),
+                successMessage: PendingSessionDeletePolicy.successMessage(for: deleteKind)
             )
             return
         }
@@ -2579,6 +2591,13 @@ public final class AppModel {
     /// its soft-delete is attempted, so an uploaded row whose delete fails is
     /// still hidden and retried after refresh/relaunch.
     public func undoSession(_ receipt: SessionLogReceipt) async {
+        await undoSession(receipt, successMessage: "Routine undone")
+    }
+
+    private func undoSession(
+        _ receipt: SessionLogReceipt,
+        successMessage: String
+    ) async {
         guard let queue else {
             surface(NSError(
                 domain: "SendmeterNative",
@@ -2608,7 +2627,8 @@ public final class AppModel {
             entityID: sessionID.uuidString
         )
 
-        // The intent gets its own queue identity. Reusing the session insert's
+        // The intent gets its own queue identity. Reusing the session/workout
+        // insert's
         // id would let an in-flight insert remove the delete intent when both
         // operations overlap.
         let deleteItem = DurableQueueItem(
@@ -2658,7 +2678,7 @@ public final class AppModel {
                 to: self.currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
-            if result.uploaded { toastMessage = "Routine undone" }
+            if result.uploaded { toastMessage = successMessage }
         } catch {
             // The optimistic hide is not durable until the delete intent has
             // been persisted. Roll it back only for the account that made the
@@ -5430,7 +5450,7 @@ public final class AppModel {
     }
     // MARK: Offline queue
 
-    public func drainQueue() async {
+    public func drainQueue(mode: QueueUploadMode = .automatic) async {
         guard let userID = currentUserID, let queue else { return }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
@@ -5444,9 +5464,12 @@ public final class AppModel {
                   to: currentUserID,
                   accountEpoch: accountEpoch
               ) else { return }
-        let due = await queue.items(for: userID, dueAt: Date())
+        let due = await queue.items(
+            for: userID,
+            dueAt: mode.revalidationDueAt(now: Date())
+        )
         for item in due {
-            _ = await upload(item, capturedBy: accountFetch)
+            _ = await upload(item, mode: mode, capturedBy: accountFetch)
         }
         await refreshQueueCount(for: accountFetch)
     }
@@ -5493,14 +5516,24 @@ public final class AppModel {
                 accountEpoch: accountEpoch
             ), let queue else { return }
 
-            if inFlightUploadClaims.isClaimed(key) {
-                await waitForQueueUpload(key)
-                continue
-            }
-            guard let current = await queue.item(
+            let current = await queue.item(
                 id: id,
                 accountUserID: accountUserID
-            ), current.quarantined == nil else { return }
+            )
+            switch QueueRetryPolicy.beforeUpload(
+                isClaimed: inFlightUploadClaims.isClaimed(key),
+                hasItem: current != nil,
+                isQuarantined: current?.quarantined != nil
+            ) {
+            case .waitForOwner:
+                await waitForQueueUpload(key)
+                continue
+            case .stop:
+                return
+            case .upload:
+                break
+            }
+            guard let current else { return }
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
@@ -5515,17 +5548,21 @@ public final class AppModel {
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
-            if result.uploaded { return }
-
             // A producer can claim the identity in the small gap between the
             // check above and `upload`'s own claim. Only that no-op result is
             // retried here; a real failure has already been durably recorded
             // with its class/error/backoff and should be shown to the user.
-            if result.failure == nil, inFlightUploadClaims.isClaimed(key) {
+            switch QueueRetryPolicy.afterUpload(
+                uploaded: result.uploaded,
+                recordedFailure: result.failure != nil,
+                ownerIsClaimed: inFlightUploadClaims.isClaimed(key)
+            ) {
+            case .waitForOwner:
                 await waitForQueueUpload(key)
                 continue
+            case .upload, .stop:
+                return
             }
-            return
         }
     }
 
@@ -5793,7 +5830,7 @@ public final class AppModel {
                     accountUserID: userID
                 )
             } else {
-                try await queue.enqueue(items)
+                editorBatchAccepted = try await queue.enqueue(items)
             }
             guard accountFetch.canApply(
                 to: currentUserID,
@@ -5843,6 +5880,17 @@ public final class AppModel {
             return edit.recordingID
         case let .recordingDelete(delete):
             return delete.recordingID
+        default:
+            return nil
+        }
+    }
+
+    private func pendingSessionInsert(for payload: PendingWrite) -> PendingSessionInsert? {
+        switch payload {
+        case let .session(insert):
+            return .loggedSession(sessionID: insert.id)
+        case let .workout(draft):
+            return .manualWorkout(sessionID: draft.sessionID)
         default:
             return nil
         }
@@ -6191,12 +6239,12 @@ public final class AppModel {
         do {
             var sessionReceipt: SessionLogReceipt?
             var savedSession: SendmeterCore.Session?
-            var finishedSessionInsertID: UUID?
+            var finishedSessionInsert: PendingSessionInsert?
             var completedDeleteReceipt: SessionLogReceipt?
             var suppressSavedToast = false
             switch item.payload {
             case let .session(payload):
-                finishedSessionInsertID = payload.id
+                finishedSessionInsert = .loggedSession(sessionID: payload.id)
                 let receipt = SessionLogReceipt(
                     sessionID: payload.id,
                     accountUserID: item.accountUserID
@@ -6249,9 +6297,10 @@ public final class AppModel {
                 }
             case let .sessionDelete(deletePayload):
                 suppressSavedToast = true
-                // A delete intent can be created while the matching insert is
-                // awaiting the server. The queue entry is the durable
-                // dependency: leave the delete due until that insert has
+                // A delete intent can be created while the matching session or
+                // workout insert is awaiting the server. The queue entry is
+                // the durable dependency: leave the delete due until that
+                // insert has
                 // either completed (and left the queue) or been skipped
                 // because Undo claimed it. Soft-deleting first is a no-op on
                 // many backends and would let the later insert resurrect the
@@ -6282,12 +6331,13 @@ public final class AppModel {
                 }
                 let hasPendingInsert = queuedForDelete.contains { queued in
                     guard queued.id != item.id else { return false }
-                    switch queued.payload {
-                    case let .session(insertPayload):
-                        return insertPayload.id == deletePayload.sessionID
-                    default:
+                    guard let insert = pendingSessionInsert(for: queued.payload) else {
                         return false
                     }
+                    return PendingSessionDeletePolicy.matches(
+                        insert: insert,
+                        deleteSessionID: deletePayload.sessionID
+                    )
                 }
                 guard !hasPendingInsert else {
                     return UploadResult(uploaded: false, failure: nil)
@@ -6700,6 +6750,7 @@ public final class AppModel {
                 }
                 }
             case let .workout(draft):
+                finishedSessionInsert = .manualWorkout(sessionID: draft.sessionID)
                 let saved = try await self.repository.insertPhoneWorkout(draft)
                 guard accountFetch.canApply(
                     to: currentUserID,
@@ -6778,9 +6829,12 @@ public final class AppModel {
                     return UploadResult(uploaded: false, failure: nil)
                 }
             }
-            if let finishedSessionInsertID {
+            if let finishedSessionInsert,
+               PendingSessionDeletePolicy.shouldDrainDeleteAfterInsert(
+                   finishedSessionInsert
+               ) {
                 await uploadPendingSessionDelete(
-                    sessionID: finishedSessionInsertID,
+                    sessionID: finishedSessionInsert.sessionID,
                     accountUserID: item.accountUserID,
                     accountFetch: accountFetch
                 )
@@ -7934,9 +7988,9 @@ public final class AppModel {
             else { continue }
             storePendingCurveSamples(recording.samples, for: recording.id)
         }
-        // Read delete intents first. A session insert and its Undo delete can
-        // overlap in the queue; the delete must win before any optimistic row
-        // is rebuilt from the insert payload.
+        // Read delete intents first. A session/workout insert and its Undo
+        // delete can overlap in the queue; the delete must win before any
+        // optimistic row is rebuilt from the insert payload.
         for item in queued {
             switch item.payload {
             case let .sessionDelete(payload):
@@ -7990,12 +8044,15 @@ public final class AppModel {
             let rejected = item.quarantined != nil
             switch item.payload {
             case let .session(payload):
-                guard !remoteSessionIDs.contains(payload.id) else { continue }
                 let receipt = SessionLogReceipt(
                     sessionID: payload.id,
                     accountUserID: item.accountUserID
                 )
-                guard !routineUndo.isClaimed(receipt) else { continue }
+                guard PendingSessionDeletePolicy.shouldRestore(
+                    insert: .loggedSession(sessionID: payload.id),
+                    remoteSessionIDs: remoteSessionIDs,
+                    deleteIsClaimed: routineUndo.isClaimed(receipt)
+                ) else { continue }
                 pendingSessions[payload.id] = pendingSession(
                     id: payload.id,
                     draft: payload.draft,
@@ -8009,7 +8066,15 @@ public final class AppModel {
             case .recordingDelete:
                 continue
             case let .workout(draft):
-                guard !remoteSessionIDs.contains(draft.sessionID) else { continue }
+                let receipt = SessionLogReceipt(
+                    sessionID: draft.sessionID,
+                    accountUserID: item.accountUserID
+                )
+                guard PendingSessionDeletePolicy.shouldRestore(
+                    insert: .manualWorkout(sessionID: draft.sessionID),
+                    remoteSessionIDs: remoteSessionIDs,
+                    deleteIsClaimed: routineUndo.isClaimed(receipt)
+                ) else { continue }
                 pendingSessions[draft.sessionID] = pendingSession(from: draft, rejected: rejected)
             case .recording:
                 // Recording inserts were restored into the account-scoped

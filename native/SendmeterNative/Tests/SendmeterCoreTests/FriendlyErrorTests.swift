@@ -217,4 +217,17 @@ final class FriendlyErrorTests: XCTestCase {
         let message = UserFacingError.message(forQueueBreadcrumbReason: raw)
         XCTAssertFalse(message.localizedCaseInsensitiveContains(raw))
     }
+
+    func testQueueRejectionLabelsDoNotExposeInternalRawValues() {
+        let expectations: [(RejectionClass, String)] = [
+            (.retryable, "temporary issue"),
+            (.auth, "sign-in required"),
+            (.parked, "permission issue"),
+            (.permanent, "server rejection")
+        ]
+        for (kind, expected) in expectations {
+            XCTAssertEqual(UserFacingError.label(for: kind), expected)
+            XCTAssertFalse(UserFacingError.label(for: kind).contains(kind.rawValue))
+        }
+    }
 }

@@ -564,14 +564,13 @@ struct HistoryView: View {
         }
         var message = parts.joined(separator: " · ") + ". Queued data is durable on device and retries automatically; rejected items never retry on their own — manage them in Settings."
         if let failure {
-            let classLabel = failure.rejectionClass?.rawValue ?? "unknown"
+            let classLabel = failure.rejectionClass.map {
+                UserFacingError.label(for: $0)
+            } ?? "previous attempt"
             let reason = failure.rejectionClass.map {
                 UserFacingError.message(for: $0)
             } ?? "The last upload attempt failed."
-            let nextRetry = failure.nextAttemptAt > Date()
-                ? " Next automatic retry: \(failure.nextAttemptAt.formatted(date: .abbreviated, time: .shortened))."
-                : " It is ready to retry now."
-            message += " Last attempt (\(classLabel)): \(reason)\(nextRetry)"
+            message += " Last attempt (\(classLabel)): \(reason) The app will retry automatically; use Retry Now in Settings if needed."
         }
         return message
     }

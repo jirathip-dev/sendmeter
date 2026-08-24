@@ -261,9 +261,10 @@ final class AppModelSplitTests: XCTestCase {
         let helper = appModel[retryEnd.lowerBound..<helperEnd.lowerBound]
         XCTAssertTrue(helper.contains("await waitForQueueUpload(key)"))
         XCTAssertTrue(helper.contains("let current = await queue.item("))
+        XCTAssertTrue(helper.contains("QueueRetryPolicy.beforeUpload("))
+        XCTAssertTrue(helper.contains("QueueRetryPolicy.afterUpload("))
         XCTAssertTrue(helper.contains("mode: .manual"))
-        XCTAssertTrue(helper.contains("if result.uploaded { return }"))
-        XCTAssertTrue(helper.contains("result.failure == nil"))
+        XCTAssertTrue(helper.contains("recordedFailure: result.failure != nil"))
     }
 
     func testAuthRecoveryDrainsSameAccountWithoutDiscardingActiveQueue() {
@@ -280,7 +281,7 @@ final class AppModelSplitTests: XCTestCase {
         }
         let authHandler = appModel[start.lowerBound..<end.lowerBound]
         XCTAssertTrue(authHandler.contains("case .signedIn, .tokenRefreshed:"))
-        XCTAssertTrue(authHandler.contains("await drainQueue()"))
+        XCTAssertTrue(authHandler.contains("await drainQueue(mode: .authRecovery)"))
         XCTAssertFalse(authHandler.contains("discardAll(accountUserID:"))
     }
 
@@ -300,6 +301,7 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertTrue(delete.contains("session.pending"))
         XCTAssertTrue(delete.contains("pendingSessions[session.id] != nil"))
         XCTAssertTrue(delete.contains("await undoSession("))
+        XCTAssertTrue(delete.contains("PendingSessionDeletePolicy.successMessage"))
         XCTAssertTrue(delete.contains("repository.softDeleteSession(id: session.id)"))
 
         guard let uploadEnd = appModel.range(
@@ -318,8 +320,17 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertTrue(upload.contains("await waitForQueueUpload("))
         XCTAssertTrue(upload.contains("repository.softDeleteSession(id: deletePayload.sessionID)"))
         XCTAssertTrue(upload.contains("waitForSessionInsert: false"))
+        XCTAssertTrue(upload.contains("PendingSessionDeletePolicy.matches("))
+        XCTAssertTrue(upload.contains("finishedSessionInsert = .manualWorkout"))
         XCTAssertTrue(upload.contains("case let .workout(draft):"))
         XCTAssertTrue(upload.contains("if routineUndo.isClaimed(receipt)"))
+
+        guard let restoreStart = appModel.range(of: "private func restorePendingWrites(") else {
+            return XCTFail("restorePendingWrites is missing")
+        }
+        let restore = appModel[restoreStart.lowerBound..<appModel.endIndex]
+        XCTAssertTrue(restore.contains("PendingSessionDeletePolicy.shouldRestore("))
+        XCTAssertTrue(restore.contains(".manualWorkout(sessionID: draft.sessionID)"))
     }
 
     func testSwiftPMExcludedSourcesAreSwiftSyntaxParseable() throws {

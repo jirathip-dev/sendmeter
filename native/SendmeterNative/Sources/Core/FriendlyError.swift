@@ -141,15 +141,17 @@ public enum UserFacingError {
     /// else, while the technical Settings surface may still show the stored
     /// class/detail for support.
     public static func message(for rejectionClass: RejectionClass) -> String {
+        message(for: classification(for: rejectionClass))
+    }
+
+    /// Stable plain-language labels for active queue diagnostics. The raw
+    /// enum identifiers remain available only in the opt-in technical view.
+    public static func label(for rejectionClass: RejectionClass) -> String {
         switch rejectionClass {
-        case .retryable:
-            return message(for: .offline)
-        case .auth:
-            return message(for: .authExpired)
-        case .parked:
-            return message(for: .accessDenied)
-        case .permanent:
-            return message(for: .serverRejected)
+        case .retryable: return "temporary issue"
+        case .auth: return "sign-in required"
+        case .parked: return "permission issue"
+        case .permanent: return "server rejection"
         }
     }
 

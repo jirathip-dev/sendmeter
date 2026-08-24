@@ -24,9 +24,11 @@ new equivalents:
 - Queued data is account-scoped and cannot be cleared with an unresolved user
 - Active queue failures retain their rejection class, last error, attempts, and
   backoff across relaunch; explicit Retry waits for an in-flight owner and
-  bypasses automatic backoff, while auth failures remain parked rather than
-  quarantined. Deleting a pending session atomically cancels its upsert and
-  retains a separate delete intent until the server mutation completes.
+  bypasses automatic backoff. Same-account auth recovery also immediately
+  revalidates that account's parked auth failures without spending quarantine
+  budget; permanently quarantined items remain excluded. Deleting a pending
+  session or phone manual workout atomically cancels its upsert and retains a
+  separate delete intent until the server mutation completes.
 - Reverse Action stores one continuous row per set with honest cadence-clock completion, markers, and time-weighted metrics
 - Existing TypeScript-created routines and force presets remain readable
 
