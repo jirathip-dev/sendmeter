@@ -59,6 +59,29 @@ public struct QueueRejection: Codable, Equatable, Sendable {
     }
 }
 
+/// The most recent failure for an active queue item. Unlike `QueueRejection`,
+/// this is not a terminal state: retryable, auth, and parked failures remain
+/// on the hot queue and need their classification retained so the UI can say
+/// why an item is waiting after a relaunch.
+public struct QueueFailure: Codable, Equatable, Sendable {
+    public let kind: RejectionClass
+    public let at: Date
+    public let code: String?
+    public let detail: String
+
+    public init(
+        kind: RejectionClass,
+        at: Date = Date(),
+        code: String? = nil,
+        detail: String
+    ) {
+        self.kind = kind
+        self.at = at
+        self.code = code
+        self.detail = String(detail.prefix(500))
+    }
+}
+
 /// #675: the seam a transport error crosses to tell the queue whether the
 /// failure was about the environment (`retryable` / `auth`) or about this
 /// payload (`permanent`). The native `PostgRESTError` in SupabaseService.swift
@@ -180,6 +203,11 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
     public var permanentAttempts: Int?
     public var nextAttemptAt: Date
     public var lastError: String?
+    /// The last classification belongs to the active item, including auth
+    /// and transport failures that must never be quarantined. It is separate
+    /// from `quarantined`, whose stamp means the item has stopped automatic
+    /// retries altogether.
+    public var lastFailure: QueueFailure?
     /// #675: non-nil once the entry has exhausted its bounded attempts on a
     /// `permanent` rejection. A quarantined entry is NEVER returned by
     /// `items(for:dueAt:)`, so the hot drain path cannot retry it; the only
@@ -211,6 +239,7 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         permanentAttempts: Int = 0,
         nextAttemptAt: Date? = nil,
         lastError: String? = nil,
+        lastFailure: QueueFailure? = nil,
         quarantined: QueueRejection? = nil,
         payload: Payload
     ) {
@@ -225,6 +254,7 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         self.permanentAttempts = permanentAttempts == 0 ? nil : permanentAttempts
         self.nextAttemptAt = nextAttemptAt ?? createdAt
         self.lastError = lastError
+        self.lastFailure = lastFailure
         self.quarantined = quarantined
         self.payload = payload
     }
@@ -232,7 +262,8 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
     private enum CodingKeys: String, CodingKey {
         case id, accountUserID, createdAt, revision, orderingKey, terminalKey
         case updatedAt, attempts
-        case permanentAttempts, nextAttemptAt, lastError, quarantined, payload
+        case permanentAttempts, nextAttemptAt, lastError, lastFailure
+        case quarantined, payload
     }
 
     /// Queue files written before replacement revisions existed decode with a
@@ -251,6 +282,7 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         self.permanentAttempts = try container.decodeIfPresent(Int.self, forKey: .permanentAttempts)
         self.nextAttemptAt = try container.decode(Date.self, forKey: .nextAttemptAt)
         self.lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
+        self.lastFailure = try container.decodeIfPresent(QueueFailure.self, forKey: .lastFailure)
         self.quarantined = try container.decodeIfPresent(QueueRejection.self, forKey: .quarantined)
         self.payload = try container.decode(Payload.self, forKey: .payload)
     }
@@ -281,9 +313,16 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
             permanentAttempts: permanentAttempts ?? 0,
             nextAttemptAt: nextAttemptAt,
             lastError: lastError,
+            lastFailure: lastFailure,
             quarantined: quarantined,
             payload: payload
         )
+    }
+
+    /// The classification most useful to diagnostics, whether the item is
+    /// still active or has already crossed into quarantine.
+    public var rejectionClass: RejectionClass? {
+        lastFailure?.kind ?? quarantined?.kind
     }
 }
 
@@ -590,20 +629,24 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         }
     }
 
-    public func enqueue(_ item: DurableQueueItem<Payload>) throws {
+    @discardableResult
+    public func enqueue(_ item: DurableQueueItem<Payload>) throws -> Bool {
         try enqueue([item])
     }
 
     /// Enqueue a group of related writes in one durable transaction. Recording
     /// metadata and its session-RPE ordering claim use this to avoid leaving
     /// only half of an editor save on disk when persistence fails.
-    public func enqueue(_ items: [DurableQueueItem<Payload>]) throws {
+    @discardableResult
+    public func enqueue(_ items: [DurableQueueItem<Payload>]) throws -> Bool {
+        var allAccepted = true
         try transact { state in
             for item in items {
                 if let terminalKey = item.terminalKey,
                    state.terminalized.contains(where: {
                        $0.key == terminalKey && $0.accountUserID == item.accountUserID
                    }) {
+                    allAccepted = false
                     continue
                 }
                 if let index = state.items.firstIndex(where: { $0.id == item.id }) {
@@ -614,6 +657,8 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                         if Self.isNewer(item, than: state.items[index]) {
                             state.items[index] = item
                             updateOrderingFloor(for: item, in: &state)
+                        } else {
+                            allAccepted = false
                         }
                     } else {
                         state.items[index] = item
@@ -622,11 +667,13 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                     if let watermark = state.orderingWatermarks.first(where: {
                         $0.queueItemID == item.id && $0.accountUserID == item.accountUserID
                     }), !Self.isNewer(item, than: watermark) {
+                        allAccepted = false
                         continue
                     }
                     if let floor = state.orderingFloors.first(where: {
                         $0.accountUserID == item.accountUserID
-                    }), !Self.isNewer(item, than: floor) {
+                    }), !Self.passesOrderingFloor(item, floor: floor) {
+                        allAccepted = false
                         continue
                     }
                     state.items.append(item)
@@ -634,6 +681,70 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 }
             }
         }
+        return allAccepted
+    }
+
+    /// Atomically cancel the supplied queue identities and install a new
+    /// intent. This is used by pending-session/workout deletion: the
+    /// insert/upsert is
+    /// removed in the same durable transaction as its delete intent, so a
+    /// crash cannot leave only an in-memory cancellation or only a delete
+    /// request. A removal is conditional on its captured revision; if a newer
+    /// replacement won the race, it remains durable and the delete intent
+    /// safely waits for that replacement to settle.
+    @discardableResult
+    public func enqueueReplacing(
+        _ item: DurableQueueItem<Payload>,
+        canceling removals: [DurableQueueRemoval] = [],
+        reason: String = "replaced-by-delete"
+    ) throws -> Bool {
+        guard removals.allSatisfy({ $0.accountUserID == item.accountUserID }) else {
+            throw DurableQueueError.accountMismatch
+        }
+        var installed = false
+        try transact { state in
+            if let terminalKey = item.terminalKey,
+               state.terminalized.contains(where: {
+                   $0.key == terminalKey && $0.accountUserID == item.accountUserID
+               }) {
+                return
+            }
+            if let existing = state.items.first(where: { $0.id == item.id }) {
+                guard existing.accountUserID == item.accountUserID else {
+                    throw DurableQueueError.accountMismatch
+                }
+                return
+            }
+
+            var conditional: [UUID: UUID] = [:]
+            for removal in removals {
+                conditional[removal.id] = removal.expectedRevision
+            }
+            let indexes = state.items.indices.filter { index in
+                let existing = state.items[index]
+                guard existing.accountUserID == item.accountUserID,
+                      existing.id != item.id else { return false }
+                return conditional[existing.id] == existing.revision
+            }
+            for index in indexes.reversed() {
+                let removed = state.items.remove(at: index)
+                recordOrderingWatermark(for: removed, in: &state)
+                appendBreadcrumb(
+                    QueueBreadcrumb(
+                        queueItemID: removed.id,
+                        accountUserID: removed.accountUserID,
+                        leftQueueAt: Date(),
+                        attempts: removed.attempts,
+                        reason: reason
+                    ),
+                    to: &state
+                )
+            }
+            state.items.append(item)
+            updateOrderingFloor(for: item, in: &state)
+            installed = true
+        }
+        return installed
     }
 
     /// Replace one migration snapshot only while the queue still contains the
@@ -662,7 +773,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                 }
                 if let floor = state.orderingFloors.first(where: {
                     $0.accountUserID == item.accountUserID
-                }), !Self.isNewer(item, than: floor) {
+                }), !Self.passesOrderingFloor(item, floor: floor) {
                     return
                 }
                 state.items.append(item)
@@ -787,7 +898,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                     }
                     if let floor = state.orderingFloors.first(where: {
                         $0.accountUserID == accountUserID
-                    }), !Self.isNewer(item, than: floor) {
+                    }), !Self.passesOrderingFloor(item, floor: floor) {
                         continue
                     }
                     state.items.append(item)
@@ -1190,6 +1301,12 @@ public actor DurableQueue<Payload: Codable & Sendable> {
             item.attempts += 1
             item.updatedAt = now
             item.lastError = String(error.prefix(500))
+            item.lastFailure = QueueFailure(
+                kind: classification,
+                at: now,
+                code: code,
+                detail: error
+            )
 
             // #675 F2: auth-shaped failures (`.auth` — revoked/expired token —
             // and `.parked` — an RLS/permission denial) PARK, they never
@@ -1323,6 +1440,8 @@ public actor DurableQueue<Payload: Codable & Sendable> {
             state.items[index].permanentAttempts = nil
             state.items[index].updatedAt = now
             state.items[index].nextAttemptAt = now
+            state.items[index].lastError = nil
+            state.items[index].lastFailure = nil
         }
         return cleared
     }
@@ -1472,6 +1591,16 @@ public actor DurableQueue<Payload: Codable & Sendable> {
             return lhs.createdAt > rhs.createdAt
         }
         return lhs.revision.uuidString > rhs.revision.uuidString
+    }
+
+    /// The account-wide floor protects only semantic editor claims. Ordinary
+    /// queue writes deliberately use ordering zero and have no relationship
+    /// to a force-recording edit, so a positive floor must never reject them.
+    private static func passesOrderingFloor(
+        _ item: DurableQueueItem<Payload>,
+        floor: DurableQueueOrderingFloor
+    ) -> Bool {
+        item.orderingKey == 0 || Self.isNewer(item, than: floor)
     }
 
     private static func isNewer(

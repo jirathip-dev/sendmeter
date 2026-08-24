@@ -206,11 +206,28 @@ final class FriendlyErrorTests: XCTestCase {
             "Recording deleted"
         )
         XCTAssertEqual(
+            UserFacingError.message(forQueueBreadcrumbReason: "replaced-by-delete"),
+            "Pending upload deleted"
+        )
+        XCTAssertEqual(
             UserFacingError.message(forQueueBreadcrumbReason: "quarantine-discarded"),
             "Rejected upload discarded"
         )
         let raw = "recording-delete-ordering-proof-not-durable"
         let message = UserFacingError.message(forQueueBreadcrumbReason: raw)
         XCTAssertFalse(message.localizedCaseInsensitiveContains(raw))
+    }
+
+    func testQueueRejectionLabelsDoNotExposeInternalRawValues() {
+        let expectations: [(RejectionClass, String)] = [
+            (.retryable, "temporary issue"),
+            (.auth, "sign-in required"),
+            (.parked, "permission issue"),
+            (.permanent, "server rejection")
+        ]
+        for (kind, expected) in expectations {
+            XCTAssertEqual(UserFacingError.label(for: kind), expected)
+            XCTAssertFalse(UserFacingError.label(for: kind).contains(kind.rawValue))
+        }
     }
 }

@@ -136,6 +136,29 @@ public enum UserFacingError {
         message(for: classification(for: rejection.kind))
     }
 
+    /// Active queue failures are diagnostic state, not terminal rejections.
+    /// Keep their normal copy on the same stable taxonomy used everywhere
+    /// else, while the technical Settings surface may still show the stored
+    /// class/detail for support.
+    public static func message(for rejectionClass: RejectionClass) -> String {
+        message(for: classification(for: rejectionClass))
+    }
+
+    /// Stable plain-language labels for active queue diagnostics. The raw
+    /// enum identifiers remain available only in the opt-in technical view.
+    public static func label(for rejectionClass: RejectionClass) -> String {
+        switch rejectionClass {
+        case .retryable: return "temporary issue"
+        case .auth: return "sign-in required"
+        case .parked: return "permission issue"
+        case .permanent: return "server rejection"
+        }
+    }
+
+    public static func message(for failure: QueueFailure) -> String {
+        message(for: failure.kind)
+    }
+
     /// Maps an internal queue breadcrumb label to plain recovery copy. The
     /// persisted label is an implementation identifier; Settings must not
     /// show it to the user (#758).
@@ -144,6 +167,7 @@ public enum UserFacingError {
         case "uploaded": return "Uploaded"
         case "recording-deleted": return "Recording deleted"
         case "recording-restored": return "Recording restored"
+        case "replaced-by-delete": return "Pending upload deleted"
         case "quarantine-discarded": return "Rejected upload discarded"
         case "account-deleted", "account-cleared": return "Account cleared"
         default: return "Resolved"

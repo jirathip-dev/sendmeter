@@ -24,7 +24,7 @@ in `docs/native-swift-rewrite.md`.
 - Guided routines compatible with the existing TypeScript JSON schema
 - Direct CoreBluetooth Tindeq Progressor connection, tare, battery, disconnect recovery, and live SwiftUI Canvas trace
 - Free pulls with a dedicated live fullscreen, static guided protocols, alternating sides, Reverse Action cadence, per-set holds, fixed/%PR/%CF/Hill-curve targets, selected target bands on Force history/duration charts, and complete protocol metadata
-- Account-scoped atomic on-device queue with stable IDs, retry backoff, and bounded diagnostic breadcrumbs
+- Account-scoped atomic on-device queue with stable IDs, retry backoff, durable failure diagnostics, and pending session/manual-workout delete barriers
 - Combined session + force History timeline (#630): filter chips, loose-recording multi-select → new session, per-rep force charts, editing, linking, soft-delete Trash, restore, and confirmed permanent deletion
 - Training Block transitions with same-day undo semantics
 - Apple Health readiness through the repository's existing `SendLogHealthCore`

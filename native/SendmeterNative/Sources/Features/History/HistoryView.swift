@@ -482,6 +482,7 @@ struct HistoryView: View {
         let phoneQuarantined = model.quarantinedWrites?.count ?? -1
         let quarantineUnknown = phoneQuarantined < 0
         let watchPending = model.watch.pendingSyncCount ?? 0
+        let latestFailure = model.latestQueuedWriteFailure
         // A banner is shown only when it has something actionable: a real
         // pending count, or a CONFIRMED (non-nil) quarantined count > 0.
         // Unknown quarantine must not show as empty and must not fabricate a
@@ -494,7 +495,12 @@ struct HistoryView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(uploadTitle(phone: phonePending, watch: watchPending, quarantined: phoneQuarantined))
                             .font(.subheadline.weight(.semibold))
-                        Text(uploadMessage(phone: phonePending, watch: watchPending, quarantined: phoneQuarantined))
+                        Text(uploadMessage(
+                            phone: phonePending,
+                            watch: watchPending,
+                            quarantined: phoneQuarantined,
+                            failure: latestFailure
+                        ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -541,7 +547,12 @@ struct HistoryView: View {
         return "Uploads waiting"
     }
 
-    private func uploadMessage(phone: Int, watch: Int, quarantined: Int) -> String {
+    private func uploadMessage(
+        phone: Int,
+        watch: Int,
+        quarantined: Int,
+        failure: QueuedWriteDiagnostic?
+    ) -> String {
         var parts: [String] = []
         if phone > 0 { parts.append("\(phone) queued on this iPhone") }
         if watch > 0 { parts.append("\(watch) on your watch") }
@@ -551,7 +562,17 @@ struct HistoryView: View {
         if parts.isEmpty {
             return "The server rejected these; they are kept on this device and never retried on their own — manage them in Settings."
         }
-        return parts.joined(separator: " · ") + ". Queued data is durable on device and retries automatically; rejected items never retry on their own — manage them in Settings."
+        var message = parts.joined(separator: " · ") + ". Queued data is durable on device and retries automatically; rejected items never retry on their own — manage them in Settings."
+        if let failure {
+            let classLabel = failure.rejectionClass.map {
+                UserFacingError.label(for: $0)
+            } ?? "previous attempt"
+            let reason = failure.rejectionClass.map {
+                UserFacingError.message(for: $0)
+            } ?? "The last upload attempt failed."
+            message += " Last attempt (\(classLabel)): \(reason) The app will retry automatically; use Retry Now in Settings if needed."
+        }
+        return message
     }
 
     // MARK: Filter chips (#630-4)
