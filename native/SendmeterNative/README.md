@@ -91,8 +91,9 @@ allocating a new visible-window array. The force accumulator still owns the
 monotonic clock handling, running peak/sum, and bounded recording history.
 
 Watch `workoutCompleted` summaries follow the same account-scoped boundary: the
-phone retains a bounded, persisted inbox keyed by `(sessionID, workoutID)`,
-adopts each valid completion into the cache as a server-origin pending session,
+phone retains a bounded, persisted inbox keyed by `(account_user_id,
+sessionID, workoutID)`, quarantines ownerless legacy payloads, and adopts each
+valid completion into the cache as a server-origin pending session,
 and publishes that History row immediately after reading it back durably.
 Repeated direct and `transferUserInfo` deliveries therefore stay one row, and
 the persisted inbox entry is acknowledged only after adoption succeeds. If
@@ -112,6 +113,49 @@ hands-free stream is handed back synchronously before a guided run starts, and
 an active pull is refused. The selected target plan is resolved once for the
 current exercise/side/protocol and its set-1 band is shared by the live gauge,
 fullscreen coach, progress detail, and Force duration/trend charts.
+
+### Account isolation and conflict contract (#747)
+
+Every native read/write boundary carries both the owning `account_user_id` and
+the current `accountEpoch`. A normal sign-out, token expiry, or account switch
+advances the epoch and clears the visible in-memory snapshot immediately, but
+keeps that account's valid cache rows, queued writes, and stamped watch
+completions on disk. The next sign-in can restore only its own namespace; an
+older async result is rejected even after the same user signs back in. Account
+deletion is different: its epoch barrier is installed before the first await,
+and the exact account's queue/cache is purged only after the server deletion
+has succeeded. Auth or network failure parks data instead of destroying it.
+
+Watch completion summaries, live beats, and account-owned queue telemetry
+require an owner stamp. Pre-stamp/unstamped legacy payloads remain in a
+separately bounded diagnostic bucket (`watch_unscoped_sync`) and are visible as
+legacy items needing review, but are never attributed to or retried for the
+currently signed-in user.
+`live_workouts` is intentionally not cached, so it cannot become a cold-launch
+cross-account row; it is accepted only from the current realtime/WC owner.
+
+Conflict resolution is deliberately narrow and testable: a pending local
+upsert or tombstone wins over a stale full refresh; a server acknowledgement
+can clear a local pending row only when its origin and captured local revision
+still match; authoritative deltas win for non-pending server rows; and a
+cursor advances only after the corresponding cache writes and tombstone
+reconciliation complete. Watch placeholders are server-origin pending rows,
+are replaced by authoritative deltas/full refreshes, and are tombstoned after
+their bounded seven-day absence window. This is client-side LWW and ownership
+protection, not a replacement for Supabase RLS or a guarantee that background
+tasks and WatchConnectivity delivery will run.
+
+Acceptance coverage is split explicitly:
+
+- Automated Core/store tests cover cold-cache/account separation, optimistic
+  local writes, queue/cache separation, epoch-invalidated completions, watch
+  owner stamps including unstamped legacy quarantine, LWW acknowledgements,
+  placeholder convergence, cursor ordering, and exact-account purge races.
+  AppModel deletion/auth wiring is additionally covered by structural checks;
+  its end-to-end ordering still needs a device/integration run.
+- Device/E2E verification remains necessary for real HealthKit ingestion,
+  Bluetooth, WatchConnectivity delivery, background scheduling/suspension,
+  realtime reconnects, passkeys, and signed account-switch behavior.
 
 `Sources/Shared` + `Sources/Widgets` compile into a second product target —
 `SendmeterNativeWidgets`, a WidgetKit app-extension embedded in the app

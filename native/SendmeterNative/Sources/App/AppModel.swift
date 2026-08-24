@@ -1130,12 +1130,28 @@ public final class AppModel {
     }
 
     public func registerPasskey() async {
-        await perform {
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        do {
             try await self.auth.registerPasskey()
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             self.toastMessage = "Passkey registered."
             // #712: a registration must be visible as a persistent list entry
             // and count in Settings, not just a transient toast.
             await self.loadPasskeys()
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
     }
 
@@ -1165,10 +1181,26 @@ public final class AppModel {
     /// confirms before calling this; failures surface through the shared
     /// error path, and a successful delete reloads the list.
     public func removePasskey(_ id: UUID) async {
-        await perform {
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        do {
             try await self.auth.deletePasskey(id: id)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             self.toastMessage = "Passkey removed."
             await self.loadPasskeys()
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
     }
 
@@ -1188,17 +1220,75 @@ public final class AppModel {
             // token are still live. Its durable recording/session writes must
             // participate in the bounded drain and remainder decision below.
             await self.teardownGuidedProtocolBeforeAuthRevocation()
-            guard let userID = self.currentUserID, let queue = self.queue else {
+            guard let userID = self.currentUserID else {
                 try await self.auth.signOut()
+                guard self.currentUserID == nil else { return }
                 self.watch.relaySession(nil)
+                self.resetAccountState()
+                self.bootState = .signedOut
+                await self.tearDownRealtime()
+                return
+            }
+            let accountFetch = AccountScopedFetch(
+                accountUserID: userID,
+                accountEpoch: self.accountEpoch
+            )
+            guard let queue = self.queue else {
+                guard accountFetch.canApply(
+                    to: self.currentUserID,
+                    accountEpoch: self.accountEpoch
+                ) else { return }
+                try await self.auth.signOut()
+                guard accountFetch.canApply(
+                    to: self.currentUserID,
+                    accountEpoch: self.accountEpoch
+                ) else { return }
+                self.watch.relaySession(nil)
+                self.authSession = nil
+                self.didBootstrapUserID = nil
+                self.resetAccountState()
+                self.bootState = .signedOut
+                await self.tearDownRealtime()
                 return
             }
             let result = await SignOutQueuePolicy.drainBeforeSignOut(
                 userId: userID,
-                drain: { await self.drainQueueForSignOut(accountUserID: $0) },
-                countRemaining: { await queue.count(for: $0) },
-                askAboutRemainder: { count in await self.askAboutSignOutRemainder(count: count) },
-                signOut: { try await self.auth.signOut() }
+                drain: { accountID in
+                    await self.drainQueueForSignOut(
+                        accountUserID: accountID,
+                        capturedBy: accountFetch
+                    )
+                },
+                countRemaining: { accountID in
+                    guard accountFetch.canApply(
+                        to: self.currentUserID,
+                        accountEpoch: self.accountEpoch
+                    ) else { return 0 }
+                    let count = await queue.count(for: accountID)
+                    guard accountFetch.canApply(
+                        to: self.currentUserID,
+                        accountEpoch: self.accountEpoch
+                    ) else { return 0 }
+                    return count
+                },
+                askAboutRemainder: { count in
+                    guard accountFetch.canApply(
+                        to: self.currentUserID,
+                        accountEpoch: self.accountEpoch
+                    ) else { return .cancel }
+                    return await self.askAboutSignOutRemainder(count: count)
+                },
+                signOut: {
+                    // The user may have been signed out or replaced while
+                    // the bounded drain/prompt was suspended. A no-op here
+                    // prevents an old sign-out task from signing out the new
+                    // account.
+                    guard accountFetch.canApply(
+                        to: self.currentUserID,
+                        accountEpoch: self.accountEpoch
+                    ) else { return }
+                    try await self.auth.signOut()
+                }
             )
             // #632 review: a cancel at the remainder prompt ("Stay Signed In")
             // returns `outcome == nil` with no error — the session is still
@@ -1209,7 +1299,20 @@ public final class AppModel {
             // re-relays) while the phone itself stays signed in.
             guard result.outcome != nil else { return }
             if let signOutError = result.signOutError { throw signOutError }
+            // Auth providers may deliver `.signedOut` asynchronously. Clear
+            // the visible model immediately after a successful user action,
+            // but only if this is still the same account generation; a newer
+            // sign-in must never be reset by an older sign-out completion.
+            guard accountFetch.canApply(
+                to: self.currentUserID,
+                accountEpoch: self.accountEpoch
+            ) else { return }
             self.watch.relaySession(nil)
+            self.authSession = nil
+            self.didBootstrapUserID = nil
+            self.resetAccountState()
+            self.bootState = .signedOut
+            await self.tearDownRealtime()
         }
     }
 
@@ -1219,20 +1322,45 @@ public final class AppModel {
     /// reason. (Web parity: the web queue has no per-entry backoff, so its
     /// pre-sign-out drain attempts everything.) Counts what actually
     /// uploaded.
-    private func drainQueueForSignOut(accountUserID: UUID) async -> Int {
+    private func drainQueueForSignOut(
+        accountUserID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> Int {
         guard let queue else { return 0 }
         var uploaded = 0
         for item in await queue.items(for: accountUserID) {
-            if (await upload(item, mode: .signOut)).uploaded { uploaded += 1 }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return uploaded }
+            if (await upload(item, mode: .signOut, capturedBy: accountFetch)).uploaded {
+                uploaded += 1
+            }
         }
         return uploaded
     }
 
     public func updatePassword(_ password: String) async {
-        await perform {
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        do {
             try await self.auth.updatePassword(password)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             self.passwordRecovery = false
             self.toastMessage = "Password updated."
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
     }
 
@@ -1242,10 +1370,25 @@ public final class AppModel {
     public func sendPasswordResetEmail() async {
         // Read the address before the await (repo closure-capture rule); the
         // signing-in account is the only one a reset should target.
-        guard let email = currentUserEmail else { return }
-        await perform {
+        guard let userID = currentUserID, let email = currentUserEmail else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        do {
             try await self.auth.resetPassword(email: email)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             self.toastMessage = "Password reset email sent to \(email)."
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
     }
 
@@ -1348,7 +1491,10 @@ public final class AppModel {
         case .initialSession, .signedIn, .tokenRefreshed, .userUpdated, .mfaChallengeVerified:
             guard let session else {
                 await teardownGuidedProtocolBeforeAuthRevocation()
+                watch.relaySession(nil)
                 authSession = nil
+                didBootstrapUserID = nil
+                resetAccountState()
                 bootState = .signedOut
                 await tearDownRealtime()
                 return
@@ -1396,15 +1542,26 @@ public final class AppModel {
                 restartLiveMirrorTickerIfNeeded()
             }
         case .passwordRecovery:
-            if GuidedForceAuthTransitionPolicy.passwordRecoveryNeedsTeardown(
-                currentUserID: authSession?.user.id,
-                nextUserID: session?.user.id
-            ) {
+            let currentRecoveryUserID = authSession?.user.id
+            let nextRecoveryUserID = session?.user.id
+            let accountChanged = currentRecoveryUserID != nextRecoveryUserID
+            if accountChanged || session == nil {
                 await teardownGuidedProtocolBeforeAuthRevocation()
             }
             authSession = session
             passwordRecovery = true
             bootState = session == nil ? .signedOut : .signedIn
+            if accountChanged || session == nil {
+                // Password-recovery callbacks can carry a different session
+                // (or nil) without a preceding signedIn/signedOut event.
+                // Treat that callback as the same account boundary: advance
+                // the epoch, clear visible state, scope the watch, and tear
+                // down the old realtime channel before any recovery UI work.
+                watch.relaySession(session)
+                didBootstrapUserID = nil
+                resetAccountState()
+                await tearDownRealtime()
+            }
         case .signedOut, .userDeleted:
             await teardownGuidedProtocolBeforeAuthRevocation()
             // #679: sign-out boundary.
@@ -1424,11 +1581,28 @@ public final class AppModel {
     private func relayValidSessionToWatch(guaranteed: Bool) async {
         // #679: route the watch relay through the single session-freshness
         // guard so a stale relayed token is never handed to the companion.
+        guard let userID = currentUserID else {
+            watch.relaySession(nil, guaranteed: guaranteed)
+            return
+        }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         do {
             let valid = try await self.auth.ensureFreshSession()
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ), valid.user.id == userID else { return }
             authSession = valid
+            watch.setAccountScope(userID)
             watch.relaySession(valid, guaranteed: guaranteed)
         } catch {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             watch.relaySession(nil, guaranteed: guaranteed)
         }
     }
@@ -1634,7 +1808,8 @@ public final class AppModel {
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
         entityID: String,
-        confirmingLocalRevision: Int? = nil
+        confirmingLocalRevision: Int? = nil,
+        publishPendingCount: Bool = true
     ) {
         guard let cachedWorkspace else { return }
         do {
@@ -1656,7 +1831,8 @@ public final class AppModel {
                 entityID: entityID,
                 confirmingLocalRevision: revision
             )
-            if CachedWorkspace.directWriteEntityTypes.contains(entityType) {
+            if publishPendingCount,
+               CachedWorkspace.directWriteEntityTypes.contains(entityType) {
                 refreshPendingCacheWriteCount(accountUserID: accountUserID)
             }
         } catch {
@@ -1872,8 +2048,20 @@ public final class AppModel {
                 // First sync with no settings row: keep the historical
                 // create-default behavior, then read the stamped timestamp so
                 // the next refresh can go incremental.
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return }
                 _ = try await repository.fetchSettings(userID: userID, today: today)
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return }
                 let settingsAfterUpsert = try await repository.fetchSettingsDelta(since: nil)
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return }
                 if settingsAfterUpsert.activeValues.isEmpty {
                     fetchedSettings = RemoteEntityDelta(
                         changes: [],
@@ -2094,6 +2282,10 @@ public final class AppModel {
     @discardableResult
     public func logSession(_ draft: SessionDraft) async -> SessionLogReceipt? {
         guard let userID = currentUserID else { return nil }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         let id = UUID()
         let pending = pendingSession(
             id: id,
@@ -2102,8 +2294,16 @@ public final class AppModel {
         )
         pendingSessions[id] = pending
         mergeSessions(remote: sessions.filter { !$0.pending })
-        let enqueued = await enqueueSession(draft: draft, id: id)
+        let enqueued = await enqueueSession(
+            draft: draft,
+            id: id,
+            capturedBy: accountFetch
+        )
         if !enqueued {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return nil }
             // #632: the session is lost — see the notice write in
             // `saveForceSummary`.
             LostRecordingStore.note(reason: "session", in: .standard)
@@ -2113,7 +2313,10 @@ public final class AppModel {
         }
         // The enqueue may have suspended while auth changed. Do not hand a
         // receipt for the old account to a newly signed-in UI.
-        guard currentUserID == userID else { return nil }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
         return SessionLogReceipt(sessionID: id, accountUserID: userID)
     }
 
@@ -2127,9 +2330,18 @@ public final class AppModel {
         draft: SessionDraft,
         id: UUID,
         rpeConfirmed: Bool? = nil,
-        groupID: UUID? = nil
+        groupID: UUID? = nil,
+        capturedBy capturedAccountFetch: AccountScopedFetch? = nil
     ) async -> Bool {
         guard let userID = currentUserID else { return false }
+        let accountFetch = capturedAccountFetch ?? AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
         let pending = pendingSession(
             id: id,
             draft: draft,
@@ -2157,7 +2369,7 @@ public final class AppModel {
                 )
             )
         )
-        let enqueued = await enqueueAndUpload(item)
+        let enqueued = await enqueueAndUpload(item, capturedBy: accountFetch)
         if !enqueued {
             _ = cacheMarkDeletedLocal(
                 accountUserID: userID,
@@ -2298,7 +2510,13 @@ public final class AppModel {
             ))
             return
         }
-        guard routineUndo.claim(receipt, currentUserID: currentUserID) else { return }
+        guard let liveUserID = currentUserID,
+              liveUserID == receipt.accountUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: liveUserID,
+            accountEpoch: accountEpoch
+        )
+        guard routineUndo.claim(receipt, currentUserID: liveUserID) else { return }
         let sessionID = receipt.sessionID
         let accountUserID = receipt.accountUserID
         let sessionBeforeUndo = sessions.first { $0.id == sessionID }
@@ -2325,18 +2543,28 @@ public final class AppModel {
         )
         do {
             try await queue.enqueue(deleteItem)
-            await refreshQueueCount()
-            let result = await upload(deleteItem)
-            guard currentUserID == accountUserID else { return }
+            guard accountFetch.canApply(
+                to: self.currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            await refreshQueueCount(for: accountFetch)
+            let result = await upload(deleteItem, capturedBy: accountFetch)
+            guard accountFetch.canApply(
+                to: self.currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             if result.uploaded { toastMessage = "Routine undone" }
         } catch {
             // The optimistic hide is not durable until the delete intent has
             // been persisted. Roll it back only for the account that made the
             // receipt; a sign-out/user switch must never refresh old-account
             // data into the new account's model.
-            let currentAccount = currentUserID
+            let currentAccount = self.currentUserID
             _ = routineUndo.rollbackClaim(receipt, currentUserID: currentAccount)
-            guard currentAccount == accountUserID else { return }
+            guard accountFetch.canApply(
+                to: currentAccount,
+                accountEpoch: accountEpoch
+            ) else { return }
             if let sessionBeforeUndo {
                 sessions.removeAll { $0.id == sessionID }
                 sessions.append(sessionBeforeUndo)
@@ -2372,15 +2600,26 @@ public final class AppModel {
             // keeps the already-inserted row truthful even if this refresh
             // itself is offline.
             await refreshAll(showSpinner: false)
-            guard currentUserID == accountUserID else { return }
+            guard accountFetch.canApply(
+                to: self.currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             surface(error)
         }
     }
 
     public func restoreSession(_ session: SendmeterCore.Session) async {
         guard let userID = currentUserID else { return }
-        await perform {
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        do {
             try await self.repository.restoreSession(id: session.id)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             self.cacheConfirmServerUpsert(
                 session,
                 accountUserID: userID,
@@ -2388,25 +2627,51 @@ public final class AppModel {
                 entityID: CacheEntityID.session(session)
             )
             self.deletedSessions.removeAll { $0.id == session.id }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             await self.refreshAll(showSpinner: false)
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
     }
 
     public func purgeSession(_ session: SendmeterCore.Session) async {
         guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         _ = cacheMarkDeletedLocal(
             accountUserID: userID,
             entityType: .sessions,
             entityID: CacheEntityID.session(session)
         )
-        await perform {
+        do {
             try await self.repository.purgeSession(id: session.id)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             self.cacheConfirmServerDelete(
                 accountUserID: userID,
                 entityType: .sessions,
                 entityID: CacheEntityID.session(session)
             )
             self.deletedSessions.removeAll { $0.id == session.id }
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
     }
 
@@ -2596,6 +2861,10 @@ public final class AppModel {
 
     public func saveWorkout(_ draft: WorkoutDraft) async {
         guard let userID = currentUserID, draft.accountUserID == userID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         let pending = pendingSession(from: draft)
         cacheUpsertLocal(
             pending,
@@ -2610,7 +2879,11 @@ public final class AppModel {
             accountUserID: userID,
             payload: PendingWrite.workout(draft)
         )
-        if !(await enqueueAndUpload(item)) {
+        if !(await enqueueAndUpload(item, capturedBy: accountFetch)) {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             // #632: the workout draft is lost — see the notice write in
             // `saveForceSummary`.
             LostRecordingStore.note(reason: "workout", in: .standard)
@@ -2632,6 +2905,11 @@ public final class AppModel {
         startingSide: TindeqSide,
         fallbackSide: TindeqSide
     ) async -> ForceTargetPlan {
+        guard let userID = currentUserID else { return ForceTargetPlan(targets: [:]) }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         let sides: [TindeqSide]
         if preset.alternateSides {
             sides = startingSide == .right ? [.right, .left] : [.left, .right]
@@ -2644,11 +2922,20 @@ public final class AppModel {
             || (preset.targetPercentage != nil && preset.percentageBasis == .criticalForce)
 
         for targetSide in sides {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return ForceTargetPlan(targets: [:]) }
             let references = await forceReferences(
                 tag: tag,
                 side: targetSide,
-                needsCurve: needsCurve
+                needsCurve: needsCurve,
+                capturedBy: accountFetch
             )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return ForceTargetPlan(targets: [:]) }
             for setNumber in 1...max(1, preset.sets) {
                 guard let band = ForceCurveEngine.targetBand(
                     preset: preset,
@@ -2862,7 +3149,7 @@ public final class AppModel {
             accountUserID: userID,
             payload: PendingWrite.recording(recording)
         )
-        let enqueued = await enqueueAndUpload(item)
+        let enqueued = await enqueueAndUpload(item, capturedBy: accountFetch)
         guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
             return .stale
         }
@@ -2889,6 +3176,10 @@ public final class AppModel {
                 keys: [savedKey],
                 capturedBy: accountFetch
             )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return .stale }
         }
         // The point fit above is awaited before the save gate finishes. The
         // chart-only band is already queued for this key and is allowed to
@@ -2909,6 +3200,11 @@ public final class AppModel {
     /// instead of stalling the log.
     public func endGaugeSession(ifCurrentAccountScope expectedScope: NativeAccountScope? = nil) async {
         guard expectedScope == nil || accountScope == expectedScope else { return }
+        guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         // #613: wait for any in-flight rep save to become durable + locally
         // published BEFORE claiming the end — a disconnect's interrupted
         // save lands after the status change (the guided view's tick
@@ -2917,7 +3213,11 @@ public final class AppModel {
         // network. The claim after the wait still precedes any await of the
         // insert, so concurrent end paths still log exactly once.
         await gaugeSessionSaveGate.waitForIdle()
-        guard expectedScope == nil || accountScope == expectedScope else { return }
+        guard expectedScope == nil || accountScope == expectedScope,
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return }
         guard let ended = gaugeSessionTracker.endActive() else { return }
 
         let groupRecordings = recordings.filter { $0.groupID == ended.groupID }
@@ -2942,9 +3242,14 @@ public final class AppModel {
             draft: draft,
             id: UUID(),
             rpeConfirmed: false,
-            groupID: ended.groupID
+            groupID: ended.groupID,
+            capturedBy: accountFetch
         )
-        guard expectedScope == nil || accountScope == expectedScope else { return }
+        guard expectedScope == nil || accountScope == expectedScope,
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return }
         toastMessage = ok
             ? "Gauge session logged to history"
             : "Couldn\u{2019}t log gauge session. Try again."
@@ -3528,8 +3833,13 @@ public final class AppModel {
     private func forceReferences(
         tag: String,
         side: TindeqSide,
-        needsCurve: Bool
+        needsCurve: Bool,
+        capturedBy accountFetch: AccountScopedFetch
     ) async -> ForceReferences {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return .empty }
         let normalizedTag = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedTag.isEmpty else { return .empty }
 
@@ -3580,7 +3890,12 @@ public final class AppModel {
             return values
         }
 
-        return await Task.detached(priority: .userInitiated) {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return .empty }
+
+        let references = await Task.detached(priority: .userInitiated) {
             // #651: `metadata` here is EFFORT-only (PR/trend keep a recovered
             // blob's valid peakKg), while `sampleSets` came from
             // curve-fit candidates — a salvage blob's inflated duration /
@@ -3588,6 +3903,11 @@ public final class AppModel {
             // asymmetry preserved.
             ForceCurveEngine.references(metadata: metadata, sampleSets: sampleSets)
         }.value
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return .empty }
+        return references
     }
 
     /// Save the History recording editor's metadata and, when the recording is
@@ -4199,6 +4519,10 @@ public final class AppModel {
 
     public func purgeRecording(_ recording: TindeqRecording) async {
         guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         _ = cacheMarkDeletedLocal(
             accountUserID: userID,
             entityType: .recordings,
@@ -4206,6 +4530,10 @@ public final class AppModel {
         )
         do {
             try await repository.purgeRecording(id: recording.id)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             cacheConfirmServerDelete(
                 accountUserID: userID,
                 entityType: .recordings,
@@ -4215,19 +4543,32 @@ public final class AppModel {
         } catch {
             // Keep the optimistic tombstone on failure: purge is a terminal
             // intent and the queued delete path already owns retrying it.
-            surface(error)
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
     }
 
     public func linkRecordings(_ recordings: [TindeqRecording], to session: SendmeterCore.Session) async {
         guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         let unlinked = recordings.filter { $0.groupID == nil }
         guard !unlinked.isEmpty else { return }
-        await perform {
+        do {
             let result = try await self.repository.linkRecordingsToSession(
                 sessionID: session.id,
                 recordingIDs: unlinked.map(\.id)
             )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             if let result {
                 // #630: the RPC may have minted the session's group id on
                 // the spot (a manually logged session never had one) — stamp
@@ -4258,6 +4599,13 @@ public final class AppModel {
                 }
             }
             self.toastMessage = "Force recordings linked."
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
     }
 
@@ -4614,14 +4962,41 @@ public final class AppModel {
     /// re-syncing within the coalescing window.
     public func syncHealth(requestAuthorization: Bool) async {
         guard let userID = currentUserID else { return }
-        await perform {
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        do {
             if requestAuthorization {
                 try await self.health.requestAuthorization()
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else { return }
                 UserDefaults.standard.set(true, forKey: "sendmeter.native.health-authorized")
             }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             self.lastHealthRefreshStartedAt = ProcessInfo.processInfo.systemUptime
-            try await self.computeAndPublishReadiness(userID: userID, trigger: .manual)
+            try await self.computeAndPublishReadiness(
+                userID: userID,
+                trigger: .manual,
+                capturedBy: accountFetch
+            )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
             self.toastMessage = "Apple Health synced."
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
     }
 
@@ -4644,9 +5019,17 @@ public final class AppModel {
             now: now
         ) else { return }
         guard let userID = currentUserID else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         lastHealthRefreshStartedAt = now
         do {
-            try await computeAndPublishReadiness(userID: userID, trigger: trigger.syncTrigger)
+            try await computeAndPublishReadiness(
+                userID: userID,
+                trigger: trigger.syncTrigger,
+                capturedBy: accountFetch
+            )
         } catch {
             // Silent: keep the last reading on failure.
         }
@@ -4659,8 +5042,23 @@ public final class AppModel {
     /// double-computing.
     private func handleHealthBackgroundUpdate() async {
         guard let userID = currentUserID else { return }
-        await perform {
-            try await self.computeAndPublishReadiness(userID: userID, trigger: .automatic)
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        do {
+            try await self.computeAndPublishReadiness(
+                userID: userID,
+                trigger: .automatic,
+                capturedBy: accountFetch
+            )
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
         }
     }
 
@@ -4679,7 +5077,19 @@ public final class AppModel {
     ///   may overwrite today's score (frozen morning score after noon).
     /// - `ReadinessSyncPolicy` decides what to relay vs upsert (never a
     ///   blanked score, never a stamped `computed_at` over a kept row).
-    private func computeAndPublishReadiness(userID: UUID, trigger: SyncTrigger) async throws {
+    private func computeAndPublishReadiness(
+        userID: UUID,
+        trigger: SyncTrigger,
+        capturedBy capturedAccountFetch: AccountScopedFetch? = nil
+    ) async throws {
+        let accountFetch = capturedAccountFetch ?? AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
         guard recomputeGate.request() == .start else { return }
         do {
             while true {
@@ -4687,6 +5097,13 @@ public final class AppModel {
                 // Fail-open (plugin parity): a fetch blip means "not yet
                 // locked", i.e. an automatic sync may still overwrite.
                 let existing = try? await repository.fetchTodayHealthMetric()
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    recomputeGate.cancel()
+                    return
+                }
                 let allowOverwrite = ReadinessWritePolicy.shouldOverwriteReadiness(
                     existingReadiness: existing?.readiness,
                     existingRowDate: existing?.date,
@@ -4694,12 +5111,33 @@ public final class AppModel {
                     trigger: trigger
                 )
                 let acwr = try await serverACWRRatio()
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    recomputeGate.cancel()
+                    return
+                }
                 let fresh = try await health.computeTodayMetric(acwr: acwr)
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    recomputeGate.cancel()
+                    return
+                }
                 let plan = ReadinessSyncPolicy.plan(
                     existingToday: existing,
                     freshlyComputed: fresh,
                     allowReadinessOverwrite: allowOverwrite
                 )
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    recomputeGate.cancel()
+                    return
+                }
                 let previousToday = healthMetrics.first { $0.date == fresh.date }
                 let optimisticRevision = cacheUpsertLocal(
                     plan.relayMetric,
@@ -4709,32 +5147,59 @@ public final class AppModel {
                 )
                 do {
                     try await repository.upsertHealthMetric(plan.upsertMetric, userID: userID)
-                } catch {
-                    if let previousToday {
-                        cacheConfirmServerUpsert(
-                            previousToday,
-                            accountUserID: userID,
-                            entityType: .healthMetrics,
-                            entityID: CacheEntityID.healthMetric(previousToday),
-                            confirmingLocalRevision: optimisticRevision
-                        )
-                    } else {
-                        cacheConfirmServerDelete(
-                            accountUserID: userID,
-                            entityType: .healthMetrics,
-                            entityID: CacheEntityID.healthMetric(plan.relayMetric),
-                            confirmingLocalRevision: optimisticRevision
-                        )
+                    let stillCurrent = accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    )
+                    // The server accepted this exact A-owned revision. Even
+                    // if the user switched accounts while the request was
+                    // suspended, acknowledge A's durable cache row; only
+                    // visible-memory publication is fenced by the epoch.
+                    cacheConfirmServerUpsert(
+                        plan.relayMetric,
+                        accountUserID: userID,
+                        entityType: .healthMetrics,
+                        entityID: CacheEntityID.healthMetric(plan.relayMetric),
+                        confirmingLocalRevision: optimisticRevision,
+                        publishPendingCount: stillCurrent
+                    )
+                    guard stillCurrent else {
+                        recomputeGate.cancel()
+                        return
                     }
-                    throw error
+                } catch {
+                    if accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) {
+                        if let previousToday {
+                            cacheConfirmServerUpsert(
+                                previousToday,
+                                accountUserID: userID,
+                                entityType: .healthMetrics,
+                                entityID: CacheEntityID.healthMetric(previousToday),
+                                confirmingLocalRevision: optimisticRevision
+                            )
+                        } else {
+                            cacheConfirmServerDelete(
+                                accountUserID: userID,
+                                entityType: .healthMetrics,
+                                entityID: CacheEntityID.healthMetric(plan.relayMetric),
+                                confirmingLocalRevision: optimisticRevision
+                            )
+                        }
+                        throw error
+                    }
+                    recomputeGate.cancel()
+                    return
                 }
-                cacheConfirmServerUpsert(
-                    plan.relayMetric,
-                    accountUserID: userID,
-                    entityType: .healthMetrics,
-                    entityID: CacheEntityID.healthMetric(plan.relayMetric),
-                    confirmingLocalRevision: optimisticRevision
-                )
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    recomputeGate.cancel()
+                    return
+                }
                 healthMetrics.removeAll { $0.date == fresh.date }
                 healthMetrics.insert(plan.relayMetric, at: 0)
                 watch.publishReadiness(plan.relayMetric)
@@ -4773,7 +5238,7 @@ public final class AppModel {
             accountEpoch: accountEpoch &+ 1
         )
         accountEpoch = purgeBoundary.accountEpoch
-        await perform {
+        do {
             try await self.repository.deleteAccount()
             try await self.queue?.discardAll(accountUserID: userID, reason: "account-deleted")
             if let cachedWorkspace = self.cachedWorkspace {
@@ -4783,8 +5248,39 @@ public final class AppModel {
                     self.recordCacheFailure("cache delete account", error)
                 }
             }
+            // The watch completion inbox is a separate durable transport
+            // store. Delete only this account's adopted/parked completions;
+            // normal sign-out never reaches this path, and legacy ownerless
+            // quarantine remains for explicit recovery/diagnostics.
+            self.watch.discardStoredCompletions(for: userID)
+            guard purgeBoundary.canApply(
+                to: self.currentUserID,
+                accountEpoch: self.accountEpoch
+            ) else { return }
             self.pendingCacheWriteCount = 0
             try await self.auth.signOut()
+            guard purgeBoundary.canApply(
+                to: self.currentUserID,
+                accountEpoch: self.accountEpoch
+            ) else { return }
+            // Auth providers usually emit `.userDeleted`/`.signedOut`, but
+            // the local boundary must not wait for that callback to remove a
+            // deleted account from the visible workspace.
+            self.watch.relaySession(nil)
+            self.authSession = nil
+            self.didBootstrapUserID = nil
+            self.resetAccountState()
+            self.bootState = .signedOut
+            await self.tearDownRealtime()
+        } catch {
+            // If a newer account has already taken over, this is an old
+            // deletion result/error and must not surface in its UI.
+            if purgeBoundary.canApply(
+                to: self.currentUserID,
+                accountEpoch: self.accountEpoch
+            ) {
+                self.surface(error)
+            }
         }
     }
 
@@ -6583,6 +7079,10 @@ public final class AppModel {
             breadcrumbs = []
             quarantined = nil
         }
+        guard fetch.canApply(
+            to: currentUserID,
+            accountEpoch: self.accountEpoch
+        ) else { return }
         refreshPendingCacheWriteCount(accountUserID: userID)
         _ = fetch.publishIfCurrent(
             to: currentUserID,
@@ -6715,7 +7215,7 @@ public final class AppModel {
             alreadyAdopted: alreadyAdopted
         )
         switch decision {
-        case .signedOut, .wrongAccount, .inFlightDuplicate:
+        case .signedOut, .wrongAccount, .unscopedLegacy, .inFlightDuplicate:
             return false
         case .alreadyAdopted:
             guard case let .found(existing) = lookup else { return false }
@@ -6838,11 +7338,10 @@ public final class AppModel {
             message: message,
             previous: liveWorkoutMirror.row
         ) else { return }
-        // #530-style ownership: a beat stamped with another account is
-        // rejected; an un-stamped beat (pre-#530 watch build) is trusted —
-        // the mirror resets to .empty on every account change, so there is
-        // no stale cross-account state for it to pollute (#626 review).
-        guard liveWorkoutOwnedBy(incoming, userID: userID, trustsUnstamped: true) else { return }
+        // #747: a beat without an immutable owner is legacy transport data,
+        // not an ownership proof. Reject it at the account boundary; the
+        // durable server row remains the fallback for pre-stamp watch builds.
+        guard liveWorkoutOwnedBy(incoming, userID: userID, trustsUnstamped: false) else { return }
         acceptLiveWorkout(incoming, source: .watchDirect, nowMs: nowMs)
     }
 
@@ -7682,6 +8181,12 @@ public final class AppModel {
 
     private func resetAccountState() {
         accountEpoch &+= 1
+        // Keep the WatchConnectivity transport on the same account boundary
+        // as the in-memory/cache snapshot. Stamped completions for other
+        // accounts remain durably parked, but live force, queue telemetry, and
+        // unstamped legacy completions are never visible after this point.
+        watch.setAccountScope(currentUserID)
+        watch.clearAccountTransientState()
         // A cache failure is account-scoped for diagnostics: the next account
         // should be able to report its own open/read/reconcile failure even if
         // the previous account already suppressed one.
@@ -7721,6 +8226,11 @@ public final class AppModel {
         for waiter in staleQueueUploadWaiters { waiter.resume() }
         recordingEditCoordinator.resetAccountScopedState()
         routineUndo.reset()
+        signOutRemainderCount = nil
+        if let staleSignOutRemainderContinuation = signOutRemainderContinuation {
+            signOutRemainderContinuation = nil
+            staleSignOutRemainderContinuation.resume(returning: .cancel)
+        }
         // Upload claims belong to their in-flight tasks, not to the loaded UI
         // snapshot. Keep them until upload's defer releases them: an A→B→A
         // account transition must not let the returning A duplicate a request

@@ -79,12 +79,12 @@ final class PendingTindeqRecordingTests: XCTestCase {
     }
 
     /// `enqueuedUserId` stays a legal `nil` for a genuinely legacy/unstamped
-    /// item — the same "trusts whoever is currently signed in" contract
-    /// `shouldDrain` relies on for the other two queues — but #529 slice 2
-    /// removed the memberwise init's default so every PRODUCTION call site
-    /// must pass it explicitly (mirrors `WorkoutSaveBundle.enqueuedUserId`);
-    /// this pins that `nil` is still a legal, honored VALUE, not merely a
-    /// convenience default a caller could forget to override.
+    /// item so the decoder can retain it for an explicit recovery path, but
+    /// #747's `shouldDrain` policy quarantines it rather than guessing an
+    /// owner. #529 slice 2 removed the memberwise init's default so every
+    /// PRODUCTION call site must pass it explicitly (mirrors
+    /// `WorkoutSaveBundle.enqueuedUserId`); this pins that `nil` is still a
+    /// legal stored VALUE, not a convenience default a caller could forget.
     func testEnqueuedUserIdNilIsStillALegalLegacyValue() {
         let row = Repo.makeTindeqRecordingRow(
             fixtureRecording(), id: UUID(), note: "", tag: "FDP", side: "left", groupId: nil

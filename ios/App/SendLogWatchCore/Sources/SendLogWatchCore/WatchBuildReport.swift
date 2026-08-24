@@ -136,12 +136,22 @@ public struct WatchPairing: Sendable, Equatable {
 /// workout beat, the live force beat, and the `requestSession` ask) — the
 /// auth path gains no new message, only two extra fields (#228).
 public enum WatchBuildReport {
+    /// Account owner for queue telemetry and domain payloads. It is the same
+    /// immutable owner stamp used by live workout/force/completion messages;
+    /// a legacy or ownerless payload must not be retroactively attributed to
+    /// whichever account is relayed when its completion is delivered.
+    public static let accountUserIdKey = "account_user_id"
     public static let versionKey = "watch_app_version"
     public static let buildKey = "watch_app_build"
     /// Depth of the watch's offline upload queues at send time (#21) — the
     /// same telemetry channel as the build, so a stuck queue is visible from
     /// the phone without picking the watch up.
     public static let pendingSyncKey = "watch_pending_sync"
+    /// Ownerless legacy queue items are intentionally not included in the
+    /// account's pending total. This separate device diagnostic keeps
+    /// "unknown ownership" distinct from both zero and another account's
+    /// queue, so a legacy row is visible without being drainable.
+    public static let unscopedSyncKey = "watch_unscoped_sync"
     /// Count of items the watch has quarantined (#475 F1) — off the drain
     /// path, on the SAME channel and the SAME honest-states rules as
     /// `pendingSyncKey`, but deliberately a separate key: folding this into
@@ -168,7 +178,9 @@ public enum WatchBuildReport {
     public static func stamped(
         _ message: [String: Any],
         with identity: BuildIdentity?,
+        accountUserID: UUID? = nil,
         pendingSync: Int? = nil,
+        unscopedSync: Int? = nil,
         quarantinedSync: Int? = nil,
         quarantinedStuckSync: Int? = nil
     ) -> [String: Any] {
@@ -177,8 +189,14 @@ public enum WatchBuildReport {
             out[versionKey] = identity.version
             out[buildKey] = identity.build
         }
+        if let accountUserID {
+            out[accountUserIdKey] = accountUserID.uuidString
+        }
         if let pendingSync, pendingSync >= 0 {
             out[pendingSyncKey] = pendingSync
+        }
+        if let unscopedSync, unscopedSync >= 0 {
+            out[unscopedSyncKey] = unscopedSync
         }
         if let quarantinedSync, quarantinedSync >= 0 {
             out[quarantinedSyncKey] = quarantinedSync
@@ -221,6 +239,13 @@ public enum WatchBuildReport {
         nonNegativeCount(pendingSyncKey, in: message)
     }
 
+    /// Pulls the count of ownerless legacy queue items back out. It is a
+    /// quarantine/diagnostic count, never a promise that those rows can be
+    /// uploaded under the current account.
+    public static func unscopedSync(in message: [String: Any]) -> Int? {
+        nonNegativeCount(unscopedSyncKey, in: message)
+    }
+
     /// Pulls the reported quarantine count back out on the phone side, on the
     /// same "unknown vs zero" terms as `pendingSync`.
     public static func quarantinedSync(in message: [String: Any]) -> Int? {
@@ -244,6 +269,7 @@ public enum WatchBuildReport {
         out.removeValue(forKey: versionKey)
         out.removeValue(forKey: buildKey)
         out.removeValue(forKey: pendingSyncKey)
+        out.removeValue(forKey: unscopedSyncKey)
         out.removeValue(forKey: quarantinedSyncKey)
         out.removeValue(forKey: quarantinedStuckSyncKey)
         return out

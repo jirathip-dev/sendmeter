@@ -28,6 +28,7 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     @Published public private(set) var watchVersion: String?
     @Published public private(set) var watchBuild: String?
     @Published public private(set) var pendingSyncCount: Int?
+    @Published public private(set) var unscopedSyncCount: Int?
     @Published public private(set) var quarantinedSyncCount: Int?
     @Published public private(set) var quarantinedStuckSyncCount: Int?
     @Published public private(set) var liveForce: WatchLiveForce?
@@ -48,6 +49,11 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     private let completionStoreKey = "sendmeter.native.workout-completions"
     private let completionStoreLimit = 8
     private var completionInbox = WatchCompletionInbox()
+    /// The transport inbox is process-wide, but its visible slice is not. A
+    /// stamped completion may wait through sign-out and be adopted when that
+    /// same account returns; an unstamped legacy completion is retained only
+    /// as bounded quarantine and is never exposed to an account.
+    private var activeAccountUserID: UUID?
 
     public override init() {
         if WCSession.isSupported() {
@@ -60,10 +66,37 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
             limit: completionStoreLimit,
             values: loadStoredCompletions()
         )
-        pendingCompletions = completionInbox.values
+        refreshPendingCompletions()
         session?.delegate = self
         session?.activate()
         refreshPairingState()
+    }
+
+    /// Switch the account-visible transport slice. This does not delete the
+    /// durable inbox: valid stamped completions stay available to their owner
+    /// after a normal sign-out/re-sign-in, while another account sees none.
+    /// Live force and queue telemetry are transient and must not cross this
+    /// boundary, so they are cleared before the next owner's messages arrive.
+    public func setAccountScope(_ accountUserID: UUID?) {
+        let changed = activeAccountUserID != accountUserID
+        activeAccountUserID = accountUserID
+        if changed {
+            clearAccountTransientState()
+        } else {
+            refreshPendingCompletions()
+        }
+    }
+
+    /// Clear transient transport state when the AppModel advances its epoch,
+    /// including a same-user rebootstrap. Durable owner-stamped completions
+    /// remain in the inbox and are merely re-filtered.
+    public func clearAccountTransientState() {
+        liveForce = nil
+        pendingSyncCount = nil
+        unscopedSyncCount = nil
+        quarantinedSyncCount = nil
+        quarantinedStuckSyncCount = nil
+        refreshPendingCompletions()
     }
 
     public func relaySession(_ authSession: Auth.Session?, guaranteed: Bool = false) {
@@ -102,15 +135,36 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     /// Returns a snapshot without acknowledging anything. The caller must
     /// explicitly acknowledge each item after durable local adoption.
     public func storedCompletions() -> [WatchWorkoutCompletion] {
-        completionInbox.values
+        completionInbox.values(for: activeAccountUserID)
     }
 
     @discardableResult
     public func acknowledgeStoredCompletion(_ completion: WatchWorkoutCompletion) -> Bool {
-        guard completionInbox.acknowledge(completion) else { return false }
-        pendingCompletions = completionInbox.values
+        guard let activeAccountUserID,
+              completionInbox.acknowledge(
+                  completion,
+                  accountUserID: activeAccountUserID
+              ) else { return false }
+        refreshPendingCompletions()
         persistCompletions()
         return true
+    }
+
+    /// Destructive account deletion only. Normal sign-out deliberately leaves
+    /// the owner's stamped completions in the durable inbox for re-sign-in;
+    /// deletion removes exactly this owner's rows and leaves every other owner
+    /// (and ownerless legacy quarantine) untouched.
+    @discardableResult
+    public func discardStoredCompletions(for accountUserID: UUID) -> Int {
+        let removed = completionInbox.discard(accountUserID: accountUserID)
+        guard removed > 0 else { return 0 }
+        refreshPendingCompletions()
+        persistCompletions()
+        return removed
+    }
+
+    private func refreshPendingCompletions() {
+        pendingCompletions = completionInbox.values(for: activeAccountUserID)
     }
 
     public func refreshPairingState() {
@@ -155,7 +209,15 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
             onLiveWorkoutMessage?(message)
             replyHandler?([:])
         case "liveForce":
-            liveForce = parseLiveForce(message)
+            // Unlike a completion, a live force beat has no durable retry
+            // value. An owner is therefore mandatory at this boundary; an
+            // unstamped pre-#530 beat is rejected rather than being rendered
+            // under whichever account happens to be active now.
+            if let activeAccountUserID,
+               let parsed = parseLiveForce(message),
+               parsed.accountUserID == activeAccountUserID {
+                liveForce = parsed
+            }
             replyHandler?([:])
         case "workoutCompleted":
             guard let completion = parseCompletion(message) else {
@@ -163,8 +225,16 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
                 return
             }
             if completionInbox.retain(completion) {
-                pendingCompletions = completionInbox.values
+                refreshPendingCompletions()
                 persistCompletions()
+            }
+            // A stamped completion is parked for its owner even when another
+            // account is active. Legacy payloads have no ownership proof and
+            // stay quarantined in the bounded inbox without an adoption task.
+            guard let activeAccountUserID,
+                  completion.accountUserID == activeAccountUserID else {
+                replyHandler?([:])
+                return
             }
             Task {
                 let adopted = await onWorkoutCompletion?(completion) ?? false
@@ -188,7 +258,16 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
         let metadata = WatchMetadata.parse(message)
         if let version = metadata.version { watchVersion = version }
         if let build = metadata.build { watchBuild = build }
+        // Queue depth is account data despite being observability metadata.
+        // Only a stamped queue report for the active account may update the
+        // badge; older unstamped reports are ignored rather than attributed
+        // to a newly signed-in user.
+        guard let activeAccountUserID,
+              metadata.accountUserID == activeAccountUserID else {
+            return
+        }
         if let pendingSync = metadata.pendingSync { pendingSyncCount = pendingSync }
+        if let unscopedSync = metadata.unscopedSync { unscopedSyncCount = unscopedSync }
         if let quarantinedSync = metadata.quarantinedSync { quarantinedSyncCount = quarantinedSync }
         if let quarantinedStuckSync = metadata.quarantinedStuckSync {
             quarantinedStuckSyncCount = quarantinedStuckSync
@@ -246,7 +325,7 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     private func persistCompletions() {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(pendingCompletions) {
+        if let data = try? encoder.encode(completionInbox.values) {
             UserDefaults.standard.set(data, forKey: completionStoreKey)
         }
     }

@@ -23,6 +23,7 @@ struct QuarantineDiagnosticsView: View {
     /// never rendered as zero.
     @State private var quarantinedTotal: Int?
     @State private var quarantinedStuckTotal: Int?
+    @State private var unscopedTotal: Int?
     @State private var entries: [QuarantineDiagnosticEntry] = []
     /// #606: the quarantine-exit breadcrumb ring, newest first for display —
     /// the "recent history" of records that LEFT quarantine (manually or by
@@ -42,6 +43,14 @@ struct QuarantineDiagnosticsView: View {
         ScrollView {
             VStack(spacing: 8) {
                 summaryCard
+
+                if let unscopedTotal, unscopedTotal > 0 {
+                    WatchStateBanner(
+                        state: .warning,
+                        title: "Legacy uploads need review",
+                        message: "\(unscopedTotal) watch item\(unscopedTotal == 1 ? "" : "s") have no account stamp. They are retained here but will not upload until an explicit recovery path can identify their owner."
+                    )
+                }
 
                 historyCard
 
@@ -99,6 +108,7 @@ struct QuarantineDiagnosticsView: View {
         let exits = await (exitWorkouts + exitSessions + exitRecordings)
         quarantinedTotal = caches.quarantinedTotal
         quarantinedStuckTotal = caches.quarantinedStuckTotal
+        unscopedTotal = caches.unscopedTotal
         entries = [merged.0, merged.1, merged.2, merged.3].flatMap { $0 }
         breadcrumbs = exits.sorted { $0.exitedAt > $1.exitedAt }
         isLoading = false

@@ -50,6 +50,8 @@ public final class PendingSyncCache: @unchecked Sendable {
 
     private let lock = NSLock()
     private var counts: [PendingSyncQueue: Int] = [:]
+    private var unscopedPending: [PendingSyncQueue: Int] = [:]
+    private var unscopedQuarantined: [PendingSyncQueue: Int] = [:]
     private var quarantined: [PendingSyncQueue: Int] = [:]
     private var quarantinedStuck: [PendingSyncQueue: Int] = [:]
 
@@ -68,6 +70,32 @@ public final class PendingSyncCache: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return sumIfComplete(counts)
+    }
+
+    /// Ownerless legacy rows are deliberately not included in `total`: they
+    /// cannot be safely uploaded under whichever account happens to be
+    /// signed in. They remain a separately reported diagnostic bucket so
+    /// "unknown owner" is visible and is never mistaken for zero.
+    public func recordUnscopedPending(_ count: Int, for queue: PendingSyncQueue) {
+        lock.lock()
+        defer { lock.unlock() }
+        unscopedPending[queue] = max(0, count)
+    }
+
+    public func recordUnscopedQuarantined(_ count: Int, for queue: PendingSyncQueue) {
+        lock.lock()
+        defer { lock.unlock() }
+        unscopedQuarantined[queue] = max(0, count)
+    }
+
+    /// Sum of decoded ownerless and undecodable rows across both queue
+    /// surfaces, or nil until every queue has reported both buckets.
+    public var unscopedTotal: Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let pending = sumIfComplete(unscopedPending),
+              let quarantined = sumIfComplete(unscopedQuarantined) else { return nil }
+        return pending + quarantined
     }
 
     /// Count of items each queue has quarantined (#475, generalized to every
@@ -125,6 +153,8 @@ public final class PendingSyncCache: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         counts = [:]
+        unscopedPending = [:]
+        unscopedQuarantined = [:]
         quarantined = [:]
         quarantinedStuck = [:]
     }

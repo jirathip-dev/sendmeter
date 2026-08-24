@@ -527,16 +527,20 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
     func pendingCount() -> Int {
         let uid = currentUserId()
         let depth: Int
+        var unscoped = 0
         if let data = try? fileIO.read(from: fileURL) {
             if let row = try? Self.makeDecoder().decode(LiveWorkoutUpsert.self, from: data) {
+                if row.userId == nil { unscoped = 1 }
                 depth = (shouldDrain(itemUserId: row.userId, currentUserId: uid) || uid == nil) ? 1 : 0
             } else {
                 depth = 1
+                unscoped = 1
             }
         } else {
             depth = 0
         }
         PendingSyncCache.shared.record(depth, for: .liveWorkoutTerminal)
+        PendingSyncCache.shared.recordUnscopedPending(unscoped, for: .liveWorkoutTerminal)
         // This queue never quarantines anything, but `quarantinedTotal`/
         // `quarantinedStuckTotal` stay nil until EVERY `PendingSyncQueue`
         // case has reported (`PendingSyncCache`'s own honest-states rule) —
@@ -545,6 +549,7 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
         // exists.
         PendingSyncCache.shared.recordQuarantined(0, for: .liveWorkoutTerminal)
         PendingSyncCache.shared.recordQuarantinedStuck(0, for: .liveWorkoutTerminal)
+        PendingSyncCache.shared.recordUnscopedQuarantined(0, for: .liveWorkoutTerminal)
         return depth
     }
 }
