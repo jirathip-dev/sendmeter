@@ -67,7 +67,14 @@ describe("watch-triggered readiness architecture (#520)", () => {
 
   it("stamps every watch request and routes execution through the generic bridge", () => {
     const manager = source(READINESS_MANAGER);
-    expect(manager).toMatch(/WatchBuild\.stamp\(request\.message\(\)\)/);
+    const accountStampedRequest =
+      /WatchBuild\.stamp\(\s*request\.message\(\),\s*accountUserID:\s*activeRequestAccountUserId\s*\)/;
+    const immediateSend =
+      manager.match(/private func send\([\s\S]*?\n {4}\}\n\n {4}private var supportedSession/)?.[0] ?? "";
+    expect(immediateSend).toMatch(accountStampedRequest);
+    const guaranteedFallback =
+      manager.match(/private func queueFallback\([\s\S]*?\n {4}\}\n\n {4}private func scheduleTimeout/)?.[0] ?? "";
+    expect(guaranteedFallback).toMatch(accountStampedRequest);
     expect(manager).not.toMatch(/Repo\.fetchLatestHealthMetric/);
     expect(manager).not.toMatch(/HealthKitReader|RecoveryEngine|\.upsert\(/);
 
