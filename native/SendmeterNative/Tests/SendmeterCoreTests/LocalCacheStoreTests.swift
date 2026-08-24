@@ -479,6 +479,85 @@ final class LocalCacheStoreTests: XCTestCase {
         XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
     }
 
+    func testServerRefreshDeletePreservesPendingRemotePlaceholderWhenCalledDirectly() throws {
+        let store = try makeStore()
+        var placeholder = makeSession(id: entityA, date: "watch")
+        placeholder.pending = true
+        let insertedAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try store.upsertPendingServer(
+            placeholder,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            insertedAt: insertedAt
+        )
+        try store.markDeletedServer(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: insertedAt.addingTimeInterval(1)
+        )
+
+        // CachedWorkspace filters these ids before the refresh delete call;
+        // this direct-store test pins the defensive guard as well.
+        XCTAssertEqual(
+            try store.loadOne(
+                Session.self,
+                accountUserID: accountA,
+                entityType: .sessions,
+                entityID: entityA.uuidString
+            ),
+            placeholder
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+        XCTAssertEqual(try Self.originFlag(in: store, entityID: entityA.uuidString, accountID: accountA), "server")
+    }
+
+    func testServerConfirmationDoesNotMatchRemotePlaceholderRevisionZero() throws {
+        let store = try makeStore()
+        var placeholder = makeSession(id: entityA, date: "watch")
+        placeholder.pending = true
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        try store.upsertPendingServer(
+            placeholder,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            insertedAt: base
+        )
+
+        try store.confirmServerUpsert(
+            makeSession(id: entityA, date: "incorrect confirmation"),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(1),
+            confirmingLocalRevision: 0
+        )
+        try store.confirmServerDelete(
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityA.uuidString,
+            updatedAt: base.addingTimeInterval(2),
+            confirmingLocalRevision: 0
+        )
+
+        // Revision zero is valid for a remote placeholder, but confirmations
+        // are phone-owned acknowledgements and must require local origin.
+        XCTAssertEqual(
+            try store.loadOne(
+                Session.self,
+                accountUserID: accountA,
+                entityType: .sessions,
+                entityID: entityA.uuidString
+            ),
+            placeholder
+        )
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 1)
+        XCTAssertEqual(try Self.revisionFlag(in: store, entityID: entityA.uuidString, accountID: accountA), 0)
+    }
+
     func testServerConfirmationClearsPendingAndAllowsLaterRefresh() throws {
         let store = try makeStore()
         let local = makeSession(id: entityA, date: "local")
@@ -699,6 +778,44 @@ final class LocalCacheStoreTests: XCTestCase {
         )
         XCTAssertNil(missing.value)
         XCTAssertFalse(missing.invalid)
+    }
+
+    func testPendingServerAdoptionDoesNotTreatCorruptRowAsMissing() throws {
+        let store = try makeStore()
+        try store.dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO cache_rows
+                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at)
+                    VALUES (?, ?, ?, 'not-json', NULL, ?)
+                    """,
+                arguments: [
+                    accountA.uuidString,
+                    LocalCacheEntityType.sessions.rawValue,
+                    entityB.uuidString,
+                    "2026-08-23T09:00:00.000Z"
+                ]
+            )
+        }
+
+        var completion = makeSession(id: entityB)
+        completion.pending = true
+        try store.upsertPendingServer(
+            completion,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityB.uuidString
+        )
+
+        let result = try store.loadOneResult(
+            Session.self,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: entityB.uuidString
+        )
+        XCTAssertNil(result.value)
+        XCTAssertTrue(result.invalid)
+        XCTAssertEqual(try Self.pendingFlag(in: store, entityID: entityB.uuidString, accountID: accountA), 0)
     }
 
     func testTimestampPreservesMicroseconds() throws {

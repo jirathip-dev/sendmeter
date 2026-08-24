@@ -246,6 +246,110 @@ final class WatchCompletionTests: XCTestCase {
         XCTAssertEqual(try pendingFlag(in: workspace, accountID: accountA, entityID: authoritative.id), 0)
     }
 
+    func testExpiredServerPlaceholderIsBoundedWithoutResurrection() throws {
+        let workspace = CachedWorkspace(store: try LocalCacheStore())
+        let received = completion(accountUserID: accountA)
+        let placeholder = received.pendingSession(accountUserID: accountA)
+        let insertedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try workspace.upsertPendingServer(
+            placeholder,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: placeholder.id.uuidString,
+            insertedAt: insertedAt
+        )
+
+        let emptySnapshot = RemoteEntityDelta<Session>(
+            changes: [],
+            activeValues: [],
+            cursor: nil
+        )
+        let beforeExpiry = insertedAt.addingTimeInterval(
+            CachedWorkspace.watchCompletionPlaceholderTTL - 1
+        )
+        try workspace.reconcileServerDelta(
+            emptySnapshot,
+            accountUserID: accountA,
+            entityType: .sessions,
+            now: beforeExpiry
+        )
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [placeholder])
+
+        let expiredAt = insertedAt.addingTimeInterval(
+            CachedWorkspace.watchCompletionPlaceholderTTL + 1
+        )
+        try workspace.reconcileServerDelta(
+            emptySnapshot,
+            accountUserID: accountA,
+            entityType: .sessions,
+            now: expiredAt
+        )
+        XCTAssertTrue(try workspace.load(accountUserID: accountA).sessions.isEmpty)
+        XCTAssertEqual(try pendingFlag(in: workspace, accountID: accountA, entityID: placeholder.id), 0)
+        XCTAssertEqual(try originFlag(in: workspace, accountID: accountA, entityID: placeholder.id), "server")
+
+        // The TTL writes a tombstone, so a stale server refresh cannot bring
+        // the phantom back. A later authoritative delta remains allowed to
+        // converge the real session.
+        try workspace.upsertServer(
+            authoritativeSession(accountUserID: accountA),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: placeholder.id.uuidString,
+            updatedAt: insertedAt.addingTimeInterval(1)
+        )
+        XCTAssertTrue(try workspace.load(accountUserID: accountA).sessions.isEmpty)
+
+        let authoritative = authoritativeSession(accountUserID: accountA)
+        try workspace.reconcileDelta(
+            RemoteEntityDelta<Session>(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: authoritative.id.uuidString,
+                        value: authoritative,
+                        updatedAt: expiredAt.addingTimeInterval(1)
+                    )
+                ],
+                activeValues: [authoritative],
+                cursor: nil
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [authoritative])
+    }
+
+    func testExplicitServerDeltaDeleteReplacesRemotePlaceholder() throws {
+        let workspace = CachedWorkspace(store: try LocalCacheStore())
+        let received = completion(accountUserID: accountA)
+        let placeholder = received.pendingSession(accountUserID: accountA)
+        try workspace.upsertPendingServer(
+            placeholder,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: placeholder.id.uuidString
+        )
+
+        try workspace.reconcileDelta(
+            RemoteEntityDelta<Session>(
+                changes: [
+                    RemoteEntityChange<Session>(
+                        entityID: placeholder.id.uuidString,
+                        value: nil,
+                        updatedAt: Date(timeIntervalSince1970: 1_700_000_100)
+                    )
+                ],
+                activeValues: [],
+                cursor: nil
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertTrue(try workspace.load(accountUserID: accountA).sessions.isEmpty)
+        XCTAssertEqual(try pendingFlag(in: workspace, accountID: accountA, entityID: placeholder.id), 0)
+    }
+
     func testPendingSessionUsesLivePhoneAccountAndAppearsInHistoryTimeline() {
         let pending = completion(accountUserID: accountB).pendingSession(accountUserID: accountA)
 

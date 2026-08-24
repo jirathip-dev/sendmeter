@@ -96,7 +96,9 @@ public struct CacheLoadOneResult<T> {
 /// `local_revision` is strictly monotonic over a row's lifetime: every local
 /// write/delete increments it, and neither a **confirmation** nor a refresh
 /// **adoption** ever resets it, so a stale confirmation from an earlier cycle
-/// can never numerically match a newer pending edit. A server **refresh**
+/// can never numerically match a newer pending edit. A server-origin
+/// placeholder intentionally keeps revision `0` because it is not a phone
+/// mutation. A server **refresh**
 /// (`upsertServer`/`markDeletedServer`) never reverts a pending local action —
 /// it only replaces non-pending local-origin rows and otherwise uses
 /// last-writer-wins on a microsecond-precision `updated_at`. A server-origin
@@ -379,6 +381,48 @@ public struct LocalCacheStore: @unchecked Sendable {
         }
     }
 
+    /// Retires stale remote-device placeholders during an authoritative full
+    /// reconcile. A placeholder is evidence that another device completed a
+    /// session, but after the bounded window an absent server row must not
+    /// remain a permanent History/ACWR phantom. This only touches
+    /// `pending + write_origin=server`; phone-owned pending writes are never
+    /// expired here. The tombstone preserves the no-resurrection rule for
+    /// stale server upserts, while a later authoritative delta can still
+    /// replace it.
+    public func expirePendingServerPlaceholders(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        olderThan: Date,
+        at: Date = Date()
+    ) throws {
+        let cutoff = Self.timestamp(olderThan)
+        let expiredAt = Self.timestamp(at)
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE cache_rows SET
+                        payload = '{}',
+                        deleted_at = ?,
+                        updated_at = ?,
+                        write_origin = 'server',
+                        pending = 0
+                    WHERE account_user_id = ? AND entity_type = ?
+                      AND deleted_at IS NULL
+                      AND pending = 1
+                      AND write_origin = 'server'
+                      AND updated_at < ?
+                    """,
+                arguments: [
+                    expiredAt,
+                    expiredAt,
+                    Self.accountIDString(accountUserID),
+                    entityType.rawValue,
+                    cutoff
+                ]
+            )
+        }
+    }
+
     /// Reads the monotonic local revision for one account + entity, if any.
     ///
     /// After a relaunch the caller cannot rely on the revision returned by the
@@ -498,12 +542,14 @@ public struct LocalCacheStore: @unchecked Sendable {
     /// has an upload queued. It is idempotent by account/entity identity and
     /// never overwrites an existing row. The normal server refresh and delta
     /// paths treat `pending + write_origin=server` as adoptable once the
-    /// authoritative row arrives.
+    /// authoritative row arrives. `insertedAt` is injectable so the
+    /// full-reconcile TTL can be tested without waiting on wall-clock time.
     public func upsertPendingServer<T: Encodable>(
         _ value: T,
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
-        entityID: String
+        entityID: String,
+        insertedAt: Date = Date()
     ) throws {
         let json = try JSONEncoder().encode(value)
         guard let payload = String(data: json, encoding: .utf8) else {
@@ -522,7 +568,7 @@ public struct LocalCacheStore: @unchecked Sendable {
                     entityType.rawValue,
                     entityID,
                     payload,
-                    Self.timestamp(Date())
+                    Self.timestamp(insertedAt)
                 ]
             )
         }
@@ -646,7 +692,7 @@ public struct LocalCacheStore: @unchecked Sendable {
                             write_origin = 'server',
                             pending = 0
                         WHERE account_user_id = ? AND entity_type = ? AND entity_id = ?
-                          AND pending = 1 AND local_revision = ?
+                          AND pending = 1 AND write_origin = 'local' AND local_revision = ?
                         """,
                     arguments: [
                         payload,
@@ -725,8 +771,11 @@ public struct LocalCacheStore: @unchecked Sendable {
     /// an out-of-order stale upsert cannot resurrect a server-deleted row),
     /// replaces a non-pending local-origin row, and only replaces an older
     /// server-origin row; in both adoption cases the row's monotonic
-    /// `local_revision` is preserved rather than reused. Use
-    /// `confirmServerDelete` for the post-upload ack instead.
+    /// `local_revision` is preserved rather than reused. The workspace
+    /// reconcile filters pending ids before calling this for an absent row;
+    /// the pending-server branch remains a defensive store-level invariant for
+    /// direct callers. Use `confirmServerDelete` for the post-upload ack
+    /// instead.
     public func markDeletedServer(
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
@@ -806,6 +855,9 @@ public struct LocalCacheStore: @unchecked Sendable {
     /// Same authoritative semantics as `upsertDeltaServer`: the row is in the
     /// delta because the server explicitly tombstoned it after the cursor, so
     /// a locally-confirmed timestamp must not keep a stale active row alive.
+    /// Unlike an absent-row refresh, this explicit tombstone also replaces a
+    /// remote-device placeholder: the server has now authoritatively said
+    /// that identity is deleted.
     public func markDeletedDeltaServer(
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
@@ -966,7 +1018,7 @@ public struct LocalCacheStore: @unchecked Sendable {
                             write_origin = 'server',
                             pending = 0
                         WHERE account_user_id = ? AND entity_type = ? AND entity_id = ?
-                          AND pending = 1 AND local_revision = ?
+                          AND pending = 1 AND write_origin = 'local' AND local_revision = ?
                         """,
                     arguments: [
                         incoming,

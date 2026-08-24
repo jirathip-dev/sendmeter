@@ -386,8 +386,9 @@ public final class AppModel {
     private nonisolated(unsafe) var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
     /// Direct WC delivery and `transferUserInfo` can overlap. The gate is
-    /// claimed before the first cache write and released only after adoption;
-    /// the cache row itself is the relaunch-safe dedupe record.
+    /// claimed before the first cache write and released only after the whole
+    /// adoption path returns; the cache row itself is the relaunch-safe dedupe
+    /// record.
     private var watchCompletionAdoption = WatchCompletionAdoptionGate()
     private var pendingRecordings = PendingRecordingOverlay()
     /// Metadata edits are overlays until the narrow PATCH has landed. Keeping
@@ -1295,6 +1296,10 @@ public final class AppModel {
         guidedActivity.reconcileOrphans()
         manualWorkoutActivity.reconcileOrphans()
         guard authSession != nil else { return }
+        // A cache-open/read failure deliberately leaves the WC inbox row in
+        // place. Retry it on every foreground pass instead of waiting for a
+        // relaunch or an account transition.
+        await acceptStoredWatchCompletions()
         await relayValidSessionToWatch(guaranteed: false)
         await drainQueue()
         // #673: only sweep all 9 tables when the foreground is actually
@@ -6612,6 +6617,7 @@ public final class AppModel {
     private enum WatchCompletionCacheLookup {
         case missing
         case found(SendmeterCore.Session)
+        case corrupt
         case unavailable
     }
 
@@ -6621,15 +6627,23 @@ public final class AppModel {
     ) -> WatchCompletionCacheLookup {
         guard let cachedWorkspace else { return .unavailable }
         do {
-            guard let session = try cachedWorkspace.store.loadOne(
+            let result = try cachedWorkspace.store.loadOneResult(
                 SendmeterCore.Session.self,
                 accountUserID: accountUserID,
                 entityType: .sessions,
                 entityID: sessionID.uuidString
-            ) else {
-                return .missing
             }
-            return .found(session)
+            if let session = result.value {
+                return .found(session)
+            }
+            if result.invalid {
+                recordCacheFailure(
+                    "watch completion lookup: corrupt session row",
+                    LocalCacheError.invalidPayload
+                )
+                return .corrupt
+            }
+            return .missing
         } catch {
             recordCacheFailure("watch completion lookup", error)
             return .unavailable
@@ -6705,17 +6719,38 @@ public final class AppModel {
                 accountFetch: accountFetch
             )
         case .adopt:
-            defer { watchCompletionAdoption.finish(completion.identity) }
+            break
         }
+        // This must be outside the switch. A defer nested in the `.adopt`
+        // case fires when the case scope exits, before the cache write and
+        // read-back below. Keep the claim live through every adoption return.
+        defer { watchCompletionAdoption.finish(completion.identity) }
 
-        guard case .missing = lookup else {
-            // `.unavailable` is deliberately not treated as an empty cache:
-            // retaining the WC row is the only safe recovery path.
+        let pending = completion.pendingSession(accountUserID: userID)
+        switch lookup {
+        case .unavailable, .corrupt:
+            // The inbox remains unacknowledged because no durable adoption
+            // occurred, but the user still sees the completion as pending
+            // while the cache is unavailable or its row is corrupt.
+            _ = publishWatchCompletion(
+                pending,
+                accountUserID: userID,
+                accountFetch: accountFetch
+            )
+            return false
+        case .found:
+            return false
+        case .missing:
+            break
+        }
+        guard let cachedWorkspace else {
+            _ = publishWatchCompletion(
+                pending,
+                accountUserID: userID,
+                accountFetch: accountFetch
+            )
             return false
         }
-        guard let cachedWorkspace else { return false }
-        var pending = completion.pendingSession(accountUserID: userID)
-        pending.accountUserID = userID
         guard accountFetch.canApply(
             to: currentUserID,
             accountEpoch: self.accountEpoch
@@ -6729,6 +6764,13 @@ public final class AppModel {
             )
         } catch {
             recordCacheFailure("watch completion adoption", error)
+            _ = publishWatchCompletion(
+                pending,
+                accountUserID: userID,
+                accountFetch: accountFetch
+            )
+            // Retaining the WC row is the only safe recovery path when the
+            // durable adoption write fails.
             return false
         }
         guard accountFetch.canApply(
@@ -6736,12 +6778,24 @@ public final class AppModel {
             accountEpoch: self.accountEpoch
         ) else { return false }
         do {
-            guard let adopted = try cachedWorkspace.store.loadOne(
+            let result = try cachedWorkspace.store.loadOneResult(
                 SendmeterCore.Session.self,
                 accountUserID: userID,
                 entityType: .sessions,
                 entityID: CacheEntityID.session(pending)
-            ) else {
+            )
+            guard let adopted = result.value else {
+                if result.invalid {
+                    recordCacheFailure(
+                        "watch completion adoption verify: corrupt session row",
+                        LocalCacheError.invalidPayload
+                    )
+                    _ = publishWatchCompletion(
+                        pending,
+                        accountUserID: userID,
+                        accountFetch: accountFetch
+                    )
+                }
                 // A tombstone or cache failure means local adoption did not
                 // become durable. Keep the persisted completion for retry.
                 return false
@@ -6757,6 +6811,11 @@ public final class AppModel {
             )
         } catch {
             recordCacheFailure("watch completion adoption verify", error)
+            _ = publishWatchCompletion(
+                pending,
+                accountUserID: userID,
+                accountFetch: accountFetch
+            )
             return false
         }
     }

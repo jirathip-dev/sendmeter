@@ -36,7 +36,7 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     public var onSessionRequested: (() async -> Void)?
     /// Returns true only after the phone has durably adopted the completion in
     /// its account-scoped cache. A false result leaves the persisted inbox row
-    /// for the next auth/foreground attempt.
+    /// for the next auth or foreground retry attempt.
     public var onWorkoutCompletion: ((WatchWorkoutCompletion) async -> Bool)?
     /// Mirror producer (#626): the raw `liveWorkout` beat. AppModel owns the
     /// mirror cursor and reduces WC beats through the same run/sequence state
