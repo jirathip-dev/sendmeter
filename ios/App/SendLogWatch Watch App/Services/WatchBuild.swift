@@ -12,11 +12,18 @@ import WatchConnectivity
 /// same reason: a workout stuck in `OfflineQueue` is invisible until someone
 /// picks the watch up. Nothing new is sent — the live-workout beat, the
 /// live-force beat and the `requestSession` ask each gain a few fields, and an
-/// unknown value is simply left off.
+/// unknown value is simply left off. `accountUserID` is only supplied by
+/// messages whose owner is known at that call site; a legacy live payload
+/// must not be attributed to whichever account happens to be relayed now.
 enum WatchBuild {
     static let identity = BuildIdentity(infoDictionary: Bundle.main.infoDictionary)
     private static let reportLock = NSLock()
     private nonisolated(unsafe) static var lastReportedQueueTotal: Int?
+    private nonisolated(unsafe) static var lastReportedQueueUserID: UUID?
+    /// Ownerless legacy rows are a separate diagnostic count. It must trigger
+    /// a fresh report even when the ordinary account-owned queue totals do not
+    /// move.
+    private nonisolated(unsafe) static var lastReportedUnscopedTotal: Int?
     /// #475 F1: tracked separately from `lastReportedQueueTotal` — a change
     /// in ONLY the quarantine count (nothing pending changed) must still
     /// trigger a report, or a workout that gets quarantined while the
@@ -28,7 +35,10 @@ enum WatchBuild {
     /// same number, and the phone needs to hear about that too.
     private nonisolated(unsafe) static var lastReportedQuarantinedStuckTotal: Int?
 
-    static func stamp(_ message: [String: Any]) -> [String: Any] {
+    static func stamp(
+        _ message: [String: Any],
+        accountUserID: UUID? = nil
+    ) -> [String: Any] {
         // Cached (see `PendingSyncCache`) because this is a synchronous send
         // path — the queues themselves are actors, and the force beat runs at
         // ~2 Hz. nil until a queue has been counted, which reports honestly as
@@ -36,7 +46,9 @@ enum WatchBuild {
         WatchBuildReport.stamped(
             message,
             with: identity,
+            accountUserID: accountUserID,
             pendingSync: PendingSyncCache.shared.total,
+            unscopedSync: PendingSyncCache.shared.unscopedTotal,
             quarantinedSync: PendingSyncCache.shared.quarantinedTotal,
             quarantinedStuckSync: PendingSyncCache.shared.quarantinedStuckTotal
         )
@@ -47,25 +59,39 @@ enum WatchBuild {
     /// phone when the newly installed watch had not yet sent another beat.
     @MainActor
     static func reportQueueStatus() {
-        guard let total = PendingSyncCache.shared.total,
+        guard let accountUserID = WatchSessionStore.shared.userId,
+              let total = PendingSyncCache.shared.total,
               WCSession.isSupported(),
               WCSession.default.activationState == .activated
         else { return }
+        let unscoped = PendingSyncCache.shared.unscopedTotal
         let quarantined = PendingSyncCache.shared.quarantinedTotal
         let quarantinedStuck = PendingSyncCache.shared.quarantinedStuckTotal
         reportLock.lock()
-        guard total != lastReportedQueueTotal
+        guard accountUserID != lastReportedQueueUserID
+            || total != lastReportedQueueTotal
+            || unscoped != lastReportedUnscopedTotal
             || quarantined != lastReportedQuarantinedTotal
             || quarantinedStuck != lastReportedQuarantinedStuckTotal
         else {
             reportLock.unlock()
             return
         }
+        lastReportedQueueUserID = accountUserID
         lastReportedQueueTotal = total
+        lastReportedUnscopedTotal = unscoped
         lastReportedQuarantinedTotal = quarantined
         lastReportedQuarantinedStuckTotal = quarantinedStuck
         reportLock.unlock()
-        let message = stamp(["kind": "queueStatus"])
+        let message = WatchBuildReport.stamped(
+            ["kind": "queueStatus"],
+            with: identity,
+            accountUserID: accountUserID,
+            pendingSync: total,
+            unscopedSync: unscoped,
+            quarantinedSync: quarantined,
+            quarantinedStuckSync: quarantinedStuck
+        )
         // Guaranteed messages are enqueued synchronously in count order. An
         // asynchronous failure fallback could otherwise enqueue old count 1
         // after newer count 0 and make the phone regress to stale state.
@@ -73,6 +99,19 @@ enum WatchBuild {
         if WCSession.default.isReachable {
             WCSession.default.sendMessage(message, replyHandler: nil, errorHandler: nil)
         }
+    }
+
+    /// A normal sign-out preserves durable account-owned queue files, but the
+    /// phone clears its visible telemetry. Reset the de-duplication markers so
+    /// a same-account re-sign-in reports the unchanged queue again.
+    static func resetQueueReportState() {
+        reportLock.lock()
+        lastReportedQueueUserID = nil
+        lastReportedQueueTotal = nil
+        lastReportedUnscopedTotal = nil
+        lastReportedQuarantinedTotal = nil
+        lastReportedQuarantinedStuckTotal = nil
+        reportLock.unlock()
     }
 
     /// Every queue whose depth the phone should hear about (#491). A new

@@ -1602,7 +1602,7 @@ struct ForceView: View {
                     }
 
                     if let live = model.watch.liveForce,
-                       live.accountUserID == nil || live.accountUserID == model.currentUserID {
+                       live.accountUserID == model.currentUserID {
                         WatchForceMirrorCard(force: live)
                     }
 

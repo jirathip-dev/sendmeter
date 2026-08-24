@@ -192,6 +192,47 @@ final class AppModelSplitTests: XCTestCase {
         )
     }
 
+    func testAccountBoundaryWiresWatchScopeAndDestructiveEpochFence() {
+        let appModel = code(source("Sources/App/AppModel.swift"))
+
+        XCTAssertTrue(
+            appModel.contains("watch.setAccountScope(currentUserID)"),
+            "account reset must move WatchConnectivity onto the new visible account"
+        )
+        XCTAssertTrue(
+            appModel.contains("watch.clearAccountTransientState()"),
+            "account reset must clear live/telemetry transport state"
+        )
+        XCTAssertTrue(
+            appModel.contains("trustsUnstamped: false"),
+            "the AppModel must fail closed for ownerless legacy live beats"
+        )
+        XCTAssertTrue(
+            appModel.contains("case .signedOut, .wrongAccount, .unscopedLegacy, .inFlightDuplicate:"),
+            "ownerless watch completions must not enter the adoption path"
+        )
+
+        guard let deleteStart = appModel.range(of: "public func deleteAccount() async") else {
+            return XCTFail("deleteAccount is missing")
+        }
+        guard let deleteEnd = appModel.range(
+            of: "private func askAboutSignOutRemainder",
+            range: deleteStart.upperBound..<appModel.endIndex
+        ) else {
+            return XCTFail("deleteAccount boundary is missing")
+        }
+        let deletion = appModel[deleteStart.lowerBound..<deleteEnd.lowerBound]
+        XCTAssertTrue(deletion.contains("accountEpoch: accountEpoch &+ 1"))
+        XCTAssertTrue(deletion.contains("try await self.repository.deleteAccount()"))
+        XCTAssertTrue(
+            deletion.contains("try await self.queue?.discardAll(accountUserID: userID, reason: \"account-deleted\")")
+        )
+        XCTAssertTrue(
+            deletion.contains("self.watch.discardStoredCompletions(for: userID)"),
+            "account deletion must purge only the deleted account's durable watch inbox rows"
+        )
+    }
+
     func testSwiftPMExcludedSourcesAreSwiftSyntaxParseable() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

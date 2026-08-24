@@ -308,6 +308,14 @@ struct SettingsView: View {
             if let pending = model.watch.pendingSyncCount {
                 LabeledContent("Waiting to upload", value: "\(pending)")
             }
+            if let unscoped = model.watch.unscopedSyncCount, unscoped > 0 {
+                HStack {
+                    Label("Legacy watch items", systemImage: "questionmark.folder.fill")
+                        .foregroundStyle(SendmeterStyle.caution)
+                    Spacer()
+                    Text("\(unscoped)").monospacedDigit()
+                }
+            }
             if let quarantined = model.watch.quarantinedSyncCount, quarantined > 0 {
                 HStack {
                     Label("Needs attention", systemImage: "exclamationmark.triangle.fill")

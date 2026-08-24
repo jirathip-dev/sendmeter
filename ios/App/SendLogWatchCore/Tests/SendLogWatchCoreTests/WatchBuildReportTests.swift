@@ -70,6 +70,22 @@ final class WatchBuildStampingTests: XCTestCase {
         XCTAssertEqual(WatchBuildReport.identity(in: msg), id("1.4.0", "57"))
     }
 
+    func testQueueOwnerStampIsOptionalAndPreservedForDomainPayloads() {
+        let owner = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let msg = WatchBuildReport.stamped(
+            ["kind": "queueStatus"],
+            with: id("1.4.0", "57"),
+            accountUserID: owner,
+            pendingSync: 2
+        )
+
+        XCTAssertEqual(msg[WatchBuildReport.accountUserIdKey] as? String, owner.uuidString)
+        XCTAssertEqual(
+            WatchBuildReport.stripped(msg)[WatchBuildReport.accountUserIdKey] as? String,
+            owner.uuidString
+        )
+    }
+
     func testStampingIsANoOpWithoutAnIdentity() {
         // Reporting is observability: it must never be able to damage the
         // message it rides on.

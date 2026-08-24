@@ -208,11 +208,11 @@ public func liveWorkoutFromRow(record: [String: Any]) -> LiveWorkout? {
     )
 }
 
-/// The ownership decision behind AppModel's mirror admission guards (#626
-/// review): a packet stamped with a DIFFERENT account is always rejected;
-/// an un-stamped packet (pre-#530 watch build) is trusted only when the
-/// caller says so — the native mirror resets to `.empty` on every account
-/// change, so trusting an un-stamped beat is safe exactly then.
+/// The ownership decision behind mirror admission guards (#626/#747): a
+/// packet stamped with a DIFFERENT account is always rejected. The optional
+/// `trustsUnstamped` switch remains for pure mixed-version callers, but the
+/// account-bound AppModel passes `false`; a legacy packet has no ownership
+/// proof and must not be attributed after an account transition.
 public func liveWorkoutOwnedBy(
     _ workout: LiveWorkout,
     userID: UUID,

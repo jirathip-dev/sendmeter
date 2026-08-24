@@ -290,7 +290,9 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// would show 0 pending forever, since `shouldDrain` always returns
     /// false with `currentUserId == nil`. `drain()`'s own guard is untouched
     /// (it still never uploads a mismatched or signed-out item) — widening
-    /// this count is display-only.
+    /// this count is display-only. An ownerless legacy file is separately
+    /// published through `PendingSyncCache.unscopedTotal`; once an account is
+    /// signed in it is not counted as that account's pending work.
     ///
     /// Quarantined items (#475) live alongside these under a different
     /// extension, so they're never counted here — see `quarantinedCount()`.
@@ -300,17 +302,27 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         decoder.dateDecodingStrategy = .iso8601
         let files = (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension == "json" } ?? []
+        var unscoped = 0
         let count = files.filter { file in
             guard
                 let data = try? Data(contentsOf: file),
                 let item = try? decoder.decode(Item.self, from: data)
-            else { return true } // unreadable: retained and reported until a later build can decode it
+            else {
+                // Unknown ownership is retained and visible, but is not
+                // presented as this account's upload after sign-in.
+                unscoped += 1
+                return true // retained and reported until a later build can decode it
+            }
+            if item.enqueuedUserId == nil {
+                unscoped += 1
+            }
             return shouldDrain(itemUserId: item.enqueuedUserId, currentUserId: currentUserId)
                 || currentUserId == nil
         }.count
         // Publish for the sync-readable stamp (#21): reading this actor is an
         // await, which the WatchConnectivity send paths can't do.
         PendingSyncCache.shared.record(count, for: slot)
+        PendingSyncCache.shared.recordUnscopedPending(unscoped, for: slot)
         return count
     }
 
@@ -332,7 +344,9 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// or act on). An unreadable/undecodable `.quarantine` file is retained
     /// and counted, same policy as an unreadable pending file — and counted
     /// as `.schemaRejection`-like (the cautious default) since its `reason`
-    /// can't be read.
+    /// can't be read. Ownerless decoded records are excluded from this
+    /// account's total and published in the separate unscoped diagnostic
+    /// bucket instead.
     @discardableResult
     func quarantinedCount() -> Int {
         let currentUserId = WatchSessionStore.shared.userId
@@ -342,6 +356,7 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
             .filter { $0.pathExtension == quarantineExtension } ?? []
         var total = 0
         var stuck = 0
+        var unscoped = 0
         for file in files {
             // #491 review F2: the header-only probe, not the full record —
             // this sweep runs at the end of every drain pass and must not
@@ -351,7 +366,11 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
                 let record = try? decoder.decode(QueueQuarantineProbe.self, from: data)
             else {
                 total += 1 // unreadable: retained and reported, same as pendingCount()
+                unscoped += 1
                 continue
+            }
+            if record.item.enqueuedUserId == nil {
+                unscoped += 1
             }
             guard shouldDrain(itemUserId: record.item.enqueuedUserId, currentUserId: currentUserId)
                 || currentUserId == nil
@@ -361,6 +380,7 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         }
         PendingSyncCache.shared.recordQuarantined(total, for: slot)
         PendingSyncCache.shared.recordQuarantinedStuck(stuck, for: slot)
+        PendingSyncCache.shared.recordUnscopedQuarantined(unscoped, for: slot)
         return total
     }
 
