@@ -6632,7 +6632,7 @@ public final class AppModel {
                 accountUserID: accountUserID,
                 entityType: .sessions,
                 entityID: sessionID.uuidString
-            }
+            )
             if let session = result.value {
                 return .found(session)
             }

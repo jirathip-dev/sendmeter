@@ -192,6 +192,31 @@ final class AppModelSplitTests: XCTestCase {
         )
     }
 
+    func testAppModelIsSwiftSyntaxParseableOutsideSwiftPMSourceSet() throws {
+        let appModelURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/App/AppModel.swift")
+        let diagnostics = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["swiftc", "-parse", appModelURL.path]
+        process.standardError = diagnostics
+        try process.run()
+        process.waitUntilExit()
+
+        let stderr = String(
+            data: diagnostics.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertEqual(
+            process.terminationStatus,
+            0,
+            "AppModel.swift must pass a syntax-only parse even though SwiftPM excludes it:\n\(stderr)"
+        )
+    }
+
     func testAppModelDeinitCanCancelEveryLifecycleTaskHandle() {
         let appModel = code(source("Sources/App/AppModel.swift"))
         let handles = [
