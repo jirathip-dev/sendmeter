@@ -178,11 +178,16 @@ public struct CachedWorkspace: @unchecked Sendable {
                 accountUserID: accountUserID,
                 entityType: .phasePeriods
             ),
+            // `AppModel.readiness` uses the first metric, matching the
+            // repository's date.desc fetch order. The generic cache store
+            // orders opaque entity IDs ascending, so restore that invariant
+            // at the typed health-metrics boundary without changing other
+            // entity ordering or Gregorian date values.
             healthMetrics: try store.loadAll(
                 HealthMetric.self,
                 accountUserID: accountUserID,
                 entityType: .healthMetrics
-            ),
+            ).sorted { $0.date > $1.date },
             recordings: try store.loadAll(
                 TindeqRecording.self,
                 accountUserID: accountUserID,

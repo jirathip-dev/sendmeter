@@ -1497,26 +1497,6 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    /// Reconciles only the slices requested by one realtime flush. This is
-    /// the realtime counterpart to the full-refresh path: a targeted fetch
-    /// never tombstones slices it did not request.
-    private func reconcileCachedSlices(
-        _ remote: CachedWorkspaceSnapshot,
-        accountUserID: UUID,
-        slices: Set<ReconcileSlice>
-    ) {
-        guard let cachedWorkspace else { return }
-        do {
-            try cachedWorkspace.reconcileSlices(
-                remote,
-                accountUserID: accountUserID,
-                slices: slices
-            )
-        } catch {
-            recordCacheFailure("cache slice reconcile", error)
-        }
-    }
-
     @discardableResult
     private func cacheUpsertLocal<T: Encodable>(
         _ value: T,
@@ -2967,6 +2947,10 @@ public final class AppModel: ObservableObject {
             // down then would freeze the live trace mid-pull.
             if phase == .background {
                 tindeq.setFlushDriverPaused(true)
+                // #747 slice 4: arm the BGAppRefreshTask when the app leaves
+                // the foreground. Execution timing is device-only; the
+                // testable body is `runBackgroundSync()`.
+                BackgroundSyncService.schedule()
             }
         }
     }
@@ -4822,6 +4806,199 @@ public final class AppModel: ObservableObject {
         await refreshQueueCount(for: accountFetch)
     }
 
+    /// The BGTask body: drain the durable queue, then reconcile every cache
+    /// entity through its cursor delta. Account scope and cancellation are
+    /// re-checked after each await by `BackgroundSyncEngine`, so an account
+    /// switch or sign-out while the task is suspended cannot write into the
+    /// wrong account or advance a cursor after partial work.
+    public func runBackgroundSync() async -> BackgroundSyncOutcome {
+        guard let userID = currentUserID else { return .accountChanged }
+        guard let workspace = cachedWorkspace else {
+            await drainQueue()
+            return .failed
+        }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let run = BackgroundSyncRun(
+            accountUserID: userID,
+            accountEpoch: accountEpoch,
+            isCurrent: { [weak self] userID, epoch in
+                guard let self else { return false }
+                return accountFetch.canApply(
+                    to: self.currentUserID,
+                    accountEpoch: self.accountEpoch
+                )
+            },
+            drain: { [weak self] in
+                await self?.drainQueue()
+            },
+            operations: makeBackgroundSyncOperations(
+                accountUserID: userID,
+                workspace: workspace
+            )
+        )
+        let outcome = await BackgroundSyncEngine.run(run)
+        if case .completed = outcome {
+            publishBackgroundSyncSnapshot(
+                accountUserID: userID,
+                capturedBy: accountFetch
+            )
+        }
+        return outcome
+    }
+
+    private func makeBackgroundSyncOperations(
+        accountUserID: UUID,
+        workspace: CachedWorkspace
+    ) -> [BackgroundSyncOperation] {
+        let repository = repository
+        return [
+            makeBackgroundSyncOperation(
+                entityType: .sessions,
+                accountUserID: accountUserID,
+                workspace: workspace,
+                fetch: { cursor in
+                    try await repository.fetchSessionDelta(
+                        since: cursor,
+                        accountUserID: accountUserID
+                    )
+                },
+                snapshot: { CachedWorkspaceSnapshot(sessions: $0.activeValues) }
+            ),
+            makeBackgroundSyncOperation(
+                entityType: .settings,
+                accountUserID: accountUserID,
+                workspace: workspace,
+                fetch: { cursor in
+                    try await repository.fetchSettingsDelta(since: cursor)
+                },
+                snapshot: { CachedWorkspaceSnapshot(settings: $0.activeValues.first) }
+            ),
+            makeBackgroundSyncOperation(
+                entityType: .phasePeriods,
+                accountUserID: accountUserID,
+                workspace: workspace,
+                fetch: { cursor in
+                    try await repository.fetchPhasePeriodDelta(since: cursor)
+                },
+                snapshot: { CachedWorkspaceSnapshot(phasePeriods: $0.activeValues) }
+            ),
+            makeBackgroundSyncOperation(
+                entityType: .healthMetrics,
+                accountUserID: accountUserID,
+                workspace: workspace,
+                fetch: { cursor in
+                    try await repository.fetchHealthMetricDelta(since: cursor)
+                },
+                snapshot: { CachedWorkspaceSnapshot(healthMetrics: $0.activeValues) }
+            ),
+            makeBackgroundSyncOperation(
+                entityType: .recordings,
+                accountUserID: accountUserID,
+                workspace: workspace,
+                fetch: { cursor in
+                    try await repository.fetchRecordingDelta(since: cursor)
+                },
+                snapshot: { CachedWorkspaceSnapshot(recordings: $0.activeValues) }
+            ),
+            makeBackgroundSyncOperation(
+                entityType: .presets,
+                accountUserID: accountUserID,
+                workspace: workspace,
+                fetch: { cursor in
+                    try await repository.fetchPresetDelta(since: cursor)
+                },
+                snapshot: { CachedWorkspaceSnapshot(presets: $0.activeValues) }
+            ),
+            makeBackgroundSyncOperation(
+                entityType: .routinePresets,
+                accountUserID: accountUserID,
+                workspace: workspace,
+                fetch: { cursor in
+                    try await repository.fetchRoutineDelta(since: cursor)
+                },
+                snapshot: { CachedWorkspaceSnapshot(routines: $0.activeValues) }
+            ),
+            makeBackgroundSyncOperation(
+                entityType: .workoutsAndAttempts,
+                accountUserID: accountUserID,
+                workspace: workspace,
+                fetch: { cursor in
+                    try await repository.fetchWorkoutDelta(since: cursor)
+                },
+                snapshot: { CachedWorkspaceSnapshot(workouts: $0.activeValues) }
+            ),
+            makeBackgroundSyncOperation(
+                entityType: .tagMetadata,
+                accountUserID: accountUserID,
+                workspace: workspace,
+                fetch: { cursor in
+                    try await repository.fetchTagMetadataDelta(since: cursor)
+                },
+                snapshot: { CachedWorkspaceSnapshot(tagMetadata: $0.activeValues) }
+            )
+        ]
+    }
+
+    private func makeBackgroundSyncOperation<Value: Encodable & Sendable>(
+        entityType: LocalCacheEntityType,
+        accountUserID: UUID,
+        workspace: CachedWorkspace,
+        fetch: @escaping @MainActor @Sendable (String?) async throws -> RemoteEntityDelta<Value>,
+        snapshot: @escaping @MainActor @Sendable (RemoteEntityDelta<Value>) -> CachedWorkspaceSnapshot
+    ) -> BackgroundSyncOperation {
+        BackgroundSyncOperation(entityType: entityType) {
+            let cursor = try workspace.cursor(
+                accountUserID: accountUserID,
+                entityType: entityType
+            )
+            let delta = try await fetch(cursor)
+            let firstSnapshot = cursor == nil ? snapshot(delta) : nil
+            return BackgroundSyncPreparedOperation {
+                if firstSnapshot != nil {
+                    try workspace.reconcileServerDelta(
+                        delta,
+                        accountUserID: accountUserID,
+                        entityType: entityType
+                    )
+                } else {
+                    try workspace.reconcileDelta(
+                        delta,
+                        accountUserID: accountUserID,
+                        entityType: entityType
+                    )
+                }
+            }
+        }
+    }
+
+    private func publishBackgroundSyncSnapshot(
+        accountUserID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        guard let workspace = cachedWorkspace else { return }
+        do {
+            let snapshot = try workspace.load(accountUserID: accountUserID)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            applyCachedNonOverlayLists(accountUserID: accountUserID)
+            mergeSessions(remote: snapshot.sessions)
+            mergeRecordings(remote: snapshot.recordings)
+            forceModel.hasLoadedRecordings = true
+            warmTagCurvesIfMissing(capturedBy: accountFetch)
+        } catch {
+            recordCacheFailure("background cache publish", error)
+        }
+    }
+
     @discardableResult
     private func enqueueAndUpload(
         _ item: DurableQueueItem<PendingWrite>,
@@ -6555,70 +6732,139 @@ public final class AppModel: ObservableObject {
         )
         do {
             if slices.contains(.sessions) {
-                let fetchedSessions = try await repository.fetchSessions(accountUserID: userID)
-                reconcileCachedSlices(
-                    CachedWorkspaceSnapshot(sessions: fetchedSessions),
+                guard let snapshot = try await reconcileRealtimeSlice(
                     accountUserID: userID,
-                    slices: [.sessions]
-                )
+                    capturedBy: accountFetch,
+                    entityType: .sessions,
+                    fetch: { cursor in
+                        try await self.repository.fetchSessionDelta(
+                            since: cursor,
+                            accountUserID: userID
+                        )
+                    },
+                    fallback: { CachedWorkspaceSnapshot(sessions: $0.activeValues) }
+                ) else { return }
                 let publishedSessions = accountFetch.publishIfCurrent(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) {
-                    mergeSessions(remote: fetchedSessions)
+                    mergeSessions(remote: snapshot.sessions)
                 }
                 guard publishedSessions else { return }
             }
             if slices.contains(.recordings) {
-                let fetchedRecordings = try await repository.fetchRecordings()
-                reconcileCachedSlices(
-                    CachedWorkspaceSnapshot(recordings: fetchedRecordings),
+                guard let snapshot = try await reconcileRealtimeSlice(
                     accountUserID: userID,
-                    slices: [.recordings]
-                )
+                    capturedBy: accountFetch,
+                    entityType: .recordings,
+                    fetch: { cursor in
+                        try await self.repository.fetchRecordingDelta(since: cursor)
+                    },
+                    fallback: { CachedWorkspaceSnapshot(recordings: $0.activeValues) }
+                ) else { return }
                 let publishedRecordings = accountFetch.publishIfCurrent(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) {
-                    mergeRecordings(remote: fetchedRecordings)
+                    mergeRecordings(remote: snapshot.recordings)
                     forceModel.hasLoadedRecordings = true
                 }
                 guard publishedRecordings else { return }
                 warmTagCurvesIfMissing(capturedBy: accountFetch)
             }
             if slices.contains(.workouts) {
-                let fetchedWorkouts = try await repository.fetchWorkouts()
-                reconcileCachedSlices(
-                    CachedWorkspaceSnapshot(workouts: fetchedWorkouts),
+                guard let snapshot = try await reconcileRealtimeSlice(
                     accountUserID: userID,
-                    slices: [.workouts]
-                )
+                    capturedBy: accountFetch,
+                    entityType: .workoutsAndAttempts,
+                    fetch: { cursor in
+                        try await self.repository.fetchWorkoutDelta(since: cursor)
+                    },
+                    fallback: { CachedWorkspaceSnapshot(workouts: $0.activeValues) }
+                ) else { return }
                 let publishedWorkouts = accountFetch.publishIfCurrent(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) {
-                    workouts = fetchedWorkouts
+                    workouts = snapshot.workouts
                 }
                 guard publishedWorkouts else { return }
             }
             if slices.contains(.health) {
-                let fetchedHealth = try await repository.fetchHealthMetrics()
-                reconcileCachedSlices(
-                    CachedWorkspaceSnapshot(healthMetrics: fetchedHealth),
+                guard let snapshot = try await reconcileRealtimeSlice(
                     accountUserID: userID,
-                    slices: [.health]
-                )
+                    capturedBy: accountFetch,
+                    entityType: .healthMetrics,
+                    fetch: { cursor in
+                        try await self.repository.fetchHealthMetricDelta(since: cursor)
+                    },
+                    fallback: { CachedWorkspaceSnapshot(healthMetrics: $0.activeValues) }
+                ) else { return }
                 let publishedHealth = accountFetch.publishIfCurrent(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) {
-                    healthMetrics = fetchedHealth
+                    healthMetrics = snapshot.healthMetrics
                 }
                 guard publishedHealth else { return }
             }
         } catch {
             // Silent degradation, same as the web: a failed reconcile leaves
             // the list stale until the next event or pull-to-refresh.
+        }
+    }
+
+    /// Fetches one realtime slice as a cursor-bounded delta, reconciles it into
+    /// the account cache, and returns the post-reconcile cache snapshot.
+    ///
+    /// The account/epoch guard is re-checked in the gap between the network
+    /// fetch and the cache write, so a realtime completion that outlives a
+    /// sign-out never mutates the wrong account's rows. A nil cursor triggers
+    /// the same full first-sync adopt/tombstone behavior as `refreshAll`.
+    private func reconcileRealtimeSlice<Value: Encodable & Sendable>(
+        accountUserID: UUID,
+        capturedBy accountFetch: AccountScopedFetch,
+        entityType: LocalCacheEntityType,
+        fetch: @escaping (String?) async throws -> RemoteEntityDelta<Value>,
+        fallback: @escaping (RemoteEntityDelta<Value>) -> CachedWorkspaceSnapshot
+    ) async throws -> CachedWorkspaceSnapshot? {
+        let cursor = cacheCursor(
+            accountUserID: accountUserID,
+            entityType: entityType
+        )
+        let delta = try await fetch(cursor)
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+        reconcileEntityRefresh(
+            delta,
+            accountUserID: accountUserID,
+            entityType: entityType,
+            fullSnapshot: cursor == nil ? fallback(delta) : nil
+        )
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+        guard let workspace = cachedWorkspace else {
+            return fallback(delta)
+        }
+        do {
+            return try workspace.load(accountUserID: accountUserID)
+        } catch {
+            recordCacheFailure("cache realtime publish", error)
+            // A cursor-bounded delta is not a complete snapshot. If the cache
+            // cannot be read, degrade to the same full network fallback a
+            // cache-open failure uses rather than publishing only the changed
+            // rows and dropping the rest of the in-memory list.
+            guard cursor != nil else { return fallback(delta) }
+            let fullDelta = try await fetch(nil)
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return nil }
+            return fallback(fullDelta)
         }
     }
 

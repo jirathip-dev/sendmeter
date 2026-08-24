@@ -59,7 +59,12 @@
     <string>Sendmeter only reads from Apple Health to compute your recovery score; it does not write data back to Health.</string>
     <key>UIBackgroundModes</key>
     <array>
+        <string>fetch</string>
         <string>bluetooth-central</string>
+    </array>
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>com.jirathip.sendlog.background-refresh</string>
     </array>
     <key>UILaunchScreen</key>
     <dict/>
