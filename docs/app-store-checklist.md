@@ -11,17 +11,19 @@ notes are `docs/app-review-notes.md` (paste-verbatim Notes). The two
 iPhone + Watch screen recording are the human/Apple-only steps; everything else
 is in-repo.
 
-- **Bundle / app record**: the native target ships to TestFlight under
-  `com.jirathip.sendlog.native` (fastlane `native_beta`, #637) so it never
-  replaces the Capacitor app's builds. The lane auto-creates the app record,
-  the app/widget App IDs, and the HealthKit / Sign-in-with-Apple /
-  Associated-Domains capabilities (no manual portal step). Promotion to the
-  shipped `com.jirathip.sendlog` is a separate decision.
+- **Bundle / app record**: the native Release target ships to the existing
+  Sendmeter TestFlight record under `com.jirathip.sendlog` (fastlane
+  `native_beta`, #637) and embeds the `com.jirathip.sendlog.watchkitapp`
+  companion. The lane provisions profiles for the phone app, embedded watch
+  app, and phone widget appex. Debug keeps `com.jirathip.sendlog.native` only
+  for side-by-side development; it cannot pair with the watch companion.
 - **Privacy manifests** (`PrivacyInfo.xcprivacy`, one per shipped bundle):
   app `native/SendmeterNative/Resources/PrivacyInfo.xcprivacy` (required-reason
-  UserDefaults `CA92.1` + SystemBootTime `35F9.1`) and the Live Activity appex
+  UserDefaults `CA92.1` + SystemBootTime `35F9.1`), the embedded Watch app
+  `ios/App/SendLogWatch Watch App/PrivacyInfo.xcprivacy` (UserDefaults and
+  FileTimestamp reasons), and the Live Activity appex
   `native/SendmeterNative/Resources/Widgets/PrivacyInfo.xcprivacy` (no
-  required-reason API). Both declare `NSPrivacyTracking = false`, no
+  required-reason API). All declare `NSPrivacyTracking = false`, no
   `NSPrivacyTrackingDomains`.
 - **App Privacy answers** ("nutrition label"): Email Address, Health, Fitness,
   Other User Content and Coarse Location, all **Used for Tracking: No** and
@@ -40,8 +42,8 @@ is in-repo.
 
 > **This file is now the native submission checklist.** Everything below this
 > banner documents the **superseded Capacitor build** (`ios/App/App`,
-> `src/lib/*`, `@capacitor/*`, the web Sentry SDK, bundled Inter, the watch
-> companion, `com.jirathip.sendlog`). It is **NOT the submission path** and is
+> `src/lib/*`, `@capacitor/*`, the web Sentry SDK, and bundled Inter). It is
+> **NOT the submission path** and is
 > kept for reference only.
 >
 > Items that **also apply to the native submission**: privacy policy URL
@@ -49,14 +51,15 @@ is in-repo.
 > deletion, password sign-in, Sign in with Apple, export compliance, and the age
 > rating questionnaire.
 >
-> Capacitor-only items that **do NOT describe the native binary**: the
-> `ios/App/App` privacy manifests, web Sentry / Diagnostics, the bundled Inter
-> typeface, the Apple Watch companion, and the `com.jirathip.sendlog` /
-> `com.jirathip.sendlog.watchkitapp` bundle ids. The native build ships **no
-> watch app, no Sentry, no bundled Inter**, uses **different privacy manifests**
-> (`native/SendmeterNative/Resources/…`), declares **no Diagnostics** data type,
-> and its required-reason APIs are only `UserDefaults` (`CA92.1`) +
-> `SystemBootTime` (`35F9.1`).
+> Capacitor-only items that do **NOT describe the native binary**: the
+> `ios/App/App` privacy manifests, web Sentry / Diagnostics, and the bundled
+> Inter typeface. The native Release configuration includes the shared Apple
+> Watch companion under `com.jirathip.sendlog.watchkitapp` and its existing
+> watch-widget extension under `com.jirathip.sendlog.watchkitapp.widgets`; it
+> uses the native privacy manifests (`native/SendmeterNative/Resources/…`) and
+> declares no
+> Diagnostics data type, and its phone required-reason APIs are only
+> `UserDefaults` (`CA92.1`) + `SystemBootTime` (`35F9.1`).
 
 ## Already handled in the repo ✅
 
@@ -257,6 +260,18 @@ Put that email/password in the review notes.
    `com.jirathip.sendlog`. The watch app is an **embedded companion**
    (`com.jirathip.sendlog.watchkitapp`) that ships inside the iOS app — it is
    **not** a separate App Store record.
+   Before `native_beta` can fetch profiles, manually enable **HealthKit** and
+   **App Groups** on `com.jirathip.sendlog.watchkitapp`, and **App Groups** on
+   `com.jirathip.sendlog.watchkitapp.widgets`; attach
+   `group.com.jirathip.sendlog` to both App IDs in Apple Developer →
+   Certificates, IDs & Profiles. For signed Debug device builds, also create
+   `com.jirathip.sendlog.native.watchkitapp` with **HealthKit** + **App Groups**
+   and `com.jirathip.sendlog.native.watchkitapp.widgets` with **App Groups**;
+   attach the same group to both Debug IDs. Unsigned simulator Debug builds do
+   not need portal profiles, but code-signed Debug device builds do. Fastlane
+   can register the IDs and verify the capability flags, but cannot toggle App
+   Groups or attach the group container; it fails before profile fetch when the
+   flags are absent.
 3. Deploy the web app so the privacy-policy and support URLs are live; paste
    `https://sendmeter.app/privacy.html` under App Privacy and
    `https://sendmeter.app/support.html` under the iOS version's Support URL.

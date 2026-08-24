@@ -5,7 +5,12 @@ on:
     paths:
       - "native/SendmeterNative/**"
       - "ios/App/SendLogWatchCore/**"
+      - "ios/App/SendLogWatch Watch App/**"
+      - "ios/App/SendLogWatch Watch App-Info.plist"
+      - "ios/App/SendLogWatchWidgets/**"
+      - "ios/App/SendLogWatchWidgets-Info.plist"
       - "native-plugins/sendlog-health-core/**"
+      - "scripts/assert-native-watch-project.rb"
       - ".github/workflows/native-swift.yml"
   push:
     branches:
@@ -15,7 +20,12 @@ on:
     paths:
       - "native/SendmeterNative/**"
       - "ios/App/SendLogWatchCore/**"
+      - "ios/App/SendLogWatch Watch App/**"
+      - "ios/App/SendLogWatch Watch App-Info.plist"
+      - "ios/App/SendLogWatchWidgets/**"
+      - "ios/App/SendLogWatchWidgets-Info.plist"
       - "native-plugins/sendlog-health-core/**"
+      - "scripts/assert-native-watch-project.rb"
       - ".github/workflows/native-swift.yml"
 
 concurrency:
@@ -49,6 +59,10 @@ jobs:
       - name: Generate Xcode project
         working-directory: native/SendmeterNative
         run: xcodegen generate
+      - name: Assert generated watch graph
+        run: |
+          gem install xcodeproj --no-document
+          ruby scripts/assert-native-watch-project.rb
       - name: Resolve Swift packages
         working-directory: native/SendmeterNative
         run: |

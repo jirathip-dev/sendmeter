@@ -3,8 +3,9 @@
 ## Scope
 
 `native/SendmeterNative` is a feature-complete parallel iPhone client written in
-SwiftUI. It shares the production data model and the existing Watch app, but it
-does not modify the shipped Capacitor target. This isolation is the primary
+SwiftUI. It shares the production data model and reuses the existing Watch app;
+the generated native project embeds that watch target in Release builds while
+leaving the shipped Capacitor target untouched. This isolation is the primary
 regression-control mechanism: the rewrite can fail validation without changing
 the current release. The native app target currently requires iOS 17 because
 its per-property `@Observable` models and typed SwiftUI environment are iOS 17
@@ -91,42 +92,30 @@ realtime events, account switching, and TestFlight signing/entitlements.
 
 ## Rollback
 
-The branch adds only a new directory and workflow. Reverting the native commit
-removes the experimental target without altering the current app, database, or
-Watch target.
+Revert the native project/workflow changes to remove the native app's embedded
+watch dependency and restore the prior native distribution behavior. The
+Capacitor app, database, and shared Watch target remain separate and are not
+altered by that rollback.
 
 ## TestFlight distribution (#637)
 
-The native app gets its own CI distribution path so it can be installed on a
-real iPhone without touching the shipped app's release channel.
+The native app's Release configuration uses the shipped bundle ID and the
+existing App Store Connect record. `SendmeterNative` embeds the existing
+`SendLogWatch Watch App` target, whose product is
+`com.jirathip.sendlog.watchkitapp`, and that watch target embeds the existing
+`SendLogWatchWidgets` product as
+`com.jirathip.sendlog.watchkitapp.widgets`. The watch Info.plist points back
+to `com.jirathip.sendlog`. The Debug configuration uses the separate native
+family `com.jirathip.sendlog.native`,
+`com.jirathip.sendlog.native.watchkitapp`, and
+`com.jirathip.sendlog.native.watchkitapp.widgets`; the Debug watch companion
+points back to the Debug phone ID, so the native trio can be installed
+side-by-side without colliding with the shipped IDs.
 
-**Bundle-ID decision: `com.jirathip.sendlog.native` — a distinct app, never
-the shipped ID.** Evidence:
-
-- TestFlight allows one app per bundle ID. Uploading the native build under
-  `com.jirathip.sendlog` would land it in the *shipped* app's slot — replacing
-  the Capacitor app's TestFlight builds, consuming its build-number train, and
-  pushing the current release candidate off testers' phones. The native target
-  is pre-promotion (the promotion gates above), and the project's core rule is
-  "keep the production target untouched", so the same-ID path is rejected.
-- The distinct ID does break one thing, deliberately: **the direct
-  WatchConnectivity mirror**. WCSession pairs an iOS app with the watch app
-  whose bundle ID derives from the iOS app's ID (Apple's own Watch
-  Connectivity sample: `com.YourCompany.ProductName` ↔
-  `com.YourCompany.ProductName.watchkitapp`). The watch app is
-  `com.jirathip.sendlog.watchkitapp`; `com.jirathip.sendlog.native` is not a
-  prefix of it, so the native phone app's `WCSession.isWatchAppInstalled` is
-  false and the low-latency mirror is inactive. The native app's
-  `LiveWorkoutMirror` already has a `server-fallback` (realtime) path, so the
-  app stays fully usable; watch-mirror validation is a promotion gate anyway
-  and happens when the native app takes over the real bundle ID. The watch
-  keeps working with the shipped app, unchanged.
-- Coexistence: both apps install side-by-side on one device (different bundle
-  IDs). One caveat: both declare the `com.jirathip.sendlog://` URL scheme
-  (static in `Resources/Info.plist`, which is not bundle-ID-derived), so with
-  both installed the scheme resolves to whichever app was installed last.
-  Supabase auth redirects and passkeys keep working — the scheme itself never
-  changes.
+The direct mirror's live-workout behavior and the fact that it does not need
+the realtime fallback are device-only promotion checks. An unsigned simulator
+build can verify the target, bundle metadata, and Embed Watch Content phase,
+but cannot prove installation on a physical paired watch.
 
 **What ships it (dispatch-only workflow `native-testflight.yml` →
 `bundle exec fastlane native_beta`):**
@@ -134,35 +123,62 @@ the shipped ID.** Evidence:
 1. API key + cert setup — same CI-safe discipline as `beta` (`setup_ci` +
    import `IOS_DIST_CERT_P12` into a temp keychain on CI; `get_certificates`
    locally).
-2. `xcodegen generate` the project (only `project.yml` is committed).
-3. Idempotently create the App ID, enable the capabilities the entitlements
-   need (HealthKit, Sign in with Apple, Associated Domains — via the Connect
-   API, so there is **no manual portal step**), and create the ASC app record
-   (SKU `SENDMETER-NATIVE`).
-4. `get_provisioning_profile` (force) for the new App ID.
-5. Build number = latest TestFlight build of *this* app + 1 (its own train —
-   never races `beta`), injected via `CURRENT_PROJECT_VERSION` xcargs; never
-   hand-bump `project.yml`.
-6. Archive with manual signing pinned on the generated project (single
-   target, so no pbxproj-restore dance is needed — the project is regenerated
-   each run); the auth flags stay export-only, same as `beta`, so the archive
-   can never mint signing assets.
-7. `upload_to_testflight`.
+2. `xcodegen generate` the project (the generated `.xcodeproj` is ignored;
+   the project spec and native resource inputs are committed).
+3. Idempotently create the shipped phone, watch, phone-widget, and
+   watch-widget App IDs, and enable the native phone capabilities.
+4. Verify that the watch App ID has HealthKit + App Groups and that the
+   watch-widget App ID has App Groups, with
+   `group.com.jirathip.sendlog` attached to both in the Apple Developer portal.
+   For signed Debug device builds, also manually create/enable
+   `com.jirathip.sendlog.native.watchkitapp` with HealthKit + App Groups and
+   `com.jirathip.sendlog.native.watchkitapp.widgets` with App Groups, attaching
+   the same group to both Debug IDs. An unsigned simulator Debug build does not
+   need portal profiles, but these capabilities are still required for a
+   code-signed Debug device build. This is a manual prerequisite: the lane does
+   not pretend the Connect API can toggle App Groups or attach the group
+   container, and it fails before profile fetch if the capability flags are
+   absent.
+5. Fetch distribution profiles for the phone app, embedded watch app, phone
+   widget appex, and embedded watch-widget appex.
+6. Build number = latest TestFlight build of the shipped app + 1 (the native
+   and Capacitor lanes share this train), injected via
+   `CURRENT_PROJECT_VERSION` xcargs; never hand-bump `project.yml`.
+7. Archive with manual signing pinned on all four generated targets (the
+   project is regenerated each run); the auth flags stay export-only, same as
+   `beta`, so the archive can never mint signing assets.
+8. `upload_to_testflight`.
 
-**One-time manual steps (first upload only):** add the tester (Guy) as an
-internal tester of the *new* "Sendmeter Native" app in App Store Connect —
-internal testers are per-app, so the shipped app's tester list does not carry
-over. Everything else (App ID, capabilities, app record, profile, build
-number) is automated by the lane.
+There is no separate native App Store record or tester list: the Release build
+uses the existing Sendmeter app record. The lane creates or reuses the shipped
+phone, watch, and widget App IDs and fetches the profiles needed for the
+embedded bundles only after the manually managed watch entitlements are
+present on the team's Apple Developer identifiers.
+
+### Release compiler status and verification blocker
+
+The native phone Release configuration restores the prior Swift
+`SWIFT_COMPILATION_MODE=wholemodule` setting and retains `-O`. The two
+fresh-derived-data Release archive attempts made with WMO and the subsequent
+fresh-derived-data attempt made with `singlefile` all reproduced the same
+Swift 6.3.3 `swift-frontend` `SILDeserializer` crash while compiling the
+phone target. No compiler-mode workaround is retained; the project is back on
+WMO and the optimizer remains `-O`.
+
+The Debug watch/widget graph is green: XcodeGen/static generated-project
+assertions pass, and the unsigned generic iOS Simulator Debug build succeeds.
+Release and signed-archive verification remain unverified and are a #768
+shipping blocker; no archive or embedded-watch inspection is claimed until a
+new serialized Release lane validates the toolchain and archive structure.
 
 **Workflow:** `native-testflight.yml` is dispatch-only (macOS runner minutes
 are the dominant CI cost), uses the same `testflight` GitHub environment as
 the shipped lane (match the capitalisation exactly), the same
 `blacksmith-6vcpu-macos-26` runner input, a `native-testflight` concurrency
-group (queue, never cancel — parallel runs would race the same build number),
-and a cheap Ubuntu gate that refuses refs without
-`native/SendmeterNative/project.yml` (the native target is not on `main`
-yet). No node/npm steps — the native app is pure Swift.
+group (queue, never cancel — parallel native runs would race the shared build
+number; do not run it concurrently with the shipped `beta` lane), and a cheap
+Ubuntu gate that refuses refs without `native/SendmeterNative/project.yml`.
+No node/npm steps — the native app is pure Swift.
 
 ### Sign in with Apple / AASA retest rule (learned the hard way)
 
@@ -182,7 +198,7 @@ change MUST be uninstall → install, never an update over the previous install.
   serves both `com.jirathip.sendlog` and `com.jirathip.sendlog.native` in both
   `applinks` and `webcredentials`; clean install passes sign-in).
 - **Deleting the app** is what throws the stale cached association away; the
-  decisive retest is: delete Sendmeter Native → reinstall the same build → first
+  decisive retest is: delete Sendmeter → reinstall the same build → first
   open cold → try Sign in with Apple. If it passes, close the issue as
   resolved-on-device (install state); only if it *still* fails on a clean
   install is it a genuine regression to investigate (capture the exact GoTrue

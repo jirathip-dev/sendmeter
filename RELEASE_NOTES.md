@@ -10,6 +10,10 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Native Release packaging now targets the existing Apple Watch companion and
+  its watch-widget extension; signed archive/device installation and the
+  paired watch's direct live-workout mirror remain validation gates, so this
+  wiring is not yet a verified release outcome.
 - Native Dashboard: tap the Send Conditions card to open a detail sheet with the same 30-day same-time-of-day comparison, median line, absolute-friction gauge, how-it's-scored breakdown, and scrub tooltips as the web.
 - Native Dashboard now opens a Recovery Inputs sheet from today's decision card: the seven raw HealthKit inputs behind your readiness score appear as simple shared 14-day bar charts with one 7-day trend and tap/scrub tooltips.
 - Native app now opens with your latest history, readiness, presets, routines, and settings already on screen from the local cache, and new/edited/deleted items render immediately while the server syncs.
