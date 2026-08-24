@@ -14,14 +14,43 @@ final class HeroMetricWiringTests: XCTestCase {
         let normalized = normalizeWhitespace(modifier)
 
         XCTAssertTrue(design.contains("public static var heroMetric: HeroMetricModifier"))
-        XCTAssertTrue(normalized.contains("@ScaledMetric(relativeTo: .largeTitle)"))
         XCTAssertTrue(normalized.contains(".font(.system(.largeTitle, design: .rounded).weight(.bold))"))
         XCTAssertTrue(normalized.contains(".monospacedDigit()"))
-        XCTAssertTrue(normalized.contains(".lineSpacing(tightLeading)"))
+        XCTAssertTrue(normalized.contains(".allowsTightening(true)"))
         XCTAssertTrue(normalized.contains(".lineLimit(1)"))
         XCTAssertTrue(normalized.contains(".minimumScaleFactor(0.65)"))
+        XCTAssertFalse(normalized.contains("lineSpacing"), "single-line hero metrics must not claim inert leading control")
+        XCTAssertFalse(normalized.contains("tightLeading"), "hero style must not retain a dead leading invariant")
         XCTAssertFalse(normalized.contains(".system(size:"), "hero style must not freeze an absolute point size")
         XCTAssertFalse(normalized.contains(".frame("), "hero style must not add a clipping frame")
+    }
+
+    func testCountdownFamilyUsesASharedDynamicTypeAwareTier() {
+        let design = code(source("Sources/App/DesignSystem.swift"))
+        let countdown = exactBlock(
+            design,
+            startingWith: "public struct CountdownMetricModifier: ViewModifier"
+        )
+        let manual = code(source("Sources/Features/Workout/ManualWorkoutFullscreen.swift"))
+        let workout = code(source("Sources/Features/Workout/WorkoutView.swift"))
+        let force = code(source("Sources/Features/Force/ForceView.swift"))
+        let normalized = normalizeWhitespace(countdown)
+
+        XCTAssertTrue(design.contains("public static func countdownMetric(baseSize: CGFloat)"))
+        XCTAssertTrue(normalized.contains("@ScaledMetric(relativeTo: .largeTitle)"))
+        XCTAssertTrue(normalized.contains(".font(.system(size: displaySize, weight: .bold, design: .rounded))"))
+        XCTAssertTrue(normalized.contains(".monospacedDigit()"))
+        XCTAssertTrue(normalized.contains(".allowsTightening(true)"))
+        XCTAssertTrue(normalized.contains(".minimumScaleFactor(0.55)"))
+        XCTAssertTrue(normalized.contains(".lineLimit(1)"))
+
+        XCTAssertTrue(manual.contains("SendmeterStyle.countdownMetric(baseSize: 82)"))
+        XCTAssertTrue(workout.contains("SendmeterStyle.countdownMetric(baseSize: 52)"))
+        XCTAssertTrue(workout.contains("SendmeterStyle.countdownMetric(baseSize: 80)"))
+        XCTAssertTrue(force.contains("SendmeterStyle.countdownMetric(baseSize: 68)"))
+        XCTAssertFalse(workout.contains(".font(.system(size: 52, weight: .bold, design: .rounded))"))
+        XCTAssertFalse(workout.contains(".font(.system(size: 80, weight: .bold, design: .rounded))"))
+        XCTAssertFalse(force.contains(".font(.system(size: 68, weight: .bold, design: .rounded))"))
     }
 
     func testMetricValueUsesTheSharedHeroTreatment() {
@@ -46,7 +75,23 @@ final class HeroMetricWiringTests: XCTestCase {
         XCTAssertTrue(decision.contains("if let score = model.readiness?.readiness"))
         XCTAssertTrue(decision.contains("Text(\"\\(score)\")"))
         XCTAssertTrue(decision.contains(".modifier(SendmeterStyle.heroMetric)"))
+        XCTAssertTrue(decision.contains("@ScaledMetric(relativeTo: .largeTitle) private var readinessRingDiameter: CGFloat = 92"))
+        XCTAssertTrue(decision.contains("@ScaledMetric(relativeTo: .largeTitle) private var readinessRingStroke: CGFloat = 10"))
+        XCTAssertTrue(decision.contains("StrokeStyle(lineWidth: readinessRingStroke"))
+        XCTAssertTrue(decision.contains(".frame(width: readinessRingDiameter, height: readinessRingDiameter)"))
         XCTAssertFalse(decision.contains(".system(size: 32"))
+    }
+
+    func testSendConditionsScoreUsesTheSharedHeroTreatment() {
+        let dashboard = code(source("Sources/Features/Dashboard/DashboardView.swift"))
+        let conditions = exactFunction(
+            dashboard,
+            startingWith: "private func populatedContent(_ conditions: SendConditions)"
+        )
+
+        XCTAssertTrue(conditions.contains("Text(\"\\(conditions.score)\")"))
+        XCTAssertTrue(conditions.contains(".modifier(SendmeterStyle.heroMetric)"))
+        XCTAssertFalse(conditions.contains(".system(size: 30"))
     }
 
     func testAcwrProjectionRatioOwnerUsesTheSharedHeroTreatment() {
@@ -65,15 +110,20 @@ final class HeroMetricWiringTests: XCTestCase {
         XCTAssertFalse(content.contains(".system(size:"))
     }
 
-    func testForceDevicePeakUsesTheSharedHeroTreatment() {
+    func testForceDeviceKeepsCurrentHeroAndLabelsPeak() {
         let force = code(source("Sources/Features/Force/ForceView.swift"))
         let deviceCard = exactBlock(force, startingWith: "private struct ForceDeviceCard: View")
+        let normalized = normalizeWhitespace(deviceCard)
 
-        XCTAssertTrue(deviceCard.contains("device.peakKilograms.formatted"))
-        XCTAssertTrue(deviceCard.contains("Text(\"Peak\")"))
-        XCTAssertTrue(deviceCard.contains(".modifier(SendmeterStyle.heroMetric)"))
-        XCTAssertTrue(deviceCard.contains("accessibilityLabel(\n                            \"Peak"))
-        XCTAssertFalse(deviceCard.contains("MetricValue(\n                            device.currentKilograms"))
+        XCTAssertTrue(normalized.contains("device.peakKilograms.formatted"))
+        XCTAssertTrue(normalized.contains("Text(\"Peak "))
+        XCTAssertTrue(normalized.contains("accessibilityLabel( \"Peak"))
+        XCTAssertEqual(
+            countOccurrences("MetricValue( device.currentKilograms", in: normalized),
+            1,
+            "ForceDeviceCard must keep exactly one current-force hero; a reintroduced duplicate must fail"
+        )
+        XCTAssertFalse(normalized.contains("MetricValue( device.peakKilograms"))
     }
 
     func testManualWorkoutRestCountdownUsesTheSharedHeroTreatment() {
@@ -81,7 +131,7 @@ final class HeroMetricWiringTests: XCTestCase {
         let phasePanel = exactFunction(workout, startingWith: "private func phasePanel(snapshot: ManualWorkoutSnapshot)")
 
         XCTAssertTrue(phasePanel.contains("Text(formatDuration(snapshot.phaseSeconds))"))
-        XCTAssertTrue(phasePanel.contains(".modifier(SendmeterStyle.heroMetric)"))
+        XCTAssertTrue(phasePanel.contains(".modifier(SendmeterStyle.countdownMetric(baseSize: 82)"))
         XCTAssertFalse(phasePanel.contains(".system(size: 82"))
     }
 
@@ -153,5 +203,17 @@ final class HeroMetricWiringTests: XCTestCase {
         source
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func countOccurrences(_ needle: String, in source: String) -> Int {
+        guard !needle.isEmpty else { return 0 }
+
+        var count = 0
+        var searchStart = source.startIndex
+        while let match = source.range(of: needle, range: searchStart..<source.endIndex) {
+            count += 1
+            searchStart = match.upperBound
+        }
+        return count
     }
 }

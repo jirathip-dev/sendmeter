@@ -147,6 +147,8 @@ private struct TodayDecisionCard: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var scheme
     @Binding var showRecovery: Bool
+    @ScaledMetric(relativeTo: .largeTitle) private var readinessRingDiameter: CGFloat = 92
+    @ScaledMetric(relativeTo: .largeTitle) private var readinessRingStroke: CGFloat = 10
 
     private func readinessColor(_ scheme: ColorScheme) -> Color {
         guard let readiness = model.readiness?.readiness else { return .secondary }
@@ -192,23 +194,23 @@ private struct TodayDecisionCard: View {
                             let color = readinessColor(scheme)
                             ZStack {
                                 Circle()
-                                    .stroke(color.opacity(0.18), lineWidth: 10)
+                                    .stroke(color.opacity(0.18), lineWidth: readinessRingStroke)
                                 Circle()
                                     .trim(from: 0, to: CGFloat(score) / 100)
                                     .stroke(
                                         color,
-                                        style: StrokeStyle(lineWidth: 10, lineCap: .round)
+                                        style: StrokeStyle(lineWidth: readinessRingStroke, lineCap: .round)
                                     )
                                     .rotationEffect(.degrees(-90))
                                 Text("\(score)")
                                     .modifier(SendmeterStyle.heroMetric)
                             }
-                            .frame(width: 92, height: 92)
+                            .frame(width: readinessRingDiameter, height: readinessRingDiameter)
                         } else {
                             Image(systemName: "heart.text.square")
                                 .font(.system(size: 54))
                                 .foregroundStyle(.secondary)
-                                .frame(width: 92, height: 92)
+                                .frame(width: readinessRingDiameter, height: readinessRingDiameter)
                         }
 
                         VStack(alignment: .leading, spacing: 7) {
@@ -669,8 +671,7 @@ private struct SendConditionsCardContent: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Text("\(conditions.score)")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .monospacedDigit()
+                    .modifier(SendmeterStyle.heroMetric)
                     .foregroundStyle(color(for: conditions))
                 VStack(alignment: .leading, spacing: 2) {
                     StatusPill(label(for: conditions).rawValue, color: color(for: conditions))

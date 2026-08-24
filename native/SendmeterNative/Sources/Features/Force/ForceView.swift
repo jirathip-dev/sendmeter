@@ -878,10 +878,7 @@ private struct GuidedForceProtocolView: View {
             .foregroundStyle(accent)
 
             Text(formatCountdown(remaining))
-                .font(.system(size: 68, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .minimumScaleFactor(0.55)
-                .lineLimit(1)
+                .modifier(SendmeterStyle.countdownMetric(baseSize: 68))
                 .accessibilityLabel("\(formatCountdown(remaining)) remaining")
 
             Text(handsFreeWaitingForPull ? "PULL TO START · \(presentation.detail)" : presentation.detail)
@@ -2416,27 +2413,20 @@ private struct ForceDeviceCard: View {
 
                 if device.status == .measuring || device.handsFreeArmed || !device.visibleSampleRange.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Peak")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                                Text(device.peakKilograms.formatted(.number.precision(.fractionLength(1))))
-                                    .modifier(SendmeterStyle.heroMetric)
-                                    .foregroundStyle(.primary)
-                                Text("kg")
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .accessibilityElement(children: .combine)
+                        MetricValue(
+                            device.currentKilograms.formatted(.number.precision(.fractionLength(1))),
+                            unit: "kg",
+                            color: inTarget ? SendmeterStyle.optimal : .primary
+                        )
                         .accessibilityLabel(
-                            "Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
+                            "Current force \(device.currentKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
                         )
                         Spacer()
                         VStack(alignment: .trailing, spacing: 5) {
-                            Text(device.currentKilograms.formatted(.number.precision(.fractionLength(1))) + " kg")
-                                .foregroundStyle(inTarget ? SendmeterStyle.optimal : .primary)
+                            Text("Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                                .accessibilityLabel(
+                                    "Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
+                                )
                             Text("Average \(device.averageKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
                             Text((device.elapsedMilliseconds / 1_000).formatted(.number.precision(.fractionLength(1))) + " s")
                         }
