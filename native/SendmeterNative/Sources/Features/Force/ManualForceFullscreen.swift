@@ -55,7 +55,13 @@ struct ManualForceFullscreen: View {
                     }
                 }
                 .animation(
-                    reduceMotion ? nil : .easeInOut(duration: 0.2),
+                    reduceMotion
+                        ? nil
+                        : .spring(
+                            response: ForceMotionPolicy.phaseResponseSeconds,
+                            dampingFraction: ForceMotionPolicy.phaseDampingFraction,
+                            blendDuration: 0
+                        ),
                     value: phase
                 )
             }
