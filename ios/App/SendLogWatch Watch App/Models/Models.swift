@@ -376,10 +376,12 @@ nonisolated struct HealthMetricRow: Codable {
 /// Live workout heartbeat (SL-41). One row per user (PK user_id), upserted
 /// every ~5s while a workout runs so the web Workout tab can mirror it.
 nonisolated struct LiveWorkoutUpsert: Codable {
-    /// Legacy terminal-retry rows may have no known owner. They remain
-    /// separately visible as unscoped and are never drained under whichever
-    /// account happens to be signed in.
-    var userId: UUID? = nil
+    /// Live paths drop beats with no relayed account; producers resolve and
+    /// stamp an owner before enqueueing. `nil` is reserved for legacy
+    /// terminal-retry rows whose owner is unknown. They remain separately
+    /// visible as unscoped and are never drained under whichever account
+    /// happens to be signed in.
+    var userId: UUID?
     var workoutId: UUID
     /// #521: both transport paths use the workout id as their run identity.
     /// Kept as a distinct field so the wire contract is explicit and can
@@ -438,6 +440,11 @@ nonisolated struct LiveWorkoutUpsert: Codable {
     // callers first.
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        // KEEP-IN-SYNC with the legacy owner handling above and its encoding
+        // regression: this must remain `encode`, not `encodeIfPresent`. A
+        // nil owner must emit "user_id": null; omitting the key would let
+        // the database default auth.uid() fill it from whichever account is
+        // currently relayed, risking cross-account attribution.
         try container.encode(userId, forKey: .userId)
         try container.encode(workoutId, forKey: .workoutId)
         try container.encode(runId, forKey: .runId)
