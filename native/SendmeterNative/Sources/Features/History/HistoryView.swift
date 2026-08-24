@@ -113,6 +113,66 @@ struct HistoryView: View {
         }
     }
 
+    private var hasActiveHistoryFilters: Bool {
+        !query.isEmpty || selectedType != nil || selectedTag != nil
+    }
+
+    private func retryHistoryLoad() {
+        Task { await model.refreshAll() }
+    }
+
+    private func startWorkout() {
+        model.selectedTab = .workout
+    }
+
+    private func openForce() {
+        model.selectedTab = .force
+    }
+
+    private func clearHistoryFilters() {
+        query = ""
+        selectedType = nil
+        selectedTag = nil
+        selectedIDs = []
+        createError = nil
+        visibleCount = HistoryPaging.pageSize
+    }
+
+    @ViewBuilder
+    private func historyLoadState(progressLabel: String) -> some View {
+        if model.isRefreshing {
+            ProgressView(progressLabel)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ProductEmptyState(
+                title: "Your history is catching its breath",
+                message: "Sync once to bring your training story back into view.",
+                actionTitle: "Try again",
+                action: retryHistoryLoad
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var filteredHistoryEmptyState: some View {
+        if hasActiveHistoryFilters {
+            ProductEmptyState(
+                title: "Nothing matches this view",
+                message: "Clear the search or filters to find another send.",
+                actionTitle: "Clear filters",
+                action: clearHistoryFilters
+            )
+        } else {
+            ProductEmptyState(
+                title: "Your next send starts here",
+                message: "Start a workout and your effort will appear in History.",
+                actionTitle: "Start a workout",
+                action: startWorkout
+            )
+        }
+    }
+
     // MARK: Body
 
     var body: some View {
@@ -235,14 +295,17 @@ struct HistoryView: View {
 
     private var combinedList: some View {
         Group {
-            if timelineItems.isEmpty {
+            if !model.hasLoadedSessions {
+                historyLoadState(progressLabel: "Loading history…")
+            } else if timelineItems.isEmpty, model.sessions.isEmpty, model.recordings.isEmpty {
                 HistoryEmptyState(
-                    title: model.sessions.isEmpty && model.recordings.isEmpty
-                        ? "No history yet"
-                        : "No history matches these filters",
-                    description: "Log a session, complete a workout, or save a pull to build your training history.",
-                    symbol: "calendar.badge.plus"
+                    title: "Your training story starts here",
+                    message: "Start a workout and your sends will gather here over time.",
+                    actionTitle: "Start a workout",
+                    action: startWorkout
                 )
+            } else if timelineItems.isEmpty {
+                filteredHistoryEmptyState
             } else {
                 List {
                     ForEach(combinedSections, id: \.date) { section in
@@ -261,12 +324,17 @@ struct HistoryView: View {
 
     private var sessionsList: some View {
         Group {
-            if filteredSessions.isEmpty {
+            if !model.hasLoadedSessions {
+                historyLoadState(progressLabel: "Loading sessions…")
+            } else if filteredSessions.isEmpty, model.sessions.isEmpty {
                 HistoryEmptyState(
-                    title: "No sessions yet",
-                    description: "Log a session or complete a workout to build your training history.",
-                    symbol: "calendar.badge.plus"
+                    title: "Your next workout starts here",
+                    message: "Start a workout and the session will be ready to review here.",
+                    actionTitle: "Start a workout",
+                    action: startWorkout
                 )
+            } else if filteredSessions.isEmpty {
+                filteredHistoryEmptyState
             } else {
                 List {
                     ForEach(sessionSections, id: \.date) { section in
@@ -293,12 +361,17 @@ struct HistoryView: View {
 
     private var forceList: some View {
         Group {
-            if filteredForceRecordings.isEmpty {
+            if !model.hasLoadedSessions {
+                historyLoadState(progressLabel: "Loading force history…")
+            } else if filteredForceRecordings.isEmpty, model.recordings.isEmpty {
                 HistoryEmptyState(
-                    title: "No force recordings yet",
-                    description: "Connect a Progressor in Force and save a pull.",
-                    symbol: "waveform.path.ecg"
+                    title: "Your next pull starts here",
+                    message: "Connect your Progressor and save a pull to build force history.",
+                    actionTitle: "Open Force",
+                    action: openForce
                 )
+            } else if filteredForceRecordings.isEmpty {
+                filteredHistoryEmptyState
             } else {
                 List {
                     ForEach(Array(filteredForceRecordings.prefix(visibleCount))) { recording in
@@ -1329,21 +1402,17 @@ private struct TrashView: View {
 
 private struct HistoryEmptyState: View {
     let title: String
-    let description: String
-    let symbol: String
+    let message: String
+    let actionTitle: String
+    let action: () -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: symbol)
-                .font(.system(size: 48, weight: .semibold))
-                .foregroundStyle(SendmeterStyle.primary)
-            Text(title).font(.title3.bold())
-            Text(description)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(32)
+        ProductEmptyState(
+            title: title,
+            message: message,
+            actionTitle: actionTitle,
+            action: action
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

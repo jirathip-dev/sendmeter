@@ -1324,6 +1324,28 @@ struct ForceView: View {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    private var forceEmptyActionTitle: String {
+        switch model.tindeq.status {
+        case .connected: return "Record a pull"
+        case .measuring: return "Stop & save"
+        case .unavailable: return "Open Settings"
+        case .idle, .scanning, .connecting, .interrupted: return "Connect Progressor"
+        }
+    }
+
+    private func performForceEmptyAction() {
+        switch model.tindeq.status {
+        case .connected:
+            startMeasurement()
+        case .measuring:
+            stopAndSave()
+        case .unavailable:
+            model.selectedTab = .settings
+        case .idle, .scanning, .connecting, .interrupted:
+            model.requestConnect()
+        }
+    }
+
     private var progressSide: TindeqSide? {
         side == .unspecified ? nil : side
     }
@@ -1585,7 +1607,9 @@ struct ForceView: View {
                         hasLoadedRecordings: forceModel.hasLoadedRecordings,
                         progressRevision: forceModel.forceProgressRevision,
                         curveRevision: sideScopedForceCurveRevision,
-                        targetBand: selectedTargetReferenceBand
+                        targetBand: selectedTargetReferenceBand,
+                        emptyActionTitle: forceEmptyActionTitle,
+                        emptyAction: performForceEmptyAction
                     )
                     .equatable()
 
@@ -1600,7 +1624,9 @@ struct ForceView: View {
                             tag: tag,
                             model: forceCurve,
                             hasLoadedRecordings: forceModel.hasLoadedRecordings,
-                            targetBand: selectedTargetReferenceBand
+                            targetBand: selectedTargetReferenceBand,
+                            emptyActionTitle: forceEmptyActionTitle,
+                            emptyAction: performForceEmptyAction
                         )
                     }
 
@@ -2398,6 +2424,13 @@ private struct ForceDeviceCard: View {
 
     private var targetRange: ClosedRange<Double>? { targetBand?.range }
 
+    private var showsDisconnectedEmptyState: Bool {
+        if case .idle = device.status {
+            return !device.hasUnsavedRecording
+        }
+        return false
+    }
+
     var body: some View {
         SurfaceCard {
             VStack(spacing: 16) {
@@ -2411,7 +2444,14 @@ private struct ForceDeviceCard: View {
                     StatusPill(statusPill.text, color: statusPill.color)
                 }
 
-                if device.status == .measuring || device.handsFreeArmed || !device.visibleSampleRange.isEmpty {
+                if showsDisconnectedEmptyState {
+                    ProductEmptyState(
+                        title: "Your first pull starts here",
+                        message: "Connect your Progressor to turn a pull into a force curve.",
+                        actionTitle: "Connect Progressor",
+                        action: connect
+                    )
+                } else if device.status == .measuring || device.handsFreeArmed || !device.visibleSampleRange.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
                         MetricValue(
                             device.currentKilograms.formatted(.number.precision(.fractionLength(1))),
@@ -2572,14 +2612,18 @@ private struct ForceDeviceCard: View {
             Label("Bluetooth is not available for this app.", systemImage: "bluetooth.slash")
                 .foregroundStyle(.secondary)
         case .idle, .interrupted:
-            Button {
-                // #656 (review F1): user-initiated — arms the transport's
-                // success/error haptics for this launch.
-                connect()
-            } label: {
-                Label("Connect Progressor", systemImage: "antenna.radiowaves.left.and.right")
+            if showsDisconnectedEmptyState {
+                EmptyView()
+            } else {
+                Button {
+                    // #656 (review F1): user-initiated — arms the transport's
+                    // success/error haptics for this launch.
+                    connect()
+                } label: {
+                    Label("Connect Progressor", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .hapticButtonStyle(PrimaryActionButtonStyle())
             }
-            .hapticButtonStyle(PrimaryActionButtonStyle())
         case .scanning, .connecting:
             HStack {
                 ProgressView()
