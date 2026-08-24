@@ -376,7 +376,10 @@ nonisolated struct HealthMetricRow: Codable {
 /// Live workout heartbeat (SL-41). One row per user (PK user_id), upserted
 /// every ~5s while a workout runs so the web Workout tab can mirror it.
 nonisolated struct LiveWorkoutUpsert: Codable {
-    var userId: UUID
+    /// Legacy terminal-retry rows may have no known owner. They remain
+    /// separately visible as unscoped and are never drained under whichever
+    /// account happens to be signed in.
+    var userId: UUID? = nil
     var workoutId: UUID
     /// #521: both transport paths use the workout id as their run identity.
     /// Kept as a distinct field so the wire contract is explicit and can

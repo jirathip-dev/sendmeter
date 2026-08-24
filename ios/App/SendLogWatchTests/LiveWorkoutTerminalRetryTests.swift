@@ -36,8 +36,9 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
         ownerless: Bool = false,
         startedAt: Date = Date(timeIntervalSince1970: 1_800_000_000)
     ) -> LiveWorkoutUpsert {
+        let owner: UUID? = ownerless ? nil : (userId ?? testUserId)
         LiveWorkoutUpsert(
-            userId: ownerless ? nil : (userId ?? testUserId), workoutId: runId, runId: runId, sequence: sequence,
+            userId: owner, workoutId: runId, runId: runId, sequence: sequence,
             event: "end", terminal: true, status: "ended",
             startedAt: startedAt,
             hr: nil, attemptCount: 3, activeKcal: nil, elevationGainM: nil,
@@ -618,8 +619,10 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
 
         XCTAssertEqual(PendingSyncCache.shared.total, 0)
         XCTAssertEqual(PendingSyncCache.shared.unscopedTotal, 1)
-        XCTAssertTrue(await uploader.uploaded.isEmpty)
-        XCTAssertFalse(await retry.hasPendingRetry())
+        let uploaded: [Int] = await uploader.uploaded
+        let pending: Bool = await retry.hasPendingRetry()
+        XCTAssertTrue(uploaded.isEmpty)
+        XCTAssertFalse(pending)
     }
 
     /// This queue never quarantines anything, but must still report zero for
