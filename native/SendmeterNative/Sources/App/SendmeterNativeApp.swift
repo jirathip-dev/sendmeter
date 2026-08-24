@@ -3,11 +3,20 @@ import SwiftUI
 
 @main
 struct SendmeterNativeApp: App {
-    @StateObject private var model = AppModel()
+    @StateObject private var model: AppModel
     // #631: the theme choice is read in init — before the first frame —
     // so a saved appearance never flashes the default scheme.
     @StateObject private var theme = AppThemeController()
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        let model = AppModel()
+        _model = StateObject(wrappedValue: model)
+        // #747 slice 4: register before the app finishes launching. The
+        // handler owns the BGTask lifecycle and invokes the testable engine
+        // body through the same `AppModel`.
+        BackgroundSyncService.register(model: model)
+    }
 
     var body: some Scene {
         WindowGroup {

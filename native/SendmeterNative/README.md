@@ -58,10 +58,17 @@ rows changed after its persisted `updated_at` cursor, apply active changes and
 soft-delete tombstones as a single batch, and advance the cursor only after the
 cache write succeeds; the first sync after install or cache rebuild still does
 a full hydration so a missing or reset cursor can never strand older rows.
-Realtime slices continue through the same reconcile path. User-initiated
-creates/edits/deletes are written optimistically and confirmed only when the
-matching server revision still wins; a cache open/read failure degrades to the
-existing network-only path and is reported in the auth diagnostics ring.
+Realtime slices continue through the same reconcile path before the published
+state changes, so a watch/other-device edit survives a relaunch without waiting
+for the next foreground pull. When the app backgrounds, a `BGAppRefreshTask`
+drains the durable queue and pulls the same cursor-bounded deltas for all nine
+read entities, then re-arms itself; the account/epoch guard is re-checked after
+every await and task expiration cancels before a cache write starts. BGTask
+timing is device-only to verify (simulators do not run scheduled refresh tasks).
+User-initiated creates/edits/deletes are written optimistically and confirmed
+only when the matching server revision still wins; a cache open/read failure
+degrades to the existing network-only path and is reported in the auth
+diagnostics ring.
 
 `Sources/Shared` + `Sources/Widgets` compile into a second product target —
 `SendmeterNativeWidgets`, a WidgetKit app-extension embedded in the app
