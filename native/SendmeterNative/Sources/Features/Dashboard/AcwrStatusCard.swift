@@ -27,9 +27,8 @@ struct AcwrStatusCard: View {
     @State private var showTrainingLoad = false
     @State private var showInfo = false
 
-    // #748 round 2 finding 3: Dynamic Type. The big ratio and the tick row
-    // must scale with accessibility text sizes instead of using fixed points.
-    @ScaledMetric(relativeTo: .largeTitle) private var bigNumberSize: CGFloat = 38
+    // #748 round 2 finding 3: Dynamic Type. The shared hero treatment keeps
+    // the ratio and other primary numbers on the same semantic font scale.
     @ScaledMetric(relativeTo: .caption) private var tickRowHeight: CGFloat = 16
 
     private var ratio: Double? { model.acwr.ratio }
@@ -104,11 +103,8 @@ struct AcwrStatusCard: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(ratio.map { String(format: "%.2f", $0) } ?? "—")
-                .font(.system(size: bigNumberSize, weight: .bold, design: .rounded))
-                .monospacedDigit()
+                .modifier(SendmeterStyle.heroMetric)
                 .foregroundStyle(statusColor)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
             Text(status.rawValue)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(statusColor)

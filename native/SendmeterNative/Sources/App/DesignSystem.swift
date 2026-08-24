@@ -5,6 +5,18 @@ public enum SendmeterStyle {
     public static let radius: CGFloat = 18
     public static let spacing: CGFloat = 16
 
+    /// Shared treatment for the app's glanceable metric values. The semantic
+    /// font keeps the number tied to Dynamic Type; tightening and the
+    /// single-line scale keep metric values visually compact.
+    public static var heroMetric: HeroMetricModifier { HeroMetricModifier() }
+
+    /// Dynamic-Type-aware display treatment for active countdowns. Callers
+    /// supply their existing context size so a fullscreen timer stays larger
+    /// than a card metric without freezing it at one accessibility size.
+    public static func countdownMetric(baseSize: CGFloat) -> CountdownMetricModifier {
+        CountdownMetricModifier(baseSize: baseSize)
+    }
+
     public static let capacity = Color(hex: "#2E96F0")
     public static let strength = Color(hex: "#DDB13A")
     public static let power = Color(hex: "#E5743A")
@@ -33,6 +45,36 @@ public enum SendmeterStyle {
         case .powerEndurance: return execution
         case .endurance: return optimal
         }
+    }
+}
+
+public struct HeroMetricModifier: ViewModifier {
+    public init() {}
+
+    public func body(content: Content) -> some View {
+        content
+            .font(.system(.largeTitle, design: .rounded).weight(.bold))
+            .monospacedDigit()
+            .allowsTightening(true)
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
+    }
+}
+
+public struct CountdownMetricModifier: ViewModifier {
+    @ScaledMetric(relativeTo: .largeTitle) private var displaySize: CGFloat = 0
+
+    public init(baseSize: CGFloat) {
+        _displaySize = ScaledMetric(wrappedValue: baseSize, relativeTo: .largeTitle)
+    }
+
+    public func body(content: Content) -> some View {
+        content
+            .font(.system(size: displaySize, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .allowsTightening(true)
+            .minimumScaleFactor(0.55)
+            .lineLimit(1)
     }
 }
 
@@ -147,8 +189,7 @@ public struct MetricValue: View {
     public var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(value)
-                .font(.system(size: 42, weight: .bold, design: .rounded))
-                .monospacedDigit()
+                .modifier(SendmeterStyle.heroMetric)
                 .foregroundStyle(color)
             if let unit {
                 Text(unit)

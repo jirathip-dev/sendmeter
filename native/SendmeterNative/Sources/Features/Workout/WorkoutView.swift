@@ -355,8 +355,7 @@ private struct ActiveWorkoutCard: View {
 
                     if let engine {
                         Text(durationString(context.date.timeIntervalSince(engine.draft.startedAt)))
-                            .font(.system(size: 52, weight: .bold, design: .rounded))
-                            .monospacedDigit()
+                            .modifier(SendmeterStyle.countdownMetric(baseSize: 52))
                         HStack(spacing: 28) {
                             metric("Attempts", "\(engine.draft.attempts.count)")
                             metric("RPE", engine.draft.rpe.formatted(.number.precision(.fractionLength(0...1))))
@@ -570,8 +569,7 @@ private struct RoutineRunnerSheet: View {
                         Text(detail).foregroundStyle(.secondary)
                     }
                     Text("\(run.remainingSeconds(at: context.date))")
-                        .font(.system(size: 80, weight: .bold, design: .rounded))
-                        .monospacedDigit()
+                        .modifier(SendmeterStyle.countdownMetric(baseSize: 80))
                     ProgressView(
                         value: run.currentStage.durationSeconds == 0
                             ? 1.0

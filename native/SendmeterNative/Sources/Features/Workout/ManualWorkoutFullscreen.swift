@@ -135,10 +135,7 @@ struct ManualWorkoutFullscreen: View {
                 .foregroundStyle(snapshot.accent)
 
             Text(formatDuration(snapshot.phaseSeconds))
-                .font(.system(size: 82, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .minimumScaleFactor(0.55)
-                .lineLimit(1)
+                .modifier(SendmeterStyle.countdownMetric(baseSize: 82))
                 .foregroundStyle(.primary)
                 .accessibilityLabel("\(snapshot.phase.label) \(formatDuration(snapshot.phaseSeconds))")
 

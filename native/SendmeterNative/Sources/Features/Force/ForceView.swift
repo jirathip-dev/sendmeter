@@ -878,10 +878,7 @@ private struct GuidedForceProtocolView: View {
             .foregroundStyle(accent)
 
             Text(formatCountdown(remaining))
-                .font(.system(size: 68, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .minimumScaleFactor(0.55)
-                .lineLimit(1)
+                .modifier(SendmeterStyle.countdownMetric(baseSize: 68))
                 .accessibilityLabel("\(formatCountdown(remaining)) remaining")
 
             Text(handsFreeWaitingForPull ? "PULL TO START · \(presentation.detail)" : presentation.detail)
@@ -2421,9 +2418,16 @@ private struct ForceDeviceCard: View {
                             unit: "kg",
                             color: inTarget ? SendmeterStyle.optimal : .primary
                         )
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(
+                            "Current force \(device.currentKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
+                        )
                         Spacer()
                         VStack(alignment: .trailing, spacing: 5) {
                             Text("Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                                .accessibilityLabel(
+                                    "Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
+                                )
                             Text("Average \(device.averageKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
                             Text((device.elapsedMilliseconds / 1_000).formatted(.number.precision(.fractionLength(1))) + " s")
                         }
