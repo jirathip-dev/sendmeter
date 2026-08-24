@@ -33,6 +33,23 @@ final class WatchCompletionTests: XCTestCase {
         )
     }
 
+    private func generatedCompletions(
+        accountUserID: UUID?,
+        count: Int,
+        startingAt: Int
+    ) -> [WatchWorkoutCompletion] {
+        (0..<count).map { offset in
+            let number = startingAt + offset
+            let suffix = String(format: "%012x", number)
+            return completion(
+                sessionID: UUID(uuidString: "00000000-0000-0000-0000-\(suffix)"),
+                workoutID: UUID(uuidString: "10000000-0000-0000-0000-\(suffix)"),
+                accountUserID: accountUserID,
+                receivedAt: Date(timeIntervalSince1970: Double(number))
+            )
+        }
+    }
+
     private func authoritativeSession(
         id: UUID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
         accountUserID: UUID
@@ -95,6 +112,60 @@ final class WatchCompletionTests: XCTestCase {
         )
 
         XCTAssertEqual(relaunched.values.map(\.identity), [second.identity, third.identity])
+    }
+
+    func testRelaunchBoundsEachStampedOwnerIndependentlyAndPreservesInterleavedOrder() {
+        let a = generatedCompletions(accountUserID: accountA, count: 10, startingAt: 1)
+        let b = generatedCompletions(accountUserID: accountB, count: 10, startingAt: 101)
+        var persisted: [WatchWorkoutCompletion] = []
+        for index in 0..<10 {
+            persisted.append(a[index])
+            persisted.append(b[index])
+        }
+
+        let relaunched = WatchCompletionInbox(limit: 8, values: persisted)
+        let expected = (2..<10).flatMap { [a[$0], b[$0]] }
+
+        XCTAssertEqual(relaunched.values.map(\.identity), expected.map(\.identity))
+        XCTAssertEqual(relaunched.values(for: accountA).count, 8)
+        XCTAssertEqual(relaunched.values(for: accountB).count, 8)
+    }
+
+    func testRelaunchKeepsSmallerInterleavedOwnerSetsWhenCombinedCountExceedsLimit() {
+        let a = generatedCompletions(accountUserID: accountA, count: 5, startingAt: 201)
+        let b = generatedCompletions(accountUserID: accountB, count: 4, startingAt: 301)
+        var persisted: [WatchWorkoutCompletion] = []
+        for index in 0..<5 {
+            persisted.append(a[index])
+            if index < b.count {
+                persisted.append(b[index])
+            }
+        }
+
+        let relaunched = WatchCompletionInbox(limit: 8, values: persisted)
+
+        XCTAssertEqual(relaunched.values.map(\.identity), persisted.map(\.identity))
+        XCTAssertEqual(relaunched.values(for: accountA).count, 5)
+        XCTAssertEqual(relaunched.values(for: accountB).count, 4)
+    }
+
+    func testRelaunchBoundsLegacyQuarantineSeparatelyFromEachStampedOwner() {
+        let a = generatedCompletions(accountUserID: accountA, count: 8, startingAt: 401)
+        let b = generatedCompletions(accountUserID: accountB, count: 8, startingAt: 501)
+        let legacy = generatedCompletions(accountUserID: nil, count: 10, startingAt: 601)
+        var persisted: [WatchWorkoutCompletion] = []
+        for index in 0..<10 {
+            if index < a.count { persisted.append(a[index]) }
+            if index < b.count { persisted.append(b[index]) }
+            persisted.append(legacy[index])
+        }
+
+        let relaunched = WatchCompletionInbox(limit: 8, values: persisted)
+        let retainedLegacy = relaunched.values.filter { $0.accountUserID == nil }
+
+        XCTAssertEqual(relaunched.values(for: accountA).count, 8)
+        XCTAssertEqual(relaunched.values(for: accountB).count, 8)
+        XCTAssertEqual(retainedLegacy.map(\.identity), legacy.suffix(8).map(\.identity))
     }
 
     func testInboxExposesOnlyStampedCompletionsToTheirOwnerAndKeepsLegacyUnscoped() {

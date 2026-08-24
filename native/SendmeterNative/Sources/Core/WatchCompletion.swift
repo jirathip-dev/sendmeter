@@ -177,18 +177,15 @@ public struct WatchCompletionInbox: Equatable, Sendable {
     public private(set) var values: [WatchWorkoutCompletion]
 
     public init(limit: Int = 8, values: [WatchWorkoutCompletion] = []) {
-        let resolvedLimit = max(1, limit)
-        self.limit = resolvedLimit
-        var unique: [WatchWorkoutCompletion] = []
+        self.limit = max(1, limit)
+        self.values = []
         for completion in values {
-            guard !unique.contains(where: { $0.identity == completion.identity }) else {
-                continue
-            }
-            unique.append(completion)
+            // Replay through the same per-owner retention path used for live
+            // deliveries. A persisted inbox may contain `limit` entries for
+            // several owners; applying one global suffix here would silently
+            // drop parked completions for all but the last owner on relaunch.
+            _ = self.retain(completion)
         }
-        let scoped = unique.filter { $0.accountUserID != nil }
-        let legacy = unique.filter { $0.accountUserID == nil }
-        self.values = Array(scoped.suffix(resolvedLimit)) + Array(legacy.suffix(resolvedLimit))
     }
 
     /// Only an explicit wire owner can be presented to an account. Legacy
