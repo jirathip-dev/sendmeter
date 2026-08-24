@@ -2416,14 +2416,27 @@ private struct ForceDeviceCard: View {
 
                 if device.status == .measuring || device.handsFreeArmed || !device.visibleSampleRange.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
-                        MetricValue(
-                            device.currentKilograms.formatted(.number.precision(.fractionLength(1))),
-                            unit: "kg",
-                            color: inTarget ? SendmeterStyle.optimal : .primary
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Peak")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                Text(device.peakKilograms.formatted(.number.precision(.fractionLength(1))))
+                                    .modifier(SendmeterStyle.heroMetric)
+                                    .foregroundStyle(.primary)
+                                Text("kg")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(
+                            "Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
                         )
                         Spacer()
                         VStack(alignment: .trailing, spacing: 5) {
-                            Text("Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                            Text(device.currentKilograms.formatted(.number.precision(.fractionLength(1))) + " kg")
+                                .foregroundStyle(inTarget ? SendmeterStyle.optimal : .primary)
                             Text("Average \(device.averageKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
                             Text((device.elapsedMilliseconds / 1_000).formatted(.number.precision(.fractionLength(1))) + " s")
                         }

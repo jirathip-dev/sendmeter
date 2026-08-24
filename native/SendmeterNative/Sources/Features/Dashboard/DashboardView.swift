@@ -201,8 +201,7 @@ private struct TodayDecisionCard: View {
                                     )
                                     .rotationEffect(.degrees(-90))
                                 Text("\(score)")
-                                    .font(.system(size: 32, weight: .bold, design: .rounded))
-                                    .monospacedDigit()
+                                    .modifier(SendmeterStyle.heroMetric)
                             }
                             .frame(width: 92, height: 92)
                         } else {

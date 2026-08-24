@@ -5,6 +5,11 @@ public enum SendmeterStyle {
     public static let radius: CGFloat = 18
     public static let spacing: CGFloat = 16
 
+    /// Shared treatment for the app's glanceable metric values. The semantic
+    /// font keeps the number tied to Dynamic Type while the scaled leading
+    /// keeps one-line and multi-line metric values visually compact.
+    public static var heroMetric: HeroMetricModifier { HeroMetricModifier() }
+
     public static let capacity = Color(hex: "#2E96F0")
     public static let strength = Color(hex: "#DDB13A")
     public static let power = Color(hex: "#E5743A")
@@ -33,6 +38,21 @@ public enum SendmeterStyle {
         case .powerEndurance: return execution
         case .endurance: return optimal
         }
+    }
+}
+
+public struct HeroMetricModifier: ViewModifier {
+    @ScaledMetric(relativeTo: .largeTitle) private var tightLeading: CGFloat = -2
+
+    public init() {}
+
+    public func body(content: Content) -> some View {
+        content
+            .font(.system(.largeTitle, design: .rounded).weight(.bold))
+            .monospacedDigit()
+            .lineSpacing(tightLeading)
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
     }
 }
 
@@ -147,8 +167,7 @@ public struct MetricValue: View {
     public var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(value)
-                .font(.system(size: 42, weight: .bold, design: .rounded))
-                .monospacedDigit()
+                .modifier(SendmeterStyle.heroMetric)
                 .foregroundStyle(color)
             if let unit {
                 Text(unit)

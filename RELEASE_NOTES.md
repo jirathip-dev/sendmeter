@@ -53,6 +53,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native hero metrics now share the same rounded, tabular-number treatment across readiness, ACWR, Force peak, and manual-workout rest countdowns, with Dynamic Type support.
 - Native Force phase colors now settle with a short spring, and the BOULDER/DONE hero gives a subtle press pulse with a light haptic; Reduce Motion keeps the same actions and feedback without the animation.
 - Native pending manual workouts now retain their durable on-device queue entries across refresh and relaunch, show clearer upload status with a manual retry action, and preserve Trash behavior for already-uploaded sessions.
 - Native and Watch error messages now use plain language that says what went wrong and what to do next, instead of showing raw server, Bluetooth, or HealthKit errors.
