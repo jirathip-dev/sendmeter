@@ -173,11 +173,8 @@ describe("useAuth local auto-login", () => {
       error: null,
     });
 
-    await act(async () => {
-      root.render(createElement(Probe));
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      await Promise.resolve();
-    });
+    await import("../lib/devAuth");
+    await renderHook();
 
     expect(mocks.signInWithPassword).toHaveBeenCalledOnce();
     expect(latest?.loading).toBe(false);
