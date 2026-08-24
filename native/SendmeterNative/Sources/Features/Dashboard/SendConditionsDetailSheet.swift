@@ -11,7 +11,7 @@ import SwiftUI
 /// the same `SendConditionsScore` formulas as the summary card, so the two
 /// surfaces cannot disagree about a reading.
 struct SendConditionsDetailSheet: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     @ScaledMetric(relativeTo: .largeTitle) private var headlineSize: CGFloat = 40

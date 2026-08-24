@@ -2,7 +2,7 @@ import SendmeterCore
 import SwiftUI
 
 struct PhasesView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var proposedPhase: PhaseID?
     @State private var isChanging = false

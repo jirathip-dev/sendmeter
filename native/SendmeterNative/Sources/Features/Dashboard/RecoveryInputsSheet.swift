@@ -10,7 +10,7 @@ import SwiftUI
 /// same 14-day X window so a scrub/tap in one row highlights the same column
 /// in every row.
 struct RecoveryInputsSheet: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     @AppStorage(AppUnits.storageKey) private var unitsPreference = UnitsPreference.metric.rawValue

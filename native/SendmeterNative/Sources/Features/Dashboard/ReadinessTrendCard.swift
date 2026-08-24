@@ -25,7 +25,7 @@ import SwiftUI
 /// notification so an app left open across midnight doesn't keep plotting
 /// yesterday's window.
 struct ReadinessTrendCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var scheme
     @State private var selectedDate: Date?
     /// Measured tooltip size, updated as the tooltip renders, so the clamp

@@ -1,8 +1,9 @@
-# PERF-671 — BLE stream→UI publishing coalescing
+# PERF-671/#783 — BLE stream→UI publishing coalescing
 
 Issue: [#671](https://github.com/sendmeter/sendmeter/issues/671) — native perf:
-coalesce BLE stream→UI publishing. Scope: publish path only (AppModel split
-domain, #672, untouched).
+coalesce BLE stream→UI publishing. Follow-up: [#783](https://github.com/sendmeter/sendmeter/issues/783)
+removes the remaining live-window materialization and adopts Swift Observation
+for the native models.
 
 ## Problem (before)
 
@@ -36,15 +37,12 @@ The native BLE→UI path was *less* coalesced than the web version it replaces:
    pins the no-skip invariant.)
 2. **Window published as a range over stable storage** (`ForceEngine.swift`):
    `ForcePublishSnapshotBuilder` computes `ForceSessionAccumulator.visibleRange`
-   at flush time; the driver then does exactly **one `Array(accumulator.samples[
-   visibleRange])` copy at flush time** — display rate, never notification rate.
-   The accumulator buffer itself is only reallocated by appends. The old
-   `visibleWindow()` zero-copy `ArraySlice` still exists as the seam's
-   proof-of-storage-sharing, but the shipped publish path reads the range. This
-   is a copy, not "zero-copy": the chart needs a value array, and a raw
-   published slice would retain the accumulator buffer (paying a full-array
-   CoW on every later append). `#671` makes the copy *less frequent*, which is
-   the win.
+   at flush time. #671 first moved that work to display cadence; #783 completes
+   the path with a stable reference-backed `ForceSampleBuffer`. The live Canvas
+   indexes that buffer over the published range, so it does not build either a
+   full visible-window `Array` or an `ArraySlice` during a BLE notification or
+   display flush. The old `visibleWindow()` remains only as a compatibility
+   helper for non-live callers.
 3. **`Task { @MainActor }` hop dropped** in `didUpdateValueFor`: the delegate
    already runs on `.main`; the body now runs under `MainActor.assumeIsolated`
    (the class is `@MainActor`), eliminating a per-notification Task
@@ -54,7 +52,7 @@ The native BLE→UI path was *less* coalesced than the web version it replaces:
    sample to the arming loop pre-start; pre-start samples still never enter
    the accumulator. The armed-but-not-recording live reading is published from
    `lastSampleKilograms` at flush time — **and is the only field published
-   while armed** (a single `objectWillChange` pulse per flush, not two).
+   while armed** (a single model update per flush, not two).
 5. **Final flush on stop** (`stopFlushDriver`): every exit path
    (stop/disarm/disconnect/reset) publishes any pending frame before
    invalidating the timer, so the post-stop metric card's peak/elapsed match
@@ -89,9 +87,10 @@ to 41/s) fails the test rather than passing it. The stream rows above are the
 *arrival rates* the timer's fires get saturated by — publishes are independent
 of them.
 
-Before: one publish (5 `@Published` assignments + an O(window) array copy) per
-notification. After: one `objectWillChange` pulse per 16.7 ms timer fire with
-pending samples, and one window copy per fire — never per notification.
+Before #671: one publish (5 published assignments + an O(window) array copy)
+per notification. After #783: one Swift Observation update per 16.7 ms timer
+fire with pending samples, and the Canvas indexes the shared buffer directly —
+no window copy at notification or display rate.
 
 The DEBUG `publishesPerSecond` counter (`TindeqBluetooth`) is the in-app
 observability seam for this: it divides the same flushed-publish count by the
@@ -100,9 +99,29 @@ deterministic bench above produces. It is debug-only and zero outside DEBUG
 builds; no simulator capture is shipped with this doc because the native
 transport has no fake-gauge driver to drive it in this repo.
 
-The per-notification O(window) copy is gone from the hot path entirely. What
-remains is the single `Array(...)` at flush time — display rate, not
-notification rate.
+The per-notification O(window) copy was removed by #671; #783 removes the
+remaining display-rate window copy as well. The only full-array conversions are
+non-live summary/persistence paths.
+
+## #783 follow-up
+
+`TindeqBluetooth` and `AppModel` are now `@Observable` and injected with typed
+SwiftUI Observation environment values. The platform services that still need
+their iOS 16/macOS 13 floors remain Combine-based behind small revision
+bridges, while the hot force transport has no Combine publisher at all.
+
+The live transport appends parsed samples and sets `pendingPublish` on the
+MainActor callback. A single `.common` RunLoop timer at 1/60 s updates the
+observed scalar metrics and `visibleSampleRange`; `ForceTraceChart` reads the
+stable buffer by index. This preserves the UInt32 wrapping subtraction,
+out-of-order rejection, running peak/sum, and the existing 600,000 ms (10
+minute) safety cap.
+
+The native deployment floor is now iOS 17 because the Observation macro and
+typed environment APIs are iOS 17 APIs. `SendmeterCore` remains iOS 16
+compatible. A physical Progressor capture and 30-minute jank/allocation
+measurement were not run in this worktree; device performance remains an
+explicit follow-up gate.
 
 ## Acceptance criteria
 
@@ -110,21 +129,21 @@ notification rate.
   the timer's fire cadence is the one and only throttle; every pending fire
   publishes; the bench drives the shipped cadence and asserts it is ~60/s
   (58–61 fires over a simulated second), so a wrong cadence fails.
-- ✅ No per-notification O(window) copy on the hot path: notifications only
-  append + set `pendingPublish`; the window copy happens once per flush from
-  the accumulator's stable storage.
-- ✅ `swift test` stays green (282 tests, 0 failures); hands-free arming
+- ✅ No per-notification or per-flush O(window) copy on the live path:
+  notifications only append + set `pendingPublish`; the chart indexes the
+  accumulator's stable storage from the flushed range.
+- ✅ `swift test` stays green (919 tests, 0 failures); hands-free arming
   unaffected (pre-start samples still consumed only by `onWeightSample`); new
   tests cover the scheduler cadence/no-skip, the snapshot branch fields (F8),
   and the window-range slice.
 - ✅ Evidence above (deterministic bench at the shipped ~60 Hz cadence, at the
   fake-gauge stream rate; the DEBUG in-app counter reads the same number).
 
-## Gates run
+## Original #671 gates
 
 ```
 cd native/SendmeterNative
-swift test                       # 282 tests, 0 failures
+swift test                       # 282 tests, 0 failures at #671
 xcodegen generate                # OK
 xcodebuild -project SendmeterNative.xcodeproj \
   -scheme SendmeterNative \

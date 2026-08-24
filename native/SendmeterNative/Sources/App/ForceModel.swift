@@ -4,8 +4,8 @@ import SendmeterCore
 
 /// #672: the Force tab's hot, feature-scoped observable state.
 ///
-/// `AppModel` was a single app-wide `ObservableObject` with ~26 `@Published`
-/// properties, so a force-stream publish (progress revision, tag curves,
+/// Before #783, `AppModel` was a single app-wide published model with ~26
+/// properties, so a force-stream update (progress revision, tag curves,
 /// guided-protocol flag, recordings-loaded flag) invalidated every observing
 /// body. This model hoists the force-EXCLUSIVE hot state into its own
 /// invalidation domain. Shared collections (`recordings`, `presets`,

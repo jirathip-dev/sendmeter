@@ -12,7 +12,7 @@ import SwiftUI
 /// the 28-day mix and the heatmap so the two windows advance together across
 /// midnight (`.NSCalendarDayChanged`).
 struct TrainingLoadSheet: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
 

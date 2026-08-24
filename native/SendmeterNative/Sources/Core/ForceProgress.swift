@@ -199,7 +199,7 @@ public struct ForceProgressRecordingIdentity: Equatable, Sendable {
 }
 
 /// Model-owned mutation contract for the Force progress curve task. The
-/// AppModel mirrors `value` into its `@Published` revision; keeping the
+/// AppModel mirrors `value` into its observed revision; keeping the
 /// counters here makes every invalidate boundary testable without compiling
 /// the UIKit/SwiftUI target.
 public enum ForceProgressInputMutation: Equatable, Sendable {

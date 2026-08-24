@@ -8,7 +8,10 @@ React/Capacitor client while keeping the currently shipped target unchanged.
 
 The native rewrite is intentionally additive. `native/SendmeterNative` can be
 built, tested, and exercised on TestFlight without replacing or destabilizing
-the production Capacitor target. Promotion should happen only after the native
+the production Capacitor target. The native rewrite currently requires iOS 17
+because its per-property Swift Observation model uses `@Observable`; the
+reusable `SendmeterCore` package remains iOS 16-compatible. Promotion should
+happen only after the native
 target passes the physical iPhone/Apple Watch soak and latency gates described
 in `docs/native-swift-rewrite.md`.
 
@@ -49,7 +52,7 @@ SwiftUI application
 └── Sources/App        App lifecycle, orchestration, design system, and optimistic reconciliation
 ```
 
-`AppModel` hydrates its published lists from the account-scoped cache before
+`AppModel` hydrates its observable lists from the account-scoped cache before
 any remote fetch, so a cold start renders the last-known sessions, recordings,
 workouts, presets, routines, phase periods, health rows, settings, and tag
 metadata immediately. Successful full and realtime-slice refreshes reconcile
@@ -69,6 +72,12 @@ User-initiated creates/edits/deletes are written optimistically and confirmed
 only when the matching server revision still wins; a cache open/read failure
 degrades to the existing network-only path and is reported in the auth
 diagnostics ring.
+
+`TindeqBluetooth` keeps a stable `ForceSampleBuffer` while a display-rate
+flush observes only the visible index range. The live Canvas chart reads that
+range directly from the buffer, so BLE notifications append samples without
+allocating a new visible-window array. The force accumulator still owns the
+monotonic clock handling, running peak/sum, and bounded recording history.
 
 `Sources/Shared` + `Sources/Widgets` compile into a second product target —
 `SendmeterNativeWidgets`, a WidgetKit app-extension embedded in the app

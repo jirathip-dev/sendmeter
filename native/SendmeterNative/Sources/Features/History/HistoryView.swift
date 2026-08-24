@@ -2,7 +2,7 @@ import SendmeterCore
 import SwiftUI
 
 struct HistoryView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @State private var mode: HistoryMode = .all
     @State private var query = ""
     @State private var editingSession: SendmeterCore.Session?
@@ -793,7 +793,7 @@ private struct HistoryFilterChip: View {
 }
 
 private struct SessionEditorSheet: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var draft: SendmeterCore.Session
     @State private var isSaving = false
@@ -872,7 +872,7 @@ private struct SessionEditorSheet: View {
 /// Shared with `SessionDetailView`'s per-recording rows, so it stays
 /// internal (not `private`).
 struct ForceRecordingDetailView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @State private var recording: TindeqRecording
     @State private var samples: [TindeqSample] = []
     @State private var loadingSamples = false
@@ -1106,7 +1106,7 @@ struct ForceRecordingDetailView: View {
 }
 
 private struct LinkRecordingSheet: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let recordings: [TindeqRecording]
 
@@ -1145,7 +1145,7 @@ private struct LinkRecordingSheet: View {
 /// #630: the multi-select assign sheet — move ticked recordings into an
 /// existing Tindeq session, mirroring the web's Assign sheet.
 private struct SelectionAssignSheet: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let recordings: [TindeqRecording]
 
@@ -1182,7 +1182,7 @@ private struct SelectionAssignSheet: View {
 }
 
 private struct TrashView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var mode: TrashMode = .sessions
     @State private var sessionToPurge: SendmeterCore.Session?

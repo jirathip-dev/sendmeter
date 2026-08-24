@@ -2,7 +2,7 @@ import SendmeterCore
 import SwiftUI
 
 struct WorkoutView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @State private var engine: PhoneWorkoutEngine?
     @State private var showRoutineEditor = false
     @State private var runningRoutine: RoutineRunPresentation?
@@ -67,7 +67,7 @@ struct WorkoutView: View {
                     onMinimize: { showManualWorkout = false },
                     onEnd: finishWorkout
                 )
-                .environmentObject(model)
+                .environment(model)
                 .onAppear { Haptics.shared.sheetPresented() }
             }
             .onReceive(
@@ -335,7 +335,7 @@ private struct StartWorkoutCard: View {
 }
 
 private struct ActiveWorkoutCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Binding var engine: PhoneWorkoutEngine?
     let isSaving: Bool
     let finish: () -> Void
@@ -439,7 +439,7 @@ private struct ActiveWorkoutCard: View {
 }
 
 private struct WatchWorkoutMirrorCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     let workout: LiveWorkout
 
     var body: some View {
@@ -481,7 +481,7 @@ private struct WatchWorkoutMirrorCard: View {
 }
 
 private struct RoutineLibraryCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     let run: (RoutinePreset) -> Void
     let edit: () -> Void
 
@@ -524,7 +524,7 @@ private struct RoutineLibraryCard: View {
 }
 
 private struct RoutineRunnerSheet: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let routine: RoutinePreset
     private let restored: PersistedRoutineRun?
@@ -706,7 +706,7 @@ private struct RoutineRunnerSheet: View {
 }
 
 private struct RoutineEditorSheet: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var name = "Warm-up"
     @State private var steps: [RoutineStep] = [

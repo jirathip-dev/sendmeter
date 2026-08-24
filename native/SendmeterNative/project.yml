@@ -2,7 +2,10 @@ name: SendmeterNative
 options:
   minimumXcodeGenVersion: 2.40.0
   deploymentTarget:
-    iOS: "16.2"
+    # Swift Observation (used by AppModel and TindeqBluetooth) is iOS 17+.
+    # The parallel native rewrite therefore has a newer floor than the
+    # existing Capacitor app; SendmeterCore remains iOS 16-compatible.
+    iOS: "17.0"
   createIntermediateGroups: true
   groupSortPosition: top
 configs:
@@ -42,7 +45,7 @@ targets:
   SendmeterNative:
     type: application
     platform: iOS
-    deploymentTarget: "16.2"
+    deploymentTarget: "17.0"
     sources:
       - path: Sources/App
         # #649: ChartTheme.swift is compiled into the SendmeterCore SwiftPM
@@ -101,7 +104,7 @@ targets:
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: SendmeterNative.entitlements
         SWIFT_VERSION: 5.0
-        IPHONEOS_DEPLOYMENT_TARGET: 16.2
+        IPHONEOS_DEPLOYMENT_TARGET: 17.0
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
@@ -123,13 +126,13 @@ targets:
   # UI. XcodeGen auto-embeds an app-extension into the app that depends on it
   # (an "Embed Foundation Extensions" copy-files phase into PlugIns), so
   # listing it in the app's dependencies is all the wiring the bundle needs.
-  # The target is min iOS 16.2 to match the app; interactive Button(intent:)
-  # bits are iOS 17+ and would need availability gating here (the guided
-  # protocol has none — no lock-screen actions).
+  # The native app is iOS 17+ because AppModel/TindeqBluetooth use Swift
+  # Observation. The widget follows that floor so the generated project does
+  # not contain an app/extension deployment mismatch.
   SendmeterNativeWidgets:
     type: app-extension
     platform: iOS
-    deploymentTarget: "16.2"
+    deploymentTarget: "17.0"
     sources:
       - path: Sources/Widgets
       - path: Sources/Shared
@@ -159,7 +162,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Sendmeter
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
         SWIFT_VERSION: 5.0
-        IPHONEOS_DEPLOYMENT_TARGET: 16.2
+        IPHONEOS_DEPLOYMENT_TARGET: 17.0
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic

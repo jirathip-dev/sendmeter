@@ -1,9 +1,11 @@
 import CoreBluetooth
 import Foundation
+import Observation
 import SendmeterCore
 
 @MainActor
-public final class TindeqBluetooth: NSObject, ObservableObject {
+@Observable
+public final class TindeqBluetooth: NSObject {
     public enum Status: Equatable {
         case unavailable
         case idle
@@ -14,28 +16,49 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         case interrupted(String)
     }
 
-    @Published public private(set) var status: Status = .idle
-    @Published public private(set) var currentKilograms: Double = 0
-    @Published public private(set) var peakKilograms: Double = 0
-    @Published public private(set) var averageKilograms: Double = 0
-    @Published public private(set) var elapsedMilliseconds: Double = 0
-    @Published public private(set) var lowBattery = false
-    @Published public private(set) var visibleSamples: [TindeqSample] = []
-    @Published public private(set) var completedSummary: ForceSummary?
+    public private(set) var status: Status = .idle {
+        didSet { onStatusChange?(status) }
+    }
+    public private(set) var currentKilograms: Double = 0
+    public private(set) var peakKilograms: Double = 0
+    public private(set) var averageKilograms: Double = 0
+    public private(set) var elapsedMilliseconds: Double = 0
+    public private(set) var lowBattery = false
+    /// The live chart reads `sampleBuffer` over this display-coalesced range.
+    /// The range is observed; the buffer is deliberately not, because the BLE
+    /// path mutates it at notification rate and only publishes this range at
+    /// the display cadence.
+    public private(set) var visibleSampleRange: Range<Int> = 0..<0
+    public private(set) var completedSummary: ForceSummary?
     /// True while the hands-free arming loop owns the weight stream (the
     /// Progressor only publishes force after the start command, so arming
     /// keeps the stream live BEFORE the recording begins). The pre-start
     /// samples drive the hands-free trigger and must never be saved.
-    @Published public private(set) var handsFreeArmed = false
+    public private(set) var handsFreeArmed = false {
+        didSet { onHandsFreeArmedChange?(handsFreeArmed) }
+    }
     /// Publishes/sec of the force surface, bounded to display rate by the
     /// flush driver (#671). Debug-only; zero outside DEBUG builds.
     #if DEBUG
-    @Published public private(set) var publishesPerSecond: Double = 0
+    public private(set) var publishesPerSecond: Double = 0
     #endif
+
+    /// Stable reference-backed storage shared with the accumulator and the
+    /// live chart. It is intentionally not an Observation property: only
+    /// `visibleSampleRange` is published by the display-rate flush driver.
+    @ObservationIgnored public let sampleBuffer: ForceSampleBuffer
 
     /// Every parsed weight sample, recording or not — the hands-free arming
     /// loop's feed. Set once by AppModel; never mutated by callers.
+    @ObservationIgnored
     public var onWeightSample: ((TindeqWireSample) -> Void)?
+    /// Status transitions used by AppModel for transport haptics and salvage.
+    /// Observation replaces the old `$status` publisher; this callback keeps
+    /// that side-effect path synchronous and MainActor-isolated.
+    @ObservationIgnored
+    public var onStatusChange: ((Status) -> Void)?
+    @ObservationIgnored
+    public var onHandsFreeArmedChange: ((Bool) -> Void)?
 
     public var interruptedRecording: ForceSummary? { interruptedSummary }
     /// #678: whether the interrupted rep was a hands-free pull (started via
@@ -47,11 +70,14 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     public private(set) var interruptedWasHandsFree = false
     public var hasUnsavedRecording: Bool { completedSummary != nil || interruptedSummary != nil }
 
-    private lazy var central = CBCentralManager(delegate: self, queue: .main)
+    /// CoreBluetooth's lazy delegate handle is infrastructure, not UI state;
+    /// Observation cannot transform a lazy stored property into a tracked
+    /// computed property.
+    @ObservationIgnored private lazy var central = CBCentralManager(delegate: self, queue: .main)
     private var peripheral: CBPeripheral?
     private var notifyCharacteristic: CBCharacteristic?
     private var controlCharacteristic: CBCharacteristic?
-    private var accumulator = ForceSessionAccumulator()
+    private var accumulator: ForceSessionAccumulator
     private var isRecording = false
     private var connectRequested = false
     private var interruptedSummary: ForceSummary?
@@ -65,7 +91,15 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     /// assigns the published values — the window included — at most once per
     /// display frame. The timer IS the throttle (one cadence source; a fire
     /// always publishes); the accumulator is the source of truth.
-    private var flushTimer: Timer?
+    /// The timer is installed and normally touched only by MainActor methods.
+    /// `deinit` is deliberately nonisolated: destruction can happen on the
+    /// executor that releases the last owner, but it must still invalidate the
+    /// RunLoop.main-owned timer so that a released transport cannot leave a
+    /// 60 Hz callback behind. `nonisolated(unsafe)` is scoped to this
+    /// infrastructure slot; the callback below re-enters MainActor before it
+    /// touches any UI or stream state.
+    @ObservationIgnored
+    private nonisolated(unsafe) var flushTimer: Timer?
     /// True when a notification has appended samples since the last flush.
     /// Consumed by the next timer fire — the final flush on stop uses it too.
     private var pendingPublish = false
@@ -79,6 +113,9 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     #endif
 
     public override init() {
+        let sampleBuffer = ForceSampleBuffer()
+        self.sampleBuffer = sampleBuffer
+        self.accumulator = ForceSessionAccumulator(sampleBuffer: sampleBuffer)
         super.init()
         _ = central
     }
@@ -127,7 +164,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         peakKilograms = 0
         averageKilograms = 0
         elapsedMilliseconds = 0
-        visibleSamples = []
+        visibleSampleRange = 0..<0
         isRecording = true
         wasHandsFreeRecording = false
         status = .measuring
@@ -179,7 +216,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         peakKilograms = 0
         averageKilograms = 0
         elapsedMilliseconds = 0
-        visibleSamples = []
+        visibleSampleRange = 0..<0
         handsFreeArmed = true
         startFlushDriver()
         peripheral.writeValue(
@@ -280,7 +317,13 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         guard flushTimer == nil else { return }
         let timer = Timer(timeInterval: flushScheduler.displayIntervalSeconds, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.flushIfDue()
+            // RunLoop.main is the executor contract for this timer. Keep the
+            // 60 Hz path synchronous (no Task allocation per frame), but make
+            // the actor boundary explicit and fail loudly if that contract is
+            // ever broken by a future scheduler change.
+            MainActor.assumeIsolated {
+                self.flushIfDue()
+            }
         }
         // Add to `.common` so the live gauge keeps flushing during scroll
         // tracking (the default `.default` mode suspends timers mid-scroll).
@@ -350,7 +393,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
             elapsedMilliseconds = snapshot.elapsedMilliseconds
         }
         if snapshot.fields.contains(.window) {
-            visibleSamples = Array(accumulator.samples[snapshot.visibleRange])
+            visibleSampleRange = snapshot.visibleRange
         }
     }
 

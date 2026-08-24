@@ -64,6 +64,32 @@ final class HandsFreeForceControllerTests: XCTestCase {
         XCTAssertFalse(controller.isArmed)
     }
 
+    func testStateChangeHookTracksVisibleFlagsNotForceSampleChurn() {
+        let controller = HandsFreeForceController(config: config)
+        var changes = 0
+        controller.onStateChange = { changes += 1 }
+
+        controller.arm()
+        XCTAssertEqual(changes, 1)
+
+        // The machine refines its associated timestamps and flat-watch on
+        // every feed, but those details are not read by the Force surface.
+        // The Observation bridge must not turn that 80 Hz work into model
+        // invalidations while the armed/measuring flags stay unchanged.
+        for step in 0..<20 {
+            controller.feed(atMs: Double(step) * 100, kg: 12)
+        }
+        XCTAssertEqual(changes, 2) // armed → recording
+
+        for step in 20..<40 {
+            controller.feed(atMs: Double(step) * 100, kg: 12)
+        }
+        XCTAssertEqual(changes, 2)
+
+        controller.stopManually()
+        XCTAssertEqual(changes, 3) // recording → stopping
+    }
+
     func testReleaseTriggersExactlyOneStopAndSaveThenRearmsArmed() {
         let controller = HandsFreeForceController(config: config)
         let hooks = Hooks()

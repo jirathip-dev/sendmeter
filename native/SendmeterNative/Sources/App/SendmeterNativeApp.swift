@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 struct SendmeterNativeApp: App {
-    @StateObject private var model: AppModel
+    @State private var model: AppModel
     // #631: the theme choice is read in init — before the first frame —
     // so a saved appearance never flashes the default scheme.
     @StateObject private var theme = AppThemeController()
@@ -11,7 +11,7 @@ struct SendmeterNativeApp: App {
 
     init() {
         let model = AppModel()
-        _model = StateObject(wrappedValue: model)
+        _model = State(wrappedValue: model)
         // #747 slice 4: register before the app finishes launching. The
         // handler owns the BGTask lifecycle and invokes the testable engine
         // body through the same `AppModel`.
@@ -22,7 +22,7 @@ struct SendmeterNativeApp: App {
         WindowGroup {
             RootView()
                 .buttonStyle(StructuralDefaultButtonStyle())
-                .environmentObject(model)
+                .environment(model)
                 .environmentObject(model.forceModel)
                 .environmentObject(theme)
                 .onOpenURL { url in
@@ -48,7 +48,7 @@ struct SendmeterNativeApp: App {
 }
 
 struct RootView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @EnvironmentObject private var theme: AppThemeController
     @Environment(\.colorScheme) private var systemScheme
 
@@ -105,9 +105,10 @@ struct RootView: View {
 }
 
 struct MainTabView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
         TabView(selection: $model.selectedTab) {
             DashboardView()
                 .tabItem { Label("Dashboard", systemImage: "gauge.with.dots.needle.67percent") }

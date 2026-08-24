@@ -96,6 +96,67 @@ public struct ForceSummary: Codable, Equatable, Sendable {
     }
 }
 
+/// Reference-backed storage for a live force trace.
+///
+/// The BLE accumulator and the SwiftUI chart share this object. The producer
+/// appends in place while the chart reads individual samples through a range;
+/// no `Array` or `ArraySlice` is retained across the next append, so a live
+/// pull never triggers copy-on-write of the accumulated trace. The native app
+/// owns this buffer on `MainActor`; `@unchecked Sendable` keeps the enclosing
+/// value types usable at their existing concurrency boundaries without
+/// pretending that the mutable buffer is independently thread-safe.
+public final class ForceSampleBuffer: Codable, Equatable, @unchecked Sendable {
+    private var storage: [TindeqSample]
+
+    public init() {
+        storage = []
+    }
+
+    public var count: Int { storage.count }
+    public var isEmpty: Bool { storage.isEmpty }
+    public var last: TindeqSample? { storage.last }
+
+    public subscript(index: Int) -> TindeqSample {
+        storage[index]
+    }
+
+    /// A full-array view for non-live consumers such as final-summary
+    /// serialization and tests. The live chart must use `subscript` with a
+    /// range instead; retaining this value while appending would intentionally
+    /// reintroduce copy-on-write.
+    public var array: [TindeqSample] { storage }
+
+    public func append(_ sample: TindeqSample) {
+        storage.append(sample)
+    }
+
+    public func removeAll(keepingCapacity: Bool = true) {
+        storage.removeAll(keepingCapacity: keepingCapacity)
+    }
+
+    /// The half-open range of the most recent `milliseconds` of samples. The
+    /// buffer is monotonic, so binary search keeps each display flush O(log n).
+    public func visibleRange(milliseconds: Double = 10_000) -> Range<Int> {
+        guard let last else { return 0..<0 }
+        let threshold = max(0, last.milliseconds - milliseconds)
+        var low = 0
+        var high = storage.count
+        while low < high {
+            let midpoint = (low + high) / 2
+            if storage[midpoint].milliseconds < threshold {
+                low = midpoint + 1
+            } else {
+                high = midpoint
+            }
+        }
+        return low..<storage.count
+    }
+
+    public static func == (lhs: ForceSampleBuffer, rhs: ForceSampleBuffer) -> Bool {
+        lhs.storage == rhs.storage
+    }
+}
+
 public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
     /// Cut 30 min -> 10 min (#682): always-armed hands-free makes a sustained
     /// non-human load accidentally reachable, so a tighter safety ceiling is
@@ -106,20 +167,27 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
     private var startMicroseconds: UInt32?
     private var runningSumKilograms: Double
     private var runningPeakKilograms: Double
-    public private(set) var samples: [TindeqSample]
+    /// Shared with the live chart by `TindeqBluetooth`. Keeping this storage
+    /// behind a reference preserves the accumulator's cheap append path while
+    /// allowing the chart to consume an index range without copying it.
+    public let sampleBuffer: ForceSampleBuffer
 
-    public init() {
+    /// Compatibility view for summaries, persistence, and existing pure-core
+    /// call sites. The live stream never reads this property for rendering.
+    public var samples: [TindeqSample] { sampleBuffer.array }
+
+    public init(sampleBuffer: ForceSampleBuffer = ForceSampleBuffer()) {
         self.startMicroseconds = nil
         self.runningSumKilograms = 0
         self.runningPeakKilograms = 0
-        self.samples = []
+        self.sampleBuffer = sampleBuffer
     }
 
     public mutating func reset() {
         startMicroseconds = nil
         runningSumKilograms = 0
         runningPeakKilograms = 0
-        samples.removeAll(keepingCapacity: true)
+        sampleBuffer.removeAll(keepingCapacity: true)
     }
 
     @discardableResult
@@ -135,13 +203,13 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
             let elapsedMicroseconds = sample.microseconds &- startMicroseconds
             let elapsedMilliseconds = Double(elapsedMicroseconds) / 1_000.0
             guard elapsedMilliseconds <= Double(Self.maximumRecordingMilliseconds) else { continue }
-            if let last = samples.last, elapsedMilliseconds < last.milliseconds {
+            if let last = sampleBuffer.last, elapsedMilliseconds < last.milliseconds {
                 // Ignore out-of-order frames rather than making the persisted
                 // trace non-monotonic and breaking duration/graph logic.
                 continue
             }
             let kilograms = max(0, sample.kilograms)
-            samples.append(
+            sampleBuffer.append(
                 TindeqSample(
                     milliseconds: elapsedMilliseconds,
                     kilograms: kilograms
@@ -154,47 +222,33 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
         return accepted
     }
 
-    public var currentKilograms: Double { samples.last?.kilograms ?? 0 }
+    public var currentKilograms: Double { sampleBuffer.last?.kilograms ?? 0 }
     public var peakKilograms: Double { runningPeakKilograms }
     public var averageKilograms: Double {
-        guard !samples.isEmpty else { return 0 }
-        return runningSumKilograms / Double(samples.count)
+        guard !sampleBuffer.isEmpty else { return 0 }
+        return runningSumKilograms / Double(sampleBuffer.count)
     }
-    public var elapsedMilliseconds: Double { samples.last?.milliseconds ?? 0 }
+    public var elapsedMilliseconds: Double { sampleBuffer.last?.milliseconds ?? 0 }
 
     /// The half-open index range of the most recent `milliseconds` of samples,
-    /// bounded by the accumulated buffer's end (#671). The chart reads this
-    /// range over the accumulator's stable `samples` storage instead of
-    /// copying a window array per BLE notification.
+    /// bounded by the accumulated buffer's end (#671). The live chart reads
+    /// this range over `sampleBuffer` instead of copying a window array per
+    /// BLE notification.
     public func visibleRange(milliseconds: Double = 10_000) -> Range<Int> {
-        guard !samples.isEmpty else { return 0..<0 }
-        let last = samples[samples.endIndex - 1]
-        let threshold = max(0, last.milliseconds - milliseconds)
-        var low = 0
-        var high = samples.count
-        while low < high {
-            let midpoint = (low + high) / 2
-            if samples[midpoint].milliseconds < threshold {
-                low = midpoint + 1
-            } else {
-                high = midpoint
-            }
-        }
-        return low..<samples.count
+        sampleBuffer.visibleRange(milliseconds: milliseconds)
     }
 
-    /// The live window as a slice over the accumulator's stable `samples`
-    /// storage — an O(log n) binary search plus an O(1) `ArraySlice` with no
-    /// element copy (#671). This previously returned a fresh `Array` (~800
-    /// elements at a 10 s window) on every BLE notification, churning
-    /// allocations at stream rate.
+    /// A compatibility convenience for non-live callers. The live chart must
+    /// use `sampleBuffer` plus `visibleRange`; this legacy slice asks for the
+    /// full-array compatibility view and can therefore trigger copy-on-write
+    /// if the returned slice is retained while the stream appends.
     public func visibleWindow(milliseconds: Double = 10_000) -> ArraySlice<TindeqSample> {
-        samples[visibleRange(milliseconds: milliseconds)]
+        sampleBuffer.array[visibleRange(milliseconds: milliseconds)]
     }
 
     public func summary() -> ForceSummary? {
-        guard !samples.isEmpty else { return nil }
-        let rounded = samples.map {
+        guard !sampleBuffer.isEmpty else { return nil }
+        let rounded = sampleBuffer.array.map {
             TindeqSample(
                 milliseconds: $0.milliseconds.rounded(),
                 kilograms: ($0.kilograms * 100).rounded() / 100
@@ -214,7 +268,7 @@ public struct ForceSessionAccumulator: Codable, Equatable, Sendable {
 
 /// The flush driver's cadence — the single throttle on force-surface
 /// publishes. BLE notifications can arrive faster than the display can
-/// redraw; without this the hot path assigned all of the published values
+/// redraw; without this the hot path assigned all of the observed values
 /// (including the chart window) once per notification, and a fresh window
 /// array at stream rate. This mirrors the web app's rAF throttle
 /// (`src/hooks/useTindeq.ts:257-268`), which native previously lacked.
@@ -253,10 +307,10 @@ public struct ForcePublishScheduler {
 /// by the transport's flush driver. Pure and testable in `swift test` even
 /// though the timer that drives it lives on the transport.
 public struct ForcePublishSnapshot: Equatable, Sendable {
-    /// Which published properties this flush refreshes. Recording refreshes
+    /// Which observed properties this flush refreshes. Recording refreshes
     /// all five; an armed-but-not-recording stream refreshes only the live
-    /// reading — a single `objectWillChange` pulse per flush (F8); an idle
-    /// stream refreshes nothing.
+    /// reading — a single Observation update per flush (F8); an idle stream
+    /// refreshes nothing.
     public struct Fields: OptionSet, Equatable, Sendable {
         public let rawValue: Int
         public init(rawValue: Int) { self.rawValue = rawValue }
@@ -278,10 +332,9 @@ public struct ForcePublishSnapshot: Equatable, Sendable {
     public let peakKilograms: Double
     public let averageKilograms: Double
     public let elapsedMilliseconds: Double
-    /// The half-open index range of the accumulator's samples the chart window
-    /// should show. The driver slices `accumulator.samples[visibleRange]` at
-    /// flush time — the only remaining window copy, at display rate rather
-    /// than notification rate.
+    /// The half-open index range of the accumulator's `sampleBuffer` the chart
+    /// window should show. The live Canvas indexes that stable buffer directly
+    /// and never materializes a visible-window array.
     public let visibleRange: Range<Int>
 
     public init(
@@ -310,7 +363,7 @@ public struct ForcePublishSnapshot: Equatable, Sendable {
     )
 }
 
-/// Builds the published snapshot from the stream's branch state. Recording
+/// Builds the observed snapshot from the stream's branch state. Recording
 /// publishes the full force surface + window; an armed-but-not-recording
 /// stream publishes only the live reading; an idle stream publishes nothing.
 public enum ForcePublishSnapshotBuilder {

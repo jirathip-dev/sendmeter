@@ -1004,7 +1004,8 @@ private struct GuidedForceProtocolView: View {
                 }
 
                 ForceTraceChart(
-                    samples: session.model.tindeq.visibleSamples,
+                    buffer: session.model.tindeq.sampleBuffer,
+                    range: session.model.tindeq.visibleSampleRange,
                     targetRange: currentTargetBand?.range,
                     target: currentTargetBand?.kilograms
                 )
@@ -1138,7 +1139,7 @@ private struct GuidedForceProtocolView: View {
 }
 
 struct ForceView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @EnvironmentObject private var forceModel: ForceModel
     @AppStorage("sendmeter.native.force.tag") private var tag = ""
     @AppStorage("sendmeter.native.force.side") private var sideValue = ""
@@ -2082,10 +2083,10 @@ private struct GuidedForceResumeCard: View {
 }
 
 private struct ForceDeviceCard: View {
-    @ObservedObject var device: TindeqBluetooth
+    let device: TindeqBluetooth
     @Binding var handsFreeEnabled: Bool
     /// #628: the hands-free loop's state, mirrored from AppModel (the loop
-    /// re-renders through the device's published sample/status changes).
+    /// re-renders through the device's observed sample/status changes).
     let handsFreeArmed: Bool
     let handsFreeMeasuring: Bool
     let guidedSessionActive: Bool
@@ -2121,7 +2122,7 @@ private struct ForceDeviceCard: View {
                     StatusPill(statusPill.text, color: statusPill.color)
                 }
 
-                if device.status == .measuring || device.handsFreeArmed || !device.visibleSamples.isEmpty {
+                if device.status == .measuring || device.handsFreeArmed || !device.visibleSampleRange.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
                         MetricValue(
                             device.currentKilograms.formatted(.number.precision(.fractionLength(1))),
@@ -2138,7 +2139,8 @@ private struct ForceDeviceCard: View {
                         .foregroundStyle(.secondary)
                     }
                     ForceTraceChart(
-                        samples: device.visibleSamples,
+                        buffer: device.sampleBuffer,
+                        range: device.visibleSampleRange,
                         targetRange: targetRange,
                         target: targetBand?.kilograms
                     )
@@ -2979,17 +2981,67 @@ private struct FlowLayout: Layout {
 }
 
 struct ForceTraceChart: View {
-    let samples: [TindeqSample]
+    private enum SampleSource {
+        case array([TindeqSample])
+        case buffer(ForceSampleBuffer, Range<Int>)
+    }
+
+    private let source: SampleSource
     let targetRange: ClosedRange<Double>?
     let target: Double?
     @Environment(\.colorScheme) private var scheme
 
+    init(
+        samples: [TindeqSample],
+        targetRange: ClosedRange<Double>?,
+        target: Double?
+    ) {
+        self.source = .array(samples)
+        self.targetRange = targetRange
+        self.target = target
+    }
+
+    init(
+        buffer: ForceSampleBuffer,
+        range: Range<Int>,
+        targetRange: ClosedRange<Double>?,
+        target: Double?
+    ) {
+        self.source = .buffer(buffer, range)
+        self.targetRange = targetRange
+        self.target = target
+    }
+
+    private var sampleRange: Range<Int> {
+        switch source {
+        case let .array(samples):
+            return 0..<samples.count
+        case let .buffer(buffer, range):
+            let lower = max(0, min(range.lowerBound, buffer.count))
+            let upper = max(lower, min(range.upperBound, buffer.count))
+            return lower..<upper
+        }
+    }
+
+    private func sample(at index: Int) -> TindeqSample {
+        switch source {
+        case let .array(samples): return samples[index]
+        case let .buffer(buffer, _): return buffer[index]
+        }
+    }
+
     var body: some View {
         Canvas { context, size in
-            let maxSample = samples.map(\.kilograms).max() ?? 0
+            let sampleRange = self.sampleRange
+            var maxSample = 0.0
+            for index in sampleRange {
+                maxSample = max(maxSample, self.sample(at: index).kilograms)
+            }
             let maxValue = max(10, max(maxSample, targetRange?.upperBound ?? 0)) * 1.15
-            let firstTime = samples.first?.milliseconds ?? 0
-            let lastTime = max(firstTime + 1, samples.last?.milliseconds ?? firstTime + 1)
+            let firstSample = sampleRange.first.map(self.sample(at:))
+            let lastSample = sampleRange.last.map(self.sample(at:))
+            let firstTime = firstSample?.milliseconds ?? 0
+            let lastTime = max(firstTime + 1, lastSample?.milliseconds ?? firstTime + 1)
             let gridColor = ChartToken.grid.color(scheme)
             let optimalColor = ChartToken.optimal.color(scheme)
 
@@ -3027,11 +3079,14 @@ struct ForceTraceChart: View {
                 )
             }
 
-            guard samples.count > 1 else { return }
+            guard sampleRange.count > 1 else { return }
             var trace = Path()
-            for (index, sample) in samples.enumerated() {
+            var pointIndex = 0
+            for index in sampleRange {
+                let sample = self.sample(at: index)
                 let point = CGPoint(x: x(sample.milliseconds), y: y(sample.kilograms))
-                if index == 0 { trace.move(to: point) } else { trace.addLine(to: point) }
+                if pointIndex == 0 { trace.move(to: point) } else { trace.addLine(to: point) }
+                pointIndex += 1
             }
             context.stroke(
                 trace,
@@ -3214,7 +3269,7 @@ private enum ForceTargetMode: String, CaseIterable, Identifiable {
 }
 
 private struct ForcePresetEditor: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var draft: TindeqPreset
     @State private var targetMode: ForceTargetMode
