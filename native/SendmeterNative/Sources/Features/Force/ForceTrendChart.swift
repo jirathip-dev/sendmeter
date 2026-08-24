@@ -136,11 +136,7 @@ struct ForceTrendChart: View {
         }
         .overlay(alignment: .topLeading) {
             if let targetBand {
-                Text(
-                    "Target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kg · "
-                        + "\(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1))))–"
-                        + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg"
-                )
+                Text(targetOverlayText(for: targetBand))
                 .font(.caption2.weight(.semibold).monospacedDigit())
                 .foregroundStyle(ChartToken.optimal.color(scheme))
                 .padding(.leading, 4)
@@ -162,6 +158,15 @@ struct ForceTrendChart: View {
                     .foregroundStyle(ChartToken.axis.color(scheme))
             }
         }
+    }
+
+    private func targetOverlayText(for band: ForceTargetBand) -> String {
+        let targetKilograms: String = formattedKilograms(band.kilograms)
+        let lowKilograms: String = formattedKilograms(band.lowKilograms)
+        let highKilograms: String = formattedKilograms(band.highKilograms)
+        let targetPrefix: String = "Target \(targetKilograms) kg · "
+        let rangeDescription: String = "range \(lowKilograms)–\(highKilograms) kg"
+        return targetPrefix + rangeDescription
     }
 
     private func targetAccessibilityLabel(for band: ForceTargetBand) -> String {
@@ -292,10 +297,17 @@ private struct ForceTrendAccessibilityDescriptor: AXChartDescriptorRepresentable
         guard let targetBand else {
             return "Peak force for each measured static hold in this evidence set."
         }
-        return "Peak force for each measured static hold in this evidence set, with a plan target of "
-            + "\(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms from "
-            + "\(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1)))) to "
-            + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms."
+        let targetKilograms: String = formattedKilograms(targetBand.kilograms)
+        let lowKilograms: String = formattedKilograms(targetBand.lowKilograms)
+        let highKilograms: String = formattedKilograms(targetBand.highKilograms)
+        let targetDescription: String = "Peak force for each measured static hold in this evidence set, with a plan target of "
+            + "\(targetKilograms) kilograms from "
+        let rangeDescription: String = "\(lowKilograms) to \(highKilograms) kilograms."
+        return targetDescription + rangeDescription
+    }
+
+    private func formattedKilograms(_ kilograms: Double) -> String {
+        kilograms.formatted(.number.precision(.fractionLength(1)))
     }
 }
 

@@ -2,6 +2,10 @@ import Charts
 import SendmeterCore
 import SwiftUI
 
+private func formattedForceKilograms(_ kilograms: Double) -> String {
+    kilograms.formatted(.number.precision(.fractionLength(1)))
+}
+
 /// Native counterpart of the web's `ForceCurveCard`.
 ///
 /// The x-axis is logarithmic because the useful duration range spans 1–120s.
@@ -38,18 +42,10 @@ struct NativeForceCurveCard: View {
                 SectionLabel("Force duration curve · \(tag)", systemImage: "chart.xyaxis.line")
 
                 if let targetBand {
-                    Text(
-                        "Plan target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kg · "
-                            + "range \(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1))))–"
-                            + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg"
-                    )
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel(
-                        "Plan target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms, "
-                            + "range \(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1)))) to "
-                            + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
-                    )
+                    Text(targetDisplayText(for: targetBand))
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(targetAccessibilityLabel(for: targetBand))
                 }
 
                 if let model {
@@ -106,6 +102,33 @@ struct NativeForceCurveCard: View {
         }
     }
 
+    private func targetDisplayText(for band: ForceTargetBand) -> String {
+        let targetKilograms: String = formattedForceKilograms(band.kilograms)
+        let lowKilograms: String = formattedForceKilograms(band.lowKilograms)
+        let highKilograms: String = formattedForceKilograms(band.highKilograms)
+        let targetPrefix: String = "Plan target \(targetKilograms) kg · "
+        let rangeDescription: String = "range \(lowKilograms)–\(highKilograms) kg"
+        return targetPrefix + rangeDescription
+    }
+
+    private func targetAccessibilityLabel(for band: ForceTargetBand) -> String {
+        let targetKilograms: String = formattedForceKilograms(band.kilograms)
+        let lowKilograms: String = formattedForceKilograms(band.lowKilograms)
+        let highKilograms: String = formattedForceKilograms(band.highKilograms)
+        let targetPrefix: String = "Plan target \(targetKilograms) kilograms, "
+        let rangeDescription: String = "range \(lowKilograms) to \(highKilograms) kilograms"
+        return targetPrefix + rangeDescription
+    }
+
+    private func targetAccessibilitySuffix(for band: ForceTargetBand) -> String {
+        let targetKilograms: String = formattedForceKilograms(band.kilograms)
+        let lowKilograms: String = formattedForceKilograms(band.lowKilograms)
+        let highKilograms: String = formattedForceKilograms(band.highKilograms)
+        let targetPrefix: String = ", plan target \(targetKilograms) kilograms, "
+        let rangeDescription: String = "range \(lowKilograms) to \(highKilograms) kilograms"
+        return targetPrefix + rangeDescription
+    }
+
     private func curveMetric(_ label: String, value: Double?, unit: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
@@ -121,11 +144,7 @@ struct NativeForceCurveCard: View {
     ) -> String {
         let band = model.confidenceBand
         let maximum = "Max \(model.maximumForceKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
-        let target = targetBand.map {
-            ", plan target \($0.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms, "
-                + "range \($0.lowKilograms.formatted(.number.precision(.fractionLength(1)))) to "
-                + "\($0.highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
-        } ?? ""
+        let target = targetBand.map { targetAccessibilitySuffix(for: $0) } ?? ""
         guard let first = band?.first,
               let last = band?.last,
               (band?.count ?? 0) >= 2
@@ -439,10 +458,7 @@ private struct NativeForceCurvePlot: View {
             Text("\(point.kilograms.formatted(.number.precision(.fractionLength(1)))) kg")
                 .font(.subheadline.weight(.semibold).monospacedDigit())
             if let bandPoint {
-                Text(
-                    "95% \(bandPoint.lowKilograms.formatted(.number.precision(.fractionLength(1))))–"
-                        + "\(bandPoint.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg"
-                )
+                Text(confidenceBandText(for: bandPoint))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             }
@@ -475,6 +491,12 @@ private struct NativeForceCurvePlot: View {
                 y: clampedTooltipY(plotFrame: plotFrame, tooltipHeight: tooltipSize.height)
             )
             .zIndex(1)
+    }
+
+    private func confidenceBandText(for point: ForceCurveConfidencePoint) -> String {
+        let lowKilograms: String = formattedForceKilograms(point.lowKilograms)
+        let highKilograms: String = formattedForceKilograms(point.highKilograms)
+        return "95% \(lowKilograms)–\(highKilograms) kg"
     }
 
     private func clampedTooltipX(x: CGFloat, plotFrame: CGRect, tooltipWidth: CGFloat) -> CGFloat {
@@ -556,10 +578,13 @@ private struct ForceCurveAccessibilityDescriptor: AXChartDescriptorRepresentable
         guard let targetBand else {
             return "Measured force-duration curve with the fitted Hill model and 95 percent confidence band."
         }
-        return "Measured force-duration curve with the fitted Hill model, 95 percent confidence band, and a plan target of "
-            + "\(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms from "
-            + "\(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1)))) to "
-            + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms."
+        let targetKilograms: String = formattedForceKilograms(targetBand.kilograms)
+        let lowKilograms: String = formattedForceKilograms(targetBand.lowKilograms)
+        let highKilograms: String = formattedForceKilograms(targetBand.highKilograms)
+        let targetDescription: String = "Measured force-duration curve with the fitted Hill model, 95 percent confidence band, and a plan target of "
+            + "\(targetKilograms) kilograms from "
+        let rangeDescription: String = "\(lowKilograms) to \(highKilograms) kilograms."
+        return targetDescription + rangeDescription
     }
 }
 
