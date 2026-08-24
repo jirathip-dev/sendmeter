@@ -35,8 +35,9 @@ public enum PasskeyPresentation {
 @MainActor
 public final class AuthService {
     public let client: SupabaseClient
-    /// Bounded, best-effort-persisted ring of auth events for Settings →
-    /// troubleshooting (#679). Mirrors the quarantine breadcrumb store.
+    /// Bounded, best-effort-persisted ring of auth events, read behind
+    /// Settings' technical-details gate (#679/#757). Mirrors the quarantine
+    /// breadcrumb store.
     public let diagnostics: AuthDiagnosticsStore
     /// Dedupe for `ensureFreshSession`: while a refresh is in flight, concurrent
     /// callers share that one refresh instead of racing one each (repo rule: a

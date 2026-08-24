@@ -341,10 +341,6 @@ struct SettingsView: View {
                     Text("\(stuck)").monospacedDigit()
                 }
             }
-            Text("The phone relays access tokens only. Refresh tokens remain owned by the phone and are never copied to the Watch.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             healthSubheader("Progressor", systemImage: "gauge.medium")
             HStack {
                 Label("Device", systemImage: "bolt.horizontal.fill")
@@ -392,9 +388,6 @@ struct SettingsView: View {
     private var accountSecuritySection: some View {
         Section("Account & Security") {
             LabeledContent("Email", value: model.currentUserEmail ?? "Signed in")
-            LabeledContent("User ID", value: model.currentUserID?.uuidString.lowercased() ?? "—")
-                .font(.caption)
-                .textSelection(.enabled)
             Button {
                 // #656: a tap arming a password reset ticks once.
                 Haptics.shared.tap()
@@ -523,12 +516,7 @@ struct SettingsView: View {
     private var aboutSupportSection: some View {
         Section("About & Support") {
             healthSubheader("Version", systemImage: "info.circle")
-            LabeledContent("Client", value: "Native SwiftUI")
             LabeledContent("Version", value: appVersion)
-            LabeledContent("Database", value: "Supabase · shared production schema")
-            Text("This target is independent from the Capacitor target, allowing side-by-side validation before any replacement decision.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             healthSubheader("Data sync", systemImage: "externaldrive.badge.icloud")
             HStack {
@@ -610,17 +598,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            healthSubheader("Diagnostics", systemImage: "wrench.and.screwdriver")
-            if model.authEventLog.isEmpty {
-                Text("No auth events on this device.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                // Most-recent-first for readability; the ring stores oldest first.
-                ForEach(model.authEventLog.reversed()) { entry in
-                    authEventRow(entry)
-                }
-            }
+            accountActivitySection
             if hasTechnicalDiagnostics {
                 Button {
                     showingTechnicalDiagnostics.toggle()
@@ -632,14 +610,56 @@ struct SettingsView: View {
                 }
                 .font(.caption)
                 if showingTechnicalDiagnostics {
-                    rawDiagnosticsSection
+                    technicalDetailsSection
                 }
             }
         }
     }
 
+    /// #757: the normal path shows only a compact, user-facing summary of the
+    /// on-device auth ring. The repetitive refresh/restore noise and the full
+    /// bounded ring stay behind the technical-details gate below.
+    @ViewBuilder
+    private var accountActivitySection: some View {
+        healthSubheader("Account activity", systemImage: "person.text.rectangle")
+        let summary = AuthDiagnostics.summary(of: model.authEventLog)
+        if summary.lastSignIn == nil, summary.lastFailure == nil {
+            Text("No recent sign-in activity recorded on this device.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            if let lastSignIn = summary.lastSignIn {
+                LabeledContent(
+                    "Last sign-in",
+                    value: lastSignIn.occurredAt.formatted(date: .abbreviated, time: .shortened)
+                )
+                .font(.subheadline)
+            }
+            if let lastFailure = summary.lastFailure {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(SendmeterStyle.alert)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Last problem")
+                            .font(.subheadline.weight(.medium))
+                        Text(UserFacingError.message(forDiagnosticDetail: lastFailure.detail ?? ""))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(lastFailure.occurredAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
     private var hasTechnicalDiagnostics: Bool {
-        model.authEventLog.contains { $0.detail != nil }
+        !model.authEventLog.isEmpty
+            || model.currentUserID != nil
             || model.quarantinedWrites?.contains {
                 $0.rejection.code != nil || !$0.rejection.detail.isEmpty
             } == true
@@ -647,9 +667,15 @@ struct SettingsView: View {
 
     /// The opt-in technical details for support. This is the only normal-path
     /// surface that may show raw server codes and diagnostics (#758 AC 3);
-    /// the inline rows above intentionally stay friendly.
-    private var rawDiagnosticsSection: some View {
+    /// the inline account-activity rows above intentionally stay friendly.
+    private var technicalDetailsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let userID = model.currentUserID {
+                healthSubheader("Account", systemImage: "person.crop.circle")
+                LabeledContent("User ID", value: userID.uuidString.lowercased())
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
             if let quarantined = model.quarantinedWrites {
                 let rawQuarantined = quarantined.filter {
                     $0.rejection.code != nil || !$0.rejection.detail.isEmpty
@@ -664,10 +690,9 @@ struct SettingsView: View {
                     }
                 }
             }
-            let rawAuthEvents = model.authEventLog.reversed().filter { $0.detail != nil }
-            if !rawAuthEvents.isEmpty {
-                healthSubheader("Auth diagnostics", systemImage: "key")
-                ForEach(rawAuthEvents) { entry in
+            if !model.authEventLog.isEmpty {
+                healthSubheader("Auth events", systemImage: "key")
+                ForEach(model.authEventLog.reversed()) { entry in
                     authDiagnosticsRow(entry)
                 }
             }
@@ -753,57 +778,12 @@ struct SettingsView: View {
         .padding(.vertical, 4)
     }
 
-    /// #679: one auth event — a category icon/label, its timestamp, and the
-    /// short reason (an error message for `.failure`).
-    private func authEventRow(_ entry: AuthEventEntry) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Image(systemName: authCategoryIcon(entry.category))
-                    .foregroundStyle(authCategoryColor(entry.category))
-                Text(authCategoryTitle(entry.category))
-                    .font(.subheadline.weight(.medium))
-                Spacer()
-                Text(entry.occurredAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if entry.category == .failure, let detail = entry.detail {
-                Text(UserFacingError.message(forDiagnosticDetail: detail))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if let detail = entry.detail {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private func authCategoryIcon(_ category: AuthEventCategory) -> String {
-        switch category {
-        case .signIn: return "person.badge.key.fill"
-        case .refresh: return "arrow.clockwise"
-        case .signOut: return "rectangle.portrait.and.arrow.right"
-        case .failure: return "exclamationmark.triangle.fill"
-        }
-    }
-
     private func authCategoryTitle(_ category: AuthEventCategory) -> String {
         switch category {
         case .signIn: return "Sign in"
         case .refresh: return "Refresh"
         case .signOut: return "Sign out"
         case .failure: return "Failure"
-        }
-    }
-
-    private func authCategoryColor(_ category: AuthEventCategory) -> Color {
-        switch category {
-        case .signIn: return SendmeterStyle.primary
-        case .refresh: return SendmeterStyle.optimal
-        case .signOut: return .secondary
-        case .failure: return SendmeterStyle.alert
         }
     }
 
@@ -891,7 +871,7 @@ private struct DeleteAccountSheet: View {
             Section("What this deletes") {
                 Text("Your account and every piece of data stored for it on the server: workouts, training sessions, force recordings and curves, readiness and health history, presets, routines, tags, and settings.")
                     .font(.subheadline)
-                Text("Queued writes owned by this account are removed only after the server confirms account deletion.")
+                Text("Uploads still waiting for this account are removed only after the server confirms account deletion.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

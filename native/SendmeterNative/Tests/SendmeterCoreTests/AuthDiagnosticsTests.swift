@@ -2,8 +2,50 @@ import XCTest
 @testable import SendmeterCore
 
 final class AuthDiagnosticsTests: XCTestCase {
-    private func entry(_ category: AuthEventCategory, detail: String? = nil) -> AuthEventEntry {
-        AuthEventEntry(category: category, detail: detail, occurredAt: Date())
+    private func entry(
+        _ category: AuthEventCategory,
+        detail: String? = nil,
+        at date: Date = Date()
+    ) -> AuthEventEntry {
+        AuthEventEntry(category: category, detail: detail, occurredAt: date)
+    }
+
+    func testUserFacingClassificationPinsRefreshAndSignOutAsDiagnostic() {
+        XCTAssertTrue(AuthEventCategory.signIn.isUserFacingSummary)
+        XCTAssertTrue(AuthEventCategory.failure.isUserFacingSummary)
+        XCTAssertFalse(AuthEventCategory.refresh.isUserFacingSummary)
+        XCTAssertFalse(AuthEventCategory.signOut.isUserFacingSummary)
+    }
+
+    func testSummaryIsEmptyForEmptyRing() {
+        let summary = AuthDiagnostics.summary(of: [])
+        XCTAssertNil(summary.lastSignIn)
+        XCTAssertNil(summary.lastFailure)
+    }
+
+    func testSummaryPicksLatestSignInAndFailureByTimestamp() {
+        let olderSignIn = entry(.signIn, detail: "Session restored at launch", at: Date(timeIntervalSince1970: 100))
+        let newerSignIn = entry(.signIn, detail: "Session established", at: Date(timeIntervalSince1970: 300))
+        let olderFailure = entry(.failure, detail: "The request timed out.", at: Date(timeIntervalSince1970: 200))
+        let newerFailure = entry(.failure, detail: "Session refresh failed: JWT expired", at: Date(timeIntervalSince1970: 400))
+        // Deliberately out of order: summary is timestamp-based, not order-based.
+        let history = [newerFailure, olderSignIn, olderFailure, newerSignIn]
+
+        let summary = AuthDiagnostics.summary(of: history)
+        XCTAssertEqual(summary.lastSignIn?.detail, newerSignIn.detail)
+        XCTAssertEqual(summary.lastSignIn?.occurredAt, newerSignIn.occurredAt)
+        XCTAssertEqual(summary.lastFailure?.detail, newerFailure.detail)
+        XCTAssertEqual(summary.lastFailure?.occurredAt, newerFailure.occurredAt)
+    }
+
+    func testSummaryOmitsRefreshAndSignOutNoise() {
+        let latestRefresh = entry(.refresh, at: Date(timeIntervalSince1970: 500))
+        let signOut = entry(.signOut, at: Date(timeIntervalSince1970: 600))
+        let failure = entry(.failure, at: Date(timeIntervalSince1970: 100))
+
+        let summary = AuthDiagnostics.summary(of: [failure, latestRefresh, signOut])
+        XCTAssertNil(summary.lastSignIn)
+        XCTAssertEqual(summary.lastFailure?.occurredAt, failure.occurredAt)
     }
 
     func testRecordsOldestFirst() {
