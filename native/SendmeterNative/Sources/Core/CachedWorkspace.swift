@@ -145,8 +145,9 @@ public enum CacheEntityID {
 public struct CachedWorkspace: @unchecked Sendable {
     /// A watch completion is immediately useful as a pending History row, but
     /// a server snapshot that still lacks it must eventually stop counting a
-    /// never-uploaded placeholder as training load. The inbox remains the
-    /// retry source after this tombstone is written.
+    /// never-uploaded placeholder as training load. After this tombstone is
+    /// written, the inbox remains durable provenance; only a later
+    /// authoritative server delta can restore the identity.
     public static let watchCompletionPlaceholderTTL: TimeInterval = 7 * 24 * 60 * 60
 
     /// Read tables whose optimistic writes are not replayed by `DurableQueue`
@@ -362,18 +363,28 @@ public struct CachedWorkspace: @unchecked Sendable {
     /// response as deleted: delta fetches include tombstones explicitly, so a
     /// hard-delete entity must reset its cursor when full reconciliation is
     /// needed. Pending rows are protected by the same store guards as every
-    /// other server refresh. The cursor advances only after every change in
-    /// the batch has been applied.
+    /// other server refresh. Session deltas also retire stale remote-device
+    /// placeholders by `watchCompletionPlaceholderTTL`; the cursor advances
+    /// only after every change and expiry in the batch has been applied.
     public func reconcileDelta<T: Encodable>(
         _ delta: RemoteEntityDelta<T>,
         accountUserID: UUID,
-        entityType: LocalCacheEntityType
+        entityType: LocalCacheEntityType,
+        now: Date = Date()
     ) throws {
         try applyDeltaChanges(
             delta,
             accountUserID: accountUserID,
             entityType: entityType
         )
+        if entityType == .sessions {
+            try store.expirePendingServerPlaceholders(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                olderThan: now.addingTimeInterval(-Self.watchCompletionPlaceholderTTL),
+                at: now
+            )
+        }
         if let cursor = delta.cursor {
             try store.setCursor(
                 cursor,
@@ -389,8 +400,8 @@ public struct CachedWorkspace: @unchecked Sendable {
     /// cached rows absent from every active change are tombstoned and the
     /// cursor is persisted. Stale remote-device session placeholders are also
     /// retired by `watchCompletionPlaceholderTTL`; their inbox entries remain
-    /// available for a later authoritative convergence. All writes happen
-    /// before the cursor advances, so a failure leaves the cache safely
+    /// durable provenance for a later authoritative convergence. All writes
+    /// happen before the cursor advances, so a failure leaves the cache safely
     /// repairable by another full refresh.
     public func reconcileServerDelta<T: Encodable>(
         _ delta: RemoteEntityDelta<T>,

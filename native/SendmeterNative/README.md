@@ -89,9 +89,9 @@ the cache is unavailable or its row is corrupt, the same summary remains a
 visible in-memory pending row and the inbox is retried on foreground; it is
 never acknowledged without durable adoption. A later session delta replaces
 the placeholder with the authoritative server row, while an authoritative full
-snapshot retires an absent placeholder after seven days via a tombstone so a
-permanent phantom cannot count toward training load. `live_workouts` remains a
-separate realtime mirror and is not cached.
+session refresh retires an absent placeholder after seven days via a tombstone
+so a permanent phantom cannot count toward training load. `live_workouts`
+remains a separate realtime mirror and is not cached.
 
 `Sources/Shared` + `Sources/Widgets` compile into a second product target —
 `SendmeterNativeWidgets`, a WidgetKit app-extension embedded in the app

@@ -246,7 +246,7 @@ final class WatchCompletionTests: XCTestCase {
         XCTAssertEqual(try pendingFlag(in: workspace, accountID: accountA, entityID: authoritative.id), 0)
     }
 
-    func testExpiredServerPlaceholderIsBoundedWithoutResurrection() throws {
+    func testExpiredServerPlaceholderIsBoundedThroughSteadyStateCursorDelta() throws {
         let workspace = CachedWorkspace(store: try LocalCacheStore())
         let received = completion(accountUserID: accountA)
         let placeholder = received.pendingSession(accountUserID: accountA)
@@ -262,12 +262,12 @@ final class WatchCompletionTests: XCTestCase {
         let emptySnapshot = RemoteEntityDelta<Session>(
             changes: [],
             activeValues: [],
-            cursor: nil
+            cursor: "steady-state-cursor"
         )
         let beforeExpiry = insertedAt.addingTimeInterval(
             CachedWorkspace.watchCompletionPlaceholderTTL - 1
         )
-        try workspace.reconcileServerDelta(
+        try workspace.reconcileDelta(
             emptySnapshot,
             accountUserID: accountA,
             entityType: .sessions,
@@ -278,7 +278,7 @@ final class WatchCompletionTests: XCTestCase {
         let expiredAt = insertedAt.addingTimeInterval(
             CachedWorkspace.watchCompletionPlaceholderTTL + 1
         )
-        try workspace.reconcileServerDelta(
+        try workspace.reconcileDelta(
             emptySnapshot,
             accountUserID: accountA,
             entityType: .sessions,
@@ -311,7 +311,7 @@ final class WatchCompletionTests: XCTestCase {
                     )
                 ],
                 activeValues: [authoritative],
-                cursor: nil
+                cursor: "authoritative-cursor"
             ),
             accountUserID: accountA,
             entityType: .sessions

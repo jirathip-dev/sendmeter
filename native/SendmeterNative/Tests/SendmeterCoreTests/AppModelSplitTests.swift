@@ -192,28 +192,67 @@ final class AppModelSplitTests: XCTestCase {
         )
     }
 
-    func testAppModelIsSwiftSyntaxParseableOutsideSwiftPMSourceSet() throws {
-        let appModelURL = URL(fileURLWithPath: #filePath)
+    func testSwiftPMExcludedSourcesAreSwiftSyntaxParseable() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/App/AppModel.swift")
-        let diagnostics = Pipe()
+        let sourcesRoot = packageRoot.appendingPathComponent("Sources")
+        let excludedRoots: Set<String> = [
+            "App", "Data", "Features", "Platform", "Shared", "Widgets"
+        ]
+        let excludedSources = (
+            FileManager.default.enumerator(
+                at: sourcesRoot,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )?.compactMap { $0 as? URL } ?? []
+        )
+        .filter { url in
+            guard url.pathExtension == "swift" else { return false }
+            let relativePath = String(
+                url.path.dropFirst(sourcesRoot.path.count + 1)
+            )
+            guard let root = relativePath.split(separator: "/").first,
+                  excludedRoots.contains(String(root)) else {
+                return false
+            }
+            return relativePath != "App/ChartTheme.swift"
+                && relativePath != "Platform/WeatherService.swift"
+        }
+        .sorted { $0.path < $1.path }
+
+        XCTAssertFalse(excludedSources.isEmpty)
+
+        let diagnosticsURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "sendmeter-swift-parse-\(UUID().uuidString).stderr"
+            )
+        defer { try? FileManager.default.removeItem(at: diagnosticsURL) }
+        guard FileManager.default.createFile(
+            atPath: diagnosticsURL.path,
+            contents: Data()
+        ) else {
+            return XCTFail("could not create syntax diagnostics file")
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["swiftc", "-parse", appModelURL.path]
+        process.arguments = ["swiftc", "-parse"] + excludedSources.map(\.path)
+        let diagnostics = try FileHandle(forWritingTo: diagnosticsURL)
         process.standardError = diagnostics
         try process.run()
         process.waitUntilExit()
+        try diagnostics.close()
 
-        let stderr = String(
-            data: diagnostics.fileHandleForReading.readDataToEndOfFile(),
+        let stderr = try String(
+            contentsOf: diagnosticsURL,
             encoding: .utf8
-        ) ?? ""
+        )
         XCTAssertEqual(
             process.terminationStatus,
             0,
-            "AppModel.swift must pass a syntax-only parse even though SwiftPM excludes it:\n\(stderr)"
+            "SwiftPM-excluded sources must pass a syntax-only parse (\(excludedSources.count) files):\n\(stderr)"
         )
     }
 
