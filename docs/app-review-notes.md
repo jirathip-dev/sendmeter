@@ -7,15 +7,16 @@ submission (Apple explicitly asked for it to be present up front).
 
 This doc now serves the **native** Sendmeter build (#617 / #474 are re-scoped
 native-only; the Capacitor-era answers are superseded). The native Release
-target ships to TestFlight under the shipped bundle id
-`com.jirathip.sendlog` (`fastlane native_beta`, #637) and embeds the existing
-`ios/App/SendLogWatch Watch App` target as
-`com.jirathip.sendlog.watchkitapp`. The watch Info.plist points back to
-`com.jirathip.sendlog`, so a signed Release install can pair with the phone
-and use the direct WatchConnectivity live-workout mirror. The Debug-only
-`com.jirathip.sendlog.native` ID is for side-by-side development and is not the
-submitted binary. Physical installation, pairing, and the direct-vs-realtime
-transport behavior remain device-only checks.
+target is configured for the shipped bundle id `com.jirathip.sendlog`
+(`fastlane native_beta`, #637), with the existing
+`ios/App/SendLogWatch Watch App` and `SendLogWatchWidgets` targets wired into
+the bundle as `com.jirathip.sendlog.watchkitapp` and
+`com.jirathip.sendlog.watchkitapp.widgets`. The watch Info.plist points back
+to `com.jirathip.sendlog`, which is the intended signed Release pairing. The
+Debug-only `com.jirathip.sendlog.native` family is for side-by-side native
+development and is not the submitted binary. Physical installation, signing,
+pairing, and the direct-vs-realtime transport behavior remain validation
+checks rather than claims made by this note.
 
 Two fields must be refreshed each submission before pasting:
 
@@ -182,10 +183,12 @@ protected third-party material**.
   Pro Max, iPad Pro 13-inch (M5), Apple Watch SE 3 (40 mm), Apple Watch Ultra 3
   (49 mm)
 
-Minimum supported versions: **iOS 16.2** (the native deployment target; the
-in-app Live Activity extension is non-interactive and also min 16.2). The
-Release binary embeds the watch companion target; installation and
-WatchConnectivity pairing are physical-device checks.
+Minimum supported versions: **iOS 17.0** for the native phone target and
+**watchOS 10.0** for its companion and watch-widget extension. The existing
+Capacitor target has its own deployment floor and is not the binary described
+by these native notes. The Release configuration wires the watch companion
+and widget extension; installation and WatchConnectivity pairing are
+physical-device checks.
 
 ---
 
@@ -229,10 +232,12 @@ Location, or delete and reinstall) so the prompts actually appear on camera.
    working is the point of the recording.)
 8. **Apple Watch companion**: install the signed Release build on a physical
    paired iPhone/Apple Watch to verify that the embedded
-   `com.jirathip.sendlog.watchkitapp` app installs and that the live Workout
-   mirror uses WatchConnectivity rather than the realtime fallback. This is
-   device-only; the lock-screen Live Activity card for guided Force protocols
-   (iOS 16.2+) is also in this build if you want to show it.
+   `com.jirathip.sendlog.watchkitapp` app and its
+   `com.jirathip.sendlog.watchkitapp.widgets` extension install, and that the
+   live Workout mirror uses WatchConnectivity rather than the realtime
+   fallback. This is device-only; the lock-screen Live Activity card for
+   guided Force protocols (iOS 17.0+) is also in this build if you want to
+   show it.
 9. **History tab**: show the timeline of sessions and recordings, open one, and
    edit it.
 10. **Account deletion**: Account → Danger zone → **Delete account** → confirm →

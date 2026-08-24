@@ -54,12 +54,14 @@ SwiftUI application
 
 The generated project also has a `SendLogWatch Watch App` watchOS target. It
 reuses the existing companion sources from `ios/App/SendLogWatch Watch App`,
-links the same `SendLogWatchCore` package used by the Capacitor target, and is
-automatically copied into `SendmeterNative.app/Watch` by the native app's
-`Embed Watch Content` phase. The Release phone bundle ID is
-`com.jirathip.sendlog`, matching the watch Info.plist's
-`WKCompanionAppBundleIdentifier`; this is the bundle relationship that enables
-WatchConnectivity pairing.
+links the same `SendLogWatchCore` and Supabase packages used by the Capacitor
+target, and embeds the existing `SendLogWatchWidgets` target without copying
+its sources or rendering logic. The watch app is automatically copied into
+`SendmeterNative.app/Watch` by the native app's `Embed Watch Content` phase,
+and the watch-widget appex is copied into the watch app's foundation-extension
+destination. The Release phone bundle ID is `com.jirathip.sendlog`, matching
+the watch Info.plist's `WKCompanionAppBundleIdentifier`; this is the bundle
+relationship intended for WatchConnectivity pairing.
 
 `AppModel` hydrates its observable lists from the account-scoped cache before
 any remote fetch, so a cold start renders the last-known sessions, recordings,
@@ -142,10 +144,13 @@ Sendmeter development team and signing profile, then run the `SendmeterNative`
 scheme. Release/TestFlight builds use the shipped `com.jirathip.sendlog` bundle
 ID and include `com.jirathip.sendlog.watchkitapp` inside the archive, so
 installing the phone app also installs the companion on a paired Apple Watch.
-The Debug configuration intentionally keeps `com.jirathip.sendlog.native` for
-side-by-side local development; that ID does not match the watch companion and
-cannot prove WCSession pairing. Direct live-workout mirroring and the absence
-of a realtime fallback are device-only checks on a signed Release build.
+The Debug configuration uses the native-only IDs
+`com.jirathip.sendlog.native`, `com.jirathip.sendlog.native.watchkitapp`, and
+`com.jirathip.sendlog.native.watchkitapp.widgets`; the Debug companion points
+back to the Debug phone, so the native trio can be installed side-by-side
+without colliding with the shipped IDs. Direct live-workout mirroring and the
+absence of a realtime fallback are device-only checks on a signed Release
+build.
 
 ## Verification
 
@@ -153,8 +158,11 @@ The pull request runs:
 
 1. Pure Swift unit tests.
 2. XcodeGen project generation.
-3. A complete iOS Simulator compile with code signing disabled.
-4. Existing repository quality checks where applicable.
+3. Generated-project assertions for watch/widget source and resource
+   membership, entitlements exclusion, package links, and embed destinations
+   (`scripts/assert-native-watch-project.rb`).
+4. A complete iOS Simulator compile with code signing disabled.
+5. Existing repository quality checks where applicable.
 
 Automated checks do not replace the physical-device gates for real Bluetooth,
 HealthKit, WatchConnectivity, passkeys, background/suspension behavior, or a

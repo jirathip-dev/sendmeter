@@ -23,6 +23,7 @@ NATIVE_SCHEME = "SendmeterNative".freeze
 NATIVE_WIDGETS_TARGET = "SendmeterNativeWidgets".freeze
 XCODEPROJ = "ios/App/App.xcodeproj".freeze
 TEAM_ID = "9244PWFYD7".freeze
+WATCH_APP_GROUP = "group.com.jirathip.sendlog".freeze
 SCREENSHOT_OUTPUT = File.expand_path("screenshots", __dir__).freeze
 SCREENSHOT_DERIVED_DATA = File.join(
   Dir.home,
@@ -117,6 +118,39 @@ def verify_screenshot_output(devices: nil)
       )
     end
   end
+end
+
+# The Connect API can register a Bundle ID and report its capabilities, but it
+# cannot attach an App Group container to a watch App ID. Do not let a profile
+# fetch turn that missing portal step into a late, ambiguous signing failure.
+# This guard is deliberately read-only: a human must enable HealthKit/App
+# Groups and attach WATCH_APP_GROUP in Certificates, IDs & Profiles.
+def require_manual_watch_capabilities!(bundle_id:, label:, required:, portal_steps:)
+  record = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: bundle_id })
+    .find { |candidate| candidate.identifier == bundle_id }
+  UI.user_error!("App ID #{bundle_id} for #{label} was not found") unless record
+
+  begin
+    have = Spaceship::ConnectAPI::BundleIdCapability
+      .all(bundle_id_id: record.id)
+      .map(&:capability_type)
+  rescue StandardError => error
+    UI.user_error!(
+      "Could not verify the manually-managed capabilities for #{label} " \
+      "(#{bundle_id}): #{error.message}. Check the Apple Developer portal " \
+      "before retrying; native_beta will not fetch a profile blindly."
+    )
+  end
+
+  missing = required - have
+  return if missing.empty?
+
+  UI.user_error!(
+    "#{label} (#{bundle_id}) is missing #{missing.join(', ')}. " \
+    "Complete this manual Apple Developer portal setup, then rerun: " \
+    "#{portal_steps} native_beta only registers IDs and verifies these " \
+    "capabilities; it cannot enable App Groups or attach #{WATCH_APP_GROUP}."
+  )
 end
 
 def capture_watch_screenshot_output
@@ -460,18 +494,18 @@ platform :ios do
       )
     end
 
-    # 2. Generate the Xcode project. Only project.yml is committed; the
-    #    .xcodeproj is generated fresh on every run (same as native-swift.yml).
+    # 2. Generate the Xcode project. The project spec and native resource
+    #    inputs are committed; the .xcodeproj is generated fresh on every run
+    #    (same as native-swift.yml).
     UI.user_error!(
       "xcodegen is not installed — run `brew install xcodegen` first"
     ) unless system("which xcodegen >/dev/null 2>&1")
     sh("cd ../#{NATIVE_PROJECT_DIR} && xcodegen generate")
 
-    # 3. Make sure the distribution material exists. All three steps are
-    #    idempotent, so every run is safe and the first run is fully
-    #    automated (no manual portal step — unlike the watch-widgets App
-    #    Group, the capabilities the entitlements need can be enabled via
-    #    the App Store Connect API).
+    # 3. Make sure the distribution material exists. Phone/widget App ID
+    #    registration and the phone capabilities are idempotent. Watch App ID
+    #    registration is also safe, but its HealthKit/App Group setup is a
+    #    deliberate manual Apple Developer portal prerequisite (see below).
     #
     #    a) The App IDs. sigh does NOT create App IDs; the beta lane uses
     #       the same Spaceship call for the widget extensions. The archive
@@ -547,15 +581,18 @@ platform :ios do
     end
 
     # 4. App Store distribution profiles carrying the cert from step 1 — one
-    #    for the app, embedded watch app, and embedded widget appex. force: true
-    #    regenerates them so they always pin the current cert — same reason
-    #    as the beta lane (the account's auto Team Store profile referenced an
-    #    older cert). sigh installs each profile locally, which is what lets
-    #    the archive resolve them by name in step 6. The watch App ID already
-    #    belongs to the shipped companion; registering it here keeps this lane
-    #    self-contained when it runs before the Capacitor lane.
+    #    for the app, embedded watch app, phone widget appex, and embedded
+    #    watch widget appex. force: true regenerates them so they always pin
+    #    the current cert — same reason as the beta lane (the account's auto
+    #    Team Store profile referenced an older cert). sigh installs each
+    #    profile locally, which is what lets the archive resolve them by name
+    #    in step 6. The App IDs are registered here, but the watch capabilities
+    #    are read-only verified below because this API cannot enable App Groups
+    #    or attach the group container.
     watch_app_id = "#{native_id}.watchkitapp"
+    watch_widgets_id = "#{watch_app_id}.widgets"
     watch_target = "SendLogWatch Watch App"
+    watch_widgets_target = "SendLogWatchWidgets"
     watch_app_record = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: watch_app_id })
     unless watch_app_record.any? { |b| b.identifier == watch_app_id }
       Spaceship::ConnectAPI::BundleId.create(
@@ -565,15 +602,49 @@ platform :ios do
       )
       UI.message("Registered App ID #{watch_app_id}")
     end
+    watch_widgets_record = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: watch_widgets_id })
+    unless watch_widgets_record.any? { |b| b.identifier == watch_widgets_id }
+      Spaceship::ConnectAPI::BundleId.create(
+        name: "Sendmeter Watch Widgets",
+        identifier: watch_widgets_id,
+        platform: "IOS"
+      )
+      UI.message("Registered App ID #{watch_widgets_id}")
+    end
+
+    require_manual_watch_capabilities!(
+      bundle_id: watch_app_id,
+      label: watch_target,
+      required: %w[HEALTHKIT APP_GROUPS],
+      portal_steps: "On #{watch_app_id}, enable HealthKit and App Groups; add #{WATCH_APP_GROUP}."
+    )
+    require_manual_watch_capabilities!(
+      bundle_id: watch_widgets_id,
+      label: watch_widgets_target,
+      required: %w[APP_GROUPS],
+      portal_steps: "On #{watch_widgets_id}, enable App Groups and add #{WATCH_APP_GROUP}."
+    )
 
     profiles = {}
-    [native_id, watch_app_id, widgets_id].each do |bundle_id|
-      get_provisioning_profile(
-        api_key: api_key,
-        app_identifier: bundle_id,
-        force: true,
-        output_path: "fastlane/certs"
-      )
+    [native_id, watch_app_id, widgets_id, watch_widgets_id].each do |bundle_id|
+      begin
+        get_provisioning_profile(
+          api_key: api_key,
+          app_identifier: bundle_id,
+          force: true,
+          output_path: "fastlane/certs"
+        )
+      rescue StandardError => error
+        unless [watch_app_id, watch_widgets_id].include?(bundle_id)
+          raise
+        end
+        UI.user_error!(
+          "Could not fetch the distribution profile for #{bundle_id}: " \
+          "#{error.message}. Confirm the manually-managed HealthKit/App " \
+          "Group capability and #{WATCH_APP_GROUP} attachment in the Apple " \
+          "Developer portal; native_beta cannot repair that configuration."
+        )
+      end
       profiles[bundle_id] = lane_context[SharedValues::SIGH_NAME]
     end
 
@@ -588,7 +659,7 @@ platform :ios do
       initial_build_number: 0
     ) + 1
 
-    # 6. Pin the ARCHIVE to manual signing (#263 discipline, THREE targets now).
+    # 6. Pin the ARCHIVE to manual signing (#263 discipline, FOUR targets now).
     #    The beta lane edits the shipped pbxproj at runtime and restores it in
     #    an ensure; here the project is generated by this lane and untracked,
     #    so the edit needs no restore — the next run regenerates it. The
@@ -607,6 +678,7 @@ platform :ios do
       NATIVE_SCHEME => native_id,
       watch_target => watch_app_id,
       NATIVE_WIDGETS_TARGET => widgets_id,
+      watch_widgets_target => watch_widgets_id,
     }
     signable.each do |target, bundle_id|
       update_code_signing_settings(

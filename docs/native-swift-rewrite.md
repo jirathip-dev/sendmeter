@@ -99,15 +99,18 @@ altered by that rollback.
 
 ## TestFlight distribution (#637)
 
-The native app's Release configuration now uses the shipped bundle ID and the
-existing App Store Connect record. `SendmeterNative` embeds the
+The native app's Release configuration uses the shipped bundle ID and the
+existing App Store Connect record. `SendmeterNative` embeds the existing
 `SendLogWatch Watch App` target, whose product is
-`com.jirathip.sendlog.watchkitapp` and whose Info.plist points back to
-`com.jirathip.sendlog`. Installing a signed Release phone build therefore also
-installs the companion on a paired Apple Watch and enables the direct
-WatchConnectivity mirror. The Debug configuration retains
-`com.jirathip.sendlog.native` only for side-by-side local development; it does
-not pair with the companion.
+`com.jirathip.sendlog.watchkitapp`, and that watch target embeds the existing
+`SendLogWatchWidgets` product as
+`com.jirathip.sendlog.watchkitapp.widgets`. The watch Info.plist points back
+to `com.jirathip.sendlog`. The Debug configuration uses the separate native
+family `com.jirathip.sendlog.native`,
+`com.jirathip.sendlog.native.watchkitapp`, and
+`com.jirathip.sendlog.native.watchkitapp.widgets`; the Debug watch companion
+points back to the Debug phone ID, so the native trio can be installed
+side-by-side without colliding with the shipped IDs.
 
 The direct mirror's live-workout behavior and the fact that it does not need
 the realtime fallback are device-only promotion checks. An unsigned simulator
@@ -120,24 +123,44 @@ but cannot prove installation on a physical paired watch.
 1. API key + cert setup — same CI-safe discipline as `beta` (`setup_ci` +
    import `IOS_DIST_CERT_P12` into a temp keychain on CI; `get_certificates`
    locally).
-2. `xcodegen generate` the project (only `project.yml` is committed).
-3. Idempotently create the shipped App ID, enable the native phone
-   capabilities, and ensure the embedded watch App ID exists.
-4. Fetch distribution profiles for the phone app, embedded watch app, and
-   phone widget appex.
-5. Build number = latest TestFlight build of the shipped app + 1 (the native
+2. `xcodegen generate` the project (the generated `.xcodeproj` is ignored;
+   the project spec and native resource inputs are committed).
+3. Idempotently create the shipped phone, watch, phone-widget, and
+   watch-widget App IDs, and enable the native phone capabilities.
+4. Verify that the watch App ID has HealthKit + App Groups and that the
+   watch-widget App ID has App Groups, with
+   `group.com.jirathip.sendlog` attached to both in the Apple Developer portal.
+   This is a manual prerequisite: the lane does not pretend the Connect API
+   can toggle App Groups or attach the group container, and it fails before
+   profile fetch if the capability flags are absent.
+5. Fetch distribution profiles for the phone app, embedded watch app, phone
+   widget appex, and embedded watch-widget appex.
+6. Build number = latest TestFlight build of the shipped app + 1 (the native
    and Capacitor lanes share this train), injected via
    `CURRENT_PROJECT_VERSION` xcargs; never hand-bump `project.yml`.
-6. Archive with manual signing pinned on all three generated targets (the
+7. Archive with manual signing pinned on all four generated targets (the
    project is regenerated each run); the auth flags stay export-only, same as
    `beta`, so the archive can never mint signing assets.
-7. `upload_to_testflight`.
+8. `upload_to_testflight`.
 
 There is no separate native App Store record or tester list: the Release build
 uses the existing Sendmeter app record. The lane creates or reuses the shipped
-phone and watch App IDs and fetches the profiles needed for the embedded
-bundles; the existing watch entitlements must still be enabled on the team's
-Apple Developer identifiers.
+phone, watch, and widget App IDs and fetches the profiles needed for the
+embedded bundles only after the manually managed watch entitlements are
+present on the team's Apple Developer identifiers.
+
+### Release compiler workaround and verification status
+
+The native phone Release configuration retains Swift `-O`, but uses
+single-file/incremental compilation instead of whole-module optimization. Two
+fresh-derived-data Release archive attempts reproduced a Swift frontend
+`SILDeserializer` crash while compiling the phone target; this narrow setting
+keeps the optimizer unchanged and limits the workaround to the target that
+crashed. The watch and widget targets are not changed to accommodate it.
+
+The archive remains unverified until the serialized Xcode lane is reassigned;
+the project wiring and static generated-project assertions do not substitute
+for that archive check.
 
 **Workflow:** `native-testflight.yml` is dispatch-only (macOS runner minutes
 are the dominant CI cost), uses the same `testflight` GitHub environment as
