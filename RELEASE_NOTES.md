@@ -53,6 +53,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native pending manual workouts now retry reliably after a foreground sync, show the last upload class/error and retry state, recover after sign-in, and can be deleted without reappearing after refresh or relaunch; already-uploaded sessions keep their Trash behavior.
 - Native and Watch error messages now use plain language that says what went wrong and what to do next, instead of showing raw server, Bluetooth, or HealthKit errors.
 - Native Settings now shows a compact account-activity summary (last sign-in and any last problem) instead of the full internal auth event log; technical identifiers, raw server codes, and the complete event history stay behind “Show technical details”.
 - Native app: foreground refreshes now fetch and apply only the sessions, health metrics, workouts, presets, routines, phases, and tags changed since the last sync — including items deleted on another device — instead of replacing the whole local cache on every refresh, while the first sync after a fresh install or cache rebuild still loads everything.

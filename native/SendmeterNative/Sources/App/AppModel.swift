@@ -58,23 +58,43 @@ public struct QuarantinedWrite: Identifiable, Sendable {
     public let lastError: String?
 }
 
+/// The user-visible diagnostic for an active durable write. Active failures
+/// are deliberately separate from `QuarantinedWrite`: auth, permission, and
+/// transport failures stay retryable and must remain visible after relaunch.
+public struct QueuedWriteDiagnostic: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let accountUserID: UUID
+    public let createdAt: Date
+    public let updatedAt: Date
+    public let kind: String
+    public let attempts: Int
+    public let permanentAttempts: Int
+    public let nextAttemptAt: Date
+    public let rejectionClass: RejectionClass?
+    public let lastError: String?
+    public let lastFailureAt: Date?
+    public let lastFailureCode: String?
+}
+
 private extension DurableQueueItem where Payload == PendingWrite {
-    func summary() -> QuarantinedWrite {
-        let kind: String
+    var writeKind: String {
         switch payload {
-        case .session: kind = "Session"
-        case .sessionDelete: kind = "Session deletion"
-        case .recording: kind = "Force recording"
-        case .recordingEdit: kind = "Force recording edit"
-        case .sessionRPEEdit: kind = "Session RPE edit"
-        case .recordingDelete: kind = "Force recording deletion"
-        case .workout: kind = "Manual workout"
+        case .session: return "Session"
+        case .sessionDelete: return "Session deletion"
+        case .recording: return "Force recording"
+        case .recordingEdit: return "Force recording edit"
+        case .sessionRPEEdit: return "Session RPE edit"
+        case .recordingDelete: return "Force recording deletion"
+        case .workout: return "Manual workout"
         }
+    }
+
+    func summary() -> QuarantinedWrite {
         return QuarantinedWrite(
             id: id,
             accountUserID: accountUserID,
             createdAt: createdAt,
-            kind: kind,
+            kind: writeKind,
             attempts: attempts,
             rejection: quarantined ?? QueueRejection(
                 kind: .permanent,
@@ -82,6 +102,23 @@ private extension DurableQueueItem where Payload == PendingWrite {
                 detail: lastError ?? ""
             ),
             lastError: lastError
+        )
+    }
+
+    func diagnostic() -> QueuedWriteDiagnostic {
+        QueuedWriteDiagnostic(
+            id: id,
+            accountUserID: accountUserID,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            kind: writeKind,
+            attempts: attempts,
+            permanentAttempts: permanentAttempts ?? 0,
+            nextAttemptAt: nextAttemptAt,
+            rejectionClass: rejectionClass,
+            lastError: lastError,
+            lastFailureAt: lastFailure?.at,
+            lastFailureCode: lastFailure?.code
         )
     }
 }
@@ -208,6 +245,10 @@ public final class AppModel {
     private(set) var passkeys: [PasskeyListItem] = []
     public private(set) var isRefreshing = false
     public private(set) var queuedWriteCount = 0
+    /// Active queue entries, including the most recent failure class and
+    /// backoff. This is intentionally retained separately from the count so a
+    /// pending badge never hides the reason an upload is still waiting.
+    public private(set) var queuedWriteDiagnostics: [QueuedWriteDiagnostic] = []
     /// Unconfirmed cache rows for direct writes that have no durable replay
     /// after process death (presets, routines, phase/settings, tag metadata).
     /// Kept separate from `queuedWriteCount` so Settings can label them as
@@ -814,6 +855,16 @@ public final class AppModel {
     public var readiness: HealthMetric? { healthMetrics.first }
     public var weeklyLoads: [WeeklyLoad] { TrainingMetrics.weeklyLoads(sessions: sessions) }
     public var recentSessions: [SendmeterCore.Session] { Array(sessions.prefix(8)) }
+    public var latestQueuedWriteFailure: QueuedWriteDiagnostic? {
+        queuedWriteDiagnostics
+            .filter { $0.lastError != nil || $0.rejectionClass != nil }
+            .max {
+                if $0.updatedAt != $1.updatedAt {
+                    return $0.updatedAt < $1.updatedAt
+                }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+    }
 
     // MARK: Tag registry (#631)
 
@@ -1540,6 +1591,18 @@ public final class AppModel {
                 await realtime.subscribe(userID: session.user.id)
                 await refreshLiveWorkoutRow()
                 restartLiveMirrorTickerIfNeeded()
+            } else {
+                switch event {
+                case .signedIn, .tokenRefreshed:
+                    // A re-authentication can keep the same user id and
+                    // therefore skip the cold bootstrap branch. It is still
+                    // the recovery boundary for queue entries parked on an
+                    // expired token, so force a fresh pass with the newly
+                    // valid session.
+                    await drainQueue()
+                default:
+                    break
+                }
             }
         case .passwordRecovery:
             let currentRecoveryUserID = authSession?.user.id
@@ -2445,6 +2508,20 @@ public final class AppModel {
 
     public func deleteSession(_ session: SendmeterCore.Session) async {
         guard let userID = currentUserID else { return }
+        // A pending row has no server record to soft-delete yet. Reuse the
+        // durable Undo path so the local upsert is canceled transactionally,
+        // the delete intent survives refresh/relaunch, and an in-flight
+        // insert cannot publish the row after the user's delete gesture.
+        let currentSession = sessions.first { $0.id == session.id }
+        let isPending = session.pending
+            || currentSession?.pending == true
+            || pendingSessions[session.id] != nil
+        if isPending {
+            await undoSession(
+                SessionLogReceipt(sessionID: session.id, accountUserID: userID)
+            )
+            return
+        }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
@@ -2541,8 +2618,36 @@ public final class AppModel {
                 SessionDeleteQueuePayload(sessionID: sessionID)
             )
         )
+        // Capture the matching upsert revision before the queue transaction.
+        // If an older upload is still in flight, the conditional removal will
+        // leave a newer replacement intact; the delete upload waits for that
+        // request before touching the server.
+        let pendingInsert = await queue.item(
+            id: sessionID,
+            accountUserID: accountUserID
+        )
+        guard accountFetch.canApply(
+            to: self.currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        let cancelingInserts = pendingInsert.map {
+            DurableQueueRemoval(
+                id: $0.id,
+                accountUserID: $0.accountUserID,
+                expectedRevision: $0.revision
+            )
+        }.map { [$0] } ?? []
         do {
-            try await queue.enqueue(deleteItem)
+            guard try await queue.enqueueReplacing(
+                deleteItem,
+                canceling: cancelingInserts
+            ) else {
+                throw NSError(
+                    domain: "SendmeterNative",
+                    code: 12,
+                    userInfo: [NSLocalizedDescriptionKey: "The session delete was already completed."]
+                )
+            }
             guard accountFetch.canApply(
                 to: self.currentUserID,
                 accountEpoch: accountEpoch
@@ -5362,9 +5467,66 @@ public final class AppModel {
               ) else { return }
         let pending = await queue.items(for: userID)
         for item in pending {
-            _ = await upload(item, mode: .manual, capturedBy: accountFetch)
+            await retryQueuedWrite(
+                id: item.id,
+                accountUserID: userID,
+                capturedBy: accountFetch
+            )
         }
         await refreshQueueCount(for: accountFetch)
+    }
+
+    /// Force one manual pass for a queue identity. A foreground drain may
+    /// already own the item when the user taps Retry; returning immediately
+    /// from `upload` in that case made Retry look successful while the item
+    /// stayed pending. Wait for the owner, re-read the durable item, and then
+    /// bypass its automatic backoff for the explicit retry.
+    private func retryQueuedWrite(
+        id: UUID,
+        accountUserID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async {
+        let key = QueueUploadKey(itemID: id, accountUserID: accountUserID)
+        for _ in 0..<3 {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ), let queue else { return }
+
+            if inFlightUploadClaims.isClaimed(key) {
+                await waitForQueueUpload(key)
+                continue
+            }
+            guard let current = await queue.item(
+                id: id,
+                accountUserID: accountUserID
+            ), current.quarantined == nil else { return }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+
+            let result = await upload(
+                current,
+                mode: .manual,
+                capturedBy: accountFetch
+            )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if result.uploaded { return }
+
+            // A producer can claim the identity in the small gap between the
+            // check above and `upload`'s own claim. Only that no-op result is
+            // retried here; a real failure has already been durably recorded
+            // with its class/error/backoff and should be shown to the user.
+            if result.failure == nil, inFlightUploadClaims.isClaimed(key) {
+                await waitForQueueUpload(key)
+                continue
+            }
+            return
+        }
     }
 
     /// The BGTask body: drain the durable queue, then reconcile every cache
@@ -5937,7 +6099,8 @@ public final class AppModel {
     private func upload(
         _ item: DurableQueueItem<PendingWrite>,
         mode: QueueUploadMode = .automatic,
-        capturedBy capturedAccountFetch: AccountScopedFetch? = nil
+        capturedBy capturedAccountFetch: AccountScopedFetch? = nil,
+        waitForSessionInsert: Bool = true
     ) async -> UploadResult {
         guard let queue else {
             return UploadResult(uploaded: false, failure: nil)
@@ -6093,6 +6256,20 @@ public final class AppModel {
                 // because Undo claimed it. Soft-deleting first is a no-op on
                 // many backends and would let the later insert resurrect the
                 // exact row Undo removed.
+                if waitForSessionInsert {
+                    await waitForQueueUpload(
+                        QueueUploadKey(
+                            itemID: deletePayload.sessionID,
+                            accountUserID: item.accountUserID
+                        )
+                    )
+                    guard accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else {
+                        return UploadResult(uploaded: false, failure: nil)
+                    }
+                }
                 let queuedForDelete = await queue.items(
                     for: item.accountUserID,
                     includeQuarantined: true
@@ -6524,26 +6701,45 @@ public final class AppModel {
                 }
             case let .workout(draft):
                 let saved = try await self.repository.insertPhoneWorkout(draft)
-                let publishedWorkout = accountFetch.publishIfCurrent(
+                guard accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
-                ) {
-                    pendingSessions.removeValue(forKey: draft.sessionID)
-                    replaceSession(saved)
-                    cacheConfirmServerUpsert(
-                        saved,
-                        accountUserID: item.accountUserID,
-                        entityType: .sessions,
-                        entityID: CacheEntityID.session(saved),
-                        confirmingLocalRevision: cacheConfirmationRevision(
-                            cacheRevisions,
-                            entityType: .sessions,
-                            entityID: saved.id.uuidString
-                        )
-                    )
-                }
-                guard publishedWorkout else {
+                ) else {
                     return UploadResult(uploaded: false, failure: nil)
+                }
+                let receipt = SessionLogReceipt(
+                    sessionID: draft.sessionID,
+                    accountUserID: item.accountUserID
+                )
+                sessionReceipt = receipt
+                if routineUndo.isClaimed(receipt) {
+                    // A pending manual workout can be deleted while its
+                    // insert is in flight. Keep the durable delete marker as
+                    // the only visible outcome; its upload waits for this
+                    // request to settle before soft-deleting the server row.
+                    pendingSessions.removeValue(forKey: draft.sessionID)
+                } else {
+                    let publishedWorkout = accountFetch.publishIfCurrent(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) {
+                        pendingSessions.removeValue(forKey: draft.sessionID)
+                        replaceSession(saved)
+                        cacheConfirmServerUpsert(
+                            saved,
+                            accountUserID: item.accountUserID,
+                            entityType: .sessions,
+                            entityID: CacheEntityID.session(saved),
+                            confirmingLocalRevision: cacheConfirmationRevision(
+                                cacheRevisions,
+                                entityType: .sessions,
+                                entityID: saved.id.uuidString
+                            )
+                        )
+                    }
+                    guard publishedWorkout else {
+                        return UploadResult(uploaded: false, failure: nil)
+                    }
                 }
             }
             if let sessionReceipt, routineUndo.isClaimed(sessionReceipt) {
@@ -6707,7 +6903,15 @@ public final class AppModel {
             guard case let .sessionDelete(payload) = item.payload else { return false }
             return payload.sessionID == sessionID
         }) else { return }
-        _ = await upload(deleteItem, capturedBy: accountFetch)
+        // The caller is the matching insert's completion. Its upload claim is
+        // still held until the surrounding `upload` defer runs, so waiting on
+        // that same claim here would deadlock. The insert has already settled;
+        // the delete path may proceed directly.
+        _ = await upload(
+            deleteItem,
+            capturedBy: accountFetch,
+            waitForSessionInsert: false
+        )
     }
 
     private func drainSessionRPE(
@@ -7058,6 +7262,7 @@ public final class AppModel {
         guard let userID = currentUserID else {
             pendingCacheWriteCount = 0
             queuedWriteCount = 0
+            queuedWriteDiagnostics = []
             queueBreadcrumbs = []
             quarantinedWrites = nil
             return
@@ -7067,15 +7272,15 @@ public final class AppModel {
             accountEpoch: self.accountEpoch
         )
         guard fetch.canApply(to: userID, accountEpoch: self.accountEpoch) else { return }
-        let count: Int
+        let activeItems: [DurableQueueItem<PendingWrite>]
         let breadcrumbs: [QueueBreadcrumb]
         let quarantined: [QuarantinedWrite]?
         if let queue {
-            count = await queue.count(for: userID)
+            activeItems = await queue.items(for: userID)
             breadcrumbs = await queue.breadcrumbs(for: userID)
             quarantined = await queue.quarantinedItems(for: userID).map { $0.summary() }
         } else {
-            count = 0
+            activeItems = []
             breadcrumbs = []
             quarantined = nil
         }
@@ -7088,7 +7293,8 @@ public final class AppModel {
             to: currentUserID,
             accountEpoch: self.accountEpoch
         ) {
-            queuedWriteCount = count
+            queuedWriteCount = activeItems.count
+            queuedWriteDiagnostics = activeItems.map { $0.diagnostic() }
             queueBreadcrumbs = breadcrumbs
             quarantinedWrites = quarantined
         }
@@ -8236,6 +8442,7 @@ public final class AppModel {
         // account transition must not let the returning A duplicate a request
         // that is still suspended for A. B can proceed through its own key.
         queuedWriteCount = 0
+        queuedWriteDiagnostics = []
         pendingCacheWriteCount = 0
         queueBreadcrumbs = []
         quarantinedWrites = nil

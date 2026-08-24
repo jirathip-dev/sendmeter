@@ -233,6 +233,95 @@ final class AppModelSplitTests: XCTestCase {
         )
     }
 
+    func testManualQueueRetryWaitsForInFlightOwnerAndPublishesFailureState() {
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        XCTAssertTrue(appModel.contains("public private(set) var queuedWriteDiagnostics"))
+        XCTAssertTrue(appModel.contains("public var latestQueuedWriteFailure"))
+        XCTAssertTrue(appModel.contains("lastFailureAt: lastFailure?.at"))
+
+        guard let retryStart = appModel.range(of: "public func retryAllQueuedWrites() async") else {
+            return XCTFail("retryAllQueuedWrites is missing")
+        }
+        guard let retryEnd = appModel.range(
+            of: "private func retryQueuedWrite(",
+            range: retryStart.upperBound..<appModel.endIndex
+        ) else {
+            return XCTFail("retry helper boundary is missing")
+        }
+        let retry = appModel[retryStart.lowerBound..<retryEnd.lowerBound]
+        XCTAssertTrue(retry.contains("await retryQueuedWrite("))
+        XCTAssertTrue(retry.contains("await refreshQueueCount(for: accountFetch)"))
+
+        guard let helperEnd = appModel.range(
+            of: "public func runBackgroundSync(",
+            range: retryEnd.upperBound..<appModel.endIndex
+        ) else {
+            return XCTFail("retry helper end is missing")
+        }
+        let helper = appModel[retryEnd.lowerBound..<helperEnd.lowerBound]
+        XCTAssertTrue(helper.contains("await waitForQueueUpload(key)"))
+        XCTAssertTrue(helper.contains("let current = await queue.item("))
+        XCTAssertTrue(helper.contains("mode: .manual"))
+        XCTAssertTrue(helper.contains("if result.uploaded { return }"))
+        XCTAssertTrue(helper.contains("result.failure == nil"))
+    }
+
+    func testAuthRecoveryDrainsSameAccountWithoutDiscardingActiveQueue() {
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        XCTAssertTrue(appModel.contains("queuedWriteDiagnostics"))
+        guard let start = appModel.range(of: "private func handleAuthEvent") else {
+            return XCTFail("handleAuthEvent is missing")
+        }
+        guard let end = appModel.range(
+            of: "case .passwordRecovery:",
+            range: start.upperBound..<appModel.endIndex
+        ) else {
+            return XCTFail("auth event switch boundary is missing")
+        }
+        let authHandler = appModel[start.lowerBound..<end.lowerBound]
+        XCTAssertTrue(authHandler.contains("case .signedIn, .tokenRefreshed:"))
+        XCTAssertTrue(authHandler.contains("await drainQueue()"))
+        XCTAssertFalse(authHandler.contains("discardAll(accountUserID:"))
+    }
+
+    func testPendingDeleteCancelsUpsertButUploadedDeleteStillUsesTrashPath() {
+        let appModel = code(source("Sources/App/AppModel.swift"))
+
+        guard let deleteStart = appModel.range(of: "public func deleteSession(") else {
+            return XCTFail("deleteSession is missing")
+        }
+        guard let undoStart = appModel.range(
+            of: "public func undoSession(",
+            range: deleteStart.upperBound..<appModel.endIndex
+        ) else {
+            return XCTFail("undoSession boundary is missing")
+        }
+        let delete = appModel[deleteStart.lowerBound..<undoStart.lowerBound]
+        XCTAssertTrue(delete.contains("session.pending"))
+        XCTAssertTrue(delete.contains("pendingSessions[session.id] != nil"))
+        XCTAssertTrue(delete.contains("await undoSession("))
+        XCTAssertTrue(delete.contains("repository.softDeleteSession(id: session.id)"))
+
+        guard let uploadEnd = appModel.range(
+            of: "private func upload(",
+            range: undoStart.upperBound..<appModel.endIndex
+        ) else {
+            return XCTFail("upload boundary is missing")
+        }
+        let undo = appModel[undoStart.lowerBound..<uploadEnd.lowerBound]
+        XCTAssertTrue(undo.contains("enqueueReplacing("))
+        XCTAssertTrue(undo.contains("canceling: cancelingInserts"))
+        XCTAssertTrue(undo.contains("SessionDeleteQueuePayload"))
+
+        let upload = appModel[uploadEnd.lowerBound..<appModel.endIndex]
+        XCTAssertTrue(upload.contains("if waitForSessionInsert"))
+        XCTAssertTrue(upload.contains("await waitForQueueUpload("))
+        XCTAssertTrue(upload.contains("repository.softDeleteSession(id: deletePayload.sessionID)"))
+        XCTAssertTrue(upload.contains("waitForSessionInsert: false"))
+        XCTAssertTrue(upload.contains("case let .workout(draft):"))
+        XCTAssertTrue(upload.contains("if routineUndo.isClaimed(receipt)"))
+    }
+
     func testSwiftPMExcludedSourcesAreSwiftSyntaxParseable() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

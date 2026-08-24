@@ -206,6 +206,10 @@ final class FriendlyErrorTests: XCTestCase {
             "Recording deleted"
         )
         XCTAssertEqual(
+            UserFacingError.message(forQueueBreadcrumbReason: "replaced-by-delete"),
+            "Pending upload deleted"
+        )
+        XCTAssertEqual(
             UserFacingError.message(forQueueBreadcrumbReason: "quarantine-discarded"),
             "Rejected upload discarded"
         )

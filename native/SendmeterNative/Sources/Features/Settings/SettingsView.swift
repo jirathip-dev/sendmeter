@@ -495,6 +495,15 @@ struct SettingsView: View {
         return "\(changes) and \(uploads) kept on this iPhone. Queue entries retry automatically; cache-only changes are preserved on the next refresh rather than being hidden as clean."
     }
 
+    private var activeQueueFailureExplanation: String? {
+        guard let failure = model.latestQueuedWriteFailure,
+              let rejectionClass = failure.rejectionClass else { return nil }
+        let retryAt = failure.nextAttemptAt > Date()
+            ? " Next automatic retry: \(failure.nextAttemptAt.formatted(date: .abbreviated, time: .shortened))."
+            : " It is ready to retry now."
+        return "Last \(failure.kind.lowercased()) attempt: \(UserFacingError.message(for: rejectionClass))\(retryAt)"
+    }
+
     // MARK: About & Support
 
     private var aboutSupportSection: some View {
@@ -517,6 +526,11 @@ struct SettingsView: View {
                 Text(cacheSyncExplanation)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let activeQueueFailureExplanation {
+                    Text(activeQueueFailureExplanation)
+                        .font(.caption)
+                        .foregroundStyle(SendmeterStyle.alert)
+                }
                 Button {
                     retryingQueue = true
                     Task {
@@ -644,6 +658,9 @@ struct SettingsView: View {
     private var hasTechnicalDiagnostics: Bool {
         !model.authEventLog.isEmpty
             || model.currentUserID != nil
+            || model.queuedWriteDiagnostics.contains {
+                $0.lastError != nil || $0.rejectionClass != nil
+            }
             || model.quarantinedWrites?.contains {
                 $0.rejection.code != nil || !$0.rejection.detail.isEmpty
             } == true
@@ -674,6 +691,18 @@ struct SettingsView: View {
                     }
                 }
             }
+            let activeFailures = model.queuedWriteDiagnostics.filter {
+                $0.lastError != nil || $0.rejectionClass != nil
+            }
+            if !activeFailures.isEmpty {
+                healthSubheader(
+                    "Queued-upload diagnostics",
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+                ForEach(activeFailures) { item in
+                    queuedDiagnosticsRow(item)
+                }
+            }
             if !model.authEventLog.isEmpty {
                 healthSubheader("Auth events", systemImage: "key")
                 ForEach(model.authEventLog.reversed()) { entry in
@@ -694,6 +723,34 @@ struct SettingsView: View {
             }
             if !item.rejection.detail.isEmpty {
                 Text(item.rejection.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func queuedDiagnosticsRow(_ item: QueuedWriteDiagnostic) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(item.kind) · \(item.updatedAt.formatted(date: .abbreviated, time: .shortened))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let rejectionClass = item.rejectionClass {
+                LabeledContent("Class", value: rejectionClass.rawValue)
+                    .font(.caption)
+            }
+            LabeledContent(
+                "Attempts",
+                value: "\(item.attempts) (\(item.permanentAttempts) permanent)"
+            )
+            .font(.caption)
+            LabeledContent(
+                "Next retry",
+                value: item.nextAttemptAt.formatted(date: .abbreviated, time: .shortened)
+            )
+            .font(.caption)
+            if let lastError = item.lastError {
+                Text(lastError)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

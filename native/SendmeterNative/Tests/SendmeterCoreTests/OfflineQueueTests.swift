@@ -383,6 +383,182 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertEqual(due.count, 1)
     }
 
+    /// An expired access token is an active, durable failure rather than a
+    /// verdict about the payload. The class/detail survive relaunch, and a
+    /// later authenticated drain can still select and remove the item.
+    func testAuthFailureDiagnosticSurvivesRelaunchAndLaterRecovery() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let now = Date(timeIntervalSince1970: 1_000)
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let item = DurableQueueItem(
+            accountUserID: user,
+            createdAt: now,
+            payload: TestPayload(value: "preserve-me")
+        )
+        try await queue.enqueue(item)
+
+        try await queue.markFailure(
+            id: item.id,
+            accountUserID: user,
+            error: "access token expired",
+            classification: .auth,
+            code: "401",
+            now: now
+        )
+
+        let reloaded = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let parked = await reloaded.items(for: user, includeQuarantined: true)
+        XCTAssertEqual(parked.count, 1)
+        XCTAssertEqual(parked.first?.lastFailure?.kind, .auth)
+        XCTAssertEqual(parked.first?.lastFailure?.code, "401")
+        XCTAssertEqual(parked.first?.lastFailure?.detail, "access token expired")
+        XCTAssertEqual(parked.first?.lastError, "access token expired")
+        XCTAssertEqual(parked.first?.rejectionClass, .auth)
+        let quarantinedCount = await reloaded.quarantinedCount(for: user)
+        XCTAssertEqual(quarantinedCount, 0)
+
+        // A valid later sign-in is modeled by a forced/manual revalidation;
+        // the item remains selectable despite its automatic backoff.
+        let recovered = await reloaded.activeItem(
+            id: item.id,
+            accountUserID: user,
+            dueAt: nil
+        )
+        XCTAssertNotNil(recovered)
+        try await reloaded.remove(id: item.id, accountUserID: user, reason: "uploaded")
+        let finalItems = await reloaded.items(for: user, includeQuarantined: true)
+        XCTAssertTrue(finalItems.isEmpty)
+    }
+
+    /// Explicit Retry bypasses automatic backoff, while the normal drain
+    /// remains due-date gated. This is the queue contract AppModel's manual
+    /// retry path relies on when a foreground drain is already in flight.
+    func testManualRetryRevalidatesBackedOffItemWithoutQuarantine() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let now = Date(timeIntervalSince1970: 2_000)
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let item = DurableQueueItem(
+            accountUserID: user,
+            createdAt: now,
+            payload: TestPayload(value: "retry-now")
+        )
+        try await queue.enqueue(item)
+        try await queue.markFailure(
+            id: item.id,
+            accountUserID: user,
+            error: "offline",
+            classification: .retryable,
+            now: now
+        )
+
+        let notDue = await queue.activeItem(id: item.id, accountUserID: user, dueAt: now)
+        let manualCandidate = await queue.activeItem(id: item.id, accountUserID: user, dueAt: nil)
+        XCTAssertNil(notDue)
+        XCTAssertNotNil(manualCandidate)
+        XCTAssertEqual(QueueUploadMode.automatic.revalidationDueAt(now: now), now)
+        XCTAssertNil(QueueUploadMode.manual.revalidationDueAt(now: now))
+        XCTAssertFalse(QueueUploadMode.manual.countsTowardQuarantine)
+        let quarantinedCount = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(quarantinedCount, 0)
+    }
+
+    /// Pending-session deletion is one durable transaction: the captured
+    /// upsert revision is canceled and a distinct delete identity is
+    /// installed. Reloading before and after completion must never restore the
+    /// canceled upsert.
+    func testPendingDeleteReplacementSurvivesRefreshAndRelaunch() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let sessionID = UUID()
+        let deleteID = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let insert = DurableQueueItem(
+            id: sessionID,
+            accountUserID: user,
+            payload: TestPayload(value: "upsert")
+        )
+        try await queue.enqueue(insert)
+        let capturedItem = await queue.item(id: sessionID, accountUserID: user)
+        let captured = try XCTUnwrap(capturedItem)
+        let delete = DurableQueueItem(
+            id: deleteID,
+            accountUserID: user,
+            payload: TestPayload(value: "delete")
+        )
+
+        let installed = try await queue.enqueueReplacing(
+            delete,
+            canceling: [
+                DurableQueueRemoval(
+                    id: captured.id,
+                    accountUserID: captured.accountUserID,
+                    expectedRevision: captured.revision
+                )
+            ]
+        )
+        XCTAssertTrue(installed)
+        let afterTransaction = await queue.items(for: user, includeQuarantined: true)
+        XCTAssertEqual(afterTransaction.map(\.id), [deleteID])
+
+        let relaunched = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let afterRelaunch = await relaunched.items(for: user, includeQuarantined: true)
+        XCTAssertEqual(afterRelaunch.map(\.id), [deleteID])
+        XCTAssertFalse(afterRelaunch.contains { $0.id == sessionID })
+
+        try await relaunched.remove(id: deleteID, accountUserID: user, reason: "uploaded")
+        let afterCompletion = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let completedItems = await afterCompletion.items(for: user, includeQuarantined: true)
+        XCTAssertTrue(completedItems.isEmpty)
+    }
+
+    /// If a newer upsert replaces the captured revision while delete is
+    /// racing it, the conditional cancel must leave that replacement durable;
+    /// an unconditional remove would lose the latest write.
+    func testPendingDeleteDoesNotCancelNewerReplacementRevision() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let sessionID = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let original = DurableQueueItem(
+            id: sessionID,
+            accountUserID: user,
+            payload: TestPayload(value: "old")
+        )
+        try await queue.enqueue(original)
+        let newer = original.replacingPayload(TestPayload(value: "new"))
+        try await queue.enqueue(newer)
+
+        let delete = DurableQueueItem(
+            id: UUID(),
+            accountUserID: user,
+            payload: TestPayload(value: "delete")
+        )
+        let installed = try await queue.enqueueReplacing(
+            delete,
+            canceling: [
+                DurableQueueRemoval(
+                    id: sessionID,
+                    accountUserID: user,
+                    expectedRevision: original.revision
+                )
+            ]
+        )
+        XCTAssertTrue(installed)
+        let items = await queue.items(for: user, includeQuarantined: true)
+        XCTAssertTrue(items.contains { $0.id == sessionID && $0.payload.value == "new" })
+        XCTAssertTrue(items.contains { $0.id == delete.id })
+    }
+
     /// AC-2: a quarantined entry is recoverable by hand — retry clears the
     /// stamp and resets attempts so the next drain treats it as fresh.
     func testRetryQuarantinedRecoversTheEntry() async throws {

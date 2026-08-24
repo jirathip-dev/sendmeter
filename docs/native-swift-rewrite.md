@@ -22,6 +22,11 @@ new equivalents:
 - WatchConnectivity is the low-latency mirror, while Supabase and durable queues remain authoritative recovery paths
 - Optimistic rows appear only after an atomic local queue write succeeds
 - Queued data is account-scoped and cannot be cleared with an unresolved user
+- Active queue failures retain their rejection class, last error, attempts, and
+  backoff across relaunch; explicit Retry waits for an in-flight owner and
+  bypasses automatic backoff, while auth failures remain parked rather than
+  quarantined. Deleting a pending session atomically cancels its upsert and
+  retains a separate delete intent until the server mutation completes.
 - Reverse Action stores one continuous row per set with honest cadence-clock completion, markers, and time-weighted metrics
 - Existing TypeScript-created routines and force presets remain readable
 

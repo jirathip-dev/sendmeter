@@ -20,6 +20,21 @@ final class RoutineUndoTests: XCTestCase {
         XCTAssertTrue(state.hasPendingDelete(sessionID: sessionID, accountUserID: account))
     }
 
+    /// An already-uploaded session remains hidden while its durable trash
+    /// delete is pending, and completion does not release the insert claim
+    /// that protects it from a stale upload callback.
+    func testUploadedSessionDeletionRetainsTrashClaimUntilCompletion() {
+        let receipt = SessionLogReceipt(sessionID: sessionID, accountUserID: account)
+        var state = RoutineUndoState()
+
+        XCTAssertTrue(state.claim(receipt, currentUserID: account))
+        XCTAssertTrue(state.hasPendingDelete(sessionID: sessionID, accountUserID: account))
+        XCTAssertTrue(state.markDeleteCompleted(receipt, currentUserID: account))
+        XCTAssertFalse(state.hasPendingDelete(sessionID: sessionID, accountUserID: account))
+        XCTAssertTrue(state.isClaimed(receipt))
+        XCTAssertFalse(state.claim(receipt, currentUserID: account))
+    }
+
     func testAccountSwitchCannotCompleteOrApplyAnotherAccountsDeleteIntent() {
         let receipt = SessionLogReceipt(sessionID: sessionID, accountUserID: account)
         var state = RoutineUndoState()
