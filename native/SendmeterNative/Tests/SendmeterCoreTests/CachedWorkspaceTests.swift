@@ -93,10 +93,13 @@ final class CachedWorkspaceTests: XCTestCase {
         PhasePeriod(id: id, phase: .capacity, startedOn: "2026-07-01", endedOn: nil)
     }
 
-    private func healthMetric() -> HealthMetric {
+    private func healthMetric(
+        date: String = "2026-08-20",
+        readiness: Int? = 82
+    ) -> HealthMetric {
         HealthMetric(
-            date: "2026-08-20",
-            readiness: 82,
+            date: date,
+            readiness: readiness,
             zone: "green",
             computedAt: Date(timeIntervalSince1970: 1_700_000_000),
             hrvSDNNMilliseconds: 61.5,
@@ -107,6 +110,22 @@ final class CachedWorkspaceTests: XCTestCase {
             bodyMassKilograms: 71.2,
             respiratoryRate: 14.1
         )
+    }
+
+    func testCachePublishedHealthMetricsPutNewestDateFirstForCurrentReadiness() throws {
+        let workspace = try makeWorkspace()
+        let older = healthMetric(date: "2026-08-18", readiness: 41)
+        let newer = healthMetric(date: "2026-08-24", readiness: 89)
+
+        try workspace.reconcileServer(
+            CachedWorkspaceSnapshot(healthMetrics: [older, newer]),
+            accountUserID: accountA
+        )
+
+        let published = try workspace.load(accountUserID: accountA)
+
+        XCTAssertEqual(published.healthMetrics.map(\.date), ["2026-08-24", "2026-08-18"])
+        XCTAssertEqual(published.healthMetrics.first?.readiness, 89)
     }
 
     func testColdStartLoadReturnsCachedRowsWithoutRemoteCall() throws {
