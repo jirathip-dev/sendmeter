@@ -165,7 +165,7 @@ struct ForceTrendChart: View {
         let lowKilograms: String = formattedKilograms(band.lowKilograms)
         let highKilograms: String = formattedKilograms(band.highKilograms)
         let targetPrefix: String = "Target \(targetKilograms) kg · "
-        let rangeDescription: String = "range \(lowKilograms)–\(highKilograms) kg"
+        let rangeDescription: String = "\(lowKilograms)–\(highKilograms) kg"
         return targetPrefix + rangeDescription
     }
 
