@@ -38,6 +38,7 @@ final class HeroMetricWiringTests: XCTestCase {
 
         XCTAssertTrue(design.contains("public static func countdownMetric(baseSize: CGFloat)"))
         XCTAssertTrue(normalized.contains("@ScaledMetric(relativeTo: .largeTitle)"))
+        XCTAssertTrue(normalized.contains("private var displaySize: CGFloat = 0"))
         XCTAssertTrue(normalized.contains(".font(.system(size: displaySize, weight: .bold, design: .rounded))"))
         XCTAssertTrue(normalized.contains(".monospacedDigit()"))
         XCTAssertTrue(normalized.contains(".allowsTightening(true)"))
@@ -77,8 +78,10 @@ final class HeroMetricWiringTests: XCTestCase {
         XCTAssertTrue(decision.contains(".modifier(SendmeterStyle.heroMetric)"))
         XCTAssertTrue(decision.contains("@ScaledMetric(relativeTo: .largeTitle) private var readinessRingDiameter: CGFloat = 92"))
         XCTAssertTrue(decision.contains("@ScaledMetric(relativeTo: .largeTitle) private var readinessRingStroke: CGFloat = 10"))
+        XCTAssertTrue(decision.contains("@ScaledMetric(relativeTo: .largeTitle) private var readinessPlaceholderIconSize: CGFloat = 54"))
         XCTAssertTrue(decision.contains("StrokeStyle(lineWidth: readinessRingStroke"))
         XCTAssertTrue(decision.contains(".frame(width: readinessRingDiameter, height: readinessRingDiameter)"))
+        XCTAssertTrue(decision.contains(".font(.system(size: readinessPlaceholderIconSize))"))
         XCTAssertFalse(decision.contains(".system(size: 32"))
     }
 
@@ -114,16 +117,18 @@ final class HeroMetricWiringTests: XCTestCase {
         let force = code(source("Sources/Features/Force/ForceView.swift"))
         let deviceCard = exactBlock(force, startingWith: "private struct ForceDeviceCard: View")
         let normalized = normalizeWhitespace(deviceCard)
+        let structural = withoutWhitespace(deviceCard)
 
         XCTAssertTrue(normalized.contains("device.peakKilograms.formatted"))
         XCTAssertTrue(normalized.contains("Text(\"Peak "))
-        XCTAssertTrue(normalized.contains("accessibilityLabel( \"Peak"))
+        XCTAssertTrue(structural.contains("accessibilityLabel(\"Peak"))
+        XCTAssertTrue(normalized.contains(".accessibilityElement(children: .combine) .accessibilityLabel( \"Current force"))
         XCTAssertEqual(
-            countOccurrences("MetricValue( device.currentKilograms", in: normalized),
+            countOccurrences("MetricValue(device.currentKilograms", in: structural),
             1,
             "ForceDeviceCard must keep exactly one current-force hero; a reintroduced duplicate must fail"
         )
-        XCTAssertFalse(normalized.contains("MetricValue( device.peakKilograms"))
+        XCTAssertFalse(structural.contains("MetricValue(device.peakKilograms"))
     }
 
     func testManualWorkoutRestCountdownUsesTheSharedHeroTreatment() {
@@ -203,6 +208,10 @@ final class HeroMetricWiringTests: XCTestCase {
         source
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func withoutWhitespace(_ source: String) -> String {
+        source.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
     }
 
     private func countOccurrences(_ needle: String, in source: String) -> Int {

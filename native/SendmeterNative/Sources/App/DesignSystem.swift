@@ -62,7 +62,7 @@ public struct HeroMetricModifier: ViewModifier {
 }
 
 public struct CountdownMetricModifier: ViewModifier {
-    @ScaledMetric(relativeTo: .largeTitle) private var displaySize: CGFloat
+    @ScaledMetric(relativeTo: .largeTitle) private var displaySize: CGFloat = 0
 
     public init(baseSize: CGFloat) {
         _displaySize = ScaledMetric(wrappedValue: baseSize, relativeTo: .largeTitle)

@@ -2418,6 +2418,7 @@ private struct ForceDeviceCard: View {
                             unit: "kg",
                             color: inTarget ? SendmeterStyle.optimal : .primary
                         )
+                        .accessibilityElement(children: .combine)
                         .accessibilityLabel(
                             "Current force \(device.currentKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
                         )

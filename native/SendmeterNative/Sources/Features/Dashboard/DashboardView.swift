@@ -149,6 +149,7 @@ private struct TodayDecisionCard: View {
     @Binding var showRecovery: Bool
     @ScaledMetric(relativeTo: .largeTitle) private var readinessRingDiameter: CGFloat = 92
     @ScaledMetric(relativeTo: .largeTitle) private var readinessRingStroke: CGFloat = 10
+    @ScaledMetric(relativeTo: .largeTitle) private var readinessPlaceholderIconSize: CGFloat = 54
 
     private func readinessColor(_ scheme: ColorScheme) -> Color {
         guard let readiness = model.readiness?.readiness else { return .secondary }
@@ -208,7 +209,7 @@ private struct TodayDecisionCard: View {
                             .frame(width: readinessRingDiameter, height: readinessRingDiameter)
                         } else {
                             Image(systemName: "heart.text.square")
-                                .font(.system(size: 54))
+                                .font(.system(size: readinessPlaceholderIconSize))
                                 .foregroundStyle(.secondary)
                                 .frame(width: readinessRingDiameter, height: readinessRingDiameter)
                         }
