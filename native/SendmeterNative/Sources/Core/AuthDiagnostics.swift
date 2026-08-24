@@ -28,6 +28,29 @@ public enum AuthEventCategory: String, Codable, CaseIterable, Sendable {
     case refresh
     case signOut
     case failure
+
+    /// #757: categories a normal user can act on or needs to know about.
+    /// Refresh and sign-out transitions are routine internal activity and stay
+    /// in the full diagnostics ring behind the technical-details gate.
+    public var isUserFacingSummary: Bool {
+        switch self {
+        case .signIn, .failure: return true
+        case .refresh, .signOut: return false
+        }
+    }
+}
+
+/// #757: the compact user-facing view of the auth ring. Only the most recent
+/// meaningful activity is surfaced in Settings; the full bounded ring remains
+/// readable behind the technical-details gate.
+public struct AuthEventSummary: Equatable, Sendable {
+    public let lastSignIn: AuthEventEntry?
+    public let lastFailure: AuthEventEntry?
+
+    public init(lastSignIn: AuthEventEntry?, lastFailure: AuthEventEntry?) {
+        self.lastSignIn = lastSignIn
+        self.lastFailure = lastFailure
+    }
 }
 
 /// Pure display helpers for the auth-diagnostics surface — mirrors the
@@ -35,6 +58,21 @@ public enum AuthEventCategory: String, Codable, CaseIterable, Sendable {
 /// a long failure reason stays readable on a small Settings row.
 public enum AuthDiagnostics {
     public static let detailDisplayLimit = 160
+
+    /// The most recent user-facing events from an auth ring. The ring is stored
+    /// oldest-first, but the selection is timestamp-based so an out-of-order
+    /// copy still reports the actual latest event.
+    public static func summary(of history: [AuthEventEntry]) -> AuthEventSummary {
+        let visible = history.filter { $0.category.isUserFacingSummary }
+        return AuthEventSummary(
+            lastSignIn: visible
+                .filter { $0.category == .signIn }
+                .max { $0.occurredAt < $1.occurredAt },
+            lastFailure: visible
+                .filter { $0.category == .failure }
+                .max { $0.occurredAt < $1.occurredAt }
+        )
+    }
 
     public static func truncatedDetail(
         _ detail: String,
@@ -62,6 +100,8 @@ public enum AuthDiagnostics {
 /// - **Unreadable file = empty ring.** A corrupt copy is treated as no history
 ///   and overwritten by the next write; it is a diagnostics sidecar, not a
 ///   queued item.
+/// - **Gated presentation.** The full ring is readable behind Settings' explicit
+///   technical-details gate; the normal path shows only a compact summary (#757).
 ///
 /// Thread-safe (lock-guarded): the MainActor auth path records while the
 /// SwiftUI diagnostics view reads, and the store is `@unchecked Sendable` so it

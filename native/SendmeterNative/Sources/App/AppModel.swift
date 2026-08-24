@@ -745,9 +745,10 @@ public final class AppModel: ObservableObject {
 
     public var currentUserID: UUID? { authSession?.user.id }
     public var currentUserEmail: String? { authSession?.user.email }
-    /// #679: recent on-device auth events (sign-in / refresh / sign-out /
-    /// failure), oldest first, for Settings → troubleshooting. The ring is
-    /// bounded and best-effort persistent (see `AuthDiagnosticsStore`).
+    /// #679/#757: recent on-device auth events (sign-in / refresh / sign-out /
+    /// failure), oldest first, readable behind Settings' technical-details
+    /// gate. The ring is bounded and best-effort persistent (see
+    /// `AuthDiagnosticsStore`).
     public var authEventLog: [AuthEventEntry] { auth.diagnostics.history() }
     public var accountScope: NativeAccountScope {
         NativeAccountScope(userID: currentUserID, epoch: accountEpoch)
