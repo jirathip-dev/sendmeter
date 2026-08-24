@@ -176,7 +176,7 @@ fullscreen accessibility invariants. This is a local supplemental gate; PR CI
 separately runs:
 
 1. Pure Swift Core tests.
-2. XcodeGen project generation.
+2. XcodeGen project generation and Swift package resolution.
 3. Generated-project assertions for watch/widget source and resource
    membership, entitlements exclusion, package links, and embed destinations
    (`scripts/assert-native-watch-project.rb`).
