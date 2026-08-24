@@ -89,14 +89,18 @@ public struct CacheLoadOneResult<T> {
 ///
 /// Every row records its `write_origin`, `pending`, and `local_revision`
 /// state. Local writes are optimistic and always replace a cached row, marking
-/// it pending and bumping `local_revision` until the server confirms.
+/// it pending and bumping `local_revision` until the server confirms. A
+/// server-origin pending row is a durable remote-device placeholder (for
+/// example, a watch completion): it is protected from an absent-row refresh
+/// but is replaced by the first authoritative row for the same identity.
 /// `local_revision` is strictly monotonic over a row's lifetime: every local
 /// write/delete increments it, and neither a **confirmation** nor a refresh
 /// **adoption** ever resets it, so a stale confirmation from an earlier cycle
 /// can never numerically match a newer pending edit. A server **refresh**
 /// (`upsertServer`/`markDeletedServer`) never reverts a pending local action —
 /// it only replaces non-pending local-origin rows and otherwise uses
-/// last-writer-wins on a microsecond-precision `updated_at`. A server
+/// last-writer-wins on a microsecond-precision `updated_at`. A server-origin
+/// pending placeholder is adoptable when its authoritative row arrives. A server
 /// **confirmation** (`confirmServerUpsert`/`confirmServerDelete`) applies the
 /// server's post-upload state and clears pending only when the row's stored
 /// `local_revision` still equals the revision that was uploaded; slice 2+
@@ -462,14 +466,17 @@ public struct LocalCacheStore: @unchecked Sendable {
     /// Upserts one server payload from a refresh (poll or realtime).
     ///
     /// A refresh must **not** revert an unconfirmed local action: if the cached
-    /// row is `pending`, the incoming payload is dropped and its
-    /// `local_revision` is preserved. Otherwise a server write replaces a
-    /// non-pending local-origin row regardless of clock and replaces a
-    /// server-origin row only when `updatedAt` is strictly newer; in both
-    /// adoption cases the row's monotonic `local_revision` is preserved rather
-    /// than reused. The writer must pass the entity's server `updated_at`;
-    /// timestamps are microsecond-precision and compared within the server
-    /// domain only. Use `confirmServerUpsert` for the post-upload ack instead.
+    /// row is a local-origin `pending` row, the incoming payload is dropped and
+    /// its `local_revision` is preserved. A server-origin pending row is a
+    /// remote-device placeholder, so an incoming row with the same identity
+    /// adopts it even when its server timestamp is older than the phone's
+    /// receive time. Otherwise a server write replaces a non-pending
+    /// local-origin row regardless of clock and replaces a server-origin row
+    /// only when `updatedAt` is strictly newer; in both adoption cases the
+    /// row's monotonic `local_revision` is preserved rather than reused. The
+    /// writer must pass the entity's server `updated_at`; timestamps are
+    /// microsecond-precision and compared within the server domain only. Use
+    /// `confirmServerUpsert` for the post-upload ack instead.
     public func upsertServer<T: Encodable>(
         _ value: T,
         accountUserID: UUID,
@@ -485,6 +492,40 @@ public struct LocalCacheStore: @unchecked Sendable {
             mode: .serverRefresh,
             updatedAt: updatedAt
         )
+    }
+
+    /// Persists a remote-device placeholder without pretending that the phone
+    /// has an upload queued. It is idempotent by account/entity identity and
+    /// never overwrites an existing row. The normal server refresh and delta
+    /// paths treat `pending + write_origin=server` as adoptable once the
+    /// authoritative row arrives.
+    public func upsertPendingServer<T: Encodable>(
+        _ value: T,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String
+    ) throws {
+        let json = try JSONEncoder().encode(value)
+        guard let payload = String(data: json, encoding: .utf8) else {
+            throw LocalCacheError.invalidJSON
+        }
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO cache_rows
+                        (account_user_id, entity_type, entity_id, payload, deleted_at, updated_at, write_origin, pending, local_revision)
+                    VALUES (?, ?, ?, ?, NULL, ?, 'server', 1, 0)
+                    ON CONFLICT(account_user_id, entity_type, entity_id) DO NOTHING
+                    """,
+                arguments: [
+                    Self.accountIDString(accountUserID),
+                    entityType.rawValue,
+                    entityID,
+                    payload,
+                    Self.timestamp(Date())
+                ]
+            )
+        }
     }
 
     private func writePayload<T: Encodable>(
@@ -549,32 +590,37 @@ public struct LocalCacheStore: @unchecked Sendable {
                         VALUES (?, ?, ?, ?, NULL, ?, 'server', 0, 0)
                         ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
                             payload = CASE
-                                WHEN cache_rows.pending = 1 THEN cache_rows.payload
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.payload
                                 WHEN cache_rows.write_origin = 'local' THEN excluded.payload
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'server' THEN excluded.payload
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN excluded.payload
                                 ELSE cache_rows.payload
                             END,
                             deleted_at = CASE
-                                WHEN cache_rows.pending = 1 THEN cache_rows.deleted_at
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.deleted_at
                                 WHEN cache_rows.write_origin = 'local' THEN NULL
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'server' THEN NULL
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN NULL
                                 ELSE cache_rows.deleted_at
                             END,
                             updated_at = CASE
-                                WHEN cache_rows.pending = 1 THEN cache_rows.updated_at
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.updated_at
                                 WHEN cache_rows.write_origin = 'local' THEN excluded.updated_at
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'server' THEN excluded.updated_at
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN excluded.updated_at
                                 ELSE cache_rows.updated_at
                             END,
                             write_origin = CASE
-                                WHEN cache_rows.pending = 1 THEN cache_rows.write_origin
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.write_origin
                                 WHEN cache_rows.write_origin = 'local' THEN 'server'
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'server' THEN 'server'
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN 'server'
                                 ELSE cache_rows.write_origin
                             END,
                             pending = CASE
-                                WHEN cache_rows.pending = 1 THEN 1
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN 1
                                 WHEN cache_rows.write_origin = 'local' THEN 0
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'server' THEN 0
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN 0
                                 ELSE cache_rows.pending
                             END,
@@ -672,13 +718,14 @@ public struct LocalCacheStore: @unchecked Sendable {
 
     /// Soft-deletes one server entity from a refresh (hidden from reads).
     ///
-    /// A refresh delete never reverts a pending local action: if the cached row
-    /// is `pending`, the incoming tombstone is dropped and its `local_revision`
-    /// is preserved. Otherwise it inserts a tombstone even when the key was
-    /// never cached (so an out-of-order stale upsert cannot resurrect a
-    /// server-deleted row), replaces a non-pending local-origin row, and only
-    /// replaces an older server-origin row; in both adoption cases the row's
-    /// monotonic `local_revision` is preserved rather than reused. Use
+    /// A refresh delete never reverts a pending action: local pending rows and
+    /// remote-device placeholders are preserved because absence from this
+    /// refresh is not proof that either action has reached the server. It
+    /// otherwise inserts a tombstone even when the key was never cached (so
+    /// an out-of-order stale upsert cannot resurrect a server-deleted row),
+    /// replaces a non-pending local-origin row, and only replaces an older
+    /// server-origin row; in both adoption cases the row's monotonic
+    /// `local_revision` is preserved rather than reused. Use
     /// `confirmServerDelete` for the post-upload ack instead.
     public func markDeletedServer(
         accountUserID: UUID,
@@ -722,23 +769,23 @@ public struct LocalCacheStore: @unchecked Sendable {
                     VALUES (?, ?, ?, ?, NULL, ?, 'server', 0, 0)
                     ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
                         payload = CASE
-                            WHEN cache_rows.pending = 1 THEN cache_rows.payload
+                            WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.payload
                             ELSE excluded.payload
                         END,
                         deleted_at = CASE
-                            WHEN cache_rows.pending = 1 THEN cache_rows.deleted_at
+                            WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.deleted_at
                             ELSE excluded.deleted_at
                         END,
                         updated_at = CASE
-                            WHEN cache_rows.pending = 1 THEN cache_rows.updated_at
+                            WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.updated_at
                             ELSE excluded.updated_at
                         END,
                         write_origin = CASE
-                            WHEN cache_rows.pending = 1 THEN cache_rows.write_origin
+                            WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.write_origin
                             ELSE 'server'
                         END,
                         pending = CASE
-                            WHEN cache_rows.pending = 1 THEN 1
+                            WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN 1
                             ELSE 0
                         END,
                         local_revision = cache_rows.local_revision
@@ -774,23 +821,23 @@ public struct LocalCacheStore: @unchecked Sendable {
                     VALUES (?, ?, ?, '{}', ?, ?, 'server', 0, 0)
                     ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
                         payload = CASE
-                            WHEN cache_rows.pending = 1 THEN cache_rows.payload
+                            WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.payload
                             ELSE excluded.payload
                         END,
                         deleted_at = CASE
-                            WHEN cache_rows.pending = 1 THEN cache_rows.deleted_at
+                            WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.deleted_at
                             ELSE excluded.deleted_at
                         END,
                         updated_at = CASE
-                            WHEN cache_rows.pending = 1 THEN cache_rows.updated_at
+                            WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.updated_at
                             ELSE excluded.updated_at
                         END,
                         write_origin = CASE
-                            WHEN cache_rows.pending = 1 THEN cache_rows.write_origin
+                            WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.write_origin
                             ELSE 'server'
                         END,
                         pending = CASE
-                            WHEN cache_rows.pending = 1 THEN 1
+                            WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN 1
                             ELSE 0
                         END,
                         local_revision = cache_rows.local_revision
@@ -863,31 +910,36 @@ public struct LocalCacheStore: @unchecked Sendable {
                         VALUES (?, ?, ?, '{}', ?, ?, 'server', 0, 0)
                         ON CONFLICT(account_user_id, entity_type, entity_id) DO UPDATE SET
                             payload = CASE
-                                WHEN cache_rows.pending = 1 THEN cache_rows.payload
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.payload
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'server' THEN cache_rows.payload
                                 WHEN cache_rows.write_origin = 'local' THEN excluded.payload
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN excluded.payload
                                 ELSE cache_rows.payload
                             END,
                             deleted_at = CASE
-                                WHEN cache_rows.pending = 1 THEN cache_rows.deleted_at
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.deleted_at
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'server' THEN cache_rows.deleted_at
                                 WHEN cache_rows.write_origin = 'local' THEN excluded.deleted_at
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN excluded.deleted_at
                                 ELSE cache_rows.deleted_at
                             END,
                             updated_at = CASE
-                                WHEN cache_rows.pending = 1 THEN cache_rows.updated_at
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.updated_at
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'server' THEN cache_rows.updated_at
                                 WHEN cache_rows.write_origin = 'local' THEN excluded.updated_at
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN excluded.updated_at
                                 ELSE cache_rows.updated_at
                             END,
                             write_origin = CASE
-                                WHEN cache_rows.pending = 1 THEN cache_rows.write_origin
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN cache_rows.write_origin
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'server' THEN cache_rows.write_origin
                                 WHEN cache_rows.write_origin = 'local' THEN 'server'
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN 'server'
                                 ELSE cache_rows.write_origin
                             END,
                             pending = CASE
-                                WHEN cache_rows.pending = 1 THEN 1
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'local' THEN 1
+                                WHEN cache_rows.pending = 1 AND cache_rows.write_origin = 'server' THEN 1
                                 WHEN cache_rows.write_origin = 'local' THEN 0
                                 WHEN cache_rows.updated_at < excluded.updated_at THEN 0
                                 ELSE cache_rows.pending

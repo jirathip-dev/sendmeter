@@ -543,6 +543,26 @@ public struct CachedWorkspace: @unchecked Sendable {
         )
     }
 
+    /// Persists a remote-origin placeholder that is known to exist durably on
+    /// another device but has not reached Supabase yet (currently the watch's
+    /// completed-workout summary). It stays visible through a full refresh and
+    /// is replaced by the first authoritative server row for the same entity.
+    /// Unlike `upsertLocal`, it is not a phone upload and therefore must not be
+    /// counted as a direct-write or confirmed through the phone queue.
+    public func upsertPendingServer<T: Encodable>(
+        _ value: T,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String
+    ) throws {
+        try store.upsertPendingServer(
+            value,
+            accountUserID: accountUserID,
+            entityType: entityType,
+            entityID: entityID
+        )
+    }
+
     public func localRevision(
         accountUserID: UUID,
         entityType: LocalCacheEntityType,

@@ -385,6 +385,10 @@ public final class AppModel {
     @ObservationIgnored
     private nonisolated(unsafe) var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
+    /// Direct WC delivery and `transferUserInfo` can overlap. The gate is
+    /// claimed before the first cache write and released only after adoption;
+    /// the cache row itself is the relaunch-safe dedupe record.
+    private var watchCompletionAdoption = WatchCompletionAdoptionGate()
     private var pendingRecordings = PendingRecordingOverlay()
     /// Metadata edits are overlays until the narrow PATCH has landed. Keeping
     /// them separate from insert placeholders means a refresh/relaunch cannot
@@ -629,7 +633,8 @@ public final class AppModel {
             await self?.relayValidSessionToWatch(guaranteed: true)
         }
         watch.onWorkoutCompletion = { [weak self] completion in
-            await self?.acceptWatchCompletion(completion)
+            guard let self else { return false }
+            return await self.acceptWatchCompletion(completion)
         }
         // A background HealthKit observer fire and foreground sync share the
         // same single-flight recompute path (see computeAndPublishReadiness).
@@ -1361,11 +1366,14 @@ public final class AppModel {
             watch.relaySession(session)
             if changedUser || didBootstrapUserID != session.user.id {
                 resetAccountState()
+                // Adopt persisted watch summaries before any network await so
+                // a relaunch with a delayed Supabase path still renders the
+                // completion in History immediately.
+                await acceptStoredWatchCompletions()
                 await refreshAll(showSpinner: true)
                 // #712: load the passkey list for the (newly) signed-in user.
                 await loadPasskeys()
                 didBootstrapUserID = session.user.id
-                await acceptStoredWatchCompletions()
                 await drainQueue()
                 // The subscribe is AWAITED on purpose (#626 review): this
                 // serializes it with auth events, so a sign-out / user switch
@@ -6583,40 +6591,173 @@ public final class AppModel {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        for completion in watch.drainStoredCompletions() {
-            await acceptWatchCompletion(completion, accountFetch: accountFetch)
+        for completion in watch.storedCompletions() {
+            let adopted = await acceptWatchCompletion(
+                completion,
+                accountFetch: accountFetch
+            )
+            // The persisted inbox is owned by the account that was captured
+            // for this pass. A switch/sign-out while adoption was suspended
+            // must leave the completion for the correct account's next pass.
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if adopted {
+                watch.acknowledgeStoredCompletion(completion)
+            }
         }
+    }
+
+    private enum WatchCompletionCacheLookup {
+        case missing
+        case found(SendmeterCore.Session)
+        case unavailable
+    }
+
+    private func cachedWatchCompletionSession(
+        sessionID: UUID,
+        accountUserID: UUID
+    ) -> WatchCompletionCacheLookup {
+        guard let cachedWorkspace else { return .unavailable }
+        do {
+            guard let session = try cachedWorkspace.store.loadOne(
+                SendmeterCore.Session.self,
+                accountUserID: accountUserID,
+                entityType: .sessions,
+                entityID: sessionID.uuidString
+            ) else {
+                return .missing
+            }
+            return .found(session)
+        } catch {
+            recordCacheFailure("watch completion lookup", error)
+            return .unavailable
+        }
+    }
+
+    /// Publishes a cache-adopted session without replacing an already-visible
+    /// authoritative row. The cache is the durable dedupe boundary; the
+    /// in-memory overlay only makes the History update synchronous with the WC
+    /// callback.
+    @discardableResult
+    private func publishWatchCompletion(
+        _ session: SendmeterCore.Session,
+        accountUserID: UUID,
+        accountFetch: AccountScopedFetch
+    ) -> Bool {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ), session.accountUserID == nil || session.accountUserID == accountUserID else {
+            return false
+        }
+        if sessions.contains(where: { $0.id == session.id && !$0.pending }) {
+            return true
+        }
+        if session.pending {
+            pendingSessions[session.id] = session
+            mergeSessions(remote: sessions.filter { !$0.pending })
+        } else {
+            mergeSessions(
+                remote: sessions.filter { !$0.pending } + [session]
+            )
+        }
+        return true
     }
 
     private func acceptWatchCompletion(
         _ completion: WatchWorkoutCompletion,
         accountFetch: AccountScopedFetch? = nil
-    ) async {
-        guard let userID = currentUserID else { return }
+    ) async -> Bool {
+        guard let userID = currentUserID else { return false }
         let accountFetch = accountFetch ?? AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: self.accountEpoch
         )
         guard accountFetch.canApply(to: userID, accountEpoch: self.accountEpoch) else {
-            return
+            return false
         }
-        if let owner = completion.accountUserID, owner != userID { return }
-        let pending = completion.pendingSession()
-        guard !sessions.contains(where: { $0.id == pending.id && !$0.pending }) else { return }
-        pendingSessions[pending.id] = pending
-        mergeSessions(remote: sessions.filter { !$0.pending })
+        let lookup = cachedWatchCompletionSession(
+            sessionID: completion.sessionID,
+            accountUserID: userID
+        )
+        let alreadyAdopted: Bool
+        if case .found = lookup {
+            alreadyAdopted = true
+        } else {
+            alreadyAdopted = false
+        }
+        let decision = watchCompletionAdoption.claim(
+            completion.identity,
+            stampedOwner: completion.accountUserID,
+            currentUserID: userID,
+            alreadyAdopted: alreadyAdopted
+        )
+        switch decision {
+        case .signedOut, .wrongAccount, .inFlightDuplicate:
+            return false
+        case .alreadyAdopted:
+            guard case let .found(existing) = lookup else { return false }
+            return publishWatchCompletion(
+                existing,
+                accountUserID: userID,
+                accountFetch: accountFetch
+            )
+        case .adopt:
+            defer { watchCompletionAdoption.finish(completion.identity) }
+        }
+
+        guard case .missing = lookup else {
+            // `.unavailable` is deliberately not treated as an empty cache:
+            // retaining the WC row is the only safe recovery path.
+            return false
+        }
+        guard let cachedWorkspace else { return false }
+        var pending = completion.pendingSession(accountUserID: userID)
+        pending.accountUserID = userID
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: self.accountEpoch
+        ) else { return false }
         do {
-            let refreshed = try await self.repository.fetchSessions(accountUserID: userID)
-            _ = accountFetch.publishIfCurrent(
+            try cachedWorkspace.upsertPendingServer(
+                pending,
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: CacheEntityID.session(pending)
+            )
+        } catch {
+            recordCacheFailure("watch completion adoption", error)
+            return false
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: self.accountEpoch
+        ) else { return false }
+        do {
+            guard let adopted = try cachedWorkspace.store.loadOne(
+                SendmeterCore.Session.self,
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: CacheEntityID.session(pending)
+            ) else {
+                // A tombstone or cache failure means local adoption did not
+                // become durable. Keep the persisted completion for retry.
+                return false
+            }
+            guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: self.accountEpoch
-            ) {
-                mergeSessions(remote: refreshed)
-            }
+            ) else { return false }
+            return publishWatchCompletion(
+                adopted,
+                accountUserID: userID,
+                accountFetch: accountFetch
+            )
         } catch {
-            // The watch queue is the durable source until its upload lands.
-            // Keep the visible pending item rather than treating network delay
-            // as a failed workout.
+            recordCacheFailure("watch completion adoption verify", error)
+            return false
         }
     }
 
@@ -7501,6 +7642,7 @@ public final class AppModel {
         tagMetadata = []
         passkeys = []
         pendingSessions = [:]
+        watchCompletionAdoption.reset()
         pendingRecordings = PendingRecordingOverlay()
         clearPendingCurveSamples()
         pendingRecordingEdits = [:]
