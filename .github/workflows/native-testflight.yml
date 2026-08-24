@@ -1,9 +1,9 @@
 # Native TestFlight — dispatch-only, cost-gated exactly like testflight.yml
-# (#150). Builds the experimental native SwiftUI app (native/SendmeterNative)
-# and uploads it to TestFlight under com.jirathip.sendlog.native — a SEPARATE
-# app record from the shipped com.jirathip.sendlog (one bundle ID = one app
-# slot on TestFlight, so the native build can never replace the Capacitor
-# app's builds — #637).
+# (#150). Builds the native SwiftUI app (native/SendmeterNative) from its
+# Release configuration and uploads it to the existing shipped
+# com.jirathip.sendlog record. The archive embeds the
+# com.jirathip.sendlog.watchkitapp companion; Debug retains a separate
+# .native ID for local side-by-side development (#768).
 #
 # macOS runner minutes are the repo's dominant CI cost and native TestFlight
 # builds are an on-demand soak, not a per-merge release, so there is no push
@@ -15,9 +15,8 @@
 #
 # Ref gate (cheap Ubuntu job, mirrors testflight.yml's gate shape): the
 # shipped lane demands main because only main carries the migration-verified
-# schema; the native lane demands the ref actually contains the native
-# target, because it does NOT exist on main yet (it lives on staging and
-# native/* branches). A workflow_dispatch on a branch without
+# schema; this lane demands the ref actually contains the native target. A
+# workflow_dispatch on a branch without
 # native/SendmeterNative/project.yml fails the gate before any macOS runner
 # is spent.
 name: Native TestFlight
@@ -30,9 +29,9 @@ on:
         default: blacksmith-6vcpu-macos-26
         type: string
 
-# The native app has its own build-number train (com.jirathip.sendlog.native,
-# latest + 1), so it cannot race the shipped `beta` lane's numbers — but two
-# parallel native runs would race each other's: queue, never cancel.
+# Native and Capacitor TestFlight builds share the shipped build-number train;
+# queue native runs and never cancel them. Do not run this lane concurrently
+# with the shipped `beta` lane.
 concurrency:
   group: native-testflight
   cancel-in-progress: false

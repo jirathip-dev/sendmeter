@@ -2,15 +2,22 @@
 
 Owner: orch-sendmeter (all-DeepSeek/opencode, gauntlet protocol).
 Goal: close the remaining native/web parity gaps so the SwiftUI target can
-reach the physical iPhone/watch soak gate (docs/native-swift-rewrite.md) and
-be promoted from parallel target to shipped.
+reach the physical iPhone/watch soak gate (docs/native-swift-rewrite.md) while
+the Capacitor and native implementations remain separately validated.
+
+Status note: #637's dispatch-only native TestFlight path is now present in
+`.github/workflows/native-testflight.yml`. Issue #768 also makes the native
+Release configuration use the shipped Sendmeter app record and embed the
+existing Apple Watch companion. The physical soak and promotion gates below
+remain device-only.
 
 ## Order of attack — #637 FIRST
 
 ### P1 (#637) — TestFlight/CI distribution path for SendmeterNative
-- The native target currently has NO TestFlight/CI path — device gates cannot
-  run. This unblocks physical-device testing of every other parity item, so
-  it goes first.
+- The native target has a dispatch-only TestFlight/CI path. This unblocks
+  physical-device testing of every other parity item, so it goes first in the
+  historical batch order. #768 keeps that path aligned with the embedded watch
+  companion.
 - Deliverable: a working CI pipeline (XcodeGen `native/SendmeterNative/project.yml`
   → xcodebuild → signed build → TestFlight upload via fastlane or gh actions)
   that Guy can actually ship from. Requires the repo's signing/distribution
@@ -47,9 +54,10 @@ be promoted from parallel target to shipped.
 
 ## Non-negotiable
 
-- Web app stays the shipped target. Native promotion ONLY after the device
-  soak gate passes (per docs/native-swift-rewrite.md) — do not flip the
-  shipped target.
+- Keep the Capacitor/web implementation separately maintained. The native
+  Release bundle now uses the existing shipped Sendmeter app record, but native
+  implementation promotion remains gated on the physical device soak (per
+  docs/native-swift-rewrite.md).
 - Every parity fix must have tests (the native target has a solid
   SendmeterCoreTests suite — extend it).
 - Run the repo's standard gates: `npm run typecheck && npm run lint && npm
@@ -59,7 +67,10 @@ be promoted from parallel target to shipped.
 
 ## Acceptance criteria (verdict gate for the batch)
 
-1. #637: TestFlight build ships from CI; Guy can install native on his phone.
+1. #637: the dispatch-only TestFlight build remains available, and #768's
+   Release build embeds the watch companion; Guy can install it on physical
+   devices once signing/profile gates pass.
 2. #633/#632/#631/#630: each closed with evidence + tests, web parity verified.
 3. cargo-equivalent quality bar: no new warnings, tests green, CI green.
-4. Web app untouched as the shipped target; native still parallel.
+4. Web app source remains untouched by the native target; native stays under
+   the separate physical-device promotion gates.

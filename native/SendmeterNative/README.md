@@ -52,6 +52,15 @@ SwiftUI application
 └── Sources/App        App lifecycle, orchestration, design system, and optimistic reconciliation
 ```
 
+The generated project also has a `SendLogWatch Watch App` watchOS target. It
+reuses the existing companion sources from `ios/App/SendLogWatch Watch App`,
+links the same `SendLogWatchCore` package used by the Capacitor target, and is
+automatically copied into `SendmeterNative.app/Watch` by the native app's
+`Embed Watch Content` phase. The Release phone bundle ID is
+`com.jirathip.sendlog`, matching the watch Info.plist's
+`WKCompanionAppBundleIdentifier`; this is the bundle relationship that enables
+WatchConnectivity pairing.
+
 `AppModel` hydrates its observable lists from the account-scoped cache before
 any remote fetch, so a cold start renders the last-known sessions, recordings,
 workouts, presets, routines, phase periods, health rows, settings, and tag
@@ -130,12 +139,13 @@ xcodebuild \
 
 For a physical device, open `SendmeterNative.xcodeproj`, select the existing
 Sendmeter development team and signing profile, then run the `SendmeterNative`
-scheme. The bundle identifier is the distinct `com.jirathip.sendlog.native`
-(#637) so the two clients ship side-by-side on TestFlight without one replacing
-the other's builds — a consequence is that the native iOS app does not pair
-with the watch companion (WCSession pairing is bundle-ID-prefix-based), so the
-live-workout mirror falls back to the realtime server path. Promotion to the
-shipped `com.jirathip.sendlog` is a separate decision.
+scheme. Release/TestFlight builds use the shipped `com.jirathip.sendlog` bundle
+ID and include `com.jirathip.sendlog.watchkitapp` inside the archive, so
+installing the phone app also installs the companion on a paired Apple Watch.
+The Debug configuration intentionally keeps `com.jirathip.sendlog.native` for
+side-by-side local development; that ID does not match the watch companion and
+cannot prove WCSession pairing. Direct live-workout mirroring and the absence
+of a realtime fallback are device-only checks on a signed Release build.
 
 ## Verification
 
