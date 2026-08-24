@@ -6,7 +6,9 @@
 SwiftUI. It shares the production data model and the existing Watch app, but it
 does not modify the shipped Capacitor target. This isolation is the primary
 regression-control mechanism: the rewrite can fail validation without changing
-the current release.
+the current release. The native app target currently requires iOS 17 because
+its per-property `@Observable` models and typed SwiftUI environment are iOS 17
+APIs; the reusable `SendmeterCore` package remains iOS 16-compatible.
 
 ## Compatibility contracts
 

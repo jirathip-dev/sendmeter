@@ -72,12 +72,61 @@ final class ForceEngineTests: XCTestCase {
         XCTAssertEqual(accumulator.samples.count, 2)
     }
 
-    /// #671: the live window is a zero-copy `ArraySlice` over the
-    /// accumulator's stable storage — an O(log n) binary search plus an O(1)
-    /// slice, never a per-notification `Array(samples[low...])` copy. This
-    /// pins the API shape AND proves storage sharing by pointer identity: the
-    /// slice's buffer base address equals the accumulator buffer's base
-    /// address offset by the slice start — no element copy was allocated.
+    func testAccumulatorPreservesWrappingClockAndMonotonicTrace() {
+        var accumulator = ForceSessionAccumulator()
+        let start = UInt32.max - 3_000
+        let wrapped = UInt32(2_000)
+        let outOfOrder = UInt32(1_000)
+
+        XCTAssertEqual(
+            accumulator.append([
+                TindeqWireSample(microseconds: start, kilograms: -4),
+                TindeqWireSample(microseconds: wrapped, kilograms: 8),
+                TindeqWireSample(microseconds: outOfOrder, kilograms: 12),
+            ]),
+            2
+        )
+        XCTAssertEqual(accumulator.samples.count, 2)
+        XCTAssertEqual(accumulator.samples[0].milliseconds, 0, accuracy: 0.001)
+        XCTAssertEqual(accumulator.samples[1].milliseconds, 5.001, accuracy: 0.001)
+        XCTAssertEqual(accumulator.samples.map(\.milliseconds), [0, 5.001])
+        XCTAssertEqual(accumulator.samples[0].kilograms, 0)
+        XCTAssertEqual(accumulator.samples[1].kilograms, 8)
+    }
+
+    func testLiveBufferKeepsIdentityAndPublishesOnlyAnIndexRange() {
+        let buffer = ForceSampleBuffer()
+        var accumulator = ForceSessionAccumulator(sampleBuffer: buffer)
+        accumulator.append((0..<20).map {
+            TindeqWireSample(microseconds: UInt32($0 * 1_000_000), kilograms: Double($0))
+        })
+
+        let snapshot = ForcePublishSnapshotBuilder.snapshot(
+            isRecording: true,
+            handsFreeArmed: false,
+            lastSampleKilograms: 0,
+            accumulator: accumulator
+        )
+        XCTAssertTrue(accumulator.sampleBuffer === buffer)
+        XCTAssertEqual(snapshot.visibleRange, 9..<20)
+        XCTAssertEqual(buffer[snapshot.visibleRange.lowerBound].milliseconds, 9_000)
+        XCTAssertEqual(buffer[snapshot.visibleRange.upperBound - 1].milliseconds, 19_000)
+
+        // Appending after a flush keeps the same reference and only changes
+        // the next range; a live chart can retain the buffer without forcing a
+        // full visible-window array to be rebuilt.
+        accumulator.append([
+            TindeqWireSample(microseconds: 20_000_000, kilograms: 20)
+        ])
+        XCTAssertTrue(accumulator.sampleBuffer === buffer)
+        XCTAssertEqual(buffer.count, 21)
+        XCTAssertEqual(accumulator.visibleRange(), 10..<21)
+    }
+
+    /// #671: this legacy helper still returns an `ArraySlice` over the
+    /// compatibility array view. The live UI no longer calls it; it consumes
+    /// `ForceSampleBuffer` by index range instead. Keep the pointer assertion
+    /// as a guard for non-live callers that still use the helper.
     func testVisibleWindowIsZeroCopySliceOverStableStorage() {
         var accumulator = ForceSessionAccumulator()
         let incoming = (0..<20).map {
@@ -93,9 +142,8 @@ final class ForceEngineTests: XCTestCase {
         XCTAssertEqual(window.first?.milliseconds, 9_000)
         XCTAssertEqual(window.last?.milliseconds, 19_000)
 
-        // Pointer identity: the slice is a view over the accumulator's buffer,
-        // not a fresh allocation. (Old implementation returned
-        // `Array(samples[low...])` — a new 800-element buffer per notification.)
+        // Pointer identity: the slice is a view over the compatibility array
+        // returned for this call, not a fresh element copy.
         window.withUnsafeBufferPointer { windowPtr in
             accumulator.samples.withUnsafeBufferPointer { allPtr in
                 guard let windowBase = windowPtr.baseAddress,
@@ -105,7 +153,7 @@ final class ForceEngineTests: XCTestCase {
                 XCTAssertEqual(
                     windowBase,
                     allBase.advanced(by: window.startIndex),
-                    "visibleWindow() must share the accumulator's storage (zero-copy)"
+                    "visibleWindow() must share its compatibility storage"
                 )
             }
         }
@@ -250,9 +298,8 @@ final class ForceEngineTests: XCTestCase {
         XCTAssertEqual(idle, .idle)
     }
 
-    /// #671: the snapshot's window range reads over the accumulator's stable
-    /// storage — the chart slices `samples[visibleRange]` at flush time, the
-    /// only window copy left, at display rate rather than notification rate.
+    /// #783: the snapshot carries only a range; the chart indexes the stable
+    /// sample buffer directly and does not materialize a visible-window array.
     func testSnapshotWindowRangeSlicesAccumulatorStorage() {
         var accumulator = ForceSessionAccumulator()
         accumulator.append((0..<20).map {
@@ -265,10 +312,15 @@ final class ForceEngineTests: XCTestCase {
             lastSampleKilograms: 0,
             accumulator: accumulator
         )
-        let window = Array(accumulator.samples[snapshot.visibleRange])
-        XCTAssertEqual(window.count, 11)
-        XCTAssertEqual(window.first?.milliseconds, 9_000)
-        XCTAssertEqual(window.last?.milliseconds, 19_000)
+        XCTAssertEqual(snapshot.visibleRange, 9..<20)
+        XCTAssertEqual(
+            accumulator.sampleBuffer[snapshot.visibleRange.lowerBound].milliseconds,
+            9_000
+        )
+        XCTAssertEqual(
+            accumulator.sampleBuffer[snapshot.visibleRange.upperBound - 1].milliseconds,
+            19_000
+        )
     }
 
     func testProtocolScheduleAlternatesSidesWithoutDuplicatingReverseActionSets() {

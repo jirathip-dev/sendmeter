@@ -15,7 +15,7 @@ import SwiftUI
 /// `axis` `RuleMark`, and day 0 — the only real number on the chart — is a
 /// solid dot colored by the universal ACWR status with a radial halo.
 struct AcwrProjectionCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var scheme
     /// Bumped on a calendar-day rollover so the projection (whose dates and
     /// relative labels read `Date()`) recomputes for the new today (#652 F11).

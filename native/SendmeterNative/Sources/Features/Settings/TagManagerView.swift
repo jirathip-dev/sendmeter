@@ -8,7 +8,7 @@ import SwiftUI
 /// (the DB RPC repoints every recording; the surviving row's hidden state
 /// wins).
 struct TagManagerView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var editingName: String?
     @State private var draft = ""

@@ -6,7 +6,7 @@ import SwiftUI
 /// from it. Dismissing this cover only minimizes the view; it never mutates or
 /// saves the workout.
 struct ManualWorkoutFullscreen: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var engine: PhoneWorkoutEngine?
     let isSaving: Bool

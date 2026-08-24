@@ -22,7 +22,7 @@ import SwiftUI
 /// info button is a sibling of (never nested inside) the tappable header and
 /// body surfaces, so one tap can't present both sheets (#748 round 2 finding 2).
 struct AcwrStatusCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var scheme
     @State private var showTrainingLoad = false
     @State private var showInfo = false

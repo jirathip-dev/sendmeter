@@ -41,7 +41,7 @@ public struct RemoteEntityDelta<Value: Sendable>: Sendable {
     }
 }
 
-/// The full read snapshot held by `AppModel`'s `@Published` collections.
+/// The full read snapshot held by `AppModel`'s observed collections.
 ///
 /// This is the cache's typed boundary: the app target loads one of these
 /// before the first network call, and a remote refresh reconciles another one

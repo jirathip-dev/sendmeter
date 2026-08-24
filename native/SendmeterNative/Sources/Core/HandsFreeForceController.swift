@@ -28,8 +28,22 @@ public final class HandsFreeForceController {
         case callerOwned
     }
 
-    public private(set) var state: HandsFreeForceState = .idle
+    public private(set) var state: HandsFreeForceState = .idle {
+        didSet {
+            let oldFlags = Self.observationFlags(for: oldValue)
+            let newFlags = Self.observationFlags(for: state)
+            guard oldFlags.armed != newFlags.armed
+                || oldFlags.measuring != newFlags.measuring
+            else { return }
+            onStateChange?()
+        }
+    }
     public var stopPolicy: StopPolicy = .automatic
+
+    /// AppModel's Observation bridge. The controller stays a Foundation/Core
+    /// type so it can keep its iOS 16/macOS 13 package floor; the app model
+    /// turns each state transition into one tracked revision for Force views.
+    public var onStateChange: (() -> Void)?
 
     /// Start the device's weight stream WITHOUT recording (the Progressor
     /// only publishes force after the start command; arming keeps the stream
@@ -54,6 +68,19 @@ public final class HandsFreeForceController {
 
     public init(config: HandsFreeForceConfig = .default) {
         self.config = config
+    }
+
+    private static func observationFlags(
+        for state: HandsFreeForceState
+    ) -> (armed: Bool, measuring: Bool) {
+        switch state {
+        case .armed, .waitingForSlack:
+            return (true, false)
+        case .recording:
+            return (false, true)
+        case .idle, .stopping:
+            return (false, false)
+        }
     }
 
     /// The stream is live and the machine owns it: `.armed`/`.waitingForSlack`

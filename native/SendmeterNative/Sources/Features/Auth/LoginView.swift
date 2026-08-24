@@ -3,7 +3,7 @@ import SendmeterCore
 import SwiftUI
 
 struct LoginView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @State private var email = ""
     @State private var password = ""
     @State private var mode: Mode = .signIn
@@ -150,7 +150,7 @@ struct LoginView: View {
 }
 
 struct PasswordRecoveryView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @State private var password = ""
     @State private var confirm = ""
 

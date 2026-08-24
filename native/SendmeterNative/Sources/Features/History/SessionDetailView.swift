@@ -9,7 +9,7 @@ import SwiftUI
 /// lazily on expand — the list fetch (`fetchWorkouts`) deliberately never
 /// selects `raw`, exactly like the recording-samples pattern.
 struct SessionDetailView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     let session: SendmeterCore.Session
 
     @State private var boxStatsByID: [UUID: BoxStats] = [:]

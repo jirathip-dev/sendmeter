@@ -3,7 +3,7 @@ import SendmeterCore
 import SwiftUI
 
 struct DashboardView: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @State private var showLog = false
     @State private var showPhases = false
     @State private var showRecovery = false
@@ -144,7 +144,7 @@ private struct DashboardContextRow: Layout {
 }
 
 private struct TodayDecisionCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var scheme
     @Binding var showRecovery: Bool
 
@@ -234,7 +234,7 @@ private struct TodayDecisionCard: View {
 }
 
 private struct PhaseCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Binding var showPhases: Bool
 
     private var age: BlockAge? {
@@ -322,7 +322,7 @@ private struct PhaseCard: View {
 /// affordance live there. This card keeps only the weekly bars + chart title,
 /// so the numbers and the open-sheet affordance are never duplicated.
 private struct LoadCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -350,7 +350,7 @@ private struct LoadCard: View {
 }
 
 private struct RecentSessionsCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         SurfaceCard {
@@ -429,7 +429,7 @@ struct SessionSummaryRow: View {
 }
 
 private struct LogSessionSheet: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var date = Date()
     @State private var typeID = "fingerboard"
@@ -510,7 +510,7 @@ private struct LogSessionSheet: View {
 /// parity); once a reading exists it silently refreshes on appear/foreground
 /// and a failed refresh keeps the last reading — never a fabricated score.
 private struct SendConditionsCard: View {
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @State private var showSendConditions = false
 
     private var state: SendConditionsCardContent.State {

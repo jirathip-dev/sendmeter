@@ -1,6 +1,7 @@
 @_spi(Experimental) import Auth
 import Combine
 import Foundation
+import Observation
 import SendLogHealthCore
 import SendLogWatchCore
 import SendmeterCore
@@ -156,10 +157,11 @@ private struct CacheEntityIdentity: Hashable {
 }
 
 @MainActor
-public final class AppModel: ObservableObject {
-    @Published public private(set) var bootState: AppBootState = .loading
-    @Published public private(set) var authSession: AuthSession?
-    @Published public private(set) var sessions: [SendmeterCore.Session] = []
+@Observable
+public final class AppModel {
+    public private(set) var bootState: AppBootState = .loading
+    public private(set) var authSession: AuthSession?
+    public private(set) var sessions: [SendmeterCore.Session] = []
     /// True once the session list has been fetched at least once for the
     /// current account (even if it came back empty). Sessions have no disk
     /// cache — `refreshAll` fetches them over the network and `sessions` stays
@@ -167,12 +169,12 @@ public final class AppModel: ObservableObject {
     /// history" from "not loaded yet". Consumers (the ACWR projection card)
     /// use this to avoid claiming a fresh user has no history on every cold
     /// launch or failed refresh (#652 F2).
-    @Published public private(set) var hasLoadedSessions = false
-    @Published public private(set) var deletedSessions: [SendmeterCore.Session] = []
-    @Published public private(set) var deletedRecordings: [TindeqRecording] = []
-    @Published public private(set) var healthMetrics: [HealthMetric] = []
-    @Published public private(set) var phasePeriods: [PhasePeriod] = []
-    @Published public private(set) var settings = UserSettings(
+    public private(set) var hasLoadedSessions = false
+    public private(set) var deletedSessions: [SendmeterCore.Session] = []
+    public private(set) var deletedRecordings: [TindeqRecording] = []
+    public private(set) var healthMetrics: [HealthMetric] = []
+    public private(set) var phasePeriods: [PhasePeriod] = []
+    public private(set) var settings = UserSettings(
         currentPhase: .capacity,
         phaseStartDate: LocalDateSupport.string(from: Date())
     )
@@ -180,22 +182,22 @@ public final class AppModel: ObservableObject {
     /// and Settings; a fresh account resets it via `resetAccountState()`. The
     /// force-scoped "has loaded" flag lives on `ForceModel` (see
     /// `ForceModel.hasLoadedRecordings`).
-    @Published public private(set) var recordings: [TindeqRecording] = []
+    public private(set) var recordings: [TindeqRecording] = []
     /// O(1) progress-input identity for the tiles, detail sheets, and selected
-    /// Static curve. This is published only at actual progress mutation
+    /// Static curve. This is observed only at actual progress mutation
     /// boundaries; live Tindeq display frames do not advance it.
-    @Published public private(set) var presets: [TindeqPreset] = []
-    @Published public private(set) var routines: [RoutinePreset] = []
-    @Published public private(set) var workouts: [WorkoutListItem] = []
-    @Published public private(set) var liveWorkout: LiveWorkout?
-    @Published public private(set) var liveWorkoutSyncState: LiveWorkoutSyncState = .unknown
+    public private(set) var presets: [TindeqPreset] = []
+    public private(set) var routines: [RoutinePreset] = []
+    public private(set) var workouts: [WorkoutListItem] = []
+    public private(set) var liveWorkout: LiveWorkout?
+    public private(set) var liveWorkoutSyncState: LiveWorkoutSyncState = .unknown
     /// #631: the per-user tag registry (SL-92) — rename/hide metadata. Tags
     /// themselves stay denormalized on recordings.
-    @Published public private(set) var tagMetadata: [TagMetadata] = []
+    public private(set) var tagMetadata: [TagMetadata] = []
     /// #720: the device-local side mode per exercise tag (web parity for the
     /// concept, deliberately NOT account-migrated). Keyed by the trimmed tag
     /// name; a tag with no entry reads as the default (`unilateral_or_bilateral`).
-    @Published public private(set) var tagSideModes: [String: ExerciseSideMode] = [:]
+    public private(set) var tagSideModes: [String: ExerciseSideMode] = [:]
     /// #712: the passkeys registered for the signed-in user. Loaded on
     /// auth-ready and whenever Settings opens, and refreshed after a register
     /// or remove — so a registration shows up as a persistent list entry and
@@ -203,26 +205,26 @@ public final class AppModel: ObservableObject {
     // #712 @_spi(Experimental) PasskeyListItem cannot appear in a `public`
     // property declaration, so this stays internal (SettingsView is in the
     // same target and reads it via the internal getter).
-    @Published private(set) var passkeys: [PasskeyListItem] = []
-    @Published public private(set) var isRefreshing = false
-    @Published public private(set) var queuedWriteCount = 0
+    private(set) var passkeys: [PasskeyListItem] = []
+    public private(set) var isRefreshing = false
+    public private(set) var queuedWriteCount = 0
     /// Unconfirmed cache rows for direct writes that have no durable replay
     /// after process death (presets, routines, phase/settings, tag metadata).
     /// Kept separate from `queuedWriteCount` so Settings can label them as
     /// unsynced rather than as automatically retried queue work.
-    @Published public private(set) var pendingCacheWriteCount = 0
-    @Published public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
+    public private(set) var pendingCacheWriteCount = 0
+    public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
     /// #675: entries the server has permanently rejected — retained on device,
     /// excluded from every automatic retry, and recoverable only by the
     /// explicit Retry/Discard actions in Settings. `nil` means the queue has
     /// not been read yet this session; `[]` means genuinely nothing
     /// quarantined. Never default to `[]` where the honest state is "not
     /// known" (#269 honest-states rule — unknown must not render as empty).
-    @Published public private(set) var quarantinedWrites: [QuarantinedWrite]?
-    @Published public var errorMessage: String?
-    @Published public private(set) var toast: AppToastState?
+    public private(set) var quarantinedWrites: [QuarantinedWrite]?
+    public var errorMessage: String?
+    public private(set) var toast: AppToastState?
     /// Compatibility accessors keep existing call sites readable while the
-    /// published source of truth is one identity-bearing toast instance.
+    /// observed source of truth is one identity-bearing toast instance.
     /// Setting the action creates a fresh instance too, so a passive toast
     /// cannot keep its two-second task when it becomes actionable.
     public var toastMessage: String? {
@@ -247,8 +249,8 @@ public final class AppModel: ObservableObject {
         guard id == nil || toast?.id == id else { return }
         toast = nil
     }
-    @Published public var passwordRecovery = false
-    @Published public var selectedTab: AppTab = .dashboard
+    public var passwordRecovery = false
+    public var selectedTab: AppTab = .dashboard
     /// The Force owner registers this while a guided run exists, including
     /// while its fullscreen is minimized. Auth teardown calls it before
     /// revoking the old bearer token so an active pull can be preserved under
@@ -258,26 +260,26 @@ public final class AppModel: ObservableObject {
     /// #632: true while a user-initiated sign-out is in flight (drain + any
     /// remainder prompt + auth.signOut) — used to disable the Sign Out button
     /// so a double-tap can't run two drains against one queue.
-    @Published public private(set) var isSigningOut = false
+    public private(set) var isSigningOut = false
     /// #632: non-nil while the sign-out remainder prompt is showing — the
     /// count the user is deciding about, presented by SettingsView as a
     /// confirmation dialog (Sign Out / Cancel) and resolved through
     /// `resolveSignOutRemainder`. The prompt appears ONLY when the pre-sign-
     /// out drain left something behind; a clean drain never asks.
-    @Published public private(set) var signOutRemainderCount: Int?
+    public private(set) var signOutRemainderCount: Int?
     private var signOutRemainderContinuation: CheckedContinuation<SignOutRemainderChoice, Never>?
 
-    public let auth: AuthService
-    public let repository: SendmeterRepository
-    public let tindeq: TindeqBluetooth
-    public let health: HealthKitService
-    public let watch: WatchConnectivityService
-    public let realtime: RealtimeService
+    @ObservationIgnored public let auth: AuthService
+    @ObservationIgnored public let repository: SendmeterRepository
+    @ObservationIgnored public let tindeq: TindeqBluetooth
+    @ObservationIgnored private let healthService: HealthKitService
+    @ObservationIgnored private let watchService: WatchConnectivityService
+    @ObservationIgnored public let realtime: RealtimeService
     /// #631: Send Conditions (SL-69) — Open-Meteo current weather + local
     /// climate, fetched + cached by the platform service.
-    public let weather: WeatherService
+    @ObservationIgnored private let weatherService: WeatherService
     /// #628: hands-free arming loop (load-triggered start/stop/save).
-    public let handsFree: HandsFreeForceController
+    @ObservationIgnored private let handsFreeService: HandsFreeForceController
     /// #628: lock-screen Live Activity mirror of the guided protocol.
     public let guidedActivity: GuidedProtocolActivityManager
     /// #627: in-flight rep saves the session-end snapshot waits for.
@@ -290,9 +292,40 @@ public final class AppModel: ObservableObject {
     /// #763: lock-screen Live Activity mirror of the Manual workout.
     public let manualWorkoutActivity: ManualWorkoutActivityManager
     /// #672: the Force tab's hot, feature-scoped observable state. Kept as a
-    /// dedicated object (not an `@Published` on `AppModel`) so a force-stream
+    /// dedicated object (not an observed property on `AppModel`) so a force-stream
     /// publish no longer invalidates History/Dashboard/Settings bodies.
     public let forceModel: ForceModel
+
+    /// The legacy platform services remain Combine-based because their
+    /// deployment floors include iOS 16/macOS 13; the hands-free controller is
+    /// kept as a Foundation/Core type for the same package-floor reason. These
+    /// revisions are the Observation bridge: a view that reads `model.watch`,
+    /// `model.health`, `model.weather`, or `model.handsFree` tracks only that
+    /// service's token, not the entire AppModel.
+    private var healthObservationRevision: UInt64 = 0
+    private var watchObservationRevision: UInt64 = 0
+    private var weatherObservationRevision: UInt64 = 0
+    private var handsFreeObservationRevision: UInt64 = 0
+
+    public var health: HealthKitService {
+        let _ = healthObservationRevision
+        return healthService
+    }
+
+    public var watch: WatchConnectivityService {
+        let _ = watchObservationRevision
+        return watchService
+    }
+
+    public var weather: WeatherService {
+        let _ = weatherObservationRevision
+        return weatherService
+    }
+
+    public var handsFree: HandsFreeForceController {
+        let _ = handsFreeObservationRevision
+        return handsFreeService
+    }
 
     public private(set) var gaugeSessionTracker = GaugeSessionTracker()
     public var freePullContext = FreePullContext()
@@ -341,7 +374,16 @@ public final class AppModel: ObservableObject {
     /// the queue's own diagnostics because a cache failure must degrade to the
     /// network-only path without looking like an auth failure.
     private var cacheOpenFailureReported = false
-    private var authObservationTask: Task<Void, Never>?
+    /// These handles are lifecycle infrastructure, not observable app state.
+    /// Task cancellation is a thread-safe, idempotent signal: deinit does not
+    /// await the task or touch task-local state. Keep creation, replacement,
+    /// and ordinary cancellation on MainActor; the narrow
+    /// `nonisolated(unsafe)` annotation only lets the language-mandated
+    /// nonisolated deinit send that final cancellation signal. Object lifetime
+    /// prevents an instance method from racing deinit after the last strong
+    /// owner is gone.
+    @ObservationIgnored
+    private nonisolated(unsafe) var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
     private var pendingRecordings = PendingRecordingOverlay()
     /// Metadata edits are overlays until the narrow PATCH has landed. Keeping
@@ -384,7 +426,7 @@ public final class AppModel: ObservableObject {
     private var didBootstrapUserID: UUID?
     /// Increments whenever the loaded account state is reset. User IDs alone
     /// cannot reject a stale A completion after an A→B→A transition.
-    @Published public private(set) var accountEpoch: UInt64 = 0
+    public private(set) var accountEpoch: UInt64 = 0
     private var refreshingOwner: AccountScopedCompletion?
     private var recomputeGate = ReadinessRecomputeGate()
     /// #661: silent foreground/appear health sync. The policy is pure Core
@@ -423,10 +465,12 @@ public final class AppModel: ObservableObject {
     /// Live workout mirror cursor (two producers: WC beat + realtime row,
     /// one merge discipline — see LiveWorkoutMirror).
     private var liveWorkoutMirror = LiveWorkoutMirrorState.empty
-    private var liveMirrorTicker: Task<Void, Never>?
+    @ObservationIgnored
+    private nonisolated(unsafe) var liveMirrorTicker: Task<Void, Never>?
     /// Realtime list reconciliation: pending slices + the scheduled flush.
     private let reconcileCoalescer = RealtimeRefreshCoalescer()
-    private var reconcileFlushTask: Task<Void, Never>?
+    @ObservationIgnored
+    private nonisolated(unsafe) var reconcileFlushTask: Task<Void, Never>?
     private var tagCurveCache: [TagCurveKey: TagForceCurve] = [:]
     private var tagCurveGenerations = TagCurveCacheGenerationIndex()
     private var tagCurveBandGenerations: [TagCurveKey: UInt64] = [:]
@@ -514,11 +558,11 @@ public final class AppModel: ObservableObject {
             )
         }
         self.tindeq = tindeq ?? TindeqBluetooth()
-        self.health = health ?? HealthKitService()
-        self.watch = watch ?? WatchConnectivityService()
+        self.healthService = health ?? HealthKitService()
+        self.watchService = watch ?? WatchConnectivityService()
         self.realtime = realtime ?? RealtimeService()
-        self.weather = weather ?? WeatherService()
-        self.handsFree = HandsFreeForceController()
+        self.weatherService = weather ?? WeatherService()
+        self.handsFreeService = HandsFreeForceController()
         self.guidedActivity = GuidedProtocolActivityManager()
         self.gaugeSessionSaveGate = GaugeSessionSaveGate()
         self.manualWorkoutRest = ManualWorkoutRestScheduler()
@@ -574,12 +618,12 @@ public final class AppModel: ObservableObject {
             self.queue = nil
         }
 
-        let watch = self.watch
+        let watch = self.watchService
         let realtime = self.realtime
         let tindeq = self.tindeq
         let auth = self.auth
-        let weather = self.weather
-        let health = self.health
+        let weather = self.weatherService
+        let health = self.healthService
 
         watch.onSessionRequested = { [weak self] in
             await self?.relayValidSessionToWatch(guaranteed: true)
@@ -619,6 +663,9 @@ public final class AppModel: ObservableObject {
         handsFree.onBeginRecording = { [weak self] in _ = self?.tindeq.beginArmedRecording() }
         handsFree.onStopAndSave = { [weak self] in self?.completeHandsFreeRep() }
         handsFree.onAutoReArm = { [weak self] in self?.armHandsFreeStream() }
+        handsFree.onStateChange = { [weak self] in
+            self?.handsFreeObservationRevision &+= 1
+        }
         tindeq.onWeightSample = { [weak self] sample in
             self?.handsFree.feed(
                 atMs: Date().timeIntervalSince1970 * 1_000,
@@ -626,108 +673,39 @@ public final class AppModel: ObservableObject {
             )
         }
 
-        tindeq.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &nestedCancellables)
         watch.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.watchObservationRevision &+= 1
+                }
+            }
             .store(in: &nestedCancellables)
         weather.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.weatherObservationRevision &+= 1
+                }
+            }
             .store(in: &nestedCancellables)
         health.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &nestedCancellables)
-        // #627/#628: a disconnect ends the gauge session (auto-log) — unless
-        // a guided protocol is running, whose interrupted path preserves the
-        // final rep and then ends the session itself (so the last rep can
-        // never be orphaned into a fresh group by a racing end). The
-        // keep-awake hold follows the transport + arming state. #656: the
-        // transport's transitions carry the success/error haptics — connect
-        // succeeds, a drop (or deliberate disconnect) errors. The success
-        // fires ONLY on a `.connecting`/`.scanning` → `.connected` transition,
-        // never when `stopMeasuring()` re-sets `.connected` after a rep.
-        tindeq.$status
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] status in
-                guard let self else { return }
-                let previous = self.lastTransportStatus
-                self.lastTransportStatus = status
-                // #656 (review F1/F2): the transport cues success/error only
-                // when a user gesture armed them this launch — `connect()`
-                // called from the Force tab — and only once per logical
-                // event. A cold launch with Bluetooth off is `.idle →
-                // .interrupted` with no user intent, and must stay silent.
-                // A single Bluetooth-off delivers TWO different
-                // `.interrupted` values back-to-back (the `.poweredOff` state
-                // change and the `didDisconnect`), so consecutive error
-                // statuses collapse to one cue.
-                let cue: HapticCue?
-                switch (previous, status) {
-                case (.connecting?, .connected), (.scanning?, .connected), (.idle?, .connected), (nil, .connected):
-                    cue = transportUserInitiated ? .success : nil
-                case (_, .interrupted), (_, .unavailable):
-                    cue = transportUserInitiated ? .error : nil
-                case (_, .idle):
-                    cue = transportUserInitiated && previous != nil
-                        && previous != .idle && previous != .unavailable
-                        ? .error : nil
-                default:
-                    cue = nil
-                }
-                if let cue, cue != lastTransportCue {
-                    lastTransportCue = cue
-                    Haptics.shared.play(cue)
-                } else if cue == nil {
-                    lastTransportCue = nil
-                }
-                if case .interrupted = status {
-                    self.handsFree.handleDisconnected()
-                    if !forceModel.guidedProtocolActive {
-                        let interrupted = self.tindeq.interruptedRecording
-                        if let interrupted, !self.disconnectSalvageInFlight {
-                            // #678: capture the hands-free provenance BEFORE
-                            // `clearInterruptedRecording()`/`handleDisconnected()`
-                            // can reset it, so the salvage can apply #682 Guard 1
-                            // (the watch captures `wasHandsFree` the same way).
-                            let wasHandsFree = self.tindeq.interruptedWasHandsFree
-                            // #678: claim the interrupted buffer synchronously
-                            // — before any await — so a duplicate
-                            // `.interrupted` emission (#656: a single
-                            // Bluetooth-off delivers two) cannot queue a second
-                            // salvage, and so the Force tab's recovery prompt
-                            // cannot also grab the same rep.
-                            self.disconnectSalvageInFlight = true
-                            if ForceDisconnectSalvage.shouldSalvage(
-                                wasIntentional: false,
-                                wasMeasuring: true,
-                                sampleCount: interrupted.samples.count
-                            ) {
-                                self.tindeq.clearInterruptedRecording()
-                                Task { @MainActor in
-                                    await self.salvageInterruptedRecording(interrupted, wasHandsFree: wasHandsFree)
-                                    self.disconnectSalvageInFlight = false
-                                }
-                            } else {
-                                // Too trivial to auto-salvage (or an
-                                // intentional drop): leave the buffer in place
-                                // so the Force tab's recovery prompt still
-                                // offers it. Release the claim synchronously.
-                                self.disconnectSalvageInFlight = false
-                            }
-                        }
-                        Task { @MainActor in await self.endGaugeSession() }
-                    }
-                }
-                self.updateKeepAwake()
-            }
-            .store(in: &nestedCancellables)
-        tindeq.$handsFreeArmed
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.updateKeepAwake()
+                Task { @MainActor [weak self] in
+                    self?.healthObservationRevision &+= 1
+                }
             }
             .store(in: &nestedCancellables)
+
+        // Observation replaces the old `$status` / `$handsFreeArmed` Combine
+        // sinks. Transport transitions still enter the same salvage and
+        // haptic path synchronously on MainActor; the hot sample properties do
+        // not flow through AppModel at all.
+        tindeq.onStatusChange = { [weak self] status in
+            self?.handleTindeqStatusChange(status)
+        }
+        tindeq.onHandsFreeArmedChange = { [weak self] _ in
+            self?.handsFreeObservationRevision &+= 1
+            self?.updateKeepAwake()
+        }
 
         authObservationTask = Task { [weak self] in
             guard let self else { return }
@@ -735,6 +713,74 @@ public final class AppModel: ObservableObject {
                 await self.handleAuthEvent(event, session: session)
             }
         }
+    }
+
+    /// The Observation equivalent of the former `$status` sink. Keeping this
+    /// transition handler on AppModel preserves the existing transport
+    /// haptics, disconnect-salvage claim, and keep-awake ordering while
+    /// avoiding a Combine publisher on the 80 Hz force object.
+    private func handleTindeqStatusChange(_ status: TindeqBluetooth.Status) {
+        let previous = lastTransportStatus
+        lastTransportStatus = status
+        // #656 (review F1/F2): the transport cues success/error only when a
+        // user gesture armed them this launch — `connect()` called from the
+        // Force tab — and only once per logical event. A cold launch with
+        // Bluetooth off is `.idle → .interrupted` with no user intent, and
+        // must stay silent. A single Bluetooth-off delivers TWO different
+        // `.interrupted` values back-to-back, so consecutive error statuses
+        // collapse to one cue.
+        let cue: HapticCue?
+        switch (previous, status) {
+        case (.connecting?, .connected), (.scanning?, .connected), (.idle?, .connected), (nil, .connected):
+            cue = transportUserInitiated ? .success : nil
+        case (_, .interrupted), (_, .unavailable):
+            cue = transportUserInitiated ? .error : nil
+        case (_, .idle):
+            cue = transportUserInitiated && previous != nil
+                && previous != .idle && previous != .unavailable
+                ? .error : nil
+        default:
+            cue = nil
+        }
+        if let cue, cue != lastTransportCue {
+            lastTransportCue = cue
+            Haptics.shared.play(cue)
+        } else if cue == nil {
+            lastTransportCue = nil
+        }
+        if case .interrupted = status {
+            handsFree.handleDisconnected()
+            if !forceModel.guidedProtocolActive {
+                let interrupted = tindeq.interruptedRecording
+                if let interrupted, !disconnectSalvageInFlight {
+                    // #678: capture the hands-free provenance BEFORE
+                    // `clearInterruptedRecording()`/`handleDisconnected()` can
+                    // reset it, so salvage can apply #682 Guard 1.
+                    let wasHandsFree = tindeq.interruptedWasHandsFree
+                    // Claim the interrupted buffer synchronously — before any
+                    // await — so duplicate `.interrupted` emissions cannot
+                    // queue a second salvage or race the recovery prompt.
+                    disconnectSalvageInFlight = true
+                    if ForceDisconnectSalvage.shouldSalvage(
+                        wasIntentional: false,
+                        wasMeasuring: true,
+                        sampleCount: interrupted.samples.count
+                    ) {
+                        tindeq.clearInterruptedRecording()
+                        Task { @MainActor in
+                            await self.salvageInterruptedRecording(interrupted, wasHandsFree: wasHandsFree)
+                            self.disconnectSalvageInFlight = false
+                        }
+                    } else {
+                        // Too trivial to auto-salvage: leave the buffer in
+                        // place for the Force tab's recovery prompt.
+                        disconnectSalvageInFlight = false
+                    }
+                }
+                Task { @MainActor in await self.endGaugeSession() }
+            }
+        }
+        updateKeepAwake()
     }
 
     deinit {

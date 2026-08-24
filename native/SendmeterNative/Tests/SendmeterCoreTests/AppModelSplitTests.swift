@@ -1,12 +1,11 @@
 import Foundation
 import XCTest
 
-/// #672: structural proof that the force-stream state lives in its own
-/// observable model, so a force publish no longer invalidates the cold
-/// History/Dashboard/Settings rows. iOS 16 `@EnvironmentObject`/`@ObservedObject`
-/// subscribe to the WHOLE object's `objectWillChange` — there is no
-/// per-property observation. The only way to isolate is to hoist the hot domain
-/// into its own `ObservableObject` and observe it only from the Force surface.
+/// #672/#783: structural proof that the force-stream state lives in its own
+/// observable model and that AppModel/TindeqBluetooth use Swift Observation,
+/// so a force tick does not invalidate unrelated views. The native rewrite is
+/// iOS 17+ because `@Observable` and typed `@Environment` are unavailable on
+/// older deployment targets.
 final class AppModelSplitTests: XCTestCase {
     func testForceStateLivesInDedicatedObservableModel() {
         let forceModel = code(source("Sources/App/ForceModel.swift"))
@@ -34,6 +33,123 @@ final class AppModelSplitTests: XCTestCase {
             XCTAssertFalse(
                 appModel.contains(declaration),
                 "AppModel.swift must not publish force-stream state: \(declaration)"
+            )
+        }
+    }
+
+    func testAppModelUsesTypedObservationEnvironment() {
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        XCTAssertTrue(appModel.contains("import Observation"))
+        XCTAssertTrue(appModel.contains("@Observable\npublic final class AppModel"))
+        XCTAssertFalse(appModel.contains("ObservableObject"))
+        XCTAssertFalse(appModel.contains("@Published public"))
+
+        let root = code(source("Sources/App/SendmeterNativeApp.swift"))
+        // The App struct owns exactly one AppModel. Its custom init creates
+        // that instance once so #747 can register the same object with the
+        // background-sync handler, then installs it into @State's backing
+        // storage. Do not regress to a declaration initializer: that can
+        // construct a second model before the custom init runs.
+        XCTAssertTrue(root.contains("@State private var model: AppModel"))
+        XCTAssertFalse(root.contains("@State private var model = AppModel()"))
+        XCTAssertTrue(root.contains("let model = AppModel()"))
+        XCTAssertTrue(root.contains("_model = State(wrappedValue: model)"))
+        XCTAssertTrue(root.contains("BackgroundSyncService.register(model: model)"))
+        XCTAssertTrue(root.contains(".environment(model)"))
+        XCTAssertTrue(root.contains("@Environment(AppModel.self) private var model"))
+        XCTAssertFalse(root.contains("environmentObject(model)"))
+        XCTAssertFalse(root.contains("@StateObject private var model"))
+
+        for path in [
+            "Sources/Features/Auth/LoginView.swift",
+            "Sources/Features/Dashboard/DashboardView.swift",
+            "Sources/Features/Force/ForceView.swift",
+            "Sources/Features/History/HistoryView.swift",
+            "Sources/Features/Phases/PhasesView.swift",
+            "Sources/Features/Settings/SettingsView.swift",
+            "Sources/Features/Workout/WorkoutView.swift",
+        ] {
+            let consumer = code(source(path))
+            XCTAssertFalse(
+                consumer.contains("@EnvironmentObject private var model: AppModel"),
+                "(path) must use typed Observation environment"
+            )
+        }
+    }
+
+    func testTindeqUsesRangeBackedObservationStream() {
+        let tindeq = code(source("Sources/Platform/TindeqBluetooth.swift"))
+        XCTAssertTrue(tindeq.contains("import Observation"))
+        XCTAssertTrue(tindeq.contains("@Observable\npublic final class TindeqBluetooth"))
+        XCTAssertFalse(tindeq.contains("ObservableObject"))
+        XCTAssertFalse(tindeq.contains("@Published"))
+        XCTAssertTrue(tindeq.contains("public private(set) var visibleSampleRange: Range<Int>"))
+        XCTAssertTrue(tindeq.contains("@ObservationIgnored public let sampleBuffer: ForceSampleBuffer"))
+        XCTAssertTrue(tindeq.contains("pendingPublish = true"))
+        XCTAssertFalse(tindeq.contains("visibleSamples"))
+        XCTAssertFalse(tindeq.contains("Array(accumulator.samples[snapshot.visibleRange])"))
+
+        let forceView = code(source("Sources/Features/Force/ForceView.swift"))
+        XCTAssertTrue(forceView.contains("let device: TindeqBluetooth"))
+        XCTAssertTrue(forceView.contains("buffer: device.sampleBuffer"))
+        XCTAssertTrue(forceView.contains("range: device.visibleSampleRange"))
+        XCTAssertTrue(forceView.contains("case buffer(ForceSampleBuffer, Range<Int>)"))
+    }
+
+    func testTindeqTimerDeinitAndMainActorBoundaryAreExplicit() {
+        let tindeq = code(source("Sources/Platform/TindeqBluetooth.swift"))
+
+        // A @MainActor deinit is nonisolated by language rule. Keep the timer
+        // slot explicitly unsafe only at that boundary so deinit can stop a
+        // RunLoop.main timer without weakening the rest of the class.
+        XCTAssertTrue(
+            tindeq.contains("private nonisolated(unsafe) var flushTimer: Timer?")
+        )
+        XCTAssertTrue(tindeq.contains("deinit {"))
+        XCTAssertTrue(tindeq.contains("flushTimer?.invalidate()"))
+
+        // The callback is installed on RunLoop.main and must synchronously
+        // enter MainActor. A Task hop here would add one allocation per frame
+        // to the 60 Hz display path.
+        XCTAssertTrue(tindeq.contains("RunLoop.main.add(timer, forMode: .common)"))
+        XCTAssertTrue(tindeq.contains("MainActor.assumeIsolated"))
+        XCTAssertTrue(tindeq.contains("self.flushIfDue()"))
+    }
+
+    func testAppModelDeinitCanCancelEveryLifecycleTaskHandle() {
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        let handles = [
+            "authObservationTask",
+            "liveMirrorTicker",
+            "reconcileFlushTask",
+        ]
+
+        // These are the only AppModel task handles touched by deinit. They
+        // remain MainActor-owned during normal operation; only the final,
+        // thread-safe Task.cancel() signal crosses the nonisolated boundary.
+        for handle in handles {
+            XCTAssertTrue(
+                appModel.contains(
+                    "private nonisolated(unsafe) var \(handle): Task<Void, Never>?"
+                ),
+                "\(handle) must be explicitly safe for nonisolated deinit"
+            )
+        }
+
+        guard let start = appModel.range(of: "deinit {") else {
+            XCTFail("AppModel must keep an explicit deinit lifecycle cleanup")
+            return
+        }
+        let afterStart = appModel[start.upperBound...]
+        guard let end = afterStart.firstIndex(of: "}") else {
+            XCTFail("AppModel deinit body could not be read")
+            return
+        }
+        let deinitBody = afterStart[..<end]
+        for handle in handles {
+            XCTAssertTrue(
+                deinitBody.contains("\(handle)?.cancel()"),
+                "AppModel deinit must cancel \(handle)"
             )
         }
     }
