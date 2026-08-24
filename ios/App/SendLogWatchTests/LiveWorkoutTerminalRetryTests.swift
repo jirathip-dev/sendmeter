@@ -37,7 +37,7 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
         startedAt: Date = Date(timeIntervalSince1970: 1_800_000_000)
     ) -> LiveWorkoutUpsert {
         let owner: UUID? = ownerless ? nil : (userId ?? testUserId)
-        LiveWorkoutUpsert(
+        return LiveWorkoutUpsert(
             userId: owner, workoutId: runId, runId: runId, sequence: sequence,
             event: "end", terminal: true, status: "ended",
             startedAt: startedAt,
