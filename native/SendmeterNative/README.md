@@ -79,6 +79,20 @@ range directly from the buffer, so BLE notifications append samples without
 allocating a new visible-window array. The force accumulator still owns the
 monotonic clock handling, running peak/sum, and bounded recording history.
 
+Watch `workoutCompleted` summaries follow the same account-scoped boundary: the
+phone retains a bounded, persisted inbox keyed by `(sessionID, workoutID)`,
+adopts each valid completion into the cache as a server-origin pending session,
+and publishes that History row immediately after reading it back durably.
+Repeated direct and `transferUserInfo` deliveries therefore stay one row, and
+the persisted inbox entry is acknowledged only after adoption succeeds. If
+the cache is unavailable or its row is corrupt, the same summary remains a
+visible in-memory pending row and the inbox is retried on foreground; it is
+never acknowledged without durable adoption. A later session delta replaces
+the placeholder with the authoritative server row, while an authoritative full
+session refresh retires an absent placeholder after seven days via a tombstone
+so a permanent phantom cannot count toward training load. `live_workouts`
+remains a separate realtime mirror and is not cached.
+
 `Sources/Shared` + `Sources/Widgets` compile into a second product target —
 `SendmeterNativeWidgets`, a WidgetKit app-extension embedded in the app
 bundle — in the same XcodeGen project. The extension renders the guided

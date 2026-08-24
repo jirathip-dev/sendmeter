@@ -140,8 +140,16 @@ public enum CacheEntityID {
 /// The store itself remains opaque and account-scoped. This layer adds the
 /// nine-entity snapshot shape plus a full-replace server reconciliation that
 /// deliberately uses `upsertServer`/`markDeletedServer`, so an unconfirmed
-/// local row survives a remote refresh.
+/// local row survives a remote refresh. Full session snapshots also bound the
+/// lifetime of absent watch-completion placeholders.
 public struct CachedWorkspace: @unchecked Sendable {
+    /// A watch completion is immediately useful as a pending History row, but
+    /// a server snapshot that still lacks it must eventually stop counting a
+    /// never-uploaded placeholder as training load. After this tombstone is
+    /// written, the inbox remains durable provenance; only a later
+    /// authoritative server delta can restore the identity.
+    public static let watchCompletionPlaceholderTTL: TimeInterval = 7 * 24 * 60 * 60
+
     /// Read tables whose optimistic writes are not replayed by `DurableQueue`
     /// after process death. Their rows must never be silently treated as clean
     /// server state; AppModel surfaces them as unsynced instead.
@@ -225,7 +233,8 @@ public struct CachedWorkspace: @unchecked Sendable {
     public func reconcileServer(
         _ remote: CachedWorkspaceSnapshot,
         accountUserID: UUID,
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        now: Date = Date()
     ) throws {
         try reconcile(
             remote.sessions,
@@ -233,6 +242,12 @@ public struct CachedWorkspace: @unchecked Sendable {
             entityType: .sessions,
             entityID: CacheEntityID.session,
             updatedAt: updatedAt
+        )
+        try store.expirePendingServerPlaceholders(
+            accountUserID: accountUserID,
+            entityType: .sessions,
+            olderThan: now.addingTimeInterval(-Self.watchCompletionPlaceholderTTL),
+            at: now
         )
         try reconcile(
             remote.settings.map { [$0] } ?? [],
@@ -348,18 +363,28 @@ public struct CachedWorkspace: @unchecked Sendable {
     /// response as deleted: delta fetches include tombstones explicitly, so a
     /// hard-delete entity must reset its cursor when full reconciliation is
     /// needed. Pending rows are protected by the same store guards as every
-    /// other server refresh. The cursor advances only after every change in
-    /// the batch has been applied.
+    /// other server refresh. Session deltas also retire stale remote-device
+    /// placeholders by `watchCompletionPlaceholderTTL`; the cursor advances
+    /// only after every change and expiry in the batch has been applied.
     public func reconcileDelta<T: Encodable>(
         _ delta: RemoteEntityDelta<T>,
         accountUserID: UUID,
-        entityType: LocalCacheEntityType
+        entityType: LocalCacheEntityType,
+        now: Date = Date()
     ) throws {
         try applyDeltaChanges(
             delta,
             accountUserID: accountUserID,
             entityType: entityType
         )
+        if entityType == .sessions {
+            try store.expirePendingServerPlaceholders(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                olderThan: now.addingTimeInterval(-Self.watchCompletionPlaceholderTTL),
+                at: now
+            )
+        }
         if let cursor = delta.cursor {
             try store.setCursor(
                 cursor,
@@ -373,18 +398,30 @@ public struct CachedWorkspace: @unchecked Sendable {
     ///
     /// Active delta rows are applied with their server `updated_at`, then
     /// cached rows absent from every active change are tombstoned and the
-    /// cursor is persisted. All writes happen before the cursor advances, so a
-    /// failure leaves the cache safely repairable by another full refresh.
+    /// cursor is persisted. Stale remote-device session placeholders are also
+    /// retired by `watchCompletionPlaceholderTTL`; their inbox entries remain
+    /// durable provenance for a later authoritative convergence. All writes
+    /// happen before the cursor advances, so a failure leaves the cache safely
+    /// repairable by another full refresh.
     public func reconcileServerDelta<T: Encodable>(
         _ delta: RemoteEntityDelta<T>,
         accountUserID: UUID,
-        entityType: LocalCacheEntityType
+        entityType: LocalCacheEntityType,
+        now: Date = Date()
     ) throws {
         try applyDeltaChanges(
             delta,
             accountUserID: accountUserID,
             entityType: entityType
         )
+        if entityType == .sessions {
+            try store.expirePendingServerPlaceholders(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                olderThan: now.addingTimeInterval(-Self.watchCompletionPlaceholderTTL),
+                at: now
+            )
+        }
         let remoteIDs = Set(
             delta.changes.compactMap { $0.value == nil ? nil : $0.entityID }
         )
@@ -540,6 +577,28 @@ public struct CachedWorkspace: @unchecked Sendable {
             entityType: entityType,
             entityID: entityID,
             updatedAt: updatedAt
+        )
+    }
+
+    /// Persists a remote-origin placeholder that is known to exist durably on
+    /// another device but has not reached Supabase yet (currently the watch's
+    /// completed-workout summary). It stays visible through a full refresh and
+    /// is replaced by the first authoritative server row for the same entity.
+    /// Unlike `upsertLocal`, it is not a phone upload and therefore must not be
+    /// counted as a direct-write or confirmed through the phone queue.
+    public func upsertPendingServer<T: Encodable>(
+        _ value: T,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        entityID: String,
+        insertedAt: Date = Date()
+    ) throws {
+        try store.upsertPendingServer(
+            value,
+            accountUserID: accountUserID,
+            entityType: entityType,
+            entityID: entityID,
+            insertedAt: insertedAt
         )
     }
 

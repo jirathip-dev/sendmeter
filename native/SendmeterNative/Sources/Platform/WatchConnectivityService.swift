@@ -19,44 +19,6 @@ public struct WatchLiveForce: Equatable, Sendable {
     public let spark: [TindeqSample]
 }
 
-public struct WatchWorkoutCompletion: Codable, Equatable, Sendable, Identifiable {
-    public var id: UUID { sessionID }
-    public let sessionID: UUID
-    public let workoutID: UUID
-    public let runID: UUID?
-    public let sequence: Int?
-    public let accountUserID: UUID?
-    public let startedAt: Date?
-    public let endedAt: Date?
-    public let attemptCount: Int
-    public let durationMinutes: Int
-    public let rpe: Double
-    public let phase: PhaseID
-    public let type: String
-    public let typeLabel: String
-    public let note: String
-    public let rpeConfirmed: Bool
-    public let receivedAt: Date
-
-    public func pendingSession() -> SendmeterCore.Session {
-        let date = LocalDateSupport.string(from: endedAt ?? receivedAt)
-        return SendmeterCore.Session(
-            id: sessionID,
-            date: date,
-            type: type,
-            typeLabel: typeLabel,
-            durationMinutes: max(1, durationMinutes),
-            rpe: min(10, max(1, rpe)),
-            rpeConfirmed: rpeConfirmed,
-            note: note,
-            phase: phase,
-            workoutSource: .watch,
-            pending: true,
-            accountUserID: accountUserID
-        )
-    }
-}
-
 @MainActor
 public final class WatchConnectivityService: NSObject, ObservableObject {
     @Published public private(set) var activated = false
@@ -72,7 +34,10 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     @Published public private(set) var pendingCompletions: [WatchWorkoutCompletion] = []
 
     public var onSessionRequested: (() async -> Void)?
-    public var onWorkoutCompletion: ((WatchWorkoutCompletion) async -> Void)?
+    /// Returns true only after the phone has durably adopted the completion in
+    /// its account-scoped cache. A false result leaves the persisted inbox row
+    /// for the next auth or foreground retry attempt.
+    public var onWorkoutCompletion: ((WatchWorkoutCompletion) async -> Bool)?
     /// Mirror producer (#626): the raw `liveWorkout` beat. AppModel owns the
     /// mirror cursor and reduces WC beats through the same run/sequence state
     /// machine as realtime rows, so the service stays a dumb transport.
@@ -82,6 +47,7 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     private var outgoingContext: [String: Any] = [:]
     private let completionStoreKey = "sendmeter.native.workout-completions"
     private let completionStoreLimit = 8
+    private var completionInbox = WatchCompletionInbox()
 
     public override init() {
         if WCSession.isSupported() {
@@ -90,7 +56,11 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
             self.session = nil
         }
         super.init()
-        pendingCompletions = loadStoredCompletions()
+        completionInbox = WatchCompletionInbox(
+            limit: completionStoreLimit,
+            values: loadStoredCompletions()
+        )
+        pendingCompletions = completionInbox.values
         session?.delegate = self
         session?.activate()
         refreshPairingState()
@@ -129,11 +99,18 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
         transmitContext(guaranteed: false)
     }
 
-    public func drainStoredCompletions() -> [WatchWorkoutCompletion] {
-        let values = pendingCompletions
-        pendingCompletions.removeAll()
+    /// Returns a snapshot without acknowledging anything. The caller must
+    /// explicitly acknowledge each item after durable local adoption.
+    public func storedCompletions() -> [WatchWorkoutCompletion] {
+        completionInbox.values
+    }
+
+    @discardableResult
+    public func acknowledgeStoredCompletion(_ completion: WatchWorkoutCompletion) -> Bool {
+        guard completionInbox.acknowledge(completion) else { return false }
+        pendingCompletions = completionInbox.values
         persistCompletions()
-        return values
+        return true
     }
 
     public func refreshPairingState() {
@@ -185,15 +162,15 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
                 replyHandler?([:])
                 return
             }
-            if !pendingCompletions.contains(where: { $0.sessionID == completion.sessionID }) {
-                pendingCompletions.append(completion)
-                if pendingCompletions.count > completionStoreLimit {
-                    pendingCompletions.removeFirst(pendingCompletions.count - completionStoreLimit)
-                }
+            if completionInbox.retain(completion) {
+                pendingCompletions = completionInbox.values
                 persistCompletions()
             }
             Task {
-                await onWorkoutCompletion?(completion)
+                let adopted = await onWorkoutCompletion?(completion) ?? false
+                if adopted {
+                    acknowledgeStoredCompletion(completion)
+                }
                 replyHandler?([:])
             }
         case "queueStatus":

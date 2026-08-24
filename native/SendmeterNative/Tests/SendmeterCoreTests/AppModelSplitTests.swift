@@ -116,6 +116,146 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertTrue(tindeq.contains("self.flushIfDue()"))
     }
 
+    func testWatchCompletionAdoptionKeepsGateClaimThroughCallSite() {
+        let appModel = source("Sources/App/AppModel.swift")
+        guard let start = appModel.range(of: "private func acceptWatchCompletion(") else {
+            return XCTFail("watch completion adoption function is missing")
+        }
+        guard let end = appModel.range(
+            of: "    // MARK: Live workout mirror",
+            range: start.upperBound..<appModel.endIndex
+        ) else {
+            return XCTFail("watch completion adoption function boundary is missing")
+        }
+        let adoption = code(String(appModel[start.lowerBound..<end.lowerBound]))
+
+        guard let adoptCase = adoption.range(of: "case .adopt:") else {
+            return XCTFail("adopt decision case is missing")
+        }
+        guard let switchEnd = adoption.range(
+            of: "\n        }\n",
+            range: adoptCase.upperBound..<adoption.endIndex
+        ) else {
+            return XCTFail("adoption decision switch boundary is missing")
+        }
+        let adoptCaseBody = adoption[adoptCase.upperBound..<switchEnd.lowerBound]
+        XCTAssertTrue(
+            adoptCaseBody.contains("break"),
+            "the adopt case must fall through to the function-scoped cleanup"
+        )
+        XCTAssertFalse(
+            adoptCaseBody.contains("watchCompletionAdoption.finish"),
+            "cleanup inside the switch case fires before adoption"
+        )
+        XCTAssertTrue(
+            adoption.contains(
+                "defer { watchCompletionAdoption.finish(completion.identity) }"
+            ),
+            "the adoption path must release its claim with a function-scoped defer"
+        )
+    }
+
+    func testWatchCompletionCallSiteRetriesForegroundAndDistinguishesCorruptCache() {
+        let appModel = source("Sources/App/AppModel.swift")
+        let withoutComments = code(appModel)
+
+        guard let activeStart = withoutComments.range(of: "public func becameActive()") else {
+            return XCTFail("becameActive is missing")
+        }
+        guard let activeEnd = withoutComments.range(
+            of: "private func handleAuthEvent",
+            range: activeStart.upperBound..<withoutComments.endIndex
+        ) else {
+            return XCTFail("becameActive boundary is missing")
+        }
+        XCTAssertTrue(
+            withoutComments[activeStart.lowerBound..<activeEnd.lowerBound]
+                .contains("await acceptStoredWatchCompletions()"),
+            "foreground must retry retained watch completions"
+        )
+
+        guard let adoptionStart = withoutComments.range(of: "private func acceptWatchCompletion(") else {
+            return XCTFail("watch completion adoption function is missing")
+        }
+        guard let adoptionEnd = withoutComments.range(
+            of: "private func acceptLiveWorkoutMessage",
+            range: adoptionStart.upperBound..<withoutComments.endIndex
+        ) else {
+            return XCTFail("watch completion adoption function boundary is missing")
+        }
+        let adoption = withoutComments[adoptionStart.lowerBound..<adoptionEnd.lowerBound]
+        XCTAssertTrue(adoption.contains("loadOneResult"))
+        XCTAssertTrue(adoption.contains(".corrupt"))
+        XCTAssertTrue(
+            adoption.contains("case .unavailable, .corrupt:"),
+            "cache degradation must keep a visible pending overlay while retaining the inbox row"
+        )
+    }
+
+    func testSwiftPMExcludedSourcesAreSwiftSyntaxParseable() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourcesRoot = packageRoot.appendingPathComponent("Sources")
+        let excludedRoots: Set<String> = [
+            "App", "Data", "Features", "Platform", "Shared", "Widgets"
+        ]
+        let excludedSources = (
+            FileManager.default.enumerator(
+                at: sourcesRoot,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )?.compactMap { $0 as? URL } ?? []
+        )
+        .filter { url in
+            guard url.pathExtension == "swift" else { return false }
+            let relativePath = String(
+                url.path.dropFirst(sourcesRoot.path.count + 1)
+            )
+            guard let root = relativePath.split(separator: "/").first,
+                  excludedRoots.contains(String(root)) else {
+                return false
+            }
+            return relativePath != "App/ChartTheme.swift"
+                && relativePath != "Platform/WeatherService.swift"
+        }
+        .sorted { $0.path < $1.path }
+
+        XCTAssertFalse(excludedSources.isEmpty)
+
+        let diagnosticsURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "sendmeter-swift-parse-\(UUID().uuidString).stderr"
+            )
+        defer { try? FileManager.default.removeItem(at: diagnosticsURL) }
+        guard FileManager.default.createFile(
+            atPath: diagnosticsURL.path,
+            contents: Data()
+        ) else {
+            return XCTFail("could not create syntax diagnostics file")
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["swiftc", "-parse"] + excludedSources.map(\.path)
+        let diagnostics = try FileHandle(forWritingTo: diagnosticsURL)
+        process.standardError = diagnostics
+        try process.run()
+        process.waitUntilExit()
+        try diagnostics.close()
+
+        let stderr = try String(
+            contentsOf: diagnosticsURL,
+            encoding: .utf8
+        )
+        XCTAssertEqual(
+            process.terminationStatus,
+            0,
+            "SwiftPM-excluded sources must pass a syntax-only parse (\(excludedSources.count) files):\n\(stderr)"
+        )
+    }
+
     func testAppModelDeinitCanCancelEveryLifecycleTaskHandle() {
         let appModel = code(source("Sources/App/AppModel.swift"))
         let handles = [
