@@ -111,6 +111,31 @@ watch_info = File.exist?(watch_info_path) ? File.read(watch_info_path) : ""
 ].each do |placeholder|
   fail_check("WatchInfo.plist is missing #{placeholder}") unless watch_info.include?(placeholder)
 end
+capacitor_watch_info_path = File.join(REPO, "ios/App/SendLogWatch Watch App-Info.plist")
+fail_check("Capacitor watch Info.plist is missing: #{capacitor_watch_info_path}") unless
+  File.exist?(capacitor_watch_info_path)
+native_watch_info = Xcodeproj::Plist.read_from_path(watch_info_path)
+capacitor_watch_info = Xcodeproj::Plist.read_from_path(capacitor_watch_info_path)
+fail_check("native and Capacitor watch Info.plists have different key sets") unless
+  native_watch_info.keys.sort == capacitor_watch_info.keys.sort
+
+intentional_watch_info_differences = {
+  "CFBundleShortVersionString" => ["$(MARKETING_VERSION)", "1.0"],
+  "CFBundleVersion" => ["$(CURRENT_PROJECT_VERSION)", "1"],
+  "WKCompanionAppBundleIdentifier" => [
+    "$(WATCH_COMPANION_APP_BUNDLE_IDENTIFIER)",
+    "com.jirathip.sendlog",
+  ],
+}
+actual_watch_info_differences = native_watch_info.keys.sort.filter_map do |key|
+  next if native_watch_info[key] == capacitor_watch_info[key]
+
+  [key, [native_watch_info[key], capacitor_watch_info[key]]]
+end.to_h
+fail_check(
+  "native and Capacitor watch Info.plists differ outside their three intentional values: " \
+  "#{actual_watch_info_differences.inspect}"
+) unless actual_watch_info_differences == intentional_watch_info_differences
 fail_check("watch target does not use the native versioned Info.plist") unless
   setting!(watch, "Release", "INFOPLIST_FILE") == "Resources/WatchInfo.plist"
 
@@ -197,8 +222,6 @@ fail_check("Release watch-widget ID is not the shipped companion ID") unless
 
 fail_check("native phone Release workaround changed optimization") unless
   setting!(app, "Release", "SWIFT_OPTIMIZATION_LEVEL") == "-O"
-fail_check("native phone Release workaround is not single-file") unless
-  setting!(app, "Release", "SWIFT_COMPILATION_MODE") == "singlefile"
 fail_check("watch Debug is missing DEBUG") unless
   setting!(watch, "Debug", "SWIFT_ACTIVE_COMPILATION_CONDITIONS").to_s.split.include?("DEBUG")
 fail_check("watch-widget Debug is missing DEBUG") unless

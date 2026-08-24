@@ -264,9 +264,14 @@ Put that email/password in the review notes.
    **App Groups** on `com.jirathip.sendlog.watchkitapp`, and **App Groups** on
    `com.jirathip.sendlog.watchkitapp.widgets`; attach
    `group.com.jirathip.sendlog` to both App IDs in Apple Developer →
-   Certificates, IDs & Profiles. Fastlane can register the IDs and verify the
-   capability flags, but cannot toggle App Groups or attach the group
-   container; it fails before profile fetch when the flags are absent.
+   Certificates, IDs & Profiles. For signed Debug device builds, also create
+   `com.jirathip.sendlog.native.watchkitapp` with **HealthKit** + **App Groups**
+   and `com.jirathip.sendlog.native.watchkitapp.widgets` with **App Groups**;
+   attach the same group to both Debug IDs. Unsigned simulator Debug builds do
+   not need portal profiles, but code-signed Debug device builds do. Fastlane
+   can register the IDs and verify the capability flags, but cannot toggle App
+   Groups or attach the group container; it fails before profile fetch when the
+   flags are absent.
 3. Deploy the web app so the privacy-policy and support URLs are live; paste
    `https://sendmeter.app/privacy.html` under App Privacy and
    `https://sendmeter.app/support.html` under the iOS version's Support URL.

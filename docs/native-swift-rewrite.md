@@ -130,9 +130,15 @@ but cannot prove installation on a physical paired watch.
 4. Verify that the watch App ID has HealthKit + App Groups and that the
    watch-widget App ID has App Groups, with
    `group.com.jirathip.sendlog` attached to both in the Apple Developer portal.
-   This is a manual prerequisite: the lane does not pretend the Connect API
-   can toggle App Groups or attach the group container, and it fails before
-   profile fetch if the capability flags are absent.
+   For signed Debug device builds, also manually create/enable
+   `com.jirathip.sendlog.native.watchkitapp` with HealthKit + App Groups and
+   `com.jirathip.sendlog.native.watchkitapp.widgets` with App Groups, attaching
+   the same group to both Debug IDs. An unsigned simulator Debug build does not
+   need portal profiles, but these capabilities are still required for a
+   code-signed Debug device build. This is a manual prerequisite: the lane does
+   not pretend the Connect API can toggle App Groups or attach the group
+   container, and it fails before profile fetch if the capability flags are
+   absent.
 5. Fetch distribution profiles for the phone app, embedded watch app, phone
    widget appex, and embedded watch-widget appex.
 6. Build number = latest TestFlight build of the shipped app + 1 (the native
@@ -151,12 +157,15 @@ present on the team's Apple Developer identifiers.
 
 ### Release compiler workaround and verification status
 
-The native phone Release configuration retains Swift `-O`, but uses
-single-file/incremental compilation instead of whole-module optimization. Two
+The native phone Release configuration retains Swift `-O`, but currently uses
+single-file compilation (`SWIFT_COMPILATION_MODE=singlefile`) instead of whole-
+module optimization as a temporary, #768-tracked workaround. Two
 fresh-derived-data Release archive attempts reproduced a Swift frontend
-`SILDeserializer` crash while compiling the phone target; this narrow setting
-keeps the optimizer unchanged and limits the workaround to the target that
-crashed. The watch and widget targets are not changed to accommodate it.
+`SILDeserializer` crash while compiling the phone target. The workaround keeps
+the optimizer unchanged and limits the workaround to the target that crashed;
+the watch and widget targets are not changed to accommodate it. It remains in
+place pending the next serialized Release archive/toolchain validation, which
+must determine whether single-file compilation can be removed.
 
 The archive remains unverified until the serialized Xcode lane is reassigned;
 the project wiring and static generated-project assertions do not substitute
