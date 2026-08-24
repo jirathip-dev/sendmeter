@@ -145,11 +145,7 @@ struct ForceTrendChart: View {
                 .foregroundStyle(ChartToken.optimal.color(scheme))
                 .padding(.leading, 4)
                 .padding(.top, 2)
-                .accessibilityLabel(
-                    "Plan target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms, "
-                        + "range \(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1)))) to "
-                        + "\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
-                )
+                .accessibilityLabel(targetAccessibilityLabel(for: targetBand))
             }
         }
         .chartYScale(domain: 0...maximum)
@@ -166,6 +162,19 @@ struct ForceTrendChart: View {
                     .foregroundStyle(ChartToken.axis.color(scheme))
             }
         }
+    }
+
+    private func targetAccessibilityLabel(for band: ForceTargetBand) -> String {
+        let targetKilograms: String = formattedKilograms(band.kilograms)
+        let lowKilograms: String = formattedKilograms(band.lowKilograms)
+        let highKilograms: String = formattedKilograms(band.highKilograms)
+        let targetPrefix: String = "Plan target \(targetKilograms) kilograms, "
+        let rangeDescription: String = "range \(lowKilograms) to \(highKilograms) kilograms"
+        return targetPrefix + rangeDescription
+    }
+
+    private func formattedKilograms(_ kilograms: Double) -> String {
+        kilograms.formatted(.number.precision(.fractionLength(1)))
     }
 
     private var accessibilitySummary: String {
