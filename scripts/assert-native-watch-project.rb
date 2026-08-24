@@ -220,7 +220,7 @@ fail_check("Release watch ID is not the shipped companion ID") unless
 fail_check("Release watch-widget ID is not the shipped companion ID") unless
   release_watch_widgets_id == "com.jirathip.sendlog.watchkitapp.widgets"
 
-fail_check("native phone Release workaround changed optimization") unless
+fail_check("native phone Release is not optimized at -O") unless
   setting!(app, "Release", "SWIFT_OPTIMIZATION_LEVEL") == "-O"
 fail_check("watch Debug is missing DEBUG") unless
   setting!(watch, "Debug", "SWIFT_ACTIVE_COMPILATION_CONDITIONS").to_s.split.include?("DEBUG")

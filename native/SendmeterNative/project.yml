@@ -124,12 +124,12 @@ targets:
         Release:
           base:
             PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog
-            # The Release archive reproduced a swift-frontend
-            # SILDeserializer crash while the native phone target was in WMO.
-            # Keep the optimizer at -O and change only this target's
-            # compilation mode to single-file/incremental; the watch and widget
-            # targets retain their normal Release optimization settings.
-            SWIFT_COMPILATION_MODE: singlefile
+            # Fresh-derived-data Swift 6.3.3 Release archives reproduced the
+            # same swift-frontend SILDeserializer crash under both this prior
+            # WMO setting and the #768 singlefile experiment. No compiler-mode
+            # workaround is retained; Release/signed archive validation is
+            # still a #768 shipping blocker.
+            SWIFT_COMPILATION_MODE: wholemodule
             SWIFT_OPTIMIZATION_LEVEL: -O
   # #768: Reuse the existing Capacitor companion sources rather than creating
   # a second watch implementation. The native-only plist supplies the

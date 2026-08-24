@@ -155,21 +155,21 @@ phone, watch, and widget App IDs and fetches the profiles needed for the
 embedded bundles only after the manually managed watch entitlements are
 present on the team's Apple Developer identifiers.
 
-### Release compiler workaround and verification status
+### Release compiler status and verification blocker
 
-The native phone Release configuration retains Swift `-O`, but currently uses
-single-file compilation (`SWIFT_COMPILATION_MODE=singlefile`) instead of whole-
-module optimization as a temporary, #768-tracked workaround. Two
-fresh-derived-data Release archive attempts reproduced a Swift frontend
-`SILDeserializer` crash while compiling the phone target. The workaround keeps
-the optimizer unchanged and limits the workaround to the target that crashed;
-the watch and widget targets are not changed to accommodate it. It remains in
-place pending the next serialized Release archive/toolchain validation, which
-must determine whether single-file compilation can be removed.
+The native phone Release configuration restores the prior Swift
+`SWIFT_COMPILATION_MODE=wholemodule` setting and retains `-O`. The two
+fresh-derived-data Release archive attempts made with WMO and the subsequent
+fresh-derived-data attempt made with `singlefile` all reproduced the same
+Swift 6.3.3 `swift-frontend` `SILDeserializer` crash while compiling the
+phone target. No compiler-mode workaround is retained; the project is back on
+WMO and the optimizer remains `-O`.
 
-The archive remains unverified until the serialized Xcode lane is reassigned;
-the project wiring and static generated-project assertions do not substitute
-for that archive check.
+The Debug watch/widget graph is green: XcodeGen/static generated-project
+assertions pass, and the unsigned generic iOS Simulator Debug build succeeds.
+Release and signed-archive verification remain unverified and are a #768
+shipping blocker; no archive or embedded-watch inspection is claimed until a
+new serialized Release lane validates the toolchain and archive structure.
 
 **Workflow:** `native-testflight.yml` is dispatch-only (macOS runner minutes
 are the dominant CI cost), uses the same `testflight` GitHub environment as

@@ -167,3 +167,9 @@ The pull request runs:
 Automated checks do not replace the physical-device gates for real Bluetooth,
 HealthKit, WatchConnectivity, passkeys, background/suspension behavior, or a
 multi-day authentication soak.
+
+The Debug watch/widget graph and unsigned generic iOS Simulator Debug build
+are green. Fresh-derived-data Swift 6.3.3 Release archives reproduce the same
+`swift-frontend` `SILDeserializer` crash with both WMO and the attempted
+`singlefile` mode; no compiler-mode workaround is retained. Release and signed
+archive verification remain a #768 shipping blocker.
