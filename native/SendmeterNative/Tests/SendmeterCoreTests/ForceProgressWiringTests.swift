@@ -99,6 +99,8 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertTrue(forceView.contains(".equatable()"))
         XCTAssertTrue(forceView.contains("progressRevision: forceModel.forceProgressRevision"))
         XCTAssertTrue(forceView.contains("curveRevision: sideScopedForceCurveRevision"))
+        XCTAssertTrue(forceView.contains("targetBand: selectedTargetReferenceBand"))
+        XCTAssertTrue(card.contains("targetBand: targetBand"))
         XCTAssertTrue(forceView.contains("sideScopedForceCurveRevision"))
         let loadCurveBody = exactFunction(
             forceView,
@@ -138,6 +140,16 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertFalse(boundary.contains("ForceProgress.staticCapacityProgress"))
         XCTAssertFalse(boundary.contains("ForceProgress.movementProgress"))
         XCTAssertFalse(boundary.contains("recordings =="))
+    }
+
+    func testForceOwnersKeepManualFullscreenAndGuidedHandsFreeOnExistingPaths() {
+        let forceView = code(source("Sources/Features/Force/ForceView.swift"))
+
+        XCTAssertTrue(forceView.contains("ManualForceFullscreen("))
+        XCTAssertTrue(forceView.contains("handsFreeEnabled: launchHandsFreeEnabled"))
+        XCTAssertTrue(forceView.contains("GuidedForceHandsFreeTimingPolicy"))
+        XCTAssertTrue(forceView.contains("case .refusedActiveRecording"))
+        XCTAssertTrue(forceView.contains("model.handsFree.cancelArm()"))
     }
 
     private func source(_ relativePath: String) -> String {

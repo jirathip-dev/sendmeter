@@ -119,7 +119,7 @@ public struct ForceReferences: Codable, Equatable, Sendable {
     )
 }
 
-public struct ForceTargetBand: Codable, Equatable, Sendable {
+public struct ForceTargetBand: Codable, Equatable, Hashable, Sendable {
     public let kilograms: Double
     public let lowKilograms: Double
     public let highKilograms: Double
@@ -153,6 +153,31 @@ public struct ForceTargetPlan: Codable, Equatable, Sendable {
     public func band(forSet setNumber: Int, side: TindeqSide) -> ForceTargetBand? {
         targets[ForceTargetKey(setNumber: setNumber, side: side)]
             ?? targets[ForceTargetKey(setNumber: setNumber, side: .unspecified)]
+    }
+
+    /// The display/persist boundary's reference band for a selected side.
+    /// Target calculation is done by `resolveForceTargetPlan`; this method
+    /// only chooses among the already-resolved bands, keeping live gauge,
+    /// history charts, and save metadata on one authoritative plan.
+    public func referenceBand(
+        forSet setNumber: Int,
+        selectedSide: TindeqSide,
+        fallbackSide: TindeqSide
+    ) -> ForceTargetBand? {
+        if let selected = band(forSet: setNumber, side: selectedSide) {
+            return selected
+        }
+        if fallbackSide != selectedSide,
+           let fallback = band(forSet: setNumber, side: fallbackSide) {
+            return fallback
+        }
+        let firstHand: TindeqSide = selectedSide == .right ? .left : .right
+        if firstHand != selectedSide,
+           firstHand != fallbackSide,
+           let first = band(forSet: setNumber, side: firstHand) {
+            return first
+        }
+        return nil
     }
 
     public static let empty = ForceTargetPlan()

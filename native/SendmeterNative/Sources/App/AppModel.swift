@@ -280,6 +280,10 @@ public final class AppModel {
     @ObservationIgnored private let weatherService: WeatherService
     /// #628: hands-free arming loop (load-triggered start/stop/save).
     @ObservationIgnored private let handsFreeService: HandsFreeForceController
+    /// True while a release-triggered hands-free pull is being made durable.
+    /// The Force fullscreen uses this to show the same save boundary as the
+    /// compact card without taking ownership of the persistence flight.
+    public private(set) var handsFreeSaveInFlight = false
     /// #628: lock-screen Live Activity mirror of the guided protocol.
     public let guidedActivity: GuidedProtocolActivityManager
     /// #627: in-flight rep saves the session-end snapshot waits for.
@@ -3069,7 +3073,9 @@ public final class AppModel {
             handsFree.rearmAfterSave()
             return
         }
+        handsFreeSaveInFlight = true
         Task {
+            defer { handsFreeSaveInFlight = false }
             let outcome = await saveForceSummaryOutcome(
                 trimmed,
                 tag: context.tag,
@@ -7724,6 +7730,7 @@ public final class AppModel {
         queueBreadcrumbs = []
         quarantinedWrites = nil
         gaugeSessionTracker.reset()
+        handsFreeSaveInFlight = false
         forceModel.guidedProtocolActive = false
         guidedProtocolTeardown = nil
         guidedProtocolTeardownOwnerID = nil

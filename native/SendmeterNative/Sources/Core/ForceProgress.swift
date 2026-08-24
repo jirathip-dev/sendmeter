@@ -262,19 +262,22 @@ public struct ForceProgressCardKey: Hashable, Sendable {
     public let selectedSide: String?
     public let hasLoadedRecordings: Bool
     public let curveRevision: UInt64
+    public let targetBand: ForceTargetBand?
 
     public init(
         progressRevision: UInt64,
         selectedTag: String?,
         selectedSide: String?,
         hasLoadedRecordings: Bool,
-        curveRevision: UInt64
+        curveRevision: UInt64,
+        targetBand: ForceTargetBand? = nil
     ) {
         self.progressRevision = progressRevision
         self.selectedTag = selectedTag
         self.selectedSide = selectedSide
         self.hasLoadedRecordings = hasLoadedRecordings
         self.curveRevision = curveRevision
+        self.targetBand = targetBand
     }
 }
 

@@ -14,6 +14,7 @@ struct StaticCapacityDetailView: View {
     let selectedSide: TindeqSide?
     let forceCurve: ForceCurveModel?
     let hasLoadedRecordings: Bool
+    let targetBand: ForceTargetBand?
 
     private var staticEvidence: StaticCapacityEvidence {
         ForceProgress.staticCapacityEvidence(
@@ -37,13 +38,17 @@ struct StaticCapacityDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        ForceTrendChart(recordings: staticEvidence.trendRecordings)
+                        ForceTrendChart(
+                            recordings: staticEvidence.trendRecordings,
+                            targetBand: targetBand
+                        )
 
                         if let selectedTag {
                             NativeForceCurveCard(
                                 tag: selectedTag,
                                 model: forceCurve,
-                                hasLoadedRecordings: hasLoadedRecordings
+                                hasLoadedRecordings: hasLoadedRecordings,
+                                targetBand: targetBand
                             )
                             SideAsymmetryCard(recordings: recordings, tag: selectedTag)
                         } else {

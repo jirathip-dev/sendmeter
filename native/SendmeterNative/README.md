@@ -23,7 +23,7 @@ in `docs/native-swift-rewrite.md`.
 - Phone climbing workouts with atomic Supabase persistence and optimistic History
 - Guided routines compatible with the existing TypeScript JSON schema
 - Direct CoreBluetooth Tindeq Progressor connection, tare, battery, disconnect recovery, and live SwiftUI Canvas trace
-- Free pulls, static guided protocols, alternating sides, Reverse Action cadence, per-set holds, fixed/%PR/%CF/Hill-curve targets, and complete protocol metadata
+- Free pulls with a dedicated live fullscreen, static guided protocols, alternating sides, Reverse Action cadence, per-set holds, fixed/%PR/%CF/Hill-curve targets, selected target bands on Force history/duration charts, and complete protocol metadata
 - Account-scoped atomic on-device queue with stable IDs, retry backoff, and bounded diagnostic breadcrumbs
 - Combined session + force History timeline (#630): filter chips, loose-recording multi-select → new session, per-rep force charts, editing, linking, soft-delete Trash, restore, and confirmed permanent deletion
 - Training Block transitions with same-day undo semantics
@@ -104,6 +104,15 @@ session refresh retires an absent placeholder after seven days via a tombstone
 so a permanent phantom cannot count toward training load. `live_workouts`
 remains a separate realtime mirror and is not cached.
 
+The regular Force fullscreen is a viewport over those same `TindeqBluetooth`
+and `AppModel` owners: minimizing leaves the stream, keep-awake hold, locked
+recording attribution, disconnect salvage, and durable save path untouched.
+Guided protocols remain the only other stream owner; an armed-but-idle
+hands-free stream is handed back synchronously before a guided run starts, and
+an active pull is refused. The selected target plan is resolved once for the
+current exercise/side/protocol and its set-1 band is shared by the live gauge,
+fullscreen coach, progress detail, and Force duration/trend charts.
+
 `Sources/Shared` + `Sources/Widgets` compile into a second product target —
 `SendmeterNativeWidgets`, a WidgetKit app-extension embedded in the app
 bundle — in the same XcodeGen project. The extension renders the guided
@@ -154,15 +163,33 @@ build.
 
 ## Verification
 
-The pull request runs:
+The no-Xcode source gate can be run from the repository root:
 
-1. Pure Swift unit tests.
-2. XcodeGen project generation.
+```bash
+bash scripts/validate-native-static.sh
+```
+
+It parses every native application, widget, Core, and test Swift file with
+`swiftc -parse`, generates a temporary XcodeGen project, checks that the Force
+files are present in the app target, and verifies the recording-context and
+fullscreen accessibility invariants. This is a local supplemental gate; PR CI
+separately runs:
+
+1. Pure Swift Core tests.
+2. XcodeGen project generation and Swift package resolution.
 3. Generated-project assertions for watch/widget source and resource
    membership, entitlements exclusion, package links, and embed destinations
    (`scripts/assert-native-watch-project.rb`).
 4. A complete iOS Simulator compile with code signing disabled.
 5. Existing repository quality checks where applicable.
+
+`swift test` does not typecheck the SwiftUI application target: the package
+target intentionally contains only `Sources/Core` plus `ChartTheme.swift`.
+The static gate therefore proves parsing and generated-project inclusion, not
+app-target type correctness. A clean Xcode project compile remains required
+when the serialized Xcode lane is available; the regular Force fullscreen,
+hands-free trigger/re-arm loop, disconnect salvage, and protocol handoff also
+remain device-only with a real Progressor.
 
 Automated checks do not replace the physical-device gates for real Bluetooth,
 HealthKit, WatchConnectivity, passkeys, background/suspension behavior, or a
@@ -173,3 +200,7 @@ are green. Fresh-derived-data Swift 6.3.3 Release archives reproduce the same
 `swift-frontend` `SILDeserializer` crash with both WMO and the attempted
 `singlefile` mode; no compiler-mode workaround is retained. Release and signed
 archive verification remain a #768 shipping blocker.
+
+The regular Force fullscreen, hands-free trigger/re-arm loop, disconnect
+salvage, and protocol handoff need a real Progressor on a device for end-to-end
+verification; simulator/static checks do not prove BLE behavior.
