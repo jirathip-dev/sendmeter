@@ -70,7 +70,13 @@ struct ManualWorkoutFullscreen: View {
             }
         }
         .animation(
-            reduceMotion ? nil : .easeInOut(duration: 0.3),
+            reduceMotion
+                ? nil
+                : .spring(
+                    response: ForceMotionPolicy.phaseResponseSeconds,
+                    dampingFraction: ForceMotionPolicy.phaseDampingFraction,
+                    blendDuration: 0
+                ),
             value: snapshot.phase
         )
     }
@@ -241,7 +247,7 @@ struct ManualWorkoutFullscreen: View {
             .frame(width: diameter, height: diameter)
             .contentShape(Circle())
         }
-        .hapticButtonStyle(.plain)
+        .hapticButtonStyle(ForceHeroActionButtonStyle())
         .accessibilityLabel(snapshot.phase == .climbing ? "Done boulder" : "Start boulder")
         .accessibilityHint(snapshot.phase == .climbing ? "Stops the current attempt" : "Starts a new attempt")
     }
@@ -255,7 +261,10 @@ struct ManualWorkoutFullscreen: View {
                 _ = try copy.endAttempt(at: Date())
             }
             engine = copy
-            Haptics.shared.playGesture(.medium)
+            // The structural style arms the default light tap. This claims
+            // that same tracked gesture, so the action does not add a second
+            // cue.
+            Haptics.shared.playGesture(.light)
         } catch {
             model.errorMessage = UserFacingError.message(for: error)
             Haptics.shared.playGesture(RefusedActionHaptics.cue(tappableAndRefused: true))
@@ -330,6 +339,35 @@ private extension ManualWorkoutPhase {
         case .restOver: return SendmeterStyle.alert
         }
     }
+}
+
+private struct ForceHeroActionButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .hapticTap(structuralHapticLevel)
+            .scaleEffect(
+                ForceMotionPolicy.heroScale(
+                    isPressed: configuration.isPressed,
+                    reduceMotion: reduceMotion
+                )
+            )
+            .animation(
+                reduceMotion
+                    ? nil
+                    : .spring(
+                        response: ForceMotionPolicy.heroActionResponseSeconds,
+                        dampingFraction: ForceMotionPolicy.heroActionDampingFraction,
+                        blendDuration: 0
+                    ),
+                value: configuration.isPressed
+            )
+    }
+}
+
+extension ForceHeroActionButtonStyle: StructuralHapticStyle {
+    var structuralHapticLevel: HapticTapLevel { .normal }
 }
 
 private struct GlassWorkoutButtonStyle: ButtonStyle {

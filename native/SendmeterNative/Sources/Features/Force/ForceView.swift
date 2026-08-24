@@ -734,7 +734,13 @@ private struct GuidedForceProtocolView: View {
                         .background(.ultraThinMaterial)
                 }
                 .animation(
-                    reduceMotion ? nil : .easeInOut(duration: 0.25),
+                    reduceMotion
+                        ? nil
+                        : .spring(
+                            response: ForceMotionPolicy.phaseResponseSeconds,
+                            dampingFraction: ForceMotionPolicy.phaseDampingFraction,
+                            blendDuration: 0
+                        ),
                     value: presentation.phase
                 )
             }
@@ -2367,6 +2373,7 @@ private struct GuidedForceResumeCard: View {
 }
 
 private struct ForceDeviceCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let device: TindeqBluetooth
     @Binding var handsFreeEnabled: Bool
     /// #628: the hands-free loop's state, mirrored from AppModel (the loop
@@ -2530,6 +2537,16 @@ private struct ForceDeviceCard: View {
                 }
             }
         }
+        .animation(
+            reduceMotion
+                ? nil
+                : .spring(
+                    response: ForceMotionPolicy.phaseResponseSeconds,
+                    dampingFraction: ForceMotionPolicy.phaseDampingFraction,
+                    blendDuration: 0
+                ),
+            value: device.status
+        )
         .alert("Discard unsaved pull?", isPresented: $showingDiscardConfirmation) {
             Button("Discard", role: .destructive) {
                 // #656: a confirmed destructive action fires the medium tick

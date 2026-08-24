@@ -53,6 +53,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native Force phase colors now settle with a short spring, and the BOULDER/DONE hero gives a subtle press pulse with a light haptic; Reduce Motion keeps the same actions and feedback without the animation.
 - Native pending manual workouts now retain their durable on-device queue entries across refresh and relaunch, show clearer upload status with a manual retry action, and preserve Trash behavior for already-uploaded sessions.
 - Native and Watch error messages now use plain language that says what went wrong and what to do next, instead of showing raw server, Bluetooth, or HealthKit errors.
 - Native Settings now shows a compact account-activity summary (last sign-in and any last problem) instead of the full internal auth event log; technical identifiers, raw server codes, and the complete event history stay behind “Show technical details”.
