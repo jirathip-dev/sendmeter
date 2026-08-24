@@ -81,7 +81,7 @@ struct ManualForceFullscreen: View {
             }
             .hapticButtonStyle(.bordered)
             .accessibilityLabel("Minimize Force recording")
-            .accessibilityHint("The recording keeps running and can be reopened from Force")
+            .accessibilityHint("The recording keeps running in the Force tab until you stop or disconnect")
 
             Spacer(minLength: 4)
 

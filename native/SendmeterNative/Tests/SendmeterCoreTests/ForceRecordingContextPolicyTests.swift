@@ -2,6 +2,34 @@ import XCTest
 @testable import SendmeterCore
 
 final class ForceRecordingContextPolicyTests: XCTestCase {
+    func testAnArmedHandsFreeStreamLocksTheRecordingContextBeforeTheFirstPull() {
+        XCTAssertTrue(
+            ForceContextLockPolicy.isLocked(
+                ForceContextLockState(
+                    liveRecording: false,
+                    interruptedRecording: false,
+                    handsFreeArmed: true,
+                    handsFreeMeasuring: false,
+                    guidedSessionActive: false
+                )
+            )
+        )
+    }
+
+    func testHandsFreePreferenceWithoutAnArmLeavesTheContextEditable() {
+        XCTAssertFalse(
+            ForceContextLockPolicy.isLocked(
+                ForceContextLockState(
+                    liveRecording: false,
+                    interruptedRecording: false,
+                    handsFreeArmed: false,
+                    handsFreeMeasuring: false,
+                    guidedSessionActive: false
+                )
+            )
+        )
+    }
+
     func testSelectingAProtocolDoesNotBlockAFreeActionBeforeTheStreamStarts() {
         let state = ForceRecordingContextState(
             liveRecording: false,

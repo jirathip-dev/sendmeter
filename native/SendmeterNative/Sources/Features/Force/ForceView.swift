@@ -1468,11 +1468,15 @@ struct ForceView: View {
         // hands-free loop, an interrupted rep awaiting recovery, or a guided
         // session. The focused chip/input `.disabled` calls then report that
         // lock to VoiceOver instead of relying only on the parent modifier.
-        let contextLocked: Bool =
-            model.tindeq.status == .measuring
-            || model.tindeq.interruptedRecording != nil
-            || model.handsFree.isMeasuring
-            || guidedControlsLocked
+        let contextLocked = ForceContextLockPolicy.isLocked(
+            ForceContextLockState(
+                liveRecording: model.tindeq.status == .measuring,
+                interruptedRecording: model.tindeq.interruptedRecording != nil,
+                handsFreeArmed: model.handsFree.isArmed,
+                handsFreeMeasuring: model.handsFree.isMeasuring,
+                guidedSessionActive: guidedControlsLocked
+            )
+        )
 
         ForceMetadataCard(
             tag: $tag,

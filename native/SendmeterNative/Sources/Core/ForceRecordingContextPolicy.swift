@@ -64,3 +64,39 @@ public enum ForceRecordingContextPolicy {
         return .allowed
     }
 }
+
+/// The compact Force metadata controls have to remain immutable for the whole
+/// window in which a recording owner can still persist samples.  In
+/// particular, an armed hands-free stream is already the owner of the next
+/// rep's attribution even though it is not measuring yet.
+public struct ForceContextLockState: Equatable, Sendable {
+    public let liveRecording: Bool
+    public let interruptedRecording: Bool
+    public let handsFreeArmed: Bool
+    public let handsFreeMeasuring: Bool
+    public let guidedSessionActive: Bool
+
+    public init(
+        liveRecording: Bool,
+        interruptedRecording: Bool,
+        handsFreeArmed: Bool,
+        handsFreeMeasuring: Bool,
+        guidedSessionActive: Bool
+    ) {
+        self.liveRecording = liveRecording
+        self.interruptedRecording = interruptedRecording
+        self.handsFreeArmed = handsFreeArmed
+        self.handsFreeMeasuring = handsFreeMeasuring
+        self.guidedSessionActive = guidedSessionActive
+    }
+}
+
+public enum ForceContextLockPolicy {
+    public static func isLocked(_ state: ForceContextLockState) -> Bool {
+        state.liveRecording
+            || state.interruptedRecording
+            || state.handsFreeArmed
+            || state.handsFreeMeasuring
+            || state.guidedSessionActive
+    }
+}

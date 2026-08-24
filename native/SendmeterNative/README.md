@@ -163,15 +163,33 @@ build.
 
 ## Verification
 
-The pull request runs:
+The no-Xcode source gate can be run from the repository root:
 
-1. Pure Swift unit tests.
+```bash
+bash scripts/validate-native-static.sh
+```
+
+It parses every native application, widget, Core, and test Swift file with
+`swiftc -parse`, generates a temporary XcodeGen project, checks that the Force
+files are present in the app target, and verifies the recording-context and
+fullscreen accessibility invariants. This is a local supplemental gate; PR CI
+separately runs:
+
+1. Pure Swift Core tests.
 2. XcodeGen project generation.
 3. Generated-project assertions for watch/widget source and resource
    membership, entitlements exclusion, package links, and embed destinations
    (`scripts/assert-native-watch-project.rb`).
 4. A complete iOS Simulator compile with code signing disabled.
 5. Existing repository quality checks where applicable.
+
+`swift test` does not typecheck the SwiftUI application target: the package
+target intentionally contains only `Sources/Core` plus `ChartTheme.swift`.
+The static gate therefore proves parsing and generated-project inclusion, not
+app-target type correctness. A clean Xcode project compile remains required
+when the serialized Xcode lane is available; the regular Force fullscreen,
+hands-free trigger/re-arm loop, disconnect salvage, and protocol handoff also
+remain device-only with a real Progressor.
 
 Automated checks do not replace the physical-device gates for real Bluetooth,
 HealthKit, WatchConnectivity, passkeys, background/suspension behavior, or a
