@@ -13,6 +13,13 @@ select plan(21);
 -- The local image grants table access to both API roles by default; RLS is
 -- therefore asserted below with real role switches. Function execution is
 -- narrower: only authenticated may invoke the account-scoped RPCs.
+-- A clean --no-seed database has no API-role table grants, so establish only
+-- the pre-existing fixture privileges needed to reach those policies. These
+-- transaction-scoped grants roll back with the test and never become schema
+-- or production privileges.
+grant select, update on table public.sessions to authenticated;
+grant select, update on table public.tindeq_recordings to authenticated;
+grant select on table public.sync_purge_generations to anon;
 select is(
   has_table_privilege(
     'authenticated', 'public.sync_purge_generations', 'select'
