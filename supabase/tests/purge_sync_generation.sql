@@ -1,7 +1,9 @@
 -- #778: exercise the real post-migration trigger/RPC/account-deletion path.
--- Run after all migrations and seed data are applied:
---   npx supabase db reset
---   npx supabase test db --local supabase/tests/purge_sync_generation.sql
+-- Run the repeatable, local-only repository gate after the local stack has
+-- been migrated:
+--   npm run test:db:purge
+-- The scoped CI workflow resets its disposable local stack before invoking
+-- that command. Never replace --local with --linked or --db-url here.
 -- Everything is rolled back at the end.
 
 begin;

@@ -1829,7 +1829,7 @@ public final class SendmeterRepository: @unchecked Sendable {
     /// recording has no row left for `updated_at > cursor` to return.
     /// Missing state means no purge has happened for this account yet.
     public func fetchPurgeSyncGeneration() async throws -> Int64 {
-        let rows: [PurgeGenerationRow] = try await transport.request(
+        let response: PurgeGenerationResponse = try await transport.request(
             path: "rest/v1/sync_purge_generations",
             method: .get,
             queryItems: [
@@ -1837,7 +1837,7 @@ public final class SendmeterRepository: @unchecked Sendable {
                 URLQueryItem(name: "limit", value: "1")
             ]
         )
-        return PurgeGenerationResponse.generation(from: rows)
+        return response.generation
     }
 
     public func fetchSessionDelta(

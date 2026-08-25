@@ -1342,17 +1342,17 @@ final class CachedWorkspaceTests: XCTestCase {
     func testPurgeGenerationResponseDecodesPopulatedAndEmptyEndpointShapes() throws {
         let decoder = JSONDecoder()
         let populated = try decoder.decode(
-            [PurgeGenerationRow].self,
+            PurgeGenerationResponse.self,
             from: Data(#"[{"generation":7}]"#.utf8)
         )
-        XCTAssertEqual(PurgeGenerationResponse.generation(from: populated), 7)
+        XCTAssertEqual(populated.generation, 7)
 
         let empty = try decoder.decode(
-            [PurgeGenerationRow].self,
+            PurgeGenerationResponse.self,
             from: Data("[]".utf8)
         )
         XCTAssertEqual(
-            PurgeGenerationResponse.generation(from: empty),
+            empty.generation,
             0,
             "RLS before the first purge is a valid generation-zero response"
         )

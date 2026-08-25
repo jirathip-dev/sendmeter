@@ -246,8 +246,16 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertTrue(appModel.contains("forceFull: forcePurgeReconcile"))
         XCTAssertTrue(appModel.contains("purgeGeneration: remotePurgeGeneration"))
         XCTAssertTrue(
-            appModel.contains("await refreshAll(showSpinner: false)"),
+            appModel.contains("await refreshAllSilently()"),
             "a realtime generation mismatch must converge both affected slices"
+        )
+        XCTAssertTrue(
+            appModel.contains("purgeGenerationContext: .userInitiatedForeground"),
+            "only the public foreground refresh may report generation rollout errors"
+        )
+        XCTAssertTrue(
+            appModel.contains("reportPurgeGenerationFailure"),
+            "foreground generation failures must use the deduplicating policy"
         )
 
         let repositories = code(source("Sources/Data/Repositories.swift"))

@@ -494,6 +494,11 @@ public final class AppModel {
     /// Increments whenever the loaded account state is reset. User IDs alone
     /// cannot reject a stale A completion after an A→B→A transition.
     public private(set) var accountEpoch: UInt64 = 0
+    /// The optional purge-generation endpoint is rollout-sensitive. Keep its
+    /// user-facing report account/epoch scoped and once-per-outage, while
+    /// silent/realtime/background callers retain the nil/full-reconcile
+    /// fallback without touching the error banner.
+    private var purgeGenerationFailurePolicy = PurgeGenerationFailurePolicy()
     private var refreshingOwner: AccountScopedCompletion?
     private var dataRefreshOwners = Set<UUID>()
     private var recomputeGate = ReadinessRecomputeGate()
@@ -1108,7 +1113,7 @@ public final class AppModel {
                     recordCacheFailure("cache cursor reset", error)
                 }
             }
-            await refreshAll(showSpinner: false)
+            await refreshAllSilently()
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
@@ -1543,7 +1548,7 @@ public final class AppModel {
             realtimeConnected: realtime.connectionStatus == .connected,
             hasLoadedData: hasLoadedSessions && forceModel.hasLoadedRecordings
         ) {
-            await refreshAll(showSpinner: false)
+            await refreshAllSilently()
         }
         // #631: keep Send Conditions honest on foreground (cached value
         // stays on failure — the service never fabricates). Only the silent
@@ -2182,12 +2187,17 @@ public final class AppModel {
     // MARK: Loading
 
     public func refreshAll(showSpinner: Bool = true) async {
-        await refreshAll(showSpinner: showSpinner, dataRefreshOwner: nil)
+        await refreshAll(
+            showSpinner: showSpinner,
+            dataRefreshOwner: nil,
+            purgeGenerationContext: .userInitiatedForeground
+        )
     }
 
     private func refreshAll(
         showSpinner: Bool,
-        dataRefreshOwner: UUID?
+        dataRefreshOwner: UUID?,
+        purgeGenerationContext: PurgeGenerationRefreshContext = .silent
     ) async {
         let dataRefreshOwner = dataRefreshOwner ?? beginDataRefresh()
         defer { endDataRefresh(dataRefreshOwner) }
@@ -2217,20 +2227,22 @@ public final class AppModel {
                 refreshingOwner = nil
             }
         }
+        var purgeGenerationFetchFailed = false
         do {
             let remotePurgeGeneration: Int64?
             do {
                 remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
+                markPurgeGenerationAvailable(capturedBy: accountFetch)
             } catch {
                 // The generation endpoint may lag a staged/older project
                 // schema. Keep the ordinary refresh alive and make both
                 // purge-sensitive entities authoritative until it recovers.
-                if accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
-                ) {
-                    surface(error)
-                }
+                purgeGenerationFetchFailed = true
+                reportPurgeGenerationFailure(
+                    error,
+                    context: purgeGenerationContext,
+                    capturedBy: accountFetch
+                )
                 remotePurgeGeneration = nil
             }
             guard accountFetch.canApply(
@@ -2444,9 +2456,23 @@ public final class AppModel {
                 // failure. Put the last-known cache snapshot back so a partial
                 // fetch cannot hide a pending local write.
                 applyCachedNonOverlayLists(accountUserID: userID)
-                surface(error)
+                if !purgeGenerationFetchFailed {
+                    surface(error)
+                }
             }
         }
+    }
+
+    /// Internal refreshes (foreground lifecycle, mutation follow-ups, and
+    /// realtime convergence) must not turn the optional generation rollout
+    /// check into a user-facing error. The public entry point is reserved for
+    /// an explicit foreground retry/pull-to-refresh.
+    private func refreshAllSilently() async {
+        await refreshAll(
+            showSpinner: false,
+            dataRefreshOwner: nil,
+            purgeGenerationContext: .silent
+        )
     }
 
     /// #627: warm the per-tag curve cache in the background for every tag
@@ -2888,7 +2914,7 @@ public final class AppModel {
             // attempting to persist its intent. The local restoration above
             // keeps the already-inserted row truthful even if this refresh
             // itself is offline.
-            await refreshAll(showSpinner: false)
+            await refreshAllSilently()
             guard accountFetch.canApply(
                 to: self.currentUserID,
                 accountEpoch: accountEpoch
@@ -2920,7 +2946,7 @@ public final class AppModel {
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
-            await self.refreshAll(showSpinner: false)
+            await self.refreshAllSilently()
         } catch {
             if accountFetch.canApply(
                 to: currentUserID,
@@ -4786,7 +4812,7 @@ public final class AppModel {
                 entityID: CacheEntityID.recording(recording)
             )
             deletedRecordings.removeAll { $0.id == recording.id }
-            await refreshAll(showSpinner: false)
+            await refreshAllSilently()
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
@@ -6413,14 +6439,9 @@ public final class AppModel {
         let remotePurgeGeneration: Int64?
         do {
             remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
+            markPurgeGenerationAvailable(capturedBy: accountFetch)
         } catch {
             if Task.isCancelled { return .cancelled }
-            if accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) {
-                surface(error)
-            }
             remotePurgeGeneration = nil
         }
         guard accountFetch.canApply(
@@ -6466,7 +6487,7 @@ public final class AppModel {
         accountUserID: UUID,
         workspace: CachedWorkspace,
         forcePurgeReconcile: Bool,
-        purgeGeneration: Int64
+        purgeGeneration: Int64?
     ) -> [BackgroundSyncOperation] {
         let repository = repository
         return [
@@ -8010,7 +8031,7 @@ public final class AppModel {
                     // check. The selected delete was not discarded, so
                     // refetch both views rather than leaving an optimistic
                     // tombstone/Trash row from the stale snapshot visible.
-                    await refreshAll(showSpinner: false)
+                    await refreshAllSilently()
                     guard accountFetch.canApply(
                         to: currentUserID,
                         accountEpoch: accountEpoch
@@ -8040,7 +8061,7 @@ public final class AppModel {
                     // delete was quarantined. Re-fetch so discarding the
                     // durable delete intent restores the truthful server
                     // state immediately.
-                    await refreshAll(showSpinner: false)
+                    await refreshAllSilently()
                     guard accountFetch.canApply(
                         to: currentUserID,
                         accountEpoch: accountEpoch
@@ -8093,7 +8114,7 @@ public final class AppModel {
                     // outcome. Clear only its exact local ownership above,
                     // then refetch both active and trash lists so the UI tells
                     // the truth instead of guessing that discard restored it.
-                    await refreshAll(showSpinner: false)
+                    await refreshAllSilently()
                     guard accountFetch.canApply(
                         to: currentUserID,
                         accountEpoch: accountEpoch
@@ -8120,7 +8141,7 @@ public final class AppModel {
                     // The rejected edit may have been visible optimistically;
                     // the server row is authoritative after the user discards
                     // it. A refresh also handles a session RPE overlay.
-                    await refreshAll(showSpinner: false)
+                    await refreshAllSilently()
                     guard accountFetch.canApply(
                         to: currentUserID,
                         accountEpoch: accountEpoch
@@ -8135,7 +8156,7 @@ public final class AppModel {
                             replaceSession(base)
                         }
                     }
-                    await refreshAll(showSpinner: false)
+                    await refreshAllSilently()
                     guard accountFetch.canApply(
                         to: currentUserID,
                         accountEpoch: accountEpoch
@@ -8628,16 +8649,11 @@ public final class AppModel {
             let remotePurgeGeneration: Int64?
             do {
                 remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
+                markPurgeGenerationAvailable(capturedBy: accountFetch)
             } catch {
                 // Keep realtime convergence alive when this optional rollout
                 // endpoint is unavailable. The nil generation forces the
                 // foreground path below to reconcile both affected entities.
-                if accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
-                ) {
-                    surface(error)
-                }
                 remotePurgeGeneration = nil
             }
             guard accountFetch.canApply(
@@ -8652,7 +8668,7 @@ public final class AppModel {
                 // observed the hard-delete generation. Reuse the foreground
                 // authoritative path so sessions and recordings converge
                 // together, even when only one table emitted the event.
-                await refreshAll(showSpinner: false)
+                await refreshAllSilently()
                 return
             }
             if slices.contains(.sessions) {
@@ -9484,6 +9500,34 @@ public final class AppModel {
         } catch {
             surface(error)
         }
+    }
+
+    private func markPurgeGenerationAvailable(capturedBy accountFetch: AccountScopedFetch) {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        purgeGenerationFailurePolicy.markAvailable(
+            accountUserID: accountFetch.accountUserID,
+            accountEpoch: accountFetch.accountEpoch
+        )
+    }
+
+    private func reportPurgeGenerationFailure(
+        _ error: Error,
+        context: PurgeGenerationRefreshContext,
+        capturedBy accountFetch: AccountScopedFetch
+    ) {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        guard purgeGenerationFailurePolicy.shouldSurface(
+            context: context,
+            accountUserID: accountFetch.accountUserID,
+            accountEpoch: accountFetch.accountEpoch
+        ) else { return }
+        surface(error)
     }
 
     private func surface(_ error: Error) {
