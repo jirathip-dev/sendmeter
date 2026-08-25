@@ -333,6 +333,46 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertTrue(restore.contains(".manualWorkout(sessionID: draft.sessionID)"))
     }
 
+    func testHealthBackfillProductionSeamsUseExactWindowAndLifecycleProgress() {
+        let healthKit = code(source("Sources/Platform/HealthKitService.swift"))
+        XCTAssertTrue(healthKit.contains("HealthMetricReadWindow.queryLookbackDays"))
+        XCTAssertTrue(healthKit.contains("HealthMetricReadWindow.candidateOffsets"))
+        XCTAssertTrue(healthKit.contains("HealthMetricReadWindow.baselineOffsets"))
+        XCTAssertFalse(healthKit.contains("0...HealthMetricReconciliationPolicy"))
+
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        guard let morningStart = appModel.range(
+            of: "private func handleHealthBackgroundUpdate()"
+        ), let morningEnd = appModel.range(
+            of: "private func computeAndPublishReadiness(",
+            range: morningStart.upperBound..<appModel.endIndex
+        ) else {
+            return XCTFail("morning health production seam is missing")
+        }
+        let morning = appModel[morningStart.lowerBound..<morningEnd.lowerBound]
+        XCTAssertTrue(morning.contains("persistMorningHealthProgress"))
+        XCTAssertTrue(morning.contains("BackgroundSyncService.schedule"))
+        XCTAssertFalse(morning.contains("Task.sleep"))
+        XCTAssertFalse(morning.contains("morningHealthRefreshTask"))
+        XCTAssertFalse(morning.contains("runMorningHealthRepolls"))
+        XCTAssertFalse(morning.contains("await self?.runMorningHealthRepolls"))
+        XCTAssertTrue(morning.contains("finishMorningHealthRefresh"))
+        XCTAssertTrue(appModel.contains("loadMorningHealthProgress(for:"))
+    }
+
+    func testHealthRepositoryUsesAtomicHistoricalInsertAndTodayMerge() {
+        let repository = code(source("Sources/Data/Repositories.swift"))
+        XCTAssertTrue(repository.contains("insertHealthMetricIfMissing"))
+        XCTAssertTrue(repository.contains("HealthMetricWriteOperation.historicalInsert.preferHeader"))
+        XCTAssertTrue(repository.contains("HealthMetricWriteOperation.todayMerge.preferHeader"))
+        XCTAssertTrue(repository.contains("return !receipts.isEmpty"))
+
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        XCTAssertTrue(appModel.contains("HealthMetricWritePolicy.operation"))
+        XCTAssertTrue(appModel.contains("insertHealthMetricIfMissing("))
+        XCTAssertTrue(appModel.contains("repository.upsertHealthMetric"))
+    }
+
     func testSwiftPMExcludedSourcesAreSwiftSyntaxParseable() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

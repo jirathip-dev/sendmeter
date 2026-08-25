@@ -25,18 +25,35 @@ public struct HealthMetricReconciliationPlan: Equatable, Sendable {
     public var reconciledCount: Int { reconciledDates.count }
 }
 
+/// The shared HealthKit read geometry. There are exactly 28 candidate days:
+/// today and the preceding 27 days. Each candidate can use the 28 days before
+/// it as a baseline, so the deepest required source date is today-55. Keeping
+/// these boundaries in Core lets the production HealthKit builder and the
+/// reconciliation tests use the same inclusive-window contract.
+public enum HealthMetricReadWindow {
+    public static let candidateDays = 28
+    public static let baselineDays = 28
+    public static let queryLookbackDays = candidateDays + baselineDays - 1
+
+    public static var candidateOffsets: Range<Int> {
+        0..<candidateDays
+    }
+
+    public static var baselineOffsets: ClosedRange<Int> {
+        1...baselineDays
+    }
+}
+
 /// Pure date-window reconciliation for the native HealthKit path (#801).
 ///
 /// HealthKit can return a real biometric on a day for which the server has no
 /// row. Historical rows are insert-if-missing: an existing historical row is
 /// deliberately not rewritten by a later read. Today is the one exception and
 /// continues through `ReadinessSyncPolicy`, so the existing automatic
-/// afternoon freeze and manual overwrite rules remain authoritative.
+/// afternoon freeze and manual overwrite rules remain authoritative. The
+/// candidate window is today plus the preceding 27 days; the deeper baseline
+/// needed to compute those candidates is owned by `HealthMetricReadWindow`.
 public enum HealthMetricReconciliationPolicy {
-    /// The native readiness baseline reads the preceding 28 local days. The
-    /// reconciled window therefore contains today plus those 28 days.
-    public static let lookbackDays = 28
-
     public static func plan(
         freshMetrics: [HealthMetric],
         existingMetrics: [HealthMetric],
@@ -130,7 +147,7 @@ public enum HealthMetricReconciliationPolicy {
             to: today,
             timeZone: timeZone
         ) else { return false }
-        return distance >= 0 && distance <= lookbackDays
+        return distance >= 0 && distance < HealthMetricReadWindow.candidateDays
     }
 
     private static func shouldUpsert(
@@ -163,6 +180,33 @@ public enum HealthMetricReconciliationPolicy {
             && lhs.sleepREMHours == rhs.sleepREMHours
             && lhs.bodyMassKilograms == rhs.bodyMassKilograms
             && lhs.respiratoryRate == rhs.respiratoryRate
+    }
+}
+
+/// The server request semantics for the two health write classes. Historical
+/// rows are immutable after they exist, so their request must use atomic
+/// conflict-ignore semantics. Today's row remains the one merge-upsert path
+/// because its biometrics and readiness can legitimately change.
+public enum HealthMetricWriteOperation: Equatable, Sendable {
+    case historicalInsert
+    case todayMerge
+
+    public var preferHeader: String {
+        switch self {
+        case .historicalInsert:
+            return "resolution=ignore-duplicates,return=representation"
+        case .todayMerge:
+            return "resolution=merge-duplicates,return=minimal"
+        }
+    }
+}
+
+public enum HealthMetricWritePolicy {
+    public static func operation(
+        for date: String,
+        today: String
+    ) -> HealthMetricWriteOperation {
+        date == today ? .todayMerge : .historicalInsert
     }
 }
 
@@ -223,8 +267,10 @@ public enum HealthSyncObservation: Equatable, Sendable {
 
 /// Best-supported morning refresh schedule. iOS does not promise a precise
 /// wall-clock wake for HealthKit delivery or BGAppRefresh, so the app starts
-/// this bounded window on the first morning lifecycle/observer signal and
-/// re-polls at deterministic relative delays.
+/// this bounded window on the first morning lifecycle/observer signal. Each
+/// later pass becomes eligible at a deterministic relative delay, but is run
+/// only by a subsequent supported lifecycle, observer, or BGAppRefresh event;
+/// no detached timer is part of the contract.
 public struct HealthMorningRefreshPolicy: Equatable, Sendable {
     public let morningStartHour: Int
     public let morningEndHour: Int
@@ -257,6 +303,30 @@ public struct HealthMorningRefreshPolicy: Equatable, Sendable {
         return max(0, next - previous)
     }
 
+    public func duePass(
+        for progress: HealthMorningRefreshProgress,
+        at now: Date
+    ) -> Int? {
+        guard let delay = delay(forPass: progress.nextPass),
+              now >= progress.startedAt.addingTimeInterval(delay)
+        else { return nil }
+        return progress.nextPass
+    }
+
+    public func isCurrentLocalDay(
+        _ progress: HealthMorningRefreshProgress,
+        at now: Date,
+        calendar: Calendar
+    ) -> Bool {
+        LocalDateSupport.string(
+            from: progress.startedAt,
+            timeZone: calendar.timeZone
+        ) == LocalDateSupport.string(
+            from: now,
+            timeZone: calendar.timeZone
+        )
+    }
+
     public func isMorning(at now: Date, calendar: Calendar) -> Bool {
         let hour = calendar.component(.hour, from: now)
         return hour >= morningStartHour && hour < morningEndHour
@@ -275,6 +345,59 @@ public struct HealthMorningRefreshPolicy: Equatable, Sendable {
             timeZone: calendar.timeZone
         )
         return today != previousDay
+    }
+}
+
+/// Persisted state for the account-scoped morning refresh window. `nextPass`
+/// is written before the first await, so termination during a HealthKit read
+/// leaves an explicit pass to retry on a later supported event. The aggregate
+/// is persisted with it so only the final pass owns the completion toast.
+public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
+    public let accountUserID: UUID
+    public let startedAt: Date
+    public var nextPass: Int
+    public var reconciledCount: Int
+    public var sourceDataPasses: Int
+    public var successfulPasses: Int
+    public var hadFailure: Bool
+
+    public init(
+        accountUserID: UUID,
+        startedAt: Date,
+        nextPass: Int = 0,
+        reconciledCount: Int = 0,
+        sourceDataPasses: Int = 0,
+        successfulPasses: Int = 0,
+        hadFailure: Bool = false
+    ) {
+        self.accountUserID = accountUserID
+        self.startedAt = startedAt
+        self.nextPass = nextPass
+        self.reconciledCount = reconciledCount
+        self.sourceDataPasses = sourceDataPasses
+        self.successfulPasses = successfulPasses
+        self.hadFailure = hadFailure
+    }
+
+    public mutating func add(_ observation: HealthSyncObservation) {
+        successfulPasses += 1
+        reconciledCount += observation.reconciledCount
+        if observation.hasSourceData {
+            sourceDataPasses += 1
+        }
+    }
+
+    public mutating func markFailure() {
+        hadFailure = true
+    }
+
+    public var finalObservation: HealthSyncObservation? {
+        if hadFailure { return .failed }
+        guard successfulPasses > 0 else { return nil }
+        return .successful(
+            reconciledCount: reconciledCount,
+            sourceDataCount: sourceDataPasses
+        )
     }
 }
 

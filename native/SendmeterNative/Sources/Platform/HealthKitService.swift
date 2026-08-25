@@ -110,7 +110,7 @@ public final class HealthKitService: ObservableObject {
         guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart),
               let baselineStart = calendar.date(
                   byAdding: .day,
-                  value: -HealthMetricReconciliationPolicy.lookbackDays,
+                  value: -HealthMetricReadWindow.queryLookbackDays,
                   to: todayStart
               )
         else {
@@ -156,8 +156,8 @@ public final class HealthKitService: ObservableObject {
             .union(bodyMass.keys)
 
         var metrics: [HealthMetric] = []
-        metrics.reserveCapacity(HealthMetricReconciliationPolicy.lookbackDays + 1)
-        for offset in 0...HealthMetricReconciliationPolicy.lookbackDays {
+        metrics.reserveCapacity(HealthMetricReadWindow.candidateDays)
+        for offset in HealthMetricReadWindow.candidateOffsets {
             guard let dateStart = calendar.date(
                 byAdding: .day,
                 value: -offset,
@@ -171,7 +171,7 @@ public final class HealthKitService: ObservableObject {
             )
             guard sourceDates.contains(date) else { continue }
 
-            let baselineDays = (1...HealthMetricReconciliationPolicy.lookbackDays)
+            let baselineDays = HealthMetricReadWindow.baselineOffsets
                 .reversed()
                 .map {
                     LocalDateSupport.daysAgo(

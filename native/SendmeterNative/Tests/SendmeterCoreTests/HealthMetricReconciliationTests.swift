@@ -46,6 +46,31 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertEqual(plan.sourceDataDates, [yesterday])
     }
 
+    func testReadWindowUsesExactly28CandidatesAnd55DayQueryBoundary() {
+        XCTAssertEqual(HealthMetricReadWindow.candidateDays, 28)
+        XCTAssertEqual(HealthMetricReadWindow.baselineDays, 28)
+        XCTAssertEqual(HealthMetricReadWindow.queryLookbackDays, 55)
+        XCTAssertEqual(HealthMetricReadWindow.candidateOffsets.count, 28)
+        XCTAssertEqual(HealthMetricReadWindow.candidateOffsets.first, 0)
+        XCTAssertEqual(HealthMetricReadWindow.candidateOffsets.last, 27)
+        XCTAssertEqual(HealthMetricReadWindow.baselineOffsets.count, 28)
+        XCTAssertEqual(HealthMetricReadWindow.baselineOffsets.first, 1)
+        XCTAssertEqual(HealthMetricReadWindow.baselineOffsets.last, 28)
+
+        let newestHistorical = metric(date: "2026-07-29") // today - 27
+        let outsideCandidateWindow = metric(date: "2026-07-28") // today - 28
+        let plan = HealthMetricReconciliationPolicy.plan(
+            freshMetrics: [newestHistorical, outsideCandidateWindow],
+            existingMetrics: [],
+            today: today,
+            allowTodayReadinessOverwrite: true,
+            timeZone: timeZone
+        )
+
+        XCTAssertEqual(plan.sourceDataDates, ["2026-07-29"])
+        XCTAssertEqual(plan.upserts.map(\.date), ["2026-07-29"])
+    }
+
     func testNoDataCandidateIsOmitted() {
         let empty = metric(
             date: yesterday,
@@ -185,11 +210,59 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertFalse(policy.shouldStart(at: morning, lastStartedAt: morning, calendar: calendar))
         XCTAssertFalse(policy.shouldStart(at: afternoon, lastStartedAt: nil, calendar: calendar))
 
+        var progress = HealthMorningRefreshProgress(
+            accountUserID: UUID(),
+            startedAt: morning
+        )
+        XCTAssertEqual(policy.duePass(for: progress, at: morning), 0)
+        progress.nextPass = 1
+        XCTAssertNil(
+            policy.duePass(
+                for: progress,
+                at: morning.addingTimeInterval(5 * 60 - 1)
+            )
+        )
+        XCTAssertEqual(
+            policy.duePass(
+                for: progress,
+                at: morning.addingTimeInterval(5 * 60)
+            ),
+            1
+        )
+        progress.add(.reconciled(1))
+        progress.nextPass = 2
+        XCTAssertEqual(
+            policy.duePass(
+                for: progress,
+                at: morning.addingTimeInterval(15 * 60)
+            ),
+            2
+        )
+
         var gate = HealthRepollGate()
         XCTAssertTrue(gate.claim())
         XCTAssertFalse(gate.claim())
         gate.release()
         XCTAssertTrue(gate.claim(), "cancellation/release permits a fresh account-scoped window")
+    }
+
+    func testHistoricalWritesIgnoreConflictsAndTodayMerges() {
+        XCTAssertEqual(
+            HealthMetricWritePolicy.operation(for: yesterday, today: today),
+            .historicalInsert
+        )
+        XCTAssertEqual(
+            HealthMetricWriteOperation.historicalInsert.preferHeader,
+            "resolution=ignore-duplicates,return=representation"
+        )
+        XCTAssertEqual(
+            HealthMetricWritePolicy.operation(for: today, today: today),
+            .todayMerge
+        )
+        XCTAssertEqual(
+            HealthMetricWriteOperation.todayMerge.preferHeader,
+            "resolution=merge-duplicates,return=minimal"
+        )
     }
 
     func testCancellationAndAccountChangeCannotPublishOldWork() {
