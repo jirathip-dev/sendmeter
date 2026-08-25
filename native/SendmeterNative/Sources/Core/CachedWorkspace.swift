@@ -305,6 +305,12 @@ public struct CachedWorkspace: @unchecked Sendable {
             entityID: CacheEntityID.tagMetadata,
             updatedAt: updatedAt
         )
+        for entityType in LocalCacheEntityType.allCases {
+            try store.markSyncComplete(
+                accountUserID: accountUserID,
+                entityType: entityType
+            )
+        }
     }
 
     /// Reconciles only the slices that a realtime event asked to refresh.
@@ -327,6 +333,7 @@ public struct CachedWorkspace: @unchecked Sendable {
                 entityID: CacheEntityID.session,
                 updatedAt: updatedAt
             )
+            try store.markSyncComplete(accountUserID: accountUserID, entityType: .sessions)
         }
         if slices.contains(.recordings) {
             try reconcile(
@@ -336,6 +343,7 @@ public struct CachedWorkspace: @unchecked Sendable {
                 entityID: CacheEntityID.recording,
                 updatedAt: updatedAt
             )
+            try store.markSyncComplete(accountUserID: accountUserID, entityType: .recordings)
         }
         if slices.contains(.workouts) {
             try reconcile(
@@ -345,6 +353,7 @@ public struct CachedWorkspace: @unchecked Sendable {
                 entityID: CacheEntityID.workout,
                 updatedAt: updatedAt
             )
+            try store.markSyncComplete(accountUserID: accountUserID, entityType: .workoutsAndAttempts)
         }
         if slices.contains(.health) {
             try reconcile(
@@ -354,6 +363,7 @@ public struct CachedWorkspace: @unchecked Sendable {
                 entityID: CacheEntityID.healthMetric,
                 updatedAt: updatedAt
             )
+            try store.markSyncComplete(accountUserID: accountUserID, entityType: .healthMetrics)
         }
     }
 
@@ -392,6 +402,10 @@ public struct CachedWorkspace: @unchecked Sendable {
                 entityType: entityType
             )
         }
+        try store.markSyncComplete(
+            accountUserID: accountUserID,
+            entityType: entityType
+        )
     }
 
     /// Reconciles one cursor-bounded delta as a full first-sync snapshot.
@@ -449,6 +463,10 @@ public struct CachedWorkspace: @unchecked Sendable {
                 entityType: entityType
             )
         }
+        try store.markSyncComplete(
+            accountUserID: accountUserID,
+            entityType: entityType
+        )
     }
 
     private func applyDeltaChanges<T: Encodable>(
@@ -500,6 +518,19 @@ public struct CachedWorkspace: @unchecked Sendable {
         entityType: LocalCacheEntityType
     ) throws {
         try store.deleteCursor(accountUserID: accountUserID, entityType: entityType)
+    }
+
+    /// Whether this account/entity has a persisted authoritative sync
+    /// boundary. A cursor is accepted for backward compatibility with caches
+    /// created before empty-result boundaries were stored separately.
+    public func hasCompletedSync(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws -> Bool {
+        try store.hasCompletedSync(
+            accountUserID: accountUserID,
+            entityType: entityType
+        )
     }
 
     @discardableResult

@@ -144,6 +144,132 @@ final class CachedWorkspaceTests: XCTestCase {
         XCTAssertEqual(loaded.settings, nil)
     }
 
+    func testFreshEmptyCacheHasNoAuthoritativeSyncBoundary() throws {
+        let workspace = try makeWorkspace()
+
+        XCTAssertTrue(try workspace.load(accountUserID: accountA).sessions.isEmpty)
+        XCTAssertTrue(try workspace.load(accountUserID: accountA).recordings.isEmpty)
+        XCTAssertFalse(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .sessions
+        ))
+        XCTAssertFalse(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .recordings
+        ))
+    }
+
+    func testAuthoritativeEmptySyncPersistsBoundaryWithoutCursorAndScopesAccounts() throws {
+        let workspace = try makeWorkspace()
+        let empty = RemoteEntityDelta<Int>(changes: [], activeValues: [], cursor: nil)
+
+        try workspace.reconcileServerDelta(
+            empty,
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+        try workspace.reconcileDelta(
+            empty,
+            accountUserID: accountA,
+            entityType: .recordings
+        )
+
+        XCTAssertNil(try workspace.cursor(accountUserID: accountA, entityType: .sessions))
+        XCTAssertNil(try workspace.cursor(accountUserID: accountA, entityType: .recordings))
+        XCTAssertTrue(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .sessions
+        ))
+        XCTAssertTrue(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .recordings
+        ))
+        XCTAssertFalse(try workspace.hasCompletedSync(
+            accountUserID: accountB,
+            entityType: .sessions
+        ))
+
+        try workspace.store.deleteAccount(accountA)
+        XCTAssertFalse(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .sessions
+        ))
+        XCTAssertFalse(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .recordings
+        ))
+    }
+
+    func testPreviouslySyncedEmptyCacheRemainsAuthoritativeAfterReload() throws {
+        let workspace = try makeWorkspace()
+        let empty = RemoteEntityDelta<Int>(changes: [], activeValues: [], cursor: nil)
+
+        try workspace.reconcileServerDelta(
+            empty,
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+        try workspace.reconcileServerDelta(
+            empty,
+            accountUserID: accountA,
+            entityType: .recordings
+        )
+
+        let reloadedWorkspace = CachedWorkspace(store: workspace.store)
+        XCTAssertTrue(try reloadedWorkspace.load(accountUserID: accountA).sessions.isEmpty)
+        XCTAssertTrue(try reloadedWorkspace.load(accountUserID: accountA).recordings.isEmpty)
+        XCTAssertTrue(try reloadedWorkspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .sessions
+        ))
+        XCTAssertTrue(try reloadedWorkspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .recordings
+        ))
+    }
+
+    func testRealtimeEmptySlicePersistsOnlySelectedBoundaries() throws {
+        let workspace = try makeWorkspace()
+
+        try workspace.reconcileSlices(
+            CachedWorkspaceSnapshot(),
+            accountUserID: accountA,
+            slices: [.sessions, .recordings]
+        )
+
+        XCTAssertTrue(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .sessions
+        ))
+        XCTAssertTrue(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .recordings
+        ))
+        XCTAssertFalse(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .workoutsAndAttempts
+        ))
+    }
+
+    func testResetCursorReturnsEntityToUnknownUntilNextSync() throws {
+        let workspace = try makeWorkspace()
+        try workspace.store.markSyncComplete(
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+        XCTAssertTrue(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .sessions
+        ))
+
+        try workspace.resetCursor(accountUserID: accountA, entityType: .sessions)
+
+        XCTAssertFalse(try workspace.hasCompletedSync(
+            accountUserID: accountA,
+            entityType: .sessions
+        ))
+    }
+
     func testServerRefreshDoesNotClobberPendingLocalRow() throws {
         let workspace = try makeWorkspace()
         let local = session(sessionID, date: "local", accountID: accountA)

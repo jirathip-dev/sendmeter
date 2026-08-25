@@ -15,6 +15,7 @@ struct StaticCapacityDetailView: View {
     let forceCurve: ForceCurveModel?
     let hasLoadedRecordings: Bool
     let targetBand: ForceTargetBand?
+    let connectionPending: Bool
 
     private var staticEvidence: StaticCapacityEvidence {
         ForceProgress.staticCapacityEvidence(
@@ -32,11 +33,12 @@ struct StaticCapacityDetailView: View {
                         ProgressView("Loading force history…")
                             .frame(maxWidth: .infinity, minHeight: 120)
                     } else if staticEvidence.trendRecordings.count < 2 {
-                        SurfaceCard {
-                            Text("Complete a couple of measured Static holds to unlock the trend and force-duration model.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
+                        ProductEmptyState(
+                            title: "Build your capacity baseline",
+                            message: "Two measured Static holds reveal your force trend and curve.",
+                            actionTitle: "Back to Force",
+                            action: { dismiss() }
+                        )
                     } else {
                         ForceTrendChart(
                             recordings: staticEvidence.trendRecordings,
@@ -48,7 +50,10 @@ struct StaticCapacityDetailView: View {
                                 tag: selectedTag,
                                 model: forceCurve,
                                 hasLoadedRecordings: hasLoadedRecordings,
-                                targetBand: targetBand
+                                targetBand: targetBand,
+                                connectionPending: connectionPending,
+                                emptyActionTitle: "Back to Force",
+                                emptyAction: { dismiss() }
                             )
                             SideAsymmetryCard(recordings: recordings, tag: selectedTag)
                         } else {

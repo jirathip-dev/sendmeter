@@ -21,6 +21,10 @@ struct NativeForceCurveCard: View {
     /// ForceView. This card only renders that authoritative band; it never
     /// derives a second target from curve points.
     let targetBand: ForceTargetBand?
+    let connectionPending: Bool
+    let showsPrimaryEmptyState: Bool
+    let emptyActionTitle: String
+    let emptyAction: () -> Void
 
     @Environment(\.colorScheme) private var scheme
 
@@ -28,12 +32,20 @@ struct NativeForceCurveCard: View {
         tag: String,
         model: ForceCurveModel?,
         hasLoadedRecordings: Bool,
-        targetBand: ForceTargetBand? = nil
+        targetBand: ForceTargetBand?,
+        connectionPending: Bool = false,
+        showsPrimaryEmptyState: Bool = true,
+        emptyActionTitle: String,
+        emptyAction: @escaping () -> Void
     ) {
         self.tag = tag
         self.model = model
         self.hasLoadedRecordings = hasLoadedRecordings
         self.targetBand = targetBand
+        self.connectionPending = connectionPending
+        self.showsPrimaryEmptyState = showsPrimaryEmptyState
+        self.emptyActionTitle = emptyActionTitle
+        self.emptyAction = emptyAction
     }
 
     var body: some View {
@@ -48,7 +60,7 @@ struct NativeForceCurveCard: View {
                         .accessibilityLabel(targetAccessibilityLabel(for: targetBand))
                 }
 
-                if let model {
+                if let model, !model.points.isEmpty {
                     let hasConfidenceBand = (model.confidenceBand?.count ?? 0) >= 2
                     NativeForceCurvePlot(model: model, targetBand: targetBand)
                         .frame(height: 190)
@@ -90,9 +102,21 @@ struct NativeForceCurveCard: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 } else if hasLoadedRecordings {
-                    Text("A force-duration curve appears after at least three long-duration efforts for this exercise.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    if connectionPending {
+                        ProgressView("Connecting to Progressor…")
+                            .frame(maxWidth: .infinity, minHeight: 150)
+                    } else if showsPrimaryEmptyState {
+                        ProductEmptyState(
+                            title: "Shape your force curve",
+                            message: "Three long pulls reveal how your strength holds over time.",
+                            actionTitle: emptyActionTitle,
+                            action: emptyAction
+                        )
+                    } else {
+                        Text("No long pulls match this exercise yet. Record one above to shape this force curve.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     ProgressView("Loading force-duration curve…")
                         .font(.subheadline)

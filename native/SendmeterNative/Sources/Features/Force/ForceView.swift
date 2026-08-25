@@ -1,6 +1,7 @@
 import Foundation
 import SendmeterCore
 import SwiftUI
+import UIKit
 
 /// Owns a guided run outside the fullscreen presentation.  The cover is only
 /// a viewport: minimizing it must not stop BLE, reset the stage clock, or end
@@ -1324,6 +1325,94 @@ struct ForceView: View {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    private var forceEmptyActionTitle: String {
+        switch model.tindeq.status {
+        case .connected:
+            if model.handsFree.isArmed {
+                return "Cancel hands-free arm"
+            }
+            if handsFreeEnabled, selectedPreset == nil {
+                return "Arm Hands-free"
+            }
+            return selectedPreset == nil ? "Record a pull" : "Start guided pull"
+        case .measuring: return "Stop & save"
+        case .unavailable: return "Open Bluetooth Settings"
+        case .idle: return "Connect Progressor"
+        case .scanning, .connecting: return "Cancel connection"
+        case .interrupted: return "Reconnect Progressor"
+        }
+    }
+
+    private var forceDeviceEmptyActionTitle: String {
+        switch model.tindeq.status {
+        case .connected:
+            if model.handsFree.isArmed {
+                return "Cancel hands-free arm"
+            }
+            if handsFreeEnabled, selectedPreset == nil {
+                return "Arm Hands-free"
+            }
+            return selectedPreset == nil ? "Record a pull" : "Start guided pull"
+        case .measuring: return "Stop & save"
+        case .unavailable: return "Open Bluetooth Settings"
+        case .scanning, .connecting: return "Cancel connection"
+        case .interrupted: return "Reconnect Progressor"
+        case .idle:
+            return model.recordings.isEmpty ? "Connect Progressor" : "Reconnect Progressor"
+        }
+    }
+
+    private var forceConnectionPending: Bool {
+        switch model.tindeq.status {
+        case .scanning, .connecting: return true
+        default: return false
+        }
+    }
+
+    private var showsForceAnalysisCards: Bool {
+        // Analysis is independent of transport state. Returning users need
+        // progress and detail-sheet entry points while the Progressor is idle,
+        // unavailable, or interrupted. Only a not-yet-authoritative empty
+        // recording collection suppresses this contextual layer.
+        !forceModel.hasLoadedRecordings || !model.recordings.isEmpty
+    }
+
+    private func startPrimaryForceAction() {
+        if let preset = selectedPreset {
+            launch(preset)
+        } else {
+            startMeasurement()
+        }
+    }
+
+    private func performForceEmptyAction() {
+        switch model.tindeq.status {
+        case .connected:
+            if model.handsFree.isArmed {
+                cancelManualArm()
+            } else if handsFreeEnabled, selectedPreset == nil {
+                armHandsFree()
+            } else {
+                startPrimaryForceAction()
+            }
+        case .measuring:
+            stopAndSave()
+        case .unavailable:
+            openBluetoothSettings()
+        case .idle, .interrupted:
+            model.requestConnect()
+        case .scanning, .connecting:
+            // Keep the action contract honest for any future consumer even
+            // though the current cards render a progress indicator instead.
+            model.tindeq.disconnect()
+        }
+    }
+
+    private func openBluetoothSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
     private var progressSide: TindeqSide? {
         side == .unspecified ? nil : side
     }
@@ -1541,6 +1630,10 @@ struct ForceView: View {
                         resolvingTarget: resolvingTargets,
                         savingSummary: savingSummary,
                         gaugeSessionCount: gaugeSessionCount,
+                        hasLoadedRecordings: forceModel.hasLoadedRecordings,
+                        hasForceRecordings: !model.recordings.isEmpty,
+                        emptyActionTitle: forceDeviceEmptyActionTitle,
+                        emptyAction: performForceEmptyAction,
                         // #653/#710: an armed suggested protocol (Focus-Next
                         // zone or maintenance) OR a selected saved preset makes
                         // the main Start button launch that guided protocol —
@@ -1549,13 +1642,7 @@ struct ForceView: View {
                         // armed it stays a free pull. `launch` correctly keeps
                         // the recording-context selection in sync for a user
                         // preset and clears a suggested arm for a saved one.
-                        start: {
-                            if let preset = selectedPreset {
-                                launch(preset)
-                            } else {
-                                startMeasurement()
-                            }
-                        },
+                        start: startPrimaryForceAction,
                         connect: { model.requestConnect() },
                         armHandsFree: armHandsFree,
                         stopAndSave: stopAndSave,
@@ -1577,31 +1664,39 @@ struct ForceView: View {
                     // this expression in reasonable time").
                     recordingContextCard
 
-                    ForceProgressCardBoundary(
-                        recordings: model.recordings,
-                        selectedTag: progressTag,
-                        selectedSide: progressSide,
-                        forceCurve: progressForceCurve,
-                        hasLoadedRecordings: forceModel.hasLoadedRecordings,
-                        progressRevision: forceModel.forceProgressRevision,
-                        curveRevision: sideScopedForceCurveRevision,
-                        targetBand: selectedTargetReferenceBand
-                    )
-                    .equatable()
-
-                    ForceConsistencyCard(
-                        recordings: model.recordings,
-                        hiddenTags: model.hiddenTagNames,
-                        hasLoadedRecordings: forceModel.hasLoadedRecordings
-                    )
-
-                    if !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        NativeForceCurveCard(
-                            tag: tag,
-                            model: forceCurve,
+                    if showsForceAnalysisCards {
+                        ForceProgressCardBoundary(
+                            recordings: model.recordings,
+                            selectedTag: progressTag,
+                            selectedSide: progressSide,
+                            forceCurve: progressForceCurve,
                             hasLoadedRecordings: forceModel.hasLoadedRecordings,
-                            targetBand: selectedTargetReferenceBand
+                            progressRevision: forceModel.forceProgressRevision,
+                            curveRevision: sideScopedForceCurveRevision,
+                            targetBand: selectedTargetReferenceBand,
+                            connectionPending: forceConnectionPending
                         )
+                        .equatable()
+
+                        ForceConsistencyCard(
+                            recordings: model.recordings,
+                            hiddenTags: model.hiddenTagNames,
+                            hasLoadedRecordings: forceModel.hasLoadedRecordings,
+                            connectionPending: forceConnectionPending
+                        )
+
+                        if !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            NativeForceCurveCard(
+                                tag: tag,
+                                model: forceCurve,
+                                hasLoadedRecordings: forceModel.hasLoadedRecordings,
+                                targetBand: selectedTargetReferenceBand,
+                                connectionPending: forceConnectionPending,
+                                showsPrimaryEmptyState: false,
+                                emptyActionTitle: forceEmptyActionTitle,
+                                emptyAction: performForceEmptyAction
+                            )
+                        }
                     }
 
                     if let live = model.watch.liveForce,
@@ -2383,6 +2478,10 @@ private struct ForceDeviceCard: View {
     let resolvingTarget: Bool
     let savingSummary: Bool
     let gaugeSessionCount: Int
+    let hasLoadedRecordings: Bool
+    let hasForceRecordings: Bool
+    let emptyActionTitle: String
+    let emptyAction: () -> Void
     let start: () -> Void
     let connect: () -> Void
     let armHandsFree: () -> Void
@@ -2398,6 +2497,60 @@ private struct ForceDeviceCard: View {
 
     private var targetRange: ClosedRange<Double>? { targetBand?.range }
 
+    private var showsDisconnectedEmptyState: Bool {
+        guard !device.hasUnsavedRecording,
+              device.interruptedRecording == nil,
+              device.completedSummary == nil
+        else { return false }
+
+        switch device.status {
+        case .idle, .unavailable, .interrupted:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var showsForceDataEmptyState: Bool {
+        guard hasLoadedRecordings,
+              !hasForceRecordings,
+              device.interruptedRecording == nil,
+              device.completedSummary == nil,
+              !device.hasUnsavedRecording,
+              !handsFreeArmed
+        else { return false }
+
+        switch device.status {
+        case .connected:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var showsPrimaryEmptyState: Bool {
+        showsDisconnectedEmptyState || showsForceDataEmptyState
+    }
+
+    private var primaryEmptyMessage: String {
+        switch device.status {
+        case .unavailable:
+            return hasForceRecordings
+                ? "Your saved force history is safe. Turn Bluetooth back on in iOS Settings to reconnect."
+                : "Turn Bluetooth back on in iOS Settings to connect your Progressor."
+        case .idle where hasForceRecordings:
+            return "Reconnect your Progressor to continue recording and extend your force history."
+        case .interrupted where hasForceRecordings:
+            return "Your saved force history is safe. Reconnect your Progressor to continue recording."
+        case .interrupted:
+            return "Reconnect your Progressor to turn a pull into a force curve."
+        case .connected:
+            return "Record a Progressor pull to turn your force into a curve and training trend."
+        default:
+            return "Connect your Progressor to turn a pull into a force curve."
+        }
+    }
+
     var body: some View {
         SurfaceCard {
             VStack(spacing: 16) {
@@ -2411,7 +2564,16 @@ private struct ForceDeviceCard: View {
                     StatusPill(statusPill.text, color: statusPill.color)
                 }
 
-                if device.status == .measuring || device.handsFreeArmed || !device.visibleSampleRange.isEmpty {
+                if showsPrimaryEmptyState {
+                    ProductEmptyState(
+                        title: hasForceRecordings
+                            ? "Reconnect to your force progress"
+                            : "Your first pull starts here",
+                        message: primaryEmptyMessage,
+                        actionTitle: emptyActionTitle,
+                        action: emptyAction
+                    )
+                } else if device.status == .measuring || device.handsFreeArmed || !device.visibleSampleRange.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
                         MetricValue(
                             device.currentKilograms.formatted(.number.precision(.fractionLength(1))),
@@ -2567,19 +2729,26 @@ private struct ForceDeviceCard: View {
 
     @ViewBuilder
     private var controls: some View {
-        switch device.status {
+        if showsPrimaryEmptyState, device.status != .connected {
+            EmptyView()
+        } else {
+            switch device.status {
         case .unavailable:
             Label("Bluetooth is not available for this app.", systemImage: "bluetooth.slash")
                 .foregroundStyle(.secondary)
         case .idle, .interrupted:
-            Button {
-                // #656 (review F1): user-initiated — arms the transport's
-                // success/error haptics for this launch.
-                connect()
-            } label: {
-                Label("Connect Progressor", systemImage: "antenna.radiowaves.left.and.right")
+            if showsDisconnectedEmptyState {
+                EmptyView()
+            } else {
+                Button {
+                    // #656 (review F1): user-initiated — arms the transport's
+                    // success/error haptics for this launch.
+                    connect()
+                } label: {
+                    Label("Connect Progressor", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .hapticButtonStyle(PrimaryActionButtonStyle())
             }
-            .hapticButtonStyle(PrimaryActionButtonStyle())
         case .scanning, .connecting:
             HStack {
                 ProgressView()
@@ -2604,10 +2773,12 @@ private struct ForceDeviceCard: View {
                     }
                 } else if handsFreeArmed, protocolArmed {
                     VStack(spacing: 8) {
-                        Button(action: start) {
-                            Label("Start Guided Protocol", systemImage: "play.fill")
+                        if !showsPrimaryEmptyState {
+                            Button(action: start) {
+                                Label("Start Guided Protocol", systemImage: "play.fill")
+                            }
+                            .hapticButtonStyle(PrimaryActionButtonStyle())
                         }
-                        .hapticButtonStyle(PrimaryActionButtonStyle())
                         Button("Cancel hands-free arm", role: .destructive, action: cancelArm)
                             .hapticButtonStyle(.bordered)
                     }
@@ -2625,12 +2796,21 @@ private struct ForceDeviceCard: View {
                         .hapticButtonStyle(.bordered)
                     }
                 } else if handsFreeEnabled, !protocolArmed {
-                    Button(action: armHandsFree) {
-                        Label("Arm Hands-free", systemImage: "scope")
+                    if showsPrimaryEmptyState {
+                        Label(
+                            "Hands-free is ready — use the action above to arm it",
+                            systemImage: "scope"
+                        )
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    } else {
+                        Button(action: armHandsFree) {
+                            Label("Arm Hands-free", systemImage: "scope")
+                        }
+                        .hapticButtonStyle(PrimaryActionButtonStyle())
+                        .disabled(device.hasUnsavedRecording)
                     }
-                    .hapticButtonStyle(PrimaryActionButtonStyle())
-                    .disabled(device.hasUnsavedRecording)
-                } else {
+                } else if !showsPrimaryEmptyState {
                     Button(action: start) {
                         Label(
                             protocolArmed ? "Start Guided Protocol" : "Start Pull",
@@ -2684,6 +2864,7 @@ private struct ForceDeviceCard: View {
             }
             .hapticButtonStyle(PrimaryActionButtonStyle())
             .disabled(savingSummary)
+            }
         }
     }
 

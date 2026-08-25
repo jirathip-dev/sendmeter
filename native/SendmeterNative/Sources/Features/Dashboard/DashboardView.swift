@@ -360,29 +360,32 @@ private struct RecentSessionsCard: View {
                 HStack {
                     SectionLabel("Recent sessions", systemImage: "clock")
                     Spacer()
-                    Button("View all") { model.selectedTab = .history }
-                        .font(.caption.weight(.semibold))
+                    if !model.recentSessions.isEmpty {
+                        Button("View all") { model.selectedTab = .history }
+                            .font(.caption.weight(.semibold))
+                    }
                 }
-                if model.recentSessions.isEmpty {
-                    if #available(iOS 17, *) {
-                        ContentUnavailableView(
-                            "No sessions yet",
-                            systemImage: "figure.climbing",
-                            description: Text("Log your first training session or start a workout.")
-                        )
+                if model.recentSessions.isEmpty,
+                   !model.hasLoadedSessions {
+                    if model.isLoadingData || model.isRefreshing {
+                        ProgressView("Loading recent sessions…")
+                            .frame(maxWidth: .infinity, minHeight: 120)
                     } else {
-                        VStack(spacing: 8) {
-                            Image(systemName: "figure.climbing")
-                                .font(.system(size: 40))
-                                .foregroundStyle(.secondary)
-                            Text("No sessions yet").font(.headline)
-                            Text("Log your first training session or start a workout.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
+                        ProductEmptyState(
+                            title: "Your history is catching its breath",
+                            message: "Sync once to bring your recent sends back into view.",
+                            actionTitle: "Try again"
+                        ) {
+                            Task { await model.refreshAll() }
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
+                    }
+                } else if model.recentSessions.isEmpty {
+                    ProductEmptyState(
+                        title: "Your next send starts here",
+                        message: "Start a workout and your effort will appear on Dashboard.",
+                        actionTitle: "Start a workout"
+                    ) {
+                        model.selectedTab = .workout
                     }
                 } else {
                     ForEach(model.recentSessions) { session in

@@ -84,21 +84,36 @@ struct AcwrProjectionCard: View {
     /// years of history "log a few sessions" on every cold launch.
     ///
     /// `projection` is nil in three materially different situations:
-    /// - sessions not fetched yet → "still loading" (distinct — sessions have
-    ///   no disk cache, so every cold launch renders a pass with `[]`);
+    /// - sessions not authoritative yet → "still loading" (distinct — a
+    ///   readable cache without a completed sync boundary still renders a pass
+    ///   with `[]`);
     /// - genuinely no sessions → the "log a few sessions" explainer;
     /// - sessions exist but all load fell out of the 90-day window (or the
     ///   chronic term is zero) → the ratio has nothing to project from.
     @ViewBuilder
     private var emptyState: some View {
         if !model.hasLoadedSessions {
-            Text("Your training history is still loading.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            if model.isLoadingData || model.isRefreshing {
+                ProgressView("Loading training history…")
+                    .frame(maxWidth: .infinity, minHeight: 108)
+            } else {
+                ProductEmptyState(
+                    title: "Your training history is catching its breath",
+                    message: "Sync once to bring your ACWR forecast back into view.",
+                    actionTitle: "Try again"
+                ) {
+                    Task { await model.refreshAll() }
+                }
+            }
         } else if model.sessions.isEmpty {
-            Text("Log a few sessions and this card will show where your ACWR drifts over the coming week if you don't train.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            ProductEmptyState(
+                title: "Your next workout shapes the forecast",
+                message: "Log a few sessions and ACWR will show where your load drifts over the coming week.",
+                actionTitle: "Start a workout",
+                compact: true
+            ) {
+                model.selectedTab = .workout
+            }
         } else {
             Text("Your most recent sessions fall outside the 90-day window this card projects from, so there's no ACWR ratio to extend yet — log a session and this card will show where it drifts over the coming week.")
                 .font(.subheadline)

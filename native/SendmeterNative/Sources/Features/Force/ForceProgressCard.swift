@@ -14,6 +14,7 @@ struct ForceProgressCardBoundary: View, Equatable {
     let progressRevision: UInt64
     let curveRevision: UInt64
     let targetBand: ForceTargetBand?
+    let connectionPending: Bool
 
     private var renderKey: ForceProgressCardKey {
         ForceProgressCardKey(
@@ -22,7 +23,8 @@ struct ForceProgressCardBoundary: View, Equatable {
             selectedSide: selectedSide?.rawValue,
             hasLoadedRecordings: hasLoadedRecordings,
             curveRevision: curveRevision,
-            targetBand: targetBand
+            targetBand: targetBand,
+            connectionPending: connectionPending
         )
     }
 
@@ -37,7 +39,8 @@ struct ForceProgressCardBoundary: View, Equatable {
             selectedSide: selectedSide,
             forceCurve: forceCurve,
             hasLoadedRecordings: hasLoadedRecordings,
-            targetBand: targetBand
+            targetBand: targetBand,
+            connectionPending: connectionPending
         )
     }
 }
@@ -54,6 +57,7 @@ struct ForceProgressCard: View {
     let forceCurve: ForceCurveModel?
     let hasLoadedRecordings: Bool
     let targetBand: ForceTargetBand?
+    let connectionPending: Bool
 
     @Environment(\.colorScheme) private var scheme
     @State private var detail: Detail?
@@ -79,9 +83,22 @@ struct ForceProgressCard: View {
 
         return VStack(alignment: .leading, spacing: 10) {
             SectionLabel("Progress & insights", systemImage: "chart.bar.xaxis")
-            HStack(alignment: .top, spacing: 10) {
-                staticTile(staticProgress)
-                movementTile(movementProgress)
+            if hasLoadedRecordings,
+               staticProgress.totalCount == 0,
+               movementProgress.latestMetrics == nil {
+                if connectionPending {
+                    ProgressView("Connecting to Progressor…")
+                        .frame(maxWidth: .infinity, minHeight: 150)
+                } else {
+                    Text("No saved pulls match this exercise and side. Record one above or choose another view.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                HStack(alignment: .top, spacing: 10) {
+                    staticTile(staticProgress)
+                    movementTile(movementProgress)
+                }
             }
         }
         .sheet(item: $detail, onDismiss: { Haptics.shared.sheetDismissed() }) { detail in
@@ -94,7 +111,8 @@ struct ForceProgressCard: View {
                         selectedSide: selectedSide,
                         forceCurve: forceCurve,
                         hasLoadedRecordings: hasLoadedRecordings,
-                        targetBand: targetBand
+                        targetBand: targetBand,
+                        connectionPending: connectionPending
                     )
                     .onAppear { Haptics.shared.sheetPresented() }
                 case .movement:
@@ -216,31 +234,13 @@ struct ForceProgressCard: View {
             Haptics.shared.tap()
             action()
         }) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Label {
-                        Text(selectedTag.map { "\(title) · \($0)" } ?? title)
-                    } icon: {
-                        Image(systemName: systemImage)
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(color)
-                    .lineLimit(2)
-
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.tertiary)
-                }
-
-                content()
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 154, alignment: .topLeading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(color.opacity(0.24), lineWidth: 1)
+            tileSurface(
+                title: title,
+                selectedTag: selectedTag,
+                systemImage: systemImage,
+                color: color,
+                showsChevron: true,
+                content: content
             )
         }
         .hapticButtonStyle(.plain)
@@ -248,6 +248,45 @@ struct ForceProgressCard: View {
             selectedTag.map { "\(accessibilityLabel), \($0)" } ?? accessibilityLabel
         )
         .accessibilityHint("Opens a full-height detail sheet")
+    }
+
+    @ViewBuilder
+    private func tileSurface<Content: View>(
+        title: String,
+        selectedTag: String?,
+        systemImage: String,
+        color: Color,
+        showsChevron: Bool,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Label {
+                    Text(selectedTag.map { "\(title) · \($0)" } ?? title)
+                } icon: {
+                    Image(systemName: systemImage)
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
+                .lineLimit(2)
+
+                Spacer(minLength: 0)
+                if showsChevron {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            content()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 154, alignment: .topLeading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(color.opacity(0.24), lineWidth: 1)
+        )
     }
 
     private func previewMetric(value: String, label: String) -> some View {

@@ -155,6 +155,83 @@ public struct SurfaceCard<Content: View>: View {
     }
 }
 
+/// Shared product empty state for data surfaces that have finished loading but
+/// have nothing useful to show yet. The illustration deliberately reuses the
+/// shipped splash art so an empty screen still feels like Sendmeter, rather
+/// than falling back to a framework placeholder or a bare SF Symbol.
+public struct ProductEmptyState: View {
+    let title: String
+    let message: String
+    let actionTitle: String
+    let action: () -> Void
+    let compact: Bool
+
+    public init(
+        title: String,
+        message: String,
+        actionTitle: String,
+        compact: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.message = message
+        self.actionTitle = actionTitle
+        self.compact = compact
+        self.action = action
+    }
+
+    public var body: some View {
+        VStack(spacing: compact ? 10 : 14) {
+            illustration
+
+            VStack(spacing: 4) {
+                Text(title)
+                    .font(compact ? .headline : .title3.weight(.bold))
+                    .multilineTextAlignment(.center)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button(actionTitle, action: action)
+                .hapticButtonStyle(PrimaryActionButtonStyle())
+                .frame(maxWidth: compact ? .infinity : 280)
+        }
+        .padding(.horizontal, compact ? 4 : 20)
+        .padding(.vertical, compact ? 4 : 24)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var illustration: some View {
+        ZStack {
+            Image("SplashCaveBackground")
+                .resizable()
+                .scaledToFill()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.42)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .clipped()
+
+            Image("SplashKangaroo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: compact ? 82 : 122)
+                .shadow(color: .black.opacity(0.34), radius: 10, y: 7)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: compact ? 82 : 118)
+        .clipShape(RoundedRectangle(cornerRadius: compact ? 12 : 16, style: .continuous))
+        .accessibilityHidden(true)
+    }
+}
+
 public struct SectionLabel: View {
     let title: String
     let systemImage: String?

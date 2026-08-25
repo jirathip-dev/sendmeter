@@ -396,6 +396,7 @@ final class ForceProgressTests: XCTestCase {
             curveRevision: 0
         )
         XCTAssertEqual(afterMovementKey, afterDisplayFrame)
+
     }
 
     func testForceProgressRevisionRestartsCurveKeyAtUploadCompletionBoundary() {

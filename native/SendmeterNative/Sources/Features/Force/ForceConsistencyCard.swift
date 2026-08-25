@@ -9,6 +9,7 @@ struct ForceConsistencyCard: View {
     let recordings: [TindeqRecording]
     let hiddenTags: Set<String>
     let hasLoadedRecordings: Bool
+    let connectionPending: Bool
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.scenePhase) private var scenePhase
@@ -53,9 +54,14 @@ struct ForceConsistencyCard: View {
                     }
 
                     if !data.hasRecordings {
-                        Text("No force recordings in the last 8 weeks")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        if connectionPending {
+                            ProgressView("Connecting to Progressor…")
+                                .frame(maxWidth: .infinity, minHeight: 108)
+                        } else {
+                            Text("No recent force recordings match this exercise filter. Record a pull above to build this rhythm.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
                         consistencyBars(data.weeks, selectedTag: activeTag)
                     }
