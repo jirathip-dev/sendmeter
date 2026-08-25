@@ -7,8 +7,10 @@ import Supabase
 import UIKit
 
 public enum SupabaseConfiguration {
+    // SAFETY: This is a fixed, RFC-compliant Supabase endpoint controlled by the app.
     public static let projectURL = URL(string: "https://zznsqmcewtzlnfoiefkk.supabase.co")!
     public static let publishableKey = "sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp"
+    // SAFETY: This is a fixed, RFC-compliant app callback URL controlled by the app.
     public static let redirectURL = URL(string: "com.jirathip.sendlog://login-callback")!
 }
 

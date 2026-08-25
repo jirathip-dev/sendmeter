@@ -440,8 +440,10 @@ struct SessionDetailView: View {
         } catch is CancellationError {
             // Popped the detail mid-fetch — nothing to show, and the app-wide
             // banner must not say "cancelled" over History (#645 review F6).
+            traceState = .notLoaded
         } catch let error as URLError where error.code == .cancelled {
             // Same — `session.data(for:)` surfaces cancellation as URLError.
+            traceState = .notLoaded
         } catch {
             traceState = .failed
         }

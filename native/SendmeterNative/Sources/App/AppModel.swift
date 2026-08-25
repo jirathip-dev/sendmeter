@@ -5231,8 +5231,15 @@ public final class AppModel {
                 trigger: trigger.syncTrigger,
                 capturedBy: accountFetch
             )
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
-            // Silent: keep the last reading on failure.
+            // Deliberately keep the last reading and swallow this background
+            // refresh failure; it must not interrupt the dashboard or pollute
+            // the auth-forensics ring.
+            _ = error
         }
     }
 
@@ -7754,8 +7761,14 @@ public final class AppModel {
                     nowMs: Date().timeIntervalSince1970 * 1_000
                 )
             }
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
-            // Silent degradation: the mirror keeps whatever it last accepted.
+            // Deliberately keep the last accepted mirror row and swallow this
+            // best-effort fallback failure; it is not an auth event.
+            _ = error
         }
     }
 
@@ -7908,9 +7921,14 @@ public final class AppModel {
                 }
                 guard publishedHealth else { return }
             }
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
-            // Silent degradation, same as the web: a failed reconcile leaves
-            // the list stale until the next event or pull-to-refresh.
+            // Deliberately keep the last list snapshot and swallow this
+            // best-effort reconcile failure; it is not an auth event.
+            _ = error
         }
     }
 

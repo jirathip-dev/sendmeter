@@ -525,8 +525,7 @@ struct HistoryView: View {
 
     @ViewBuilder
     private func recordingRow(_ recording: TindeqRecording) -> some View {
-        let isLoose = recording.groupID == nil
-            || !sessionGroupIDs.contains(recording.groupID!)
+        let isLoose = recording.groupID.map { !sessionGroupIDs.contains($0) } ?? true
         NavigationLink {
             ForceRecordingDetailView(recording: recording)
         } label: {
@@ -771,9 +770,8 @@ private struct HistorySessionRow: View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 3)
                 .fill(
-                    zone != nil
-                        ? SendmeterStyle.zoneColor(zone!)
-                        : SendmeterStyle.phaseColor(session.phase)
+                    zone.map { SendmeterStyle.zoneColor($0) }
+                        ?? SendmeterStyle.phaseColor(session.phase)
                 )
                 .frame(width: 5, height: 46)
             VStack(alignment: .leading, spacing: 4) {

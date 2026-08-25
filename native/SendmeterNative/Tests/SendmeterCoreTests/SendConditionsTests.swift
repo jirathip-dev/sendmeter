@@ -219,11 +219,11 @@ final class SendConditionsTests: XCTestCase {
 
     func testURLsMatchWebEndpoints() {
         XCTAssertEqual(
-            OpenMeteo.forecastURL(latitude: 13.75, longitude: 100.50).absoluteString,
+            OpenMeteo.forecastURL(latitude: 13.75, longitude: 100.50)?.absoluteString,
             "https://api.open-meteo.com/v1/forecast?latitude=13.75&longitude=100.50&current=temperature_2m,relative_humidity_2m"
         )
         XCTAssertEqual(
-            OpenMeteo.archiveURL(latitude: 13.75, longitude: 100.50, startDate: "2026-07-01", endDate: "2026-07-31").absoluteString,
+            OpenMeteo.archiveURL(latitude: 13.75, longitude: 100.50, startDate: "2026-07-01", endDate: "2026-07-31")?.absoluteString,
             "https://archive-api.open-meteo.com/v1/era5?latitude=13.75&longitude=100.50&start_date=2026-07-01&end_date=2026-07-31&hourly=temperature_2m,relative_humidity_2m&timezone=auto"
         )
     }

@@ -256,7 +256,7 @@ public enum ForceCurveEngine {
         // is computed once from the full data. The fixed-seed, recording-level
         // bootstrap below only supplies the display uncertainty band; it must
         // never change CF, W′, or the Hill fit used for targets/RPE.
-        guard model.capabilityFit != nil,
+        guard let modelCapabilityFit = model.capabilityFit,
               recordings.count >= 3,
               bootstrapSamples > 0
         else { return model }
@@ -301,7 +301,7 @@ public enum ForceCurveEngine {
             confidenceBand.append(
                 ForceCurveConfidencePoint(
                     windowSeconds: windowSeconds,
-                    kilograms: predictCapabilityFit(model.capabilityFit!, seconds: windowSeconds),
+                    kilograms: predictCapabilityFit(modelCapabilityFit, seconds: windowSeconds),
                     lowKilograms: percentile(values, p: 0.025),
                     highKilograms: percentile(values, p: 0.975)
                 )

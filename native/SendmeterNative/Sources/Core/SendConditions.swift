@@ -314,8 +314,17 @@ public enum OpenMeteo {
     /// Current weather, keyless public API. Coordinates are formatted with
     /// 2 decimals (~1 km, the web's `toFixed(2)`) so we don't ship a precise
     /// location off-device.
-    public static func forecastURL(latitude: Double, longitude: Double) -> URL {
-        URL(string: "https://api.open-meteo.com/v1/forecast?latitude=\(String(format: "%.2f", latitude))&longitude=\(String(format: "%.2f", longitude))&current=temperature_2m,relative_humidity_2m")!
+    public static func forecastURL(latitude: Double, longitude: Double) -> URL? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "api.open-meteo.com"
+        components.path = "/v1/forecast"
+        components.queryItems = [
+            URLQueryItem(name: "latitude", value: String(format: "%.2f", latitude)),
+            URLQueryItem(name: "longitude", value: String(format: "%.2f", longitude)),
+            URLQueryItem(name: "current", value: "temperature_2m,relative_humidity_2m")
+        ]
+        return components.url
     }
 
     /// Last ~30 days of hourly local weather from the ERA5 archive, with
@@ -327,8 +336,20 @@ public enum OpenMeteo {
         longitude: Double,
         startDate: String,
         endDate: String
-    ) -> URL {
-        URL(string: "https://archive-api.open-meteo.com/v1/era5?latitude=\(String(format: "%.2f", latitude))&longitude=\(String(format: "%.2f", longitude))&start_date=\(startDate)&end_date=\(endDate)&hourly=temperature_2m,relative_humidity_2m&timezone=auto")!
+    ) -> URL? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "archive-api.open-meteo.com"
+        components.path = "/v1/era5"
+        components.queryItems = [
+            URLQueryItem(name: "latitude", value: String(format: "%.2f", latitude)),
+            URLQueryItem(name: "longitude", value: String(format: "%.2f", longitude)),
+            URLQueryItem(name: "start_date", value: startDate),
+            URLQueryItem(name: "end_date", value: endDate),
+            URLQueryItem(name: "hourly", value: "temperature_2m,relative_humidity_2m"),
+            URLQueryItem(name: "timezone", value: "auto")
+        ]
+        return components.url
     }
 
     /// Match the web's `date.toISOString().slice(0, 10)`: archive request
@@ -336,6 +357,7 @@ public enum OpenMeteo {
     public static func archiveDateWindow(referenceDate: Date) -> ArchiveDateWindow {
         let end = referenceDate.addingTimeInterval(-Double(SendConditionsScore.era5LagDays * 86_400))
         let start = end.addingTimeInterval(-Double(30 * 86_400))
+        // SAFETY: UTC (zero seconds from GMT) is a valid Foundation time zone.
         let utc = TimeZone(secondsFromGMT: 0)!
         return ArchiveDateWindow(
             startDate: LocalDateSupport.string(from: start, timeZone: utc),

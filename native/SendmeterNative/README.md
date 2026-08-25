@@ -205,6 +205,42 @@ without colliding with the shipped IDs. Direct live-workout mirroring and the
 absence of a realtime fallback are device-only checks on a signed Release
 build.
 
+## Native Swift source quality
+
+The native source is linted with a vendored copy of
+[sawfwair/anti-slop-swift](https://github.com/sawfwair/anti-slop-swift), pinned
+at upstream revision `259e1a32dd9a41e65478513ab3b902a1cb8036e0`. The pre-fix
+baseline on Swift 6.3.3 was **53 violations across 134 files and four rule
+types**: 21 `no-any-dictionary-value`, 14 `no-force-unwrap`, 10
+`no-any-parameters`, and 8 `no-swallowed-errors`.
+
+The committed `.anti-slop.json` disables exactly `no-any-dictionary-value` and
+`no-any-parameters`. WatchConnectivity's system API requires `[String: Any]`
+payload bridges and `Any?` callback parameters, so those two rules are
+intentional exceptions while the remaining rules stay enabled. The CI step is
+advisory for findings: it annotates violations as GitHub warnings without
+blocking this first pass, while missing paths/configuration or a tool-build
+failure remains a real CI failure.
+
+Run the same pinned executable locally from the repository root:
+
+```bash
+bash scripts/anti-slop-swift.sh native/SendmeterNative/Sources
+```
+
+The native workflow also runs the cold-build regression, which removes the
+vendored tool's debug products before invoking the wrapper and requires both a
+successful rebuild and its positive scanned-file signal. Run it locally with:
+
+```bash
+bash scripts/validate-anti-slop-cold.sh
+```
+
+When a force unwrap, cast, try, or process-termination primitive is genuinely
+required, put a specific `// SAFETY:` explanation in the contiguous comment
+block immediately above it. Prefer an explicit unwrap or error path whenever
+the invariant is not independently guaranteed.
+
 ## Verification
 
 The no-Xcode source gate can be run from the repository root:

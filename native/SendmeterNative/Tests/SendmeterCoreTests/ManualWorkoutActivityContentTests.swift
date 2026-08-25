@@ -143,6 +143,40 @@ final class ManualWorkoutActivityContentTests: XCTestCase {
         XCTAssertEqual(duplicateStop, snapshot)
     }
 
+    func testReplayKeepsEarlierEventsWhenALaterDuplicateIsRejected() {
+        let start = Date(timeIntervalSince1970: 5_500)
+        let engine = PhoneWorkoutEngine(accountUserID: UUID(), phase: .power, startedAt: start)
+        let events = [
+            ManualWorkoutActivityEvent(
+                workoutStartedAt: start,
+                action: .beginBoulder,
+                at: start.addingTimeInterval(5)
+            ),
+            ManualWorkoutActivityEvent(
+                workoutStartedAt: start,
+                action: .beginBoulder,
+                at: start.addingTimeInterval(6)
+            ),
+            ManualWorkoutActivityEvent(
+                workoutStartedAt: start,
+                action: .endBoulder,
+                at: start.addingTimeInterval(30)
+            ),
+            ManualWorkoutActivityEvent(
+                workoutStartedAt: start,
+                action: .endBoulder,
+                at: start.addingTimeInterval(31)
+            )
+        ]
+
+        let replayed = ManualWorkoutActivityReplay.applying(events, to: engine)
+
+        XCTAssertNil(replayed.attemptStartedAt)
+        XCTAssertEqual(replayed.draft.attempts.count, 1)
+        XCTAssertEqual(replayed.draft.attempts[0].startedAt, start.addingTimeInterval(5))
+        XCTAssertEqual(replayed.draft.attempts[0].durationSeconds, 25)
+    }
+
     func testStaleQueuedEventsAreDroppedForNewWorkout() {
         let oldStart = Date(timeIntervalSince1970: 6_000)
         let newStart = Date(timeIntervalSince1970: 7_000)

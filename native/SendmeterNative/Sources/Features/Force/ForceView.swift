@@ -1643,6 +1643,7 @@ struct ForceView: View {
                         // the recording-context selection in sync for a user
                         // preset and clears a suggested arm for a saved one.
                         start: startPrimaryForceAction,
+                        refuseAction: { message in refuseAction(message) },
                         connect: { model.requestConnect() },
                         armHandsFree: armHandsFree,
                         stopAndSave: stopAndSave,
@@ -2483,6 +2484,7 @@ private struct ForceDeviceCard: View {
     let emptyActionTitle: String
     let emptyAction: () -> Void
     let start: () -> Void
+    let refuseAction: (String) -> Void
     let connect: () -> Void
     let armHandsFree: () -> Void
     let stopAndSave: () -> Void
@@ -2828,13 +2830,21 @@ private struct ForceDeviceCard: View {
                 }
                 HStack {
                     Button {
-                        do { try device.tare() } catch { }
+                        do {
+                            try device.tare()
+                        } catch {
+                            refuseAction(UserFacingError.message(for: error))
+                        }
                     } label: {
                         Label("Tare", systemImage: "scalemass")
                     }
                     .hapticButtonStyle(.bordered)
                     Button {
-                        do { try device.refreshBattery() } catch { }
+                        do {
+                            try device.refreshBattery()
+                        } catch {
+                            refuseAction(UserFacingError.message(for: error))
+                        }
                     } label: {
                         Label("Battery", systemImage: "battery.100percent")
                     }

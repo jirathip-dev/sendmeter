@@ -261,21 +261,10 @@ struct WorkoutView: View {
         let events = model.manualWorkoutActivity.drainPendingEvents(
             forWorkoutStartedAt: engine?.draft.startedAt
         )
-        guard var current = engine else { return }
-        for event in events {
-            do {
-                switch event.action {
-                case .beginBoulder:
-                    try current.startAttempt(at: event.at)
-                case .endBoulder:
-                    _ = try current.endAttempt(at: event.at)
-                }
-            } catch {
-                // Already applied/replayed or no longer valid — ignore.
-            }
-        }
+        guard let engine else { return }
+        let current = ManualWorkoutActivityReplay.applying(events, to: engine)
         guard current != engine else { return }
-        engine = current
+        self.engine = current
         model.manualWorkoutActivity.refresh(engine: current, restTarget: restTarget)
     }
 }

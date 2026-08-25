@@ -72,8 +72,11 @@ public final class HealthKitService: ObservableObject {
         do {
             let now = Date()
             let todayStart = calendar.startOfDay(for: now)
-            let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart)!
-            let baselineStart = calendar.date(byAdding: .day, value: -28, to: todayStart)!
+            guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart),
+                  let baselineStart = calendar.date(byAdding: .day, value: -28, to: todayStart)
+            else {
+                throw HealthKitError.dateCalculationFailed
+            }
 
             async let hrvMap = dailyAverages(
                 identifier: .heartRateVariabilitySDNN,
@@ -352,6 +355,7 @@ private struct SleepDay {
 public enum HealthKitError: Error, LocalizedError, FriendlyErrorClassifying {
     case authorizationDenied
     case typeUnavailable(String)
+    case dateCalculationFailed
 
     public var errorDescription: String? {
         switch self {
@@ -359,13 +363,15 @@ public enum HealthKitError: Error, LocalizedError, FriendlyErrorClassifying {
             return "Apple Health access was not granted."
         case let .typeUnavailable(type):
             return "Apple Health type is unavailable: \(type)"
+        case .dateCalculationFailed:
+            return "Apple Health date range could not be calculated."
         }
     }
 
     public var friendlyErrorClass: FriendlyErrorClass {
         switch self {
         case .authorizationDenied: return .healthPermissionDenied
-        case .typeUnavailable: return .healthUnavailable
+        case .typeUnavailable, .dateCalculationFailed: return .healthUnavailable
         }
     }
 }

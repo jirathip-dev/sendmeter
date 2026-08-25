@@ -183,7 +183,10 @@ struct ForceTrendChart: View {
     }
 
     private var accessibilitySummary: String {
-        "\(peaks.count) measured holds, best \(peaks.compactMap(\.peakKilograms).max()!.formatted(.number.precision(.fractionLength(1)))) kilograms"
+        guard let best = peaks.compactMap(\.peakKilograms).max() else {
+            return "\(peaks.count) measured holds"
+        }
+        return "\(peaks.count) measured holds, best \(best.formatted(.number.precision(.fractionLength(1)))) kilograms"
     }
 
     private func accessibilityText(for recording: TindeqRecording) -> String {
