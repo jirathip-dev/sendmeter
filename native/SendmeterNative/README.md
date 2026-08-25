@@ -142,6 +142,26 @@ deletion is different: its epoch barrier is installed before the first await,
 and the exact account's queue/cache is purged only after the server deletion
 has succeeded. Auth or network failure parks data instead of destroying it.
 
+Native auth restoration is guarded by a durable, non-secret install/session
+marker beside the Supabase SDK session. On the first rollout, an already-readable
+SDK session is accepted once; if a locked/background launch cannot read an
+identity, marker creation is deferred until the first auth identity arrives.
+Later unaccepted restored sessions are dropped locally before they reach the UI
+or the watch. The marker and accepted identity are container-local, so this is
+one-time rollout grandfathering, not reinstall detection: a reinstall or local
+container reset that leaves the SDK Keychain session available cannot be
+distinguished from a first install. JWT verification, expired-session,
+refresh-reuse, and future-`iat` failures retry exact local credential removal
+(bounded per event and again on later events/relaunch) before returning to fresh
+sign-in with fixed friendly copy. Successful PostgREST responses provide the last
+known-good HTTP `Date` evidence for a defense-in-depth clock check. The check
+uses a sleep-counting continuous clock, rejects evidence older than 15 minutes,
+and remains inconclusive when there is no trustworthy server sample, so a
+device wall clock is never treated as authoritative. A device lead is advisory
+and directs the user to Settings → General → Date & Time → Set Automatically;
+only an actual server rejection or future-`iat` diagnosis clears the exact
+rejected session.
+
 Watch completion summaries, live beats, and account-owned queue telemetry
 require an owner stamp. Pre-stamp/unstamped legacy payloads remain in a
 separately bounded diagnostic bucket (`watch_unscoped_sync`) and are visible as
@@ -206,6 +226,13 @@ xcodebuild \
   -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO \
   build
+
+# Compiled application-target auth/date/session wiring coverage (simulator):
+hermes-sim-task --shell 'xcodebuild test -project SendmeterNative.xcodeproj \
+  -scheme SendmeterNative -configuration Debug \
+  -destination "id=$SIMULATOR_UDID" \
+  -only-testing:SendmeterNativeTests/AuthRecoveryWiringTests \
+  CODE_SIGNING_ALLOWED=NO'
 ```
 
 For a physical device, open `SendmeterNative.xcodeproj`, select the existing
@@ -281,11 +308,13 @@ separately runs:
 
 `swift test` does not typecheck the SwiftUI application target: the package
 target intentionally contains only `Sources/Core` plus `ChartTheme.swift`.
-The static gate therefore proves parsing and generated-project inclusion, not
-app-target type correctness. A clean Xcode project compile remains required
-when the serialized Xcode lane is available; the regular Force fullscreen,
-hands-free trigger/re-arm loop, disconnect salvage, and protocol handoff also
-remain device-only with a real Progressor.
+The focused `SendmeterNativeTests/AuthRecoveryWiringTests` target covers the
+application-target PostgREST/date/session recovery seams on an iOS Simulator;
+the static gate still proves parsing and generated-project inclusion. A clean
+Xcode project compile remains required when the serialized Xcode lane is
+available; the regular Force fullscreen, hands-free trigger/re-arm loop,
+disconnect salvage, and protocol handoff also remain device-only with a real
+Progressor.
 
 Automated checks do not replace the physical-device gates for real Bluetooth,
 HealthKit, WatchConnectivity, passkeys, background/suspension behavior, or a

@@ -198,6 +198,14 @@ private struct CacheEntityIdentity: Hashable {
 public final class AppModel {
     public private(set) var bootState: AppBootState = .loading
     public private(set) var authSession: AuthSession?
+    /// Local auth self-heal and the SDK's resulting `.signedOut` event can
+    /// cross an await in either order. This gate makes the account boundary
+    /// idempotent: one failure advances `accountEpoch` at most once.
+    private var authRecoveryInProgress = false
+    /// Nonfatal server-time evidence is kept as account-scoped presentation
+    /// state so Settings can give the user the Date & Time nudge without
+    /// clearing an otherwise usable session.
+    public private(set) var authClockAdvisoryMessage: String?
     public private(set) var sessions: [SendmeterCore.Session] = []
     /// True once the current account has crossed an authoritative session
     /// boundary: either a persisted sync cursor/empty-result marker was
@@ -637,7 +645,8 @@ public final class AppModel {
             self.repository = SendmeterRepository(
                 transport: PostgRESTClient(
                     authClient: authRef.client.auth,
-                    sessionProvider: { try await authRef.ensureFreshSession() }
+                    sessionProvider: { try await authRef.ensureFreshSession() },
+                    serverClock: authRef.serverClock
                 )
             )
         }
@@ -1520,6 +1529,17 @@ public final class AppModel {
         manualWorkoutActivity.reconcileOrphans()
     }
 
+    /// Refresh the nonfatal clock advisory from the live auth service. This is
+    /// deliberately separate from destructive recovery: a device clock lead
+    /// keeps the session and all account state intact while exposing the
+    /// stable Settings copy.
+    public func updateAuthClockAdvisory(for session: AuthSession? = nil) {
+        let session = session ?? authSession
+        authClockAdvisoryMessage = session.flatMap {
+            auth.clockAdvisoryMessage(for: $0)
+        }
+    }
+
     public func becameActive() async {
         // #674 review F7: clear any guided Live Activity stranded by a
         // force-quit / jetsam BEFORE the auth gate — a killed app never ran
@@ -1527,7 +1547,8 @@ public final class AppModel {
         // the card. No-op while a run is in progress.
         guidedActivity.reconcileOrphans()
         manualWorkoutActivity.reconcileOrphans()
-        guard authSession != nil else { return }
+        guard let currentSession = authSession else { return }
+        updateAuthClockAdvisory(for: currentSession)
         // A cache-open/read failure deliberately leaves the WC inbox row in
         // place. Retry it on every foreground pass instead of waiting for a
         // relaunch or an account transition.
@@ -1574,7 +1595,7 @@ public final class AppModel {
     private func handleAuthEvent(_ event: AuthChangeEvent, session: AuthSession?) async {
         switch event {
         case .initialSession, .signedIn, .tokenRefreshed, .userUpdated, .mfaChallengeVerified:
-            guard let session else {
+            guard let incomingSession = session else {
                 await teardownGuidedProtocolBeforeAuthRevocation()
                 watch.relaySession(nil)
                 authSession = nil
@@ -1582,6 +1603,24 @@ public final class AppModel {
                 resetAccountState()
                 bootState = .signedOut
                 await tearDownRealtime()
+                return
+            }
+            let nativeEvent: NativeAuthEvent
+            switch event {
+            case .initialSession: nativeEvent = .initialSession
+            case .signedIn: nativeEvent = .signedIn
+            case .tokenRefreshed: nativeEvent = .tokenRefreshed
+            case .userUpdated, .mfaChallengeVerified: nativeEvent = .userUpdated
+            default: nativeEvent = .userUpdated
+            }
+            let session: AuthSession
+            do {
+                session = try await auth.prepareIncomingSession(
+                    incomingSession,
+                    event: nativeEvent
+                )
+            } catch {
+                await handleAuthSessionFailure(error)
                 return
             }
             // #679: capture the transition at the real authStateChanges
@@ -1647,49 +1686,114 @@ public final class AppModel {
                     break
                 }
             }
+            updateAuthClockAdvisory(for: session)
         case .passwordRecovery:
+            let preparedSession: AuthSession?
+            if let session {
+                do {
+                    preparedSession = try await auth.prepareIncomingSession(
+                        session,
+                        event: .passwordRecovery
+                    )
+                } catch {
+                    await handleAuthSessionFailure(error)
+                    return
+                }
+            } else {
+                preparedSession = nil
+            }
             let currentRecoveryUserID = authSession?.user.id
-            let nextRecoveryUserID = session?.user.id
+            let nextRecoveryUserID = preparedSession?.user.id
             let accountChanged = currentRecoveryUserID != nextRecoveryUserID
-            if accountChanged || session == nil {
+            if accountChanged || preparedSession == nil {
                 await teardownGuidedProtocolBeforeAuthRevocation()
             }
-            authSession = session
+            authSession = preparedSession
             passwordRecovery = true
-            bootState = session == nil ? .signedOut : .signedIn
-            if accountChanged || session == nil {
+            bootState = preparedSession == nil ? .signedOut : .signedIn
+            if accountChanged || preparedSession == nil {
                 // Password-recovery callbacks can carry a different session
                 // (or nil) without a preceding signedIn/signedOut event.
                 // Treat that callback as the same account boundary: advance
                 // the epoch, clear visible state, scope the watch, and tear
                 // down the old realtime channel before any recovery UI work.
-                watch.relaySession(session)
+                watch.relaySession(preparedSession)
                 didBootstrapUserID = nil
                 resetAccountState()
-                if let session {
-                    restoreHealthSyncState(for: session.user.id)
+                if let preparedSession {
+                    restoreHealthSyncState(for: preparedSession.user.id)
                 }
                 await tearDownRealtime()
-            } else if session != nil {
+            } else if preparedSession != nil {
                 // Some password-recovery flows deliver the replacement token
                 // as `.passwordRecovery` without a second `.signedIn` event.
                 // The same-account token is still a recovery boundary.
                 await drainQueue(mode: .authRecovery)
             }
+            updateAuthClockAdvisory(for: preparedSession)
         case .signedOut, .userDeleted:
             await teardownGuidedProtocolBeforeAuthRevocation()
             // #679: sign-out boundary.
-            auth.recordAuthEvent(
-                .signOut,
-                detail: event == .signedOut ? "Signed out" : "Account deleted"
-            )
+            let hadActiveAccount = authSession != nil || bootState != .signedOut
+            // A local recovery can clear the model before the SDK delivers its
+            // buffered `.signedOut` callback. Do not emit a second boundary
+            // diagnostic for that callback; ordinary account deletion remains
+            // observable even if the model was already empty.
+            if AuthRecoveryEpochPolicy.shouldRecordBoundaryDiagnostic(
+                isAccountDeletion: event == .userDeleted,
+                hasActiveSession: hadActiveAccount
+            ) {
+                auth.recordAuthEvent(
+                    .signOut,
+                    detail: event == .signedOut ? "Signed out" : "Account deleted"
+                )
+            }
             watch.relaySession(nil)
             authSession = nil
             didBootstrapUserID = nil
-            resetAccountState()
+            if AuthRecoveryEpochPolicy.shouldResetForSignedOut(
+                hasActiveSession: hadActiveAccount
+            ) {
+                resetAccountState()
+            }
             bootState = .signedOut
             await tearDownRealtime()
         }
+    }
+
+    /// Auth self-healing is a normal signed-out boundary: clear the visible
+    /// model and advance the account epoch, but preserve the exact account's
+    /// valid cache/queue for a later fresh sign-in. The AuthService has already
+    /// removed a poisoned SDK session locally before this helper is reached.
+    private func handleAuthSessionFailure(_ error: Error) async {
+        let hasActiveSession = authSession != nil || bootState != .signedOut
+        guard AuthRecoveryEpochPolicy.shouldBegin(
+            hasActiveSession: hasActiveSession,
+            recoveryInProgress: authRecoveryInProgress
+        ) else {
+            surface(error)
+            return
+        }
+        authRecoveryInProgress = true
+        defer { authRecoveryInProgress = false }
+        await teardownGuidedProtocolBeforeAuthRevocation()
+        // The local sign-out may have emitted `.signedOut` while the teardown
+        // above was suspended. Re-check the live actor state before applying
+        // the boundary; captured pre-await state is not a guard.
+        guard AuthRecoveryEpochPolicy.shouldBegin(
+            hasActiveSession: authSession != nil || bootState != .signedOut,
+            recoveryInProgress: false
+        ) else {
+            surface(error)
+            return
+        }
+        watch.relaySession(nil)
+        authSession = nil
+        didBootstrapUserID = nil
+        resetAccountState()
+        bootState = .signedOut
+        await tearDownRealtime()
+        surface(error)
     }
 
     private func relayValidSessionToWatch(guaranteed: Bool) async {
@@ -1710,6 +1814,7 @@ public final class AppModel {
                 accountEpoch: accountEpoch
             ), valid.user.id == userID else { return }
             authSession = valid
+            updateAuthClockAdvisory(for: valid)
             watch.setAccountScope(userID)
             watch.relaySession(valid, guaranteed: guaranteed)
         } catch {
@@ -1717,6 +1822,10 @@ public final class AppModel {
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
+            if error is AuthRecoveryError {
+                await handleAuthSessionFailure(error)
+                return
+            }
             watch.relaySession(nil, guaranteed: guaranteed)
         }
     }
@@ -9392,6 +9501,7 @@ public final class AppModel {
 
     private func resetAccountState() {
         accountEpoch &+= 1
+        authClockAdvisoryMessage = nil
         // A HealthKit read can be suspended across sign-out/account switch.
         // Invalidate its owner before clearing the visible account snapshot;
         // a stale completion can then neither publish a toast nor release a
@@ -9528,5 +9638,14 @@ public final class AppModel {
 
     private func surface(_ error: Error) {
         errorMessage = UserFacingError.message(for: error)
+        // A rejected bearer can surface as a PostgREST 401 before GoTrue's
+        // refresh path gets a chance to report it. Start the same exact-
+        // session recovery asynchronously; the visible copy is already fixed
+        // above, and the current-session check inside AuthService prevents an
+        // old request from signing out a newer account.
+        guard let postgRESTError = error as? PostgRESTError else { return }
+        Task { @MainActor [weak self] in
+            await self?.auth.recoverFromAuthFailure(postgRESTError)
+        }
     }
 }

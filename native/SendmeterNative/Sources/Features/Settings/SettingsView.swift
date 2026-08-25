@@ -396,6 +396,16 @@ struct SettingsView: View {
     private var accountSecuritySection: some View {
         Section("Account & Security") {
             LabeledContent("Email", value: model.currentUserEmail ?? "Signed in")
+            if let advisory = model.authClockAdvisoryMessage {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Date & Time", systemImage: "clock.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Text(advisory)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("auth-clock-advisory")
+            }
             Button {
                 // #656: a tap arming a password reset ticks once.
                 Haptics.shared.tap()
@@ -740,12 +750,19 @@ struct SettingsView: View {
             Text("\(item.kind) · \(item.rejection.at.formatted(date: .abbreviated, time: .shortened))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if let code = item.rejection.code {
+            if item.rejection.kind != .auth, let code = item.rejection.code {
                 LabeledContent("Server code", value: code)
                     .font(.caption)
             }
             if !item.rejection.detail.isEmpty {
-                Text(item.rejection.detail)
+                Text(
+                    item.rejection.kind == .auth
+                        ? UserFacingError.message(
+                            forAuthDiagnosticCode: item.rejection.code,
+                            detail: item.rejection.detail
+                        )
+                        : item.rejection.detail
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -773,7 +790,14 @@ struct SettingsView: View {
             )
             .font(.caption)
             if let lastError = item.lastError {
-                Text(lastError)
+                Text(
+                    item.rejectionClass == .auth
+                        ? UserFacingError.message(
+                            forAuthDiagnosticCode: item.lastFailureCode,
+                            detail: lastError
+                        )
+                        : lastError
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
