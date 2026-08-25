@@ -1,4 +1,4 @@
-# Quality gate — lint, typecheck, tests, and a production build.
+# Quality gate — lint, typecheck, tests + coverage, and a production build.
 # Deployment is separate (deploy-web.yml deploys via the Vercel CLI:
 # main → production, staging → preview).
 name: CI
@@ -13,9 +13,9 @@ jobs:
   quality:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -23,14 +23,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit dependencies (high/critical)
+        run: npm run audit
+
       - name: Lint
         run: npm run lint
 
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Tests
-        run: npm test
+      - name: Tests + coverage
+        run: npm run test:coverage
+
+      - name: Upload web coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: web-coverage
+          path: coverage
+          if-no-files-found: warn
+          retention-days: 14
 
       # supabase.ts falls back to the public dev instance when VITE_ vars are
       # absent — this step only proves the bundle compiles.
@@ -45,9 +57,9 @@ jobs:
   mcp:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -56,6 +68,10 @@ jobs:
       - name: Install dependencies
         working-directory: mcp
         run: npm ci
+
+      - name: Audit dependencies (high/critical)
+        working-directory: mcp
+        run: npm run audit
 
       # Lint is intentionally NOT run here: the root quality job's `eslint .`
       # already covers mcp/ with the scoped node-globals config in

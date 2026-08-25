@@ -10,7 +10,7 @@ jobs:
     permissions:
       contents: read
       issues: write
-    uses: jirathip-k/agent-ops/.github/workflows/implement.yml@v1
+    uses: jirathip-k/agent-ops/.github/workflows/implement.yml@6a1a962989cd61cfa592332ea5f2da46354cf132 # v1
     with:
       model: sonnet
       base_branch: staging

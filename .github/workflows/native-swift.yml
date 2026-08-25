@@ -16,6 +16,9 @@ on:
       - "scripts/validate-anti-slop-cold.sh"
       - "scripts/validate-anti-slop.sh"
       - "scripts/assert-native-watch-project.rb"
+      - "scripts/check-coverage-threshold.sh"
+      - "scripts/swift-coverage.sh"
+      - "scripts/test-coverage-threshold.sh"
       - ".github/workflows/native-swift.yml"
   push:
     branches:
@@ -36,6 +39,9 @@ on:
       - "scripts/validate-anti-slop-cold.sh"
       - "scripts/validate-anti-slop.sh"
       - "scripts/assert-native-watch-project.rb"
+      - "scripts/check-coverage-threshold.sh"
+      - "scripts/swift-coverage.sh"
+      - "scripts/test-coverage-threshold.sh"
       - ".github/workflows/native-swift.yml"
 
 concurrency:
@@ -48,7 +54,7 @@ jobs:
     runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
       - name: Validate anti-slop Swift wiring
@@ -83,28 +89,57 @@ jobs:
               exit "$lint_status"
               ;;
           esac
-      - name: Run pure Swift tests
-        run: swift test --package-path native/SendmeterNative
-      - name: Run health-core pure Swift tests
-        run: swift test --package-path native-plugins/sendlog-health-core
+      - name: Verify coverage threshold helper
+        run: bash scripts/test-coverage-threshold.sh
+
+      - name: Run pure Swift coverage gates
+        run: bash scripts/swift-coverage.sh
+
+      - name: Upload Swift coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: swift-coverage
+          path: coverage/swift
+          if-no-files-found: warn
+          retention-days: 14
 
   ios-build:
     name: iOS Simulator build
     runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: "4.0.5"
+          bundler-cache: true
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
+      # Download a release asset at an exact version and verify its checksum;
+      # the runner's moving Homebrew formula is not an acceptable CI pin.
       - name: Install XcodeGen
-        run: brew install xcodegen
+        env:
+          XCODEGEN_VERSION: "2.46.0"
+          XCODEGEN_SHA256: "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806"
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen.zip"
+          curl --fail --location --silent --show-error \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" \
+            --output "$archive"
+          echo "${XCODEGEN_SHA256}  ${archive}" | shasum --algorithm 256 --check --strict
+          unzip -q "$archive" -d "$RUNNER_TEMP/xcodegen"
+          xcodegen_bin="$RUNNER_TEMP/xcodegen/xcodegen/bin"
+          echo "$xcodegen_bin" >> "$GITHUB_PATH"
+          export PATH="$xcodegen_bin:$PATH"
+          xcodegen --version
       - name: Generate Xcode project
         working-directory: native/SendmeterNative
         run: xcodegen generate
       - name: Assert generated watch graph
         run: |
-          gem install xcodeproj --no-document
-          ruby scripts/assert-native-watch-project.rb
+          bundle exec ruby scripts/assert-native-watch-project.rb
       - name: Resolve Swift packages
         working-directory: native/SendmeterNative
         run: |
