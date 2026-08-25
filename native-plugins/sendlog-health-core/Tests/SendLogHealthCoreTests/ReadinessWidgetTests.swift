@@ -45,6 +45,20 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertTrue(decoded.isValid)
     }
 
+    func testStoreRoundTripAndClear() throws {
+        let suiteName = "ReadinessWidgetTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = ReadinessWidgetStore(defaults: defaults)
+        let original = snapshot()
+
+        store.save(original)
+        XCTAssertEqual(store.load(), original)
+
+        store.clear()
+        XCTAssertNil(store.load())
+    }
+
     func testNoDataDoesNotBecomeZeroOrRetainAZone() {
         let noData = snapshot(
             readiness: nil,
@@ -66,6 +80,82 @@ final class ReadinessWidgetTests: XCTestCase {
     func testOnlyCurrentGregorianDayIsRenderable() {
         XCTAssertEqual(snapshot().freshness(on: "2026-08-26"), .current)
         XCTAssertEqual(snapshot(day: "2026-08-25").freshness(on: "2026-08-26"), .stale)
+    }
+
+    func testDecodedInvalidZoneAndPhaseAreRejected() throws {
+        let data = try JSONEncoder().encode(snapshot())
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+
+        object["readinessZone"] = "unknown"
+        let invalidZone = try JSONSerialization.data(withJSONObject: object)
+        let decodedZone = try JSONDecoder().decode(
+            ReadinessWidgetSnapshot.self,
+            from: invalidZone
+        )
+        XCTAssertFalse(decodedZone.isValid)
+
+        object["readinessZone"] = "push"
+        object["phaseName"] = "   "
+        let invalidPhase = try JSONSerialization.data(withJSONObject: object)
+        let decodedPhase = try JSONDecoder().decode(
+            ReadinessWidgetSnapshot.self,
+            from: invalidPhase
+        )
+        XCTAssertFalse(decodedPhase.isValid)
+
+        object["phaseName"] = "Capacity"
+        object["phaseColorHex"] = "\t"
+        let invalidPhaseColor = try JSONSerialization.data(withJSONObject: object)
+        let decodedPhaseColor = try JSONDecoder().decode(
+            ReadinessWidgetSnapshot.self,
+            from: invalidPhaseColor
+        )
+        XCTAssertFalse(decodedPhaseColor.isValid)
+    }
+
+    func testOwnershipAndResetPoliciesFenceAccountsAndEpochs() {
+        let original = snapshot()
+        XCTAssertTrue(
+            ReadinessWidgetOwnershipPolicy.canPublish(
+                original,
+                currentUserID: userID,
+                currentEpoch: 7
+            )
+        )
+        XCTAssertFalse(
+            ReadinessWidgetOwnershipPolicy.canPublish(
+                original,
+                currentUserID: UUID(),
+                currentEpoch: 7
+            )
+        )
+        XCTAssertFalse(
+            ReadinessWidgetOwnershipPolicy.canPublish(
+                original,
+                currentUserID: userID,
+                currentEpoch: 8
+            )
+        )
+        XCTAssertTrue(
+            ReadinessWidgetOwnershipPolicy.shouldClearOnReset(
+                snapshotOwner: userID,
+                currentUserID: UUID()
+            )
+        )
+        XCTAssertFalse(
+            ReadinessWidgetOwnershipPolicy.shouldClearOnReset(
+                snapshotOwner: userID,
+                currentUserID: userID
+            )
+        )
+        XCTAssertTrue(
+            ReadinessWidgetOwnershipPolicy.shouldClearOnReset(
+                snapshotOwner: userID,
+                currentUserID: nil
+            )
+        )
     }
 
     func testPartialOrImpossibleACWRIsDropped() {
@@ -112,6 +202,24 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertEqual(
             next,
             calendar.date(from: DateComponents(year: 2026, month: 8, day: 27))!
+        )
+    }
+
+    func testLocalDayStringForcesGregorianEvenWithABuddhistCalendar() {
+        var calendar = Calendar(identifier: .buddhist)
+        calendar.timeZone = TimeZone(secondsFromGMT: 7 * 3600)!
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = calendar.timeZone
+        let date = gregorian.date(from: DateComponents(
+            year: 2026, month: 8, day: 26, hour: 16
+        ))!
+
+        XCTAssertEqual(
+            ReadinessWidgetTimelinePolicy.localDayString(
+                for: date,
+                calendar: calendar
+            ),
+            "2026-08-26"
         )
     }
 

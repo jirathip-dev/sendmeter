@@ -3,20 +3,7 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
-private let readinessWidgetURL = URL(string: "sendmeter://dashboard")!
-
-private func readinessWidgetLocalDay(_ date: Date) -> String {
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.locale = .current
-    calendar.timeZone = .current
-    let components = calendar.dateComponents([.year, .month, .day], from: date)
-    return String(
-        format: "%04d-%02d-%02d",
-        components.year ?? 0,
-        components.month ?? 0,
-        components.day ?? 0
-    )
-}
+private let readinessWidgetURL = URL(string: "sendmeter://dashboard")
 
 struct ReadinessWidgetEntry: TimelineEntry {
     let date: Date
@@ -49,12 +36,16 @@ struct ReadinessWidgetProvider: TimelineProvider {
             snapshot: currentSnapshot(at: now)
         )
         let next = ReadinessWidgetTimelinePolicy.nextReloadDate(after: now)
-        completion(Timeline(entries: [entry], policy: .after(next)))
+        let boundary = ReadinessWidgetEntry(date: next, snapshot: nil)
+        completion(Timeline(entries: [entry, boundary], policy: .atEnd))
     }
 
     private func currentSnapshot(at date: Date) -> ReadinessWidgetSnapshot? {
-        guard let snapshot = ReadinessWidgetStore.load(),
-              snapshot.freshness(on: readinessWidgetLocalDay(date)) == .current
+        guard let store = ReadinessWidgetStore.appGroupStore,
+              let snapshot = store.load(),
+              snapshot.freshness(
+                  on: ReadinessWidgetTimelinePolicy.localDayString(for: date)
+              ) == .current
         else { return nil }
         return snapshot
     }
@@ -81,6 +72,9 @@ struct ReadinessWidget: Widget {
 private struct ReadinessWidgetView: View {
     let entry: ReadinessWidgetEntry
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.widgetFamily) private var widgetFamily
+    @ScaledMetric(relativeTo: .largeTitle) private var readinessMetricSize: CGFloat = 39
+    @ScaledMetric(relativeTo: .title) private var acwrMetricSize: CGFloat = 30
 
     var body: some View {
         if let snapshot = entry.snapshot {
@@ -125,13 +119,34 @@ private struct ReadinessWidgetView: View {
         .accessibilityLabel("No readiness score yet. Open Sendmeter to connect Apple Health and sync today's score.")
     }
 
+    @ViewBuilder
     private func data(_ snapshot: ReadinessWidgetSnapshot) -> some View {
+        if widgetFamily == .systemLarge {
+            largeData(snapshot)
+        } else {
+            mediumData(snapshot)
+        }
+    }
+
+    private func mediumData(_ snapshot: ReadinessWidgetSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 14) {
                 readinessSummary(snapshot)
                 Spacer(minLength: 4)
                 acwrSummary(snapshot, compact: true)
             }
+            phaseSummary(snapshot)
+        }
+    }
+
+    private func largeData(_ snapshot: ReadinessWidgetSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 18) {
+                readinessSummary(snapshot)
+                Spacer(minLength: 8)
+                acwrSummary(snapshot, compact: false)
+            }
+            Divider()
             phaseSummary(snapshot)
         }
     }
@@ -145,7 +160,7 @@ private struct ReadinessWidgetView: View {
             if let score = snapshot.readiness {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     Text("\(score)")
-                        .font(.system(size: 39, weight: .heavy, design: .rounded))
+                        .font(.system(size: readinessMetricSize, weight: .heavy, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(semanticColor(band.semanticToken))
                     Text("/100")
@@ -181,7 +196,7 @@ private struct ReadinessWidgetView: View {
                 .foregroundStyle(.secondary)
             if let ratio = snapshot.acwr {
                 Text(Self.decimal(ratio, places: 2))
-                    .font(.system(size: 30, weight: .heavy, design: .rounded))
+                    .font(.system(size: acwrMetricSize, weight: .heavy, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(semanticColor(band.semanticToken))
                 Text(band.rawValue)

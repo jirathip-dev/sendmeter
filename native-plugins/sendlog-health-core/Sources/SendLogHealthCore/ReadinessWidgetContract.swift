@@ -1,11 +1,13 @@
 import Foundation
 
-/// The account-owned payload written by the iPhone app for the home-screen
-/// readiness widget. This is deliberately a small, Codable wire model: the
-/// widget process must not fetch Supabase or HealthKit, and it must never
-/// infer a score from a missing field.
+/// Foundation-only widget contract shared by the native app and its separate
+/// WidgetKit process. It lives in the health core package because the app and
+/// extension need one testable source of truth for the Codable wire shape,
+/// App Group store, Gregorian day boundary, and semantic colors; it has no
+/// HealthKit, Supabase, or WidgetKit dependency.
 public struct ReadinessWidgetSnapshot: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
+    private static let validReadinessZones = Set(["recover", "maintain", "push"])
 
     public let schemaVersion: Int
     public let accountUserID: UUID
@@ -56,7 +58,7 @@ public struct ReadinessWidgetSnapshot: Codable, Equatable, Sendable {
         self.readinessZone = validReadiness == nil
             ? nil
             : readinessZone.flatMap { zone in
-                ["recover", "maintain", "push"].contains(zone) ? zone : nil
+                Self.validReadinessZones.contains(zone) ? zone : nil
             }
         self.readinessComputedAt = validReadiness == nil ? nil : readinessComputedAt
 
@@ -70,9 +72,9 @@ public struct ReadinessWidgetSnapshot: Codable, Equatable, Sendable {
         self.chronic = validLoad ? chronic : nil
         self.acwr = validLoad ? acwr : nil
 
-        self.phaseID = phaseID?.isEmpty == false ? phaseID : nil
-        self.phaseName = phaseName?.isEmpty == false ? phaseName : nil
-        self.phaseColorHex = phaseColorHex?.isEmpty == false ? phaseColorHex : nil
+        self.phaseID = Self.nonEmptyPhaseValue(phaseID)
+        self.phaseName = Self.nonEmptyPhaseValue(phaseName)
+        self.phaseColorHex = Self.nonEmptyPhaseValue(phaseColorHex)
         self.phaseWeek = phaseWeek.flatMap { $0 > 0 ? $0 : nil }
         self.phaseDay = phaseDay.flatMap { $0 > 0 ? $0 : nil }
     }
@@ -84,7 +86,11 @@ public struct ReadinessWidgetSnapshot: Codable, Equatable, Sendable {
         guard schemaVersion == Self.currentSchemaVersion,
               !day.isEmpty,
               readiness.map({ (0...100).contains($0) }) ?? true,
+              readinessZone.map { Self.validReadinessZones.contains($0) } ?? true,
               readiness == nil ? readinessZone == nil && readinessComputedAt == nil : true,
+              phaseID.map { Self.hasNonEmptyPhaseValue($0) } ?? true,
+              phaseName.map { Self.hasNonEmptyPhaseValue($0) } ?? true,
+              phaseColorHex.map { Self.hasNonEmptyPhaseValue($0) } ?? true,
               phaseWeek.map({ $0 > 0 }) ?? true,
               phaseDay.map({ $0 > 0 }) ?? true
         else { return false }
@@ -92,6 +98,15 @@ public struct ReadinessWidgetSnapshot: Codable, Equatable, Sendable {
         let loadValues = [acute, chronic, acwr].compactMap { $0 }
         guard loadValues.count == 0 || loadValues.count == 3 else { return false }
         return loadValues.allSatisfy { $0.isFinite && $0 >= 0 }
+    }
+
+    private static func nonEmptyPhaseValue(_ value: String?) -> String? {
+        guard let value, hasNonEmptyPhaseValue(value) else { return nil }
+        return value
+    }
+
+    private static func hasNonEmptyPhaseValue(_ value: String) -> Bool {
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     public func freshness(on localDay: String) -> ReadinessWidgetFreshness {
@@ -104,6 +119,70 @@ public enum ReadinessWidgetFreshness: Equatable, Sendable {
     case current
     case stale
     case invalid
+}
+
+/// The app process and the WidgetKit process both use this exact App Group
+/// payload. The injected `UserDefaults` initializer makes save/load/clear
+/// behavior testable without touching a user's real App Group in tests.
+public final class ReadinessWidgetStore {
+    public static let appGroup = "group.com.jirathip.sendlog"
+    public static let snapshotKey = "sendmeter.readiness-widget.snapshot"
+
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults) {
+        self.defaults = defaults
+    }
+
+    public static var appGroupStore: ReadinessWidgetStore? {
+        guard let defaults = UserDefaults(suiteName: appGroup) else { return nil }
+        return ReadinessWidgetStore(defaults: defaults)
+    }
+
+    public func load() -> ReadinessWidgetSnapshot? {
+        guard let data = defaults.data(forKey: Self.snapshotKey),
+              let snapshot = try? JSONDecoder().decode(
+                ReadinessWidgetSnapshot.self,
+                from: data
+              ),
+              snapshot.isValid
+        else { return nil }
+        return snapshot
+    }
+
+    public func save(_ snapshot: ReadinessWidgetSnapshot) {
+        guard snapshot.isValid,
+              let data = try? JSONEncoder().encode(snapshot)
+        else { return }
+        defaults.set(data, forKey: Self.snapshotKey)
+    }
+
+    public func clear() {
+        defaults.removeObject(forKey: Self.snapshotKey)
+    }
+}
+
+public enum ReadinessWidgetOwnershipPolicy {
+    public static func canPublish(
+        _ snapshot: ReadinessWidgetSnapshot,
+        currentUserID: UUID?,
+        currentEpoch: UInt64
+    ) -> Bool {
+        snapshot.isValid
+            && snapshot.accountUserID == currentUserID
+            && snapshot.accountEpoch == currentEpoch
+    }
+
+    /// A reset advances the in-memory epoch. Keep a current same-account
+    /// snapshot visible while its replacement refreshes, but never let an old
+    /// account or a signed-out state remain in the App Group.
+    public static func shouldClearOnReset(
+        snapshotOwner: UUID?,
+        currentUserID: UUID?
+    ) -> Bool {
+        guard let currentUserID else { return true }
+        return snapshotOwner != currentUserID
+    }
 }
 
 /// These are the semantic colors used by the native Dashboard's ChartToken
@@ -204,6 +283,18 @@ public enum ReadinessWidgetTimelinePolicy {
         calendar.locale = .current
         calendar.timeZone = .current
         return calendar
+    }
+
+    /// Shared by the writer and the WidgetKit process. The supplied calendar
+    /// contributes only its time zone; the output is always Gregorian AD,
+    /// even when the device's region uses a Buddhist or other local calendar.
+    public static func localDayString(
+        for date: Date,
+        calendar: Calendar = localGregorianCalendar
+    ) -> String {
+        var style = Date.ISO8601FormatStyle().year().month().day()
+        style.timeZone = calendar.timeZone
+        return style.format(date)
     }
 
     /// A day-boundary reload keeps the score frozen for the current local day

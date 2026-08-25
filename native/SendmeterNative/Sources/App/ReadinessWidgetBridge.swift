@@ -12,18 +12,32 @@ enum ReadinessWidgetBridge {
         _ snapshot: ReadinessWidgetSnapshot,
         for scope: NativeAccountScope
     ) {
-        guard let userID = scope.userID,
-              snapshot.accountUserID == userID,
-              snapshot.accountEpoch == scope.epoch,
-              snapshot.isValid
+        guard ReadinessWidgetOwnershipPolicy.canPublish(
+            snapshot,
+            currentUserID: scope.userID,
+            currentEpoch: scope.epoch
+        ),
+        let store = ReadinessWidgetStore.appGroupStore
         else { return }
 
-        ReadinessWidgetStore.save(snapshot)
+        store.save(snapshot)
         WidgetCenter.shared.reloadTimelines(ofKind: kind)
     }
 
     static func clear() {
-        ReadinessWidgetStore.clear()
+        ReadinessWidgetStore.appGroupStore?.clear()
+        WidgetCenter.shared.reloadTimelines(ofKind: kind)
+    }
+
+    static func reset(for currentUserID: UUID?) {
+        let store = ReadinessWidgetStore.appGroupStore
+        let snapshotOwner = store?.load()?.accountUserID
+        if ReadinessWidgetOwnershipPolicy.shouldClearOnReset(
+            snapshotOwner: snapshotOwner,
+            currentUserID: currentUserID
+        ) {
+            store?.clear()
+        }
         WidgetCenter.shared.reloadTimelines(ofKind: kind)
     }
 }

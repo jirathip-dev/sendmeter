@@ -898,12 +898,12 @@ public final class AppModel {
     public var readiness: HealthMetric? { healthMetrics.first }
     public var weeklyLoads: [WeeklyLoad] { TrainingMetrics.weeklyLoads(sessions: sessions) }
 
-    /// Publishes the same current-day readiness, in-memory session load, and
-    /// phase state that Dashboard renders. The widget receives no HealthKit or
+    /// Publishes the authoritative readiness, in-memory session load, and
+    /// phase state that Dashboard uses. The widget receives no HealthKit or
     /// Supabase credentials; it gets an account/epoch-stamped snapshot only.
-    /// In particular, selecting `healthMetrics.first` here would let a
-    /// yesterday row appear as today's score when the list is stale, so the
-    /// widget is always keyed by the Gregorian local day.
+    /// Dashboard keeps its historical list ordering, while the widget selects
+    /// today's row explicitly so a stale yesterday score cannot appear as
+    /// today's score.
     private func publishReadinessWidgetSnapshot() {
         guard let userID = currentUserID else {
             ReadinessWidgetBridge.clear()
@@ -911,7 +911,7 @@ public final class AppModel {
         }
 
         let now = Date()
-        let today = LocalDateSupport.string(from: now)
+        let today = ReadinessWidgetTimelinePolicy.localDayString(for: now)
         let todayMetric = healthMetrics.first { $0.date == today }
         let computedACWR = TrainingMetrics.computeACWR(
             sessions: sessions,
@@ -2372,7 +2372,6 @@ public final class AppModel {
             dataRefreshOwner: nil,
             purgeGenerationContext: .userInitiatedForeground
         )
-        publishReadinessWidgetSnapshot()
     }
 
     private func refreshAll(
@@ -2629,6 +2628,11 @@ public final class AppModel {
             // intentionally leaves the non-watched tables untouched).
             lastListRefreshAt = ProcessInfo.processInfo.systemUptime
             warmTagCurvesIfMissing(capturedBy: accountFetch)
+            // This is deliberately inside the private refresh path so cold
+            // bootstrap, foreground refresh, and mutation follow-ups all
+            // have one guaranteed publication point after authoritative data
+            // has successfully crossed the account/epoch guard.
+            publishReadinessWidgetSnapshot()
         } catch {
             if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
                 // Some slices may have already been published before the
@@ -2650,7 +2654,6 @@ public final class AppModel {
             dataRefreshOwner: nil,
             purgeGenerationContext: .silent
         )
-        publishReadinessWidgetSnapshot()
     }
 
     /// #627: warm the per-tag curve cache in the background for every tag
@@ -6176,6 +6179,11 @@ public final class AppModel {
                     }
                     watch.publishReadiness(relayMetric)
                 }
+                // Health reconciliation can touch the complete 28-day
+                // candidate window. Publish once after the pass, rather than
+                // once per historical row, so a single refresh causes one
+                // App Group write and one WidgetKit reload.
+                publishReadinessWidgetSnapshot()
                 guard !Task.isCancelled else {
                     recomputeGate.cancel()
                     return nil
@@ -6201,7 +6209,6 @@ public final class AppModel {
         healthMetrics.removeAll { $0.date == metric.date }
         healthMetrics.append(metric)
         healthMetrics.sort { $0.date > $1.date }
-        publishReadinessWidgetSnapshot()
     }
 
     /// ACWR ratios from server session loads for every date in the HealthKit
@@ -9584,10 +9591,11 @@ public final class AppModel {
 
     private func resetAccountState() {
         accountEpoch &+= 1
-        // Remove the current-account snapshot at the same synchronous
-        // boundary as the visible model. The next signed-in account must
-        // publish its own owner/epoch before the widget can render again.
-        ReadinessWidgetBridge.clear()
+        // Remove a different account's snapshot at the same synchronous
+        // boundary as the visible model. A same-account bootstrap keeps its
+        // last valid glance visible until the successful refresh publishes a
+        // new epoch, avoiding an unnecessary blank window.
+        ReadinessWidgetBridge.reset(for: currentUserID)
         authClockAdvisoryMessage = nil
         // A HealthKit read can be suspended across sign-out/account switch.
         // Invalidate its owner before clearing the visible account snapshot;

@@ -54,7 +54,7 @@ SwiftUI application
 ├── Sources/Data       Supabase auth and typed PostgREST repositories
 ├── Sources/Platform   CoreBluetooth, HealthKit, and WatchConnectivity
 ├── Sources/Features   Native product screens
-├── Sources/Shared     ActivityKit + readiness-widget wire/store types shared with the widget appex
+├── Sources/Shared     ActivityKit wire types shared with the widget appex
 ├── Sources/Widgets    The WidgetKit app-extension target's rendering code (#674)
 └── Sources/App        App lifecycle, orchestration, design system, and optimistic reconciliation
 ```
@@ -65,10 +65,17 @@ scheme. Both the app and extension require the App Group
 watch-widget bridge, but the phone widget has its own snapshot key. A successful
 foreground, HealthKit, session-load, realtime-health, or phase publication
 rewrites the snapshot and reloads the `SendmeterReadiness` timeline. Sign-out
-and account reset remove it synchronously. The snapshot's current-day check
-uses the shared Gregorian date helpers, so a stale prior-day readiness score is
-never displayed as today's score. App Group capability/profile setup and
-home-screen/Smart Stack rendering remain device-only verification gates.
+and an account change remove a different owner's snapshot synchronously; a
+same-account bootstrap keeps the last valid glance visible until its successful
+refresh publishes the new epoch. The snapshot's current-day check uses the
+shared Foundation-only `ReadinessWidgetTimelinePolicy` helper, so a stale
+prior-day readiness score is never displayed as today's score. The Codable
+contract, store, date boundary, ownership policy, and semantic tokens live in
+`sendlog-health-core` so the app and extension share one tested source without
+pulling HealthKit or Supabase into the widget process. App Group capability and
+profile availability are signing/portal/device concerns: if the suite is not
+available, publication is a no-op and the widget remains an honest no-data
+surface; unsigned local builds cannot prove that portal configuration.
 
 The generated project also has a `SendLogWatch Watch App` watchOS target. It
 reuses the existing companion sources from `ios/App/SendLogWatch Watch App`,
