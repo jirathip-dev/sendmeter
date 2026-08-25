@@ -637,7 +637,8 @@ public final class AppModel {
             self.repository = SendmeterRepository(
                 transport: PostgRESTClient(
                     authClient: authRef.client.auth,
-                    sessionProvider: { try await authRef.ensureFreshSession() }
+                    sessionProvider: { try await authRef.ensureFreshSession() },
+                    serverClock: authRef.serverClock
                 )
             )
         }
@@ -1574,7 +1575,7 @@ public final class AppModel {
     private func handleAuthEvent(_ event: AuthChangeEvent, session: AuthSession?) async {
         switch event {
         case .initialSession, .signedIn, .tokenRefreshed, .userUpdated, .mfaChallengeVerified:
-            guard let session else {
+            guard let incomingSession = session else {
                 await teardownGuidedProtocolBeforeAuthRevocation()
                 watch.relaySession(nil)
                 authSession = nil
@@ -1582,6 +1583,24 @@ public final class AppModel {
                 resetAccountState()
                 bootState = .signedOut
                 await tearDownRealtime()
+                return
+            }
+            let nativeEvent: NativeAuthEvent
+            switch event {
+            case .initialSession: nativeEvent = .initialSession
+            case .signedIn: nativeEvent = .signedIn
+            case .tokenRefreshed: nativeEvent = .tokenRefreshed
+            case .userUpdated, .mfaChallengeVerified: nativeEvent = .userUpdated
+            default: nativeEvent = .userUpdated
+            }
+            let session: AuthSession
+            do {
+                session = try await auth.prepareIncomingSession(
+                    incomingSession,
+                    event: nativeEvent
+                )
+            } catch {
+                await handleAuthSessionFailure(error)
                 return
             }
             // #679: capture the transition at the real authStateChanges
@@ -1648,29 +1667,43 @@ public final class AppModel {
                 }
             }
         case .passwordRecovery:
+            let preparedSession: AuthSession?
+            if let session {
+                do {
+                    preparedSession = try await auth.prepareIncomingSession(
+                        session,
+                        event: .passwordRecovery
+                    )
+                } catch {
+                    await handleAuthSessionFailure(error)
+                    return
+                }
+            } else {
+                preparedSession = nil
+            }
             let currentRecoveryUserID = authSession?.user.id
-            let nextRecoveryUserID = session?.user.id
+            let nextRecoveryUserID = preparedSession?.user.id
             let accountChanged = currentRecoveryUserID != nextRecoveryUserID
-            if accountChanged || session == nil {
+            if accountChanged || preparedSession == nil {
                 await teardownGuidedProtocolBeforeAuthRevocation()
             }
-            authSession = session
+            authSession = preparedSession
             passwordRecovery = true
-            bootState = session == nil ? .signedOut : .signedIn
-            if accountChanged || session == nil {
+            bootState = preparedSession == nil ? .signedOut : .signedIn
+            if accountChanged || preparedSession == nil {
                 // Password-recovery callbacks can carry a different session
                 // (or nil) without a preceding signedIn/signedOut event.
                 // Treat that callback as the same account boundary: advance
                 // the epoch, clear visible state, scope the watch, and tear
                 // down the old realtime channel before any recovery UI work.
-                watch.relaySession(session)
+                watch.relaySession(preparedSession)
                 didBootstrapUserID = nil
                 resetAccountState()
-                if let session {
-                    restoreHealthSyncState(for: session.user.id)
+                if let preparedSession {
+                    restoreHealthSyncState(for: preparedSession.user.id)
                 }
                 await tearDownRealtime()
-            } else if session != nil {
+            } else if preparedSession != nil {
                 // Some password-recovery flows deliver the replacement token
                 // as `.passwordRecovery` without a second `.signedIn` event.
                 // The same-account token is still a recovery boundary.
@@ -1690,6 +1723,28 @@ public final class AppModel {
             bootState = .signedOut
             await tearDownRealtime()
         }
+    }
+
+    /// Auth self-healing is a normal signed-out boundary: clear the visible
+    /// model and advance the account epoch, but preserve the exact account's
+    /// valid cache/queue for a later fresh sign-in. The AuthService has already
+    /// removed a poisoned SDK session locally before this helper is reached.
+    private func handleAuthSessionFailure(_ error: Error) async {
+        // The local sign-out emits `.signedOut` as well. Whichever callback
+        // wins the race owns the epoch transition; the other only re-surfaces
+        // the fixed friendly message and must not advance it twice.
+        if authSession == nil, bootState == .signedOut {
+            surface(error)
+            return
+        }
+        await teardownGuidedProtocolBeforeAuthRevocation()
+        watch.relaySession(nil)
+        authSession = nil
+        didBootstrapUserID = nil
+        resetAccountState()
+        bootState = .signedOut
+        await tearDownRealtime()
+        surface(error)
     }
 
     private func relayValidSessionToWatch(guaranteed: Bool) async {
@@ -1717,6 +1772,10 @@ public final class AppModel {
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
+            if error is AuthRecoveryError {
+                await handleAuthSessionFailure(error)
+                return
+            }
             watch.relaySession(nil, guaranteed: guaranteed)
         }
     }
@@ -9528,5 +9587,14 @@ public final class AppModel {
 
     private func surface(_ error: Error) {
         errorMessage = UserFacingError.message(for: error)
+        // A rejected bearer can surface as a PostgREST 401 before GoTrue's
+        // refresh path gets a chance to report it. Start the same exact-
+        // session recovery asynchronously; the visible copy is already fixed
+        // above, and the current-session check inside AuthService prevents an
+        // old request from signing out a newer account.
+        guard let postgRESTError = error as? PostgRESTError else { return }
+        Task { @MainActor [weak self] in
+            await self?.auth.recoverFromAuthFailure(postgRESTError)
+        }
     }
 }

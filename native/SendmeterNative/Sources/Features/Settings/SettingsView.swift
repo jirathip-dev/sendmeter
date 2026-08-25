@@ -740,12 +740,19 @@ struct SettingsView: View {
             Text("\(item.kind) · \(item.rejection.at.formatted(date: .abbreviated, time: .shortened))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if let code = item.rejection.code {
+            if item.rejection.kind != .auth, let code = item.rejection.code {
                 LabeledContent("Server code", value: code)
                     .font(.caption)
             }
             if !item.rejection.detail.isEmpty {
-                Text(item.rejection.detail)
+                Text(
+                    item.rejection.kind == .auth
+                        ? UserFacingError.message(
+                            forAuthDiagnosticCode: item.rejection.code,
+                            detail: item.rejection.detail
+                        )
+                        : item.rejection.detail
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -773,7 +780,14 @@ struct SettingsView: View {
             )
             .font(.caption)
             if let lastError = item.lastError {
-                Text(lastError)
+                Text(
+                    item.rejectionClass == .auth
+                        ? UserFacingError.message(
+                            forAuthDiagnosticCode: item.lastFailureCode,
+                            detail: lastError
+                        )
+                        : lastError
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

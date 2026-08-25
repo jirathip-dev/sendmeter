@@ -9,6 +9,7 @@ public enum FriendlyErrorClass: Equatable, Sendable {
     case offline
     case timeout
     case authExpired
+    case authClockSkew
     case authRejected
     case authEmailNotConfirmed
     case accountAlreadyExists
@@ -54,6 +55,8 @@ public enum UserFacingError {
             return "Sendmeter took too long to respond. Check your connection and try again."
         case .authExpired:
             return "Your session has expired. Sign in again, then try again."
+        case .authClockSkew:
+            return "Your iPhone’s date and time may be wrong. Turn on Set Automatically in Settings → General → Date & Time, then try again."
         case .authRejected:
             return "That email and password combination wasn\u{2019}t recognised. Try again, or use a magic link."
         case .authEmailNotConfirmed:
@@ -181,6 +184,10 @@ public enum UserFacingError {
         if lowercased.contains("timed out") || lowercased.contains("timeout") {
             return message(for: .timeout)
         }
+        if lowercased.contains("jwt issued at future")
+            || (lowercased.contains("future") && lowercased.contains("iat")) {
+            return message(for: .authExpired)
+        }
         return message(
             for: classification(for: BackendFailureReason(errorDescription: detail))
         )
@@ -192,10 +199,28 @@ public enum UserFacingError {
         message(for: friendlyErrorClass(forAuthErrorCode: code))
     }
 
+    /// Auth diagnostics may be rendered in the opt-in support surface, but a
+    /// GoTrue code/message is still not useful product copy. Keep the raw
+    /// value available to classifiers only and return the same fixed class
+    /// used by the normal auth banner.
+    public static func message(
+        forAuthDiagnosticCode code: String?,
+        detail: String?
+    ) -> String {
+        let classification = friendlyErrorClass(
+            forAuthErrorCode: code ?? "",
+            message: detail
+        )
+        return message(for: classification == .authFailed ? .authExpired : classification)
+    }
+
     /// The fixed class for a server-side auth error code. Typed app-layer
     /// conformances call this so the code never reaches user copy.
-    public static func friendlyErrorClass(forAuthErrorCode code: String) -> FriendlyErrorClass {
-        classification(forAuthErrorCode: code)
+    public static func friendlyErrorClass(
+        forAuthErrorCode code: String,
+        message: String? = nil
+    ) -> FriendlyErrorClass {
+        classification(forAuthErrorCode: code, message: message)
     }
 
     private static func classification(
@@ -218,9 +243,34 @@ public enum UserFacingError {
     }
 
     private static func classification(
-        forAuthErrorCode code: String
+        forAuthErrorCode code: String,
+        message: String? = nil
     ) -> FriendlyErrorClass {
-        switch code {
+        let normalizedCode = code
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+        let normalizedMessage = (message ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let futureJWT = normalizedMessage.contains("jwt issued at future")
+            || (normalizedMessage.contains("future")
+                && (normalizedMessage.contains("iat")
+                    || (normalizedMessage.contains("jwt")
+                        && (normalizedMessage.contains("issued")
+                            || normalizedMessage.contains("claim")))))
+        if futureJWT {
+            // The message is a server validation diagnosis, not a clock
+            // measurement. Only the trusted server-clock policy may upgrade
+            // it to the Date & Time nudge; otherwise ask for a fresh sign-in.
+            return .authExpired
+        }
+        if normalizedMessage.contains("jwt expired")
+            || normalizedMessage.contains("session expired")
+            || normalizedMessage.contains("refresh token") {
+            return .authExpired
+        }
+        switch normalizedCode {
         case "invalid_credentials", "email_address_not_authorized", "user_banned", "captcha_failed":
             return .authRejected
         case "email_not_confirmed", "provider_email_needs_verification":
@@ -235,6 +285,7 @@ public enum UserFacingError {
             return .timeout
         case "session_expired", "session_not_found", "refresh_token_not_found",
              "refresh_token_already_used", "bad_jwt", "invalid_jwt",
+             "invalid_claim", "future_iat", "jwt_issued_at_future",
              "reauthentication_not_valid", "otp_expired", "flow_state_expired",
              "webauthn_challenge_not_found", "webauthn_challenge_expired":
             return .authExpired

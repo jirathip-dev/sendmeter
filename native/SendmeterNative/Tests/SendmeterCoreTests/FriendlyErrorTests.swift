@@ -18,6 +18,7 @@ final class FriendlyErrorTests: XCTestCase {
             (.offline, "Couldn\u{2019}t reach Sendmeter. Check your Internet connection and try again."),
             (.timeout, "Sendmeter took too long to respond. Check your connection and try again."),
             (.authExpired, "Your session has expired. Sign in again, then try again."),
+            (.authClockSkew, "Your iPhone\u{2019}s date and time may be wrong. Turn on Set Automatically in Settings \u{2192} General \u{2192} Date & Time, then try again."),
             (.authRejected, "That email and password combination wasn\u{2019}t recognised. Try again, or use a magic link."),
             (.authEmailNotConfirmed, "Check your email to confirm your account, then try again."),
             (.accountAlreadyExists, "An account already exists for that email. Try signing in instead."),
@@ -104,6 +105,20 @@ final class FriendlyErrorTests: XCTestCase {
         XCTAssertEqual(
             UserFacingError.message(forAuthErrorCode: "session_expired"),
             UserFacingError.message(for: .authExpired)
+        )
+        for code in ["invalid_claim", "bad_jwt", "invalid_jwt", "refresh_token_already_used"] {
+            XCTAssertEqual(
+                UserFacingError.message(forAuthErrorCode: code),
+                UserFacingError.message(for: .authExpired),
+                code
+            )
+        }
+        XCTAssertEqual(
+            UserFacingError.friendlyErrorClass(
+                forAuthErrorCode: "invalid_claim",
+                message: "JWT issued at future"
+            ),
+            .authExpired
         )
         XCTAssertEqual(
             UserFacingError.message(forAuthErrorCode: "webauthn_credential_exists"),

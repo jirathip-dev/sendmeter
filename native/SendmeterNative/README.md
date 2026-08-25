@@ -142,6 +142,18 @@ deletion is different: its epoch barrier is installed before the first await,
 and the exact account's queue/cache is purged only after the server deletion
 has succeeded. Auth or network failure parks data instead of destroying it.
 
+Native auth restoration is guarded by a durable, non-secret install/session
+marker beside the Supabase SDK session. A session carried across a partial
+update or local auth-state reset is dropped locally before it can reach the
+UI or the watch; JWT verification, expired-session, refresh-reuse, and future-
+`iat` failures clear the poisoned local session once and return to fresh sign-in
+with fixed friendly copy. Successful PostgREST responses provide the last
+known-good HTTP `Date` evidence for a defense-in-depth clock check. The check
+uses monotonic time within the current process and remains inconclusive when
+there is no trustworthy server sample, so a device wall clock is never treated
+as authoritative; a detected device lead directs the user to Settings →
+General → Date & Time → Set Automatically.
+
 Watch completion summaries, live beats, and account-owned queue telemetry
 require an owner stamp. Pre-stamp/unstamped legacy payloads remain in a
 separately bounded diagnostic bucket (`watch_unscoped_sync`) and are visible as
