@@ -110,12 +110,20 @@ public enum UserFacingError {
     /// Foundation/backend keyword classification. Unknown errors always get
     /// the fixed honest generic copy and never the original description.
     public static func message(for error: Error) -> String {
+        message(for: classification(for: error))
+    }
+
+    /// Returns the fixed class used by every normal user-facing surface. Raw
+    /// detail may be retained for the opt-in support ring, but it never needs
+    /// to be converted to copy by callers that are deciding whether an error
+    /// is auth-related or merely offline.
+    public static func classification(for error: Error) -> FriendlyErrorClass {
         if let typed = error as? FriendlyErrorClassifying {
-            return message(for: typed.friendlyErrorClass)
+            return typed.friendlyErrorClass
         }
         if let urlError = error as? URLError {
             if let classification = classification(for: urlError.code) {
-                return message(for: classification)
+                return classification
             }
         } else {
             let nsError = error as NSError
@@ -123,14 +131,14 @@ public enum UserFacingError {
                let classification = classification(
                    for: URLError.Code(rawValue: nsError.code)
                ) {
-                return message(for: classification)
+                return classification
             }
             if nsError.domain == NSCocoaErrorDomain,
                nsError.code == CocoaError.Code.fileWriteOutOfSpace.rawValue {
-                return message(for: .storageFull)
+                return .storageFull
             }
         }
-        return message(for: Self.classification(for: BackendFailureReason(error: error)))
+        return Self.classification(for: BackendFailureReason(error: error))
     }
 
     /// Maps a quarantined rejection using its immutable classification, so
@@ -181,11 +189,35 @@ public enum UserFacingError {
     /// the text. Unknown/technical details never leak through.
     public static func message(forDiagnosticDetail detail: String) -> String {
         let lowercased = detail.lowercased()
+        if lowercased.hasPrefix("auth ") {
+            let payload = lowercased.dropFirst("auth ".count)
+            let fields = payload.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            let code = fields.first.map(String.init) ?? ""
+            let detailMessage = fields.count > 1 ? String(fields[1]).trimmingCharacters(in: .whitespaces) : nil
+            return Self.message(
+                for: friendlyErrorClass(
+                    forAuthErrorCode: code,
+                    message: detailMessage
+                )
+            )
+        }
+        if lowercased.contains("postgrest status=401") {
+            return Self.message(for: .authExpired)
+        }
         if lowercased.contains("timed out") || lowercased.contains("timeout") {
             return message(for: .timeout)
         }
         if lowercased.contains("jwt issued at future")
             || (lowercased.contains("future") && lowercased.contains("iat")) {
+            return message(for: .authExpired)
+        }
+        let authCodeMarkers = [
+            "invalid_claim", "bad_jwt", "invalid_jwt", "refresh_token_already_used",
+            "refresh_token_not_found", "session_expired", "session_not_found"
+        ]
+        if authCodeMarkers.contains(where: lowercased.contains)
+            || lowercased.contains("jwt expired")
+            || lowercased.contains("unauthorized") {
             return message(for: .authExpired)
         }
         return message(

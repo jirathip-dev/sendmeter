@@ -2,6 +2,14 @@ import Foundation
 import XCTest
 @testable import SendmeterCore
 
+private final class TestContinuousClock: AuthMonotonicClock, @unchecked Sendable {
+    var now: TimeInterval
+
+    init(now: TimeInterval) {
+        self.now = now
+    }
+}
+
 final class AuthRecoveryTests: XCTestCase {
     private var defaults: UserDefaults!
     private var keyPrefix: String!
@@ -161,7 +169,7 @@ final class AuthRecoveryTests: XCTestCase {
             message: nil,
             clockAssessment: .deviceClockAhead
         )
-        XCTAssertEqual(clock.action, .clearPoisonedSession)
+        XCTAssertEqual(clock.action, .none)
         XCTAssertEqual(clock.friendlyErrorClass, .authClockSkew)
         XCTAssertTrue(UserFacingError.message(for: .authClockSkew).contains("Set Automatically"))
 
@@ -223,19 +231,180 @@ final class AuthClockSkewTests: XCTestCase {
         let prefix = "sendmeter.tests.clock.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: prefix)!
         defer { defaults.removePersistentDomain(forName: prefix) }
-        let first = ServerClockStore(defaults: defaults, keyPrefix: prefix)
-        first.record(serverDate: serverDate, observedAtUptime: 10)
+        let clock = TestContinuousClock(now: 10)
+        let first = ServerClockStore(defaults: defaults, keyPrefix: prefix, clock: clock)
+        first.record(serverDate: serverDate)
 
         XCTAssertEqual(
-            first.trustedServerDate(nowUptime: 40),
+            first.trustedServerDate(nowContinuousTime: 40),
             serverDate.addingTimeInterval(30)
         )
-        let second = ServerClockStore(defaults: defaults, keyPrefix: prefix)
-        XCTAssertNil(second.trustedServerDate(nowUptime: 40))
+        // Separate transport instances in one process must read the same
+        // last-known-good anchor; the process boot id still rejects a stale
+        // anchor after a real relaunch.
+        let second = ServerClockStore(defaults: defaults, keyPrefix: prefix, clock: clock)
+        XCTAssertEqual(
+            second.trustedServerDate(nowContinuousTime: 40),
+            serverDate.addingTimeInterval(30)
+        )
+    }
+
+    func testContinuousClockCountsSuspensionWhileWallClockMovesWithIt() {
+        let prefix = "sendmeter.tests.clock.sleep.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: prefix)!
+        defer { defaults.removePersistentDomain(forName: prefix) }
+        let clock = TestContinuousClock(now: 10)
+        let store = ServerClockStore(defaults: defaults, keyPrefix: prefix, clock: clock)
+        store.record(serverDate: serverDate)
+
+        // Both clocks advance across the simulated sleep. With an
+        // awake-only uptime clock, the server anchor would remain at +10 and
+        // falsely diagnose this correct device clock as being 10 minutes fast.
+        clock.now = 610
+        XCTAssertEqual(
+            store.assessment(
+                deviceDate: serverDate.addingTimeInterval(600),
+                tokenIssuedAt: nil
+            ),
+            .healthy
+        )
+    }
+
+    func testStaleServerAnchorBecomesInsufficientEvidence() {
+        let prefix = "sendmeter.tests.clock.stale.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: prefix)!
+        defer { defaults.removePersistentDomain(forName: prefix) }
+        let store = ServerClockStore(defaults: defaults, keyPrefix: prefix)
+        store.record(serverDate: serverDate, observedAtContinuousTime: 10)
+
+        XCTAssertNil(
+            store.trustedServerDate(
+                nowContinuousTime: 10 + AuthClockSkewPolicy.defaultEvidenceMaxAge + 1
+            )
+        )
     }
 
     func testHTTPDateParserAcceptsRFCDate() {
         let date = ServerClockStore.date(fromHTTPDate: "Thu, 01 Jan 1970 00:00:00 GMT")
         XCTAssertEqual(date, Date(timeIntervalSince1970: 0))
+    }
+
+    func testExistingKeychainSessionIsGrandfatheredOnlyOnFirstGuardLaunch() {
+        let prefix = "sendmeter.tests.guard.grandfather.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: prefix)!
+        defer { defaults.removePersistentDomain(forName: prefix) }
+        let store = AuthSessionGuardStore(defaults: defaults, keyPrefix: prefix)
+        let descriptor = AuthSessionDescriptor(userID: "existing-user", sessionID: "existing")
+        let firstLaunch = store.beginLaunch(
+            hasStoredSession: true,
+            storedSessionDescriptor: descriptor
+        )
+
+        XCTAssertFalse(firstLaunch.restoredSessionNeedsFreshSignIn)
+        XCTAssertEqual(
+            AuthSessionGuardPolicy.decision(
+                event: .initialSession,
+                descriptor: descriptor,
+                hasInstallationMarker: firstLaunch.hadInstallationMarker,
+                acceptedSessionKey: store.acceptedSessionKey(),
+                rejectedSessionKeys: store.rejectedSessionKeys(),
+                grandfatheredSessionKey: firstLaunch.grandfatheredSessionKey
+            ),
+            .accept
+        )
+
+        let relaunch = store.beginLaunch(hasStoredSession: true)
+        XCTAssertNil(relaunch.grandfatheredSessionKey)
+        XCTAssertEqual(
+            AuthSessionGuardPolicy.decision(
+                event: .initialSession,
+                descriptor: descriptor,
+                hasInstallationMarker: relaunch.hadInstallationMarker,
+                acceptedSessionKey: store.acceptedSessionKey(),
+                rejectedSessionKeys: store.rejectedSessionKeys()
+            ),
+            .accept
+        )
+    }
+
+    func testExactSessionRecoveryRejectsReplacementButRetriesSameSession() {
+        let expected = AuthSessionDescriptor(userID: "user-1", sessionID: "old")
+        let replacement = AuthSessionDescriptor(userID: "user-1", sessionID: "new")
+
+        XCTAssertTrue(
+            AuthSessionRecoveryPolicy.shouldAttemptLocalRemoval(
+                expected: expected,
+                current: expected
+            )
+        )
+        XCTAssertFalse(
+            AuthSessionRecoveryPolicy.shouldAttemptLocalRemoval(
+                expected: expected,
+                current: replacement
+            )
+        )
+        XCTAssertFalse(
+            AuthRecoveryEpochPolicy.shouldBegin(
+                hasActiveSession: true,
+                recoveryInProgress: true
+            )
+        )
+        XCTAssertTrue(
+            AuthRecoveryEpochPolicy.shouldBegin(
+                hasActiveSession: true,
+                recoveryInProgress: false
+            )
+        )
+        XCTAssertTrue(
+            AuthRecoveryEpochPolicy.shouldResetForSignedOut(hasActiveSession: true)
+        )
+        XCTAssertFalse(
+            AuthRecoveryEpochPolicy.shouldResetForSignedOut(hasActiveSession: false)
+        )
+    }
+
+    func testRejectedMarkerIsDedupeOnlyAndDoesNotBlockASecondRemovalAttempt() {
+        let prefix = "sendmeter.tests.guard.retry.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: prefix)!
+        defer { defaults.removePersistentDomain(forName: prefix) }
+        let store = AuthSessionGuardStore(defaults: defaults, keyPrefix: prefix)
+        let descriptor = AuthSessionDescriptor(userID: "user-1", sessionID: "poison")
+
+        XCTAssertTrue(store.markRejected(descriptor))
+        XCTAssertFalse(store.markRejected(descriptor))
+        XCTAssertTrue(
+            AuthSessionRecoveryPolicy.shouldAttemptLocalRemoval(
+                expected: descriptor,
+                current: descriptor
+            ),
+            "A repeated durable marker must not suppress local Keychain removal retry."
+        )
+    }
+
+    func testBareUnauthorizedStatusIsRecoverableButClockAdviceIsNotDestructive() {
+        let bare401 = AuthRecoveryPolicy.decision(
+            errorCode: nil,
+            message: "Unauthorized",
+            statusCode: 401
+        )
+        XCTAssertEqual(bare401.action, .clearPoisonedSession)
+        XCTAssertEqual(bare401.friendlyErrorClass, .authExpired)
+
+        let clock = AuthRecoveryPolicy.decision(
+            errorCode: nil,
+            message: nil,
+            clockAssessment: .deviceClockAhead
+        )
+        XCTAssertEqual(clock.action, .none)
+        XCTAssertEqual(clock.friendlyErrorClass, .authClockSkew)
+
+        let rejected = AuthRecoveryPolicy.decision(
+            errorCode: nil,
+            message: "Unauthorized",
+            clockAssessment: .deviceClockAhead,
+            statusCode: 401
+        )
+        XCTAssertEqual(rejected.action, .clearPoisonedSession)
+        XCTAssertEqual(rejected.friendlyErrorClass, .authExpired)
     }
 }

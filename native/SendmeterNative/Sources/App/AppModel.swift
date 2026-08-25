@@ -198,6 +198,10 @@ private struct CacheEntityIdentity: Hashable {
 public final class AppModel {
     public private(set) var bootState: AppBootState = .loading
     public private(set) var authSession: AuthSession?
+    /// Local auth self-heal and the SDK's resulting `.signedOut` event can
+    /// cross an await in either order. This gate makes the account boundary
+    /// idempotent: one failure advances `accountEpoch` at most once.
+    private var authRecoveryInProgress = false
     public private(set) var sessions: [SendmeterCore.Session] = []
     /// True once the current account has crossed an authoritative session
     /// boundary: either a persisted sync cursor/empty-result marker was
@@ -1712,14 +1716,28 @@ public final class AppModel {
         case .signedOut, .userDeleted:
             await teardownGuidedProtocolBeforeAuthRevocation()
             // #679: sign-out boundary.
-            auth.recordAuthEvent(
-                .signOut,
-                detail: event == .signedOut ? "Signed out" : "Account deleted"
-            )
+            let hadActiveAccount = authSession != nil || bootState != .signedOut
+            // A local recovery can clear the model before the SDK delivers its
+            // buffered `.signedOut` callback. Do not emit a second boundary
+            // diagnostic for that callback; ordinary account deletion remains
+            // observable even if the model was already empty.
+            if AuthRecoveryEpochPolicy.shouldRecordBoundaryDiagnostic(
+                isAccountDeletion: event == .userDeleted,
+                hasActiveSession: hadActiveAccount
+            ) {
+                auth.recordAuthEvent(
+                    .signOut,
+                    detail: event == .signedOut ? "Signed out" : "Account deleted"
+                )
+            }
             watch.relaySession(nil)
             authSession = nil
             didBootstrapUserID = nil
-            resetAccountState()
+            if AuthRecoveryEpochPolicy.shouldResetForSignedOut(
+                hasActiveSession: hadActiveAccount
+            ) {
+                resetAccountState()
+            }
             bootState = .signedOut
             await tearDownRealtime()
         }
@@ -1730,14 +1748,27 @@ public final class AppModel {
     /// valid cache/queue for a later fresh sign-in. The AuthService has already
     /// removed a poisoned SDK session locally before this helper is reached.
     private func handleAuthSessionFailure(_ error: Error) async {
-        // The local sign-out emits `.signedOut` as well. Whichever callback
-        // wins the race owns the epoch transition; the other only re-surfaces
-        // the fixed friendly message and must not advance it twice.
-        if authSession == nil, bootState == .signedOut {
+        let hasActiveSession = authSession != nil || bootState != .signedOut
+        guard AuthRecoveryEpochPolicy.shouldBegin(
+            hasActiveSession: hasActiveSession,
+            recoveryInProgress: authRecoveryInProgress
+        ) else {
             surface(error)
             return
         }
+        authRecoveryInProgress = true
+        defer { authRecoveryInProgress = false }
         await teardownGuidedProtocolBeforeAuthRevocation()
+        // The local sign-out may have emitted `.signedOut` while the teardown
+        // above was suspended. Re-check the live actor state before applying
+        // the boundary; captured pre-await state is not a guard.
+        guard AuthRecoveryEpochPolicy.shouldBegin(
+            hasActiveSession: authSession != nil || bootState != .signedOut,
+            recoveryInProgress: false
+        ) else {
+            surface(error)
+            return
+        }
         watch.relaySession(nil)
         authSession = nil
         didBootstrapUserID = nil

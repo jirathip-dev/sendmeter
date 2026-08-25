@@ -157,7 +157,19 @@ final class FriendlyErrorTests: XCTestCase {
 
     func testDiagnosticDetailUsesFixedCopy() {
         XCTAssertEqual(
+            UserFacingError.message(forDiagnosticDetail: "Auth invalid_credentials: Invalid login credentials"),
+            UserFacingError.message(for: .authRejected)
+        )
+        XCTAssertEqual(
+            UserFacingError.message(forDiagnosticDetail: "Auth email_exists: User already registered"),
+            UserFacingError.message(for: .accountAlreadyExists)
+        )
+        XCTAssertEqual(
             UserFacingError.message(forDiagnosticDetail: "Session refresh failed: JWT expired"),
+            UserFacingError.message(for: .authExpired)
+        )
+        XCTAssertEqual(
+            UserFacingError.message(forDiagnosticDetail: "PostgREST status=401: Unauthorized"),
             UserFacingError.message(for: .authExpired)
         )
         XCTAssertEqual(

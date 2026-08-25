@@ -131,6 +131,25 @@ targets:
             # still a #768 shipping blocker.
             SWIFT_COMPILATION_MODE: wholemodule
             SWIFT_OPTIMIZATION_LEVEL: -O
+  # #808: these tests compile against the application module, not only the
+  # SwiftPM Core policy target. They exercise the PostgREST/date/session
+  # context wiring that swift test intentionally cannot see.
+  SendmeterNativeTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/SendmeterNativeTests
+    dependencies:
+      - target: SendmeterNative
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native.tests
+        SWIFT_VERSION: 5.0
+        IPHONEOS_DEPLOYMENT_TARGET: 17.0
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Sendmeter.app/Sendmeter"
+        BUNDLE_LOADER: "$(TEST_HOST)"
   # #768: Reuse the existing Capacitor companion sources rather than creating
   # a second watch implementation. The native-only plist supplies the
   # per-configuration companion ID and version variables. XcodeGen's watchOS
@@ -295,6 +314,12 @@ schemes:
       targets:
         SendmeterNative: all
         SendmeterNativeWidgets: all
+    test:
+      config: Debug
+      targets:
+        - name: SendmeterNativeTests
+          parallelizable: false
+          randomExecutionOrder: false
     run:
       config: Debug
     archive:
