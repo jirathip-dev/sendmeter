@@ -98,6 +98,29 @@ heavier alternative from the audit and is intentionally **not** what ships
 here: while realtime already converges the watched tables with targeted
 refetches, a 60s bounded window is sufficient and far less invasive.
 
+### HealthKit morning refresh (#801)
+
+The phone reconciles the complete local HealthKit read window on each
+authorized health refresh: a date with at least one real Apple Health source
+value can create a missing `health_metrics` row, while an existing historical
+row is left untouched and today's readiness continues through the shared
+overwrite/freeze policies. The read is against the merged Apple Health store,
+so samples written there by third-party wearables are included.
+
+The first `.appear`, foreground, observer, or app-refresh signal during the
+morning claims one account-scoped window and persists its progress before the
+HealthKit read starts. Two follow-up reads become eligible at five and fifteen
+minutes from the start, but they run only when a later foreground, appearance,
+observer, or `BGAppRefreshTask` event reaches the app; no detached timer keeps a
+background task alive. The app requests a best-effort background refresh for
+the next eligible pass, re-checks the persisted due time on entry, and shows an
+automatic confirmation only when the complete window finishes. iOS does not
+guarantee a precise wall-clock wake for HealthKit delivery or
+`BGAppRefreshTask`, so the Settings/Dashboard `Last synced` value remains the
+truthful fallback. HealthKit delivery timing, notification/toast presentation
+while suspended, and third-party wearable latency still require a
+physical-device/TestFlight check.
+
 ## Promotion gates
 
 A native target should replace the Capacitor phone target only after all of the

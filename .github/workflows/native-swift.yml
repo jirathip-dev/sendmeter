@@ -16,6 +16,9 @@ on:
       - "scripts/validate-anti-slop-cold.sh"
       - "scripts/validate-anti-slop.sh"
       - "scripts/assert-native-watch-project.rb"
+      - "scripts/check-coverage-threshold.sh"
+      - "scripts/swift-coverage.sh"
+      - "scripts/test-coverage-threshold.sh"
       - ".github/workflows/native-swift.yml"
   push:
     branches:
@@ -36,6 +39,9 @@ on:
       - "scripts/validate-anti-slop-cold.sh"
       - "scripts/validate-anti-slop.sh"
       - "scripts/assert-native-watch-project.rb"
+      - "scripts/check-coverage-threshold.sh"
+      - "scripts/swift-coverage.sh"
+      - "scripts/test-coverage-threshold.sh"
       - ".github/workflows/native-swift.yml"
 
 concurrency:
@@ -83,10 +89,20 @@ jobs:
               exit "$lint_status"
               ;;
           esac
-      - name: Run pure Swift tests
-        run: swift test --package-path native/SendmeterNative
-      - name: Run health-core pure Swift tests
-        run: swift test --package-path native-plugins/sendlog-health-core
+      - name: Verify coverage threshold helper
+        run: bash scripts/test-coverage-threshold.sh
+
+      - name: Run pure Swift coverage gates
+        run: bash scripts/swift-coverage.sh
+
+      - name: Upload Swift coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: swift-coverage
+          path: coverage/swift
+          if-no-files-found: warn
+          retention-days: 14
 
   ios-build:
     name: iOS Simulator build

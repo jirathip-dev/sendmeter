@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+coverage/
+*.profraw
+*.profdata
 
 # Editor directories and files
 .vscode/*

@@ -79,5 +79,50 @@ export default defineConfig({
     // exposed to the same starvation, just with fewer chances to trip
     // (hooks here are trivial). Kept consistent with testTimeout.
     hookTimeout: 15_000,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "text-summary", "json", "html", "lcov"],
+      reportsDirectory: "coverage",
+      // This gate covers the dependency-free logic seam, not React components,
+      // hooks, Supabase repositories, or platform/build adapters. The latter
+      // need browser/device integration tests and would make this host-only
+      // gate measure wiring rather than the tested calculations and policies.
+      include: ["src/lib/**/*.ts"],
+      exclude: [
+        "**/*.test.ts",
+        "src/lib/repo/**",
+        "src/lib/supabase.ts",
+        "src/lib/appVersion.ts",
+        "src/lib/appleAuth.ts",
+        "src/lib/authEventStore.ts",
+        "src/lib/authRedirect.ts",
+        "src/lib/deepLinks.ts",
+        "src/lib/devAuth.ts",
+        "src/lib/forceConnection.ts",
+        "src/lib/forceLatency.ts",
+        "src/lib/forcePresetStorage.ts",
+        "src/lib/foregroundSignals.ts",
+        "src/lib/healthSync.ts",
+        "src/lib/liveActivity.ts",
+        "src/lib/monitoring.ts",
+        "src/lib/passkeys.ts",
+        "src/lib/pendingRecording.ts",
+        "src/lib/recordingDb.ts",
+        "src/lib/signOut.ts",
+        "src/lib/weather.ts",
+        "src/lib/watchAuthRelay.ts",
+        "src/lib/dynamometer/contract.ts",
+        "src/lib/dynamometer/index.ts",
+        "src/lib/dynamometer/tindeq.ts",
+      ],
+      thresholds: {
+        lines: 95,
+        functions: 93,
+        // Branches/statements remain visible in the report but are not floors
+        // yet; this issue establishes only the requested line/function gate.
+        branches: 0,
+        statements: 0,
+      },
+    },
   },
 });

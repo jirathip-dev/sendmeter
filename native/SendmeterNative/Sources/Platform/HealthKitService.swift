@@ -3,6 +3,93 @@ import HealthKit
 import SendLogHealthCore
 import SendmeterCore
 
+/// Owns one HealthKit query and its checked continuation. HealthKit invokes
+/// result handlers independently of Swift task cancellation, so cancellation
+/// must stop the query and resume the continuation itself. The lock makes the
+/// cancellation/result race one-shot: exactly one path takes ownership of the
+/// continuation and query, and a late HealthKit callback is ignored.
+private final class HealthKitQueryCancellation<Value>: @unchecked Sendable {
+    private let store: HKHealthStore
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var query: HKQuery?
+    private var finished = false
+
+    init(store: HKHealthStore) {
+        self.store = store
+    }
+
+    func install(
+        _ continuation: CheckedContinuation<Value, Error>
+    ) -> Bool {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            continuation.resume(throwing: CancellationError())
+            return false
+        }
+        self.continuation = continuation
+        lock.unlock()
+        return true
+    }
+
+    func install(_ query: HKQuery) -> Bool {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            store.stop(query)
+            return false
+        }
+        self.query = query
+        lock.unlock()
+        return true
+    }
+
+    var isFinished: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return finished
+    }
+
+    func finish(_ result: Result<Value, Error>) {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            return
+        }
+        finished = true
+        let continuation = self.continuation
+        let query = self.query
+        self.continuation = nil
+        self.query = nil
+        lock.unlock()
+
+        if let query {
+            store.stop(query)
+        }
+        continuation?.resume(with: result)
+    }
+
+    func cancel() {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            return
+        }
+        finished = true
+        let continuation = self.continuation
+        let query = self.query
+        self.continuation = nil
+        self.query = nil
+        lock.unlock()
+
+        if let query {
+            store.stop(query)
+        }
+        continuation?.resume(throwing: CancellationError())
+    }
+}
+
 @MainActor
 public final class HealthKitService: ObservableObject {
     @Published public private(set) var authorizationStatus: HKAuthorizationStatus = .notDetermined
@@ -10,25 +97,18 @@ public final class HealthKitService: ObservableObject {
     @Published public private(set) var lastError: String?
 
     /// Fired on the main actor when a background HealthKit observer query
-    /// detects new data for one of the four observed types. Wired by
+    /// detects new data for one of the observed types. Wired by
     /// `AppModel` to the same recompute path as foreground sync so a
     /// background wake recomputes readiness, upserts `health_metrics` and
     /// relays the result to the watch (parity with the shipped plugin, #629).
     public var onBackgroundUpdate: (@MainActor () async -> Void)?
 
     private let store: HKHealthStore
-    private let calendar: Calendar
     private var observersRegistered = false
     private var backgroundSetupRegistered = false
 
-    public init(
-        store: HKHealthStore = HKHealthStore(),
-        timeZone: TimeZone = .current
-    ) {
+    public init(store: HKHealthStore = HKHealthStore()) {
         self.store = store
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        self.calendar = calendar
     }
 
     public var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
@@ -47,6 +127,7 @@ public final class HealthKitService: ObservableObject {
                 }
             }
         }
+        try Task.checkCancellation()
         if let hrv = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN) {
             authorizationStatus = store.authorizationStatus(for: hrv)
         }
@@ -54,75 +135,176 @@ public final class HealthKitService: ObservableObject {
     }
 
     /// Idempotent per-process registration of background delivery + observer
-    /// queries for the four types in `HealthObserverTypes.observedIdentifiers`.
+    /// queries for the types in `HealthObserverTypes.observedIdentifiers`.
     /// Observer queries live only for the current process, so a cold launch —
     /// including a HealthKit background wake that relaunches the app — must
     /// re-register; `AppModel` calls this from launch and on foreground.
     public func ensureBackgroundObserversRegistered() async {
-        guard isAvailable, !backgroundSetupRegistered else { return }
+        guard isAvailable, !backgroundSetupRegistered, !Task.isCancelled else {
+            return
+        }
         backgroundSetupRegistered = true
         await enableBackgroundDelivery()
+        guard !Task.isCancelled else {
+            backgroundSetupRegistered = false
+            return
+        }
         registerBackgroundObservers()
     }
 
-    public func computeTodayMetric(acwr: Double?) async throws -> HealthMetric {
+    /// Reads the whole local HealthKit window and returns only dates with at
+    /// least one real source-backed value. HealthKit is the merged Apple Health
+    /// store, so samples written by third-party wearables are included by the
+    /// same queries; no source/application filter is applied here.
+    public func computeMetrics(
+        acwrByDate: [String: Double] = [:],
+        timeZone: TimeZone = .current
+    ) async throws -> [HealthMetric] {
+        try Task.checkCancellation()
         isSyncing = true
         lastError = nil
         defer { isSyncing = false }
+        let calendar = LocalDateSupport.calendar(timeZone: timeZone)
         do {
-            let now = Date()
-            let todayStart = calendar.startOfDay(for: now)
-            guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart),
-                  let baselineStart = calendar.date(byAdding: .day, value: -28, to: todayStart)
-            else {
+            let metrics = try await readMetrics(
+                now: Date(),
+                acwrByDate: acwrByDate,
+                calendar: calendar,
+                timeZone: timeZone
+            )
+            try Task.checkCancellation()
+            return metrics
+        } catch {
+            if !Task.isCancelled {
+                lastError = UserFacingError.message(for: error)
+            }
+            throw error
+        }
+    }
+
+    /// Compatibility wrapper for callers that only need today's value. The
+    /// reconciliation path uses `computeMetrics` so a no-source day can never
+    /// accidentally become an empty persisted row.
+    public func computeTodayMetric(acwr: Double?) async throws -> HealthMetric {
+        let passTimeZone = TimeZone.current
+        let today = LocalDateSupport.string(
+            from: Date(),
+            timeZone: passTimeZone
+        )
+        var acwrByDate: [String: Double] = [:]
+        if let acwr {
+            acwrByDate[today] = acwr
+        }
+        let metrics = try await computeMetrics(
+            acwrByDate: acwrByDate,
+            timeZone: passTimeZone
+        )
+        guard let metric = metrics.first(where: { $0.date == today }) else {
+            throw HealthKitError.noSourceData
+        }
+        return metric
+    }
+
+    private func readMetrics(
+        now: Date,
+        acwrByDate: [String: Double],
+        calendar: Calendar,
+        timeZone: TimeZone
+    ) async throws -> [HealthMetric] {
+        let todayStart = calendar.startOfDay(for: now)
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart),
+              let baselineStart = calendar.date(
+                  byAdding: .day,
+                  value: -HealthMetricReadWindow.queryLookbackDays,
+                  to: todayStart
+              )
+        else {
+            throw HealthKitError.dateCalculationFailed
+        }
+
+        async let hrvMap = dailyAverages(
+            identifier: .heartRateVariabilitySDNN,
+            unit: .secondUnit(with: .milli),
+            start: baselineStart,
+            end: tomorrow,
+            calendar: calendar
+        )
+        async let rhrMap = dailyAverages(
+            identifier: .restingHeartRate,
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            start: baselineStart,
+            end: tomorrow,
+            calendar: calendar
+        )
+        async let respMap = dailyAverages(
+            identifier: .respiratoryRate,
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            start: baselineStart,
+            end: tomorrow,
+            calendar: calendar
+        )
+        async let sleepMap = dailySleep(
+            start: baselineStart,
+            end: tomorrow,
+            calendar: calendar
+        )
+        async let bodyMassMap = dailyLatestQuantities(
+            identifier: .bodyMass,
+            unit: .gramUnit(with: .kilo),
+            start: baselineStart,
+            end: tomorrow,
+            calendar: calendar
+        )
+
+        let hrv = try await hrvMap
+        let rhr = try await rhrMap
+        let resp = try await respMap
+        let sleep = try await sleepMap
+        let bodyMass = try await bodyMassMap
+        let today = LocalDateSupport.string(from: now, timeZone: timeZone)
+        let sourceDates = Set(hrv.keys)
+            .union(rhr.keys)
+            .union(resp.keys)
+            .union(sleep.filter { $0.value.totalHours > 0 }.keys)
+            .union(bodyMass.keys)
+
+        var metrics: [HealthMetric] = []
+        metrics.reserveCapacity(HealthMetricReadWindow.candidateDays)
+        for offset in HealthMetricReadWindow.candidateOffsets {
+            guard let dateStart = calendar.date(
+                byAdding: .day,
+                value: -offset,
+                to: todayStart
+            ) else {
                 throw HealthKitError.dateCalculationFailed
             }
+            let date = LocalDateSupport.string(
+                from: dateStart,
+                timeZone: timeZone
+            )
+            guard sourceDates.contains(date) else { continue }
 
-            async let hrvMap = dailyAverages(
-                identifier: .heartRateVariabilitySDNN,
-                unit: .secondUnit(with: .milli),
-                start: baselineStart,
-                end: tomorrow
-            )
-            async let rhrMap = dailyAverages(
-                identifier: .restingHeartRate,
-                unit: HKUnit.count().unitDivided(by: .minute()),
-                start: baselineStart,
-                end: tomorrow
-            )
-            async let respMap = dailyAverages(
-                identifier: .respiratoryRate,
-                unit: HKUnit.count().unitDivided(by: .minute()),
-                start: baselineStart,
-                end: tomorrow
-            )
-            async let sleepMap = dailySleep(start: baselineStart, end: tomorrow)
-            async let bodyMass = latestQuantity(
-                identifier: .bodyMass,
-                unit: .gramUnit(with: .kilo),
-                start: baselineStart,
-                end: tomorrow
-            )
-
-            let hrv = try await hrvMap
-            let rhr = try await rhrMap
-            let resp = try await respMap
-            let sleep = try await sleepMap
-            let mass = try await bodyMass
-            let today = LocalDateSupport.string(from: now, timeZone: calendar.timeZone)
-
-            let baselineDays = (1...28).reversed().map {
-                LocalDateSupport.daysAgo($0, from: now, timeZone: calendar.timeZone)
-            }
+            let baselineDays = HealthMetricReadWindow.baselineOffsets
+                .reversed()
+                .map {
+                    LocalDateSupport.daysAgo(
+                        $0,
+                        from: dateStart,
+                        timeZone: timeZone
+                    )
+                }
             let inputs = DailyHealthInputs(
-                hrvSDNNms: hrv[today],
-                restingHR: rhr[today],
-                sleepHours: sleep[today]?.totalHours,
-                bodyMassKg: mass,
-                sleepDeepHours: sleep[today]?.deepHours,
-                sleepRemHours: sleep[today]?.remHours,
-                respRateBpm: resp[today],
-                hrvLnBaseline: baselineDays.compactMap { hrv[$0] }.filter { $0 > 0 }.map(log),
+                hrvSDNNms: hrv[date],
+                restingHR: rhr[date],
+                sleepHours: sleep[date]?.totalHours,
+                bodyMassKg: latestBodyMass(onOrBefore: date, valuesByDate: bodyMass),
+                sleepDeepHours: sleep[date]?.deepHours,
+                sleepRemHours: sleep[date]?.remHours,
+                respRateBpm: resp[date],
+                hrvLnBaseline: baselineDays
+                    .compactMap { hrv[$0] }
+                    .filter { $0 > 0 }
+                    .map(log),
                 rhrBaseline: baselineDays.compactMap { rhr[$0] },
                 sleepBaseline: baselineDays.compactMap { sleep[$0]?.totalHours },
                 respBaseline: baselineDays.compactMap { resp[$0] },
@@ -131,24 +313,38 @@ public final class HealthKitService: ObservableObject {
                     return day.deepHours + day.remHours
                 }
             )
-            let result = RecoveryEngine.compute(inputs: inputs, acwr: acwr)
-            return HealthMetric(
-                date: today,
-                readiness: result.score,
-                zone: result.zone?.rawValue,
-                computedAt: now,
-                hrvSDNNMilliseconds: inputs.hrvSDNNms,
-                restingHeartRate: inputs.restingHR,
-                sleepHours: inputs.sleepHours,
-                sleepDeepHours: inputs.sleepDeepHours,
-                sleepREMHours: inputs.sleepRemHours,
-                bodyMassKilograms: inputs.bodyMassKg,
-                respiratoryRate: inputs.respRateBpm
+            let result = RecoveryEngine.compute(
+                inputs: inputs,
+                acwr: acwrByDate[date]
             )
-        } catch {
-            lastError = UserFacingError.message(for: error)
-            throw error
+            metrics.append(
+                HealthMetric(
+                    date: date,
+                    readiness: result.score,
+                    zone: result.zone?.rawValue,
+                    computedAt: now,
+                    hrvSDNNMilliseconds: inputs.hrvSDNNms,
+                    restingHeartRate: inputs.restingHR,
+                    sleepHours: inputs.sleepHours,
+                    sleepDeepHours: inputs.sleepDeepHours,
+                    sleepREMHours: inputs.sleepRemHours,
+                    bodyMassKilograms: inputs.bodyMassKg,
+                    respiratoryRate: inputs.respRateBpm
+                )
+            )
         }
+        return metrics
+    }
+
+    private func latestBodyMass(
+        onOrBefore date: String,
+        valuesByDate: [String: Double]
+    ) -> Double? {
+        guard let latestDate = valuesByDate.keys
+            .filter({ $0 <= date })
+            .max()
+        else { return nil }
+        return valuesByDate[latestDate]
     }
 
     private func requiredReadTypes() throws -> Set<HKObjectType> {
@@ -173,7 +369,7 @@ public final class HealthKitService: ObservableObject {
     }
 
     /// One observer query per delivered type, so HealthKit can wake the app
-    /// for each of the four independently (the shipped plugin observes only
+    /// for each independently (the shipped plugin observes only
     /// HRV; observing the full delivered set means a mid-day sleep-stage or
     /// resting-HR write lands too). A fired query funnels into
     /// `onBackgroundUpdate`, which `AppModel` routes through the same
@@ -185,8 +381,9 @@ public final class HealthKitService: ObservableObject {
             guard let type = Self.objectType(for: identifier) else { continue }
             let query = HKObserverQuery(sampleType: type, predicate: nil) { [weak self] _, completion, _ in
                 Task { @MainActor in
+                    defer { completion() }
+                    guard !Task.isCancelled else { return }
                     await self?.onBackgroundUpdate?()
-                    completion()
                 }
             }
             store.execute(query)
@@ -195,12 +392,14 @@ public final class HealthKitService: ObservableObject {
 
     private func enableBackgroundDelivery() async {
         for identifier in HealthObserverTypes.observedIdentifiers {
+            guard !Task.isCancelled else { return }
             guard let type = Self.objectType(for: identifier) else { continue }
             await withCheckedContinuation { continuation in
                 store.enableBackgroundDelivery(for: type, frequency: .daily) { _, _ in
                     continuation.resume()
                 }
             }
+            guard !Task.isCancelled else { return }
         }
     }
 
@@ -218,7 +417,8 @@ public final class HealthKitService: ObservableObject {
         identifier: HKQuantityTypeIdentifier,
         unit: HKUnit,
         start: Date,
-        end: Date
+        end: Date,
+        calendar: Calendar
     ) async throws -> [String: Double] {
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else {
             throw HealthKitError.typeUnavailable(identifier.rawValue)
@@ -230,72 +430,109 @@ public final class HealthKitService: ObservableObject {
         )
         var day = DateComponents()
         day.day = 1
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKStatisticsCollectionQuery(
-                quantityType: type,
-                quantitySamplePredicate: predicate,
-                options: [.discreteAverage],
-                anchorDate: calendar.startOfDay(for: start),
-                intervalComponents: day
-            )
-            query.initialResultsHandler = { [calendar] _, collection, error in
-                if let error {
-                    continuation.resume(throwing: error)
+        let cancellation = HealthKitQueryCancellation<[String: Double]>(store: store)
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<[String: Double], Error>) in
+                guard cancellation.install(continuation) else { return }
+                let query = HKStatisticsCollectionQuery(
+                    quantityType: type,
+                    quantitySamplePredicate: predicate,
+                    options: [.discreteAverage],
+                    anchorDate: calendar.startOfDay(for: start),
+                    intervalComponents: day
+                )
+                query.initialResultsHandler = { [calendar] _, collection, error in
+                    if let error {
+                        cancellation.finish(.failure(error))
+                        return
+                    }
+                    guard let collection else {
+                        cancellation.finish(.success([:]))
+                        return
+                    }
+                    var values: [String: Double] = [:]
+                    collection.enumerateStatistics(from: start, to: end) { statistics, _ in
+                        guard let quantity = statistics.averageQuantity() else { return }
+                        let key = LocalDateSupport.string(
+                            from: statistics.startDate,
+                            timeZone: calendar.timeZone
+                        )
+                        values[key] = quantity.doubleValue(for: unit)
+                    }
+                    cancellation.finish(.success(values))
+                }
+                guard cancellation.install(query), !cancellation.isFinished else {
                     return
                 }
-                guard let collection else {
-                    continuation.resume(returning: [:])
-                    return
-                }
-                var values: [String: Double] = [:]
-                collection.enumerateStatistics(from: start, to: end) { statistics, _ in
-                    guard let quantity = statistics.averageQuantity() else { return }
-                    let key = LocalDateSupport.string(
-                        from: statistics.startDate,
-                        timeZone: calendar.timeZone
-                    )
-                    values[key] = quantity.doubleValue(for: unit)
-                }
-                continuation.resume(returning: values)
+                store.execute(query)
             }
-            store.execute(query)
-        }
+        }, onCancel: {
+            cancellation.cancel()
+        })
     }
 
-    private func latestQuantity(
+    private func dailyLatestQuantities(
         identifier: HKQuantityTypeIdentifier,
         unit: HKUnit,
         start: Date,
-        end: Date
-    ) async throws -> Double? {
+        end: Date,
+        calendar: Calendar
+    ) async throws -> [String: Double] {
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else {
             throw HealthKitError.typeUnavailable(identifier.rawValue)
         }
         let predicate = HKQuery.predicateForSamples(
             withStart: start,
             end: end,
-            options: [.strictEndDate]
+            options: [.strictStartDate]
         )
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(
-                sampleType: type,
-                predicate: predicate,
-                limit: 1,
-                sortDescriptors: [sort]
-            ) { _, samples, error in
-                if let error {
-                    continuation.resume(throwing: error)
+        let cancellation = HealthKitQueryCancellation<[String: Double]>(store: store)
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<[String: Double], Error>) in
+                guard cancellation.install(continuation) else { return }
+                let query = HKSampleQuery(
+                    sampleType: type,
+                    predicate: predicate,
+                    limit: HKObjectQueryNoLimit,
+                    sortDescriptors: [sort]
+                ) { [calendar] _, samples, error in
+                    if let error {
+                        cancellation.finish(.failure(error))
+                        return
+                    }
+                    var values: [String: Double] = [:]
+                    for sample in samples as? [HKQuantitySample] ?? [] {
+                        let key = LocalDateSupport.string(
+                            from: sample.endDate,
+                            timeZone: calendar.timeZone
+                        )
+                        // Samples are sorted newest-first, so the first value for
+                        // a local day is the same latest-value semantics as the
+                        // old single-row query.
+                        if values[key] == nil {
+                            values[key] = sample.quantity.doubleValue(for: unit)
+                        }
+                    }
+                    cancellation.finish(.success(values))
+                }
+                guard cancellation.install(query), !cancellation.isFinished else {
                     return
                 }
-                let value = (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit)
-                continuation.resume(returning: value)
+                store.execute(query)
             }
-            store.execute(query)
-        }
+        }, onCancel: {
+            cancellation.cancel()
+        })
     }
 
-    private func dailySleep(start: Date, end: Date) async throws -> [String: SleepDay] {
+    private func dailySleep(
+        start: Date,
+        end: Date,
+        calendar: Calendar
+    ) async throws -> [String: SleepDay] {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
             throw HealthKitError.typeUnavailable(HKCategoryTypeIdentifier.sleepAnalysis.rawValue)
         }
@@ -304,45 +541,55 @@ public final class HealthKitService: ObservableObject {
             end: end,
             options: [.strictEndDate]
         )
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(
-                sampleType: type,
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: nil
-            ) { [calendar] _, samples, error in
-                if let error {
-                    continuation.resume(throwing: error)
+        let cancellation = HealthKitQueryCancellation<[String: SleepDay]>(store: store)
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<[String: SleepDay], Error>) in
+                guard cancellation.install(continuation) else { return }
+                let query = HKSampleQuery(
+                    sampleType: type,
+                    predicate: predicate,
+                    limit: HKObjectQueryNoLimit,
+                    sortDescriptors: nil
+                ) { [calendar] _, samples, error in
+                    if let error {
+                        cancellation.finish(.failure(error))
+                        return
+                    }
+                    var byDay: [String: SleepDay] = [:]
+                    for sample in samples as? [HKCategorySample] ?? [] {
+                        let seconds = max(0, sample.endDate.timeIntervalSince(sample.startDate))
+                        guard seconds > 0 else { continue }
+                        let key = LocalDateSupport.string(
+                            from: sample.endDate.addingTimeInterval(-1),
+                            timeZone: calendar.timeZone
+                        )
+                        var day = byDay[key] ?? SleepDay()
+                        switch sample.value {
+                        case HKCategoryValueSleepAnalysis.asleepDeep.rawValue:
+                            day.deepHours += seconds / 3_600
+                            day.totalHours += seconds / 3_600
+                        case HKCategoryValueSleepAnalysis.asleepREM.rawValue:
+                            day.remHours += seconds / 3_600
+                            day.totalHours += seconds / 3_600
+                        case HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                             HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue:
+                            day.totalHours += seconds / 3_600
+                        default:
+                            break
+                        }
+                        byDay[key] = day
+                    }
+                    cancellation.finish(.success(byDay))
+                }
+                guard cancellation.install(query), !cancellation.isFinished else {
                     return
                 }
-                var byDay: [String: SleepDay] = [:]
-                for sample in samples as? [HKCategorySample] ?? [] {
-                    let seconds = max(0, sample.endDate.timeIntervalSince(sample.startDate))
-                    guard seconds > 0 else { continue }
-                    let key = LocalDateSupport.string(
-                        from: sample.endDate.addingTimeInterval(-1),
-                        timeZone: calendar.timeZone
-                    )
-                    var day = byDay[key] ?? SleepDay()
-                    switch sample.value {
-                    case HKCategoryValueSleepAnalysis.asleepDeep.rawValue:
-                        day.deepHours += seconds / 3_600
-                        day.totalHours += seconds / 3_600
-                    case HKCategoryValueSleepAnalysis.asleepREM.rawValue:
-                        day.remHours += seconds / 3_600
-                        day.totalHours += seconds / 3_600
-                    case HKCategoryValueSleepAnalysis.asleepCore.rawValue,
-                         HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue:
-                        day.totalHours += seconds / 3_600
-                    default:
-                        break
-                    }
-                    byDay[key] = day
-                }
-                continuation.resume(returning: byDay)
+                store.execute(query)
             }
-            store.execute(query)
-        }
+        }, onCancel: {
+            cancellation.cancel()
+        })
     }
 }
 
@@ -356,6 +603,7 @@ public enum HealthKitError: Error, LocalizedError, FriendlyErrorClassifying {
     case authorizationDenied
     case typeUnavailable(String)
     case dateCalculationFailed
+    case noSourceData
 
     public var errorDescription: String? {
         switch self {
@@ -365,13 +613,15 @@ public enum HealthKitError: Error, LocalizedError, FriendlyErrorClassifying {
             return "Apple Health type is unavailable: \(type)"
         case .dateCalculationFailed:
             return "Apple Health date range could not be calculated."
+        case .noSourceData:
+            return "Apple Health has no source data for this window yet."
         }
     }
 
     public var friendlyErrorClass: FriendlyErrorClass {
         switch self {
         case .authorizationDenied: return .healthPermissionDenied
-        case .typeUnavailable, .dateCalculationFailed: return .healthUnavailable
+        case .typeUnavailable, .dateCalculationFailed, .noSourceData: return .healthUnavailable
         }
     }
 }

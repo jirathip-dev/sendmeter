@@ -216,6 +216,12 @@ public final class AppModel {
     public private(set) var deletedSessions: [SendmeterCore.Session] = []
     public private(set) var deletedRecordings: [TindeqRecording] = []
     public private(set) var healthMetrics: [HealthMetric] = []
+    /// The last completed HealthKit read for the current account. This is a
+    /// read/check timestamp, not a claim that a row changed; the companion
+    /// observation distinguishes a real reconciliation from a no-op or an
+    /// empty source window.
+    public private(set) var lastHealthSyncedAt: Date?
+    public private(set) var lastHealthSyncObservation: HealthSyncObservation?
     public private(set) var phasePeriods: [PhasePeriod] = []
     public private(set) var settings = UserSettings(
         currentPhase: .capacity,
@@ -499,6 +505,17 @@ public final class AppModel {
     /// `FOREGROUND_SYNC_COALESCE_MS` (5s).
     private let healthRefreshPolicy = HealthRefreshPolicy(coalescingWindow: 5)
     private var lastHealthRefreshStartedAt: TimeInterval?
+    /// Morning HealthKit delivery can arrive before an overnight wearable has
+    /// finished writing to Apple Health. One account-scoped owner runs an
+    /// immediate pass and persists the two follow-up passes; later lifecycle,
+    /// observer, or BGAppRefresh events claim each pass when it is due.
+    private let healthMorningRefreshPolicy = HealthMorningRefreshPolicy()
+    private var lastMorningRefreshStartedAt: Date?
+    private var morningHealthRefreshState = HealthMorningRefreshStateMachine()
+    private var morningHealthRefreshOwner: AccountScopedCompletion?
+    private static let healthLastSyncedDefaultsPrefix = "sendmeter.native.health-last-synced-at."
+    private static let healthMorningStartedDefaultsPrefix = "sendmeter.native.health-morning-started-at."
+    private static let healthMorningProgressDefaultsPrefix = "sendmeter.native.health-morning-progress."
     /// #673: the gate that decides whether a scenePhase → `.active`
     /// transition runs the 9-table authoritative `refreshAll`. The policy is
     /// pure Core (`ForegroundRefreshPolicy`, unit-tested); the window is the
@@ -1584,6 +1601,7 @@ public final class AppModel {
             watch.relaySession(session)
             if changedUser || didBootstrapUserID != session.user.id {
                 resetAccountState()
+                restoreHealthSyncState(for: session.user.id)
                 // Claim the same refresh owner that the bootstrap refresh will
                 // finish. Otherwise the watch inbox adoption can suspend with
                 // an ownerless loading latch between signed-in and refresh.
@@ -1643,6 +1661,9 @@ public final class AppModel {
                 watch.relaySession(session)
                 didBootstrapUserID = nil
                 resetAccountState()
+                if let session {
+                    restoreHealthSyncState(for: session.user.id)
+                }
                 await tearDownRealtime()
             } else if session != nil {
                 // Some password-recovery flows deliver the replacement token
@@ -5170,32 +5191,45 @@ public final class AppModel {
         do {
             if requestAuthorization {
                 try await self.health.requestAuthorization()
-                guard accountFetch.canApply(
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else { return }
                 UserDefaults.standard.set(true, forKey: "sendmeter.native.health-authorized")
             }
-            guard accountFetch.canApply(
+            guard !Task.isCancelled, accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
             self.lastHealthRefreshStartedAt = ProcessInfo.processInfo.systemUptime
-            try await self.computeAndPublishReadiness(
+            let passTimeZone = TimeZone.current
+            guard let result = try await self.computeAndPublishReadiness(
                 userID: userID,
                 trigger: .manual,
-                capturedBy: accountFetch
-            )
-            guard accountFetch.canApply(
+                capturedBy: accountFetch,
+                timeZone: passTimeZone
+            ) else { return }
+            let observation = result.observation
+            guard !Task.isCancelled, accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
-            self.toastMessage = "Apple Health synced."
+            recordHealthSync(
+                observation,
+                capturedBy: accountFetch,
+                showAutomaticConfirmation: false
+            )
+            if !Task.isCancelled, let message = observation.manualMessage {
+                self.toastMessage = message
+            }
+        } catch is CancellationError {
+            return
         } catch {
-            if accountFetch.canApply(
+            if !Task.isCancelled, accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) {
+                recordHealthSyncFailure(capturedBy: accountFetch)
                 surface(error)
             }
         }
@@ -5206,68 +5240,367 @@ public final class AppModel {
     /// when the coalescing policy says so. The last reading is always kept on
     /// failure — a throwing query or a successful-but-empty read never blanks
     /// a scored today row and never fabricates a score (see
-    /// `ReadinessSyncPolicy`). A failure is swallowed, not surfaced: this is
-    /// a background-quality refresh (web `runForegroundSync` parity), so a
-    /// HealthKit hiccup must not throw an error banner over the last reading.
+    /// `ReadinessSyncPolicy`). A failure is recorded in health-sync state, not
+    /// surfaced through auth diagnostics or an error banner: this is a
+    /// background-quality refresh (web `runForegroundSync` parity), so a
+    /// HealthKit hiccup must not interrupt the last reading.
     /// `.manual` maps to the authoritative #109 trigger and so may surface the
     /// honest empty state; appear/foreground/background are automatic.
     public func silentHealthRefresh(trigger: HealthRefreshTrigger) async {
-        guard UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") else { return }
-        let now = ProcessInfo.processInfo.systemUptime
+        guard !Task.isCancelled,
+              UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized")
+        else { return }
+        let monotonicNow = ProcessInfo.processInfo.systemUptime
         guard healthRefreshPolicy.shouldRefresh(
             trigger: trigger,
             lastStartedAt: lastHealthRefreshStartedAt,
-            now: now
+            now: monotonicNow
         ) else { return }
         guard let userID = currentUserID else { return }
+        let wallNow = Date()
+        let passTimeZone = TimeZone.current
+        let passCalendar = LocalDateSupport.calendar(timeZone: passTimeZone)
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        lastHealthRefreshStartedAt = now
+
+        if trigger != .manual {
+            var persistedProgress = loadMorningHealthProgress(for: userID)
+            if let progress = persistedProgress,
+               progress.accountUserID != userID
+                || !healthMorningRefreshPolicy.isCurrentLocalDay(
+                    progress,
+                    at: wallNow,
+                    calendar: passCalendar
+                )
+                || progress.nextPass < 0
+                || progress.nextPass >= healthMorningRefreshPolicy.passCount {
+                clearMorningHealthProgress(for: userID)
+                persistedProgress = nil
+            }
+            if let progress = persistedProgress {
+                // A completed pass is durable state, not an instruction to
+                // run immediately. The next pass is claimed only when a
+                // later supported lifecycle/observer/BGAppRefresh event
+                // arrives after its persisted eligibility time. This is a
+                // resume claim even for pass 0: the new-window once/day gate
+                // must not reject a persisted retry after cancellation.
+                if let pass = healthMorningRefreshPolicy.duePass(
+                    for: progress,
+                    at: wallNow
+                ) {
+                    let owner = claimMorningHealthRefresh(
+                        now: wallNow,
+                        startedAt: progress.startedAt,
+                        pass: pass,
+                        accountFetch: accountFetch,
+                        calendar: passCalendar,
+                        mode: .resumePersisted,
+                        progress: progress
+                    )
+                    let route = HealthMorningRefreshRoute.afterClaim(
+                        pass: pass,
+                        didClaim: owner != nil
+                    )
+                    if case .morning = route, let owner {
+                        await runMorningHealthRefreshPass(
+                            owner,
+                            progress: progress,
+                            pass: pass,
+                            timeZone: passTimeZone
+                        )
+                        return
+                    }
+                }
+            }
+            if healthMorningRefreshPolicy.isMorning(at: wallNow, calendar: passCalendar) {
+                // A completed morning window is represented by the persisted
+                // start marker and the absence of progress. A concurrent
+                // owner cannot create a duplicate window; this failed claim
+                // falls through to the ordinary automatic refresh below.
+                let owner = claimMorningHealthRefresh(
+                    now: wallNow,
+                    startedAt: wallNow,
+                    pass: 0,
+                    accountFetch: accountFetch,
+                    calendar: passCalendar,
+                    mode: .newWindow,
+                    progress: nil
+                )
+                let route = HealthMorningRefreshRoute.afterClaim(
+                    pass: 0,
+                    didClaim: owner != nil
+                )
+                if case .morning = route, let owner {
+                    let progress = HealthMorningRefreshProgress(
+                        accountUserID: userID,
+                        startedAt: wallNow,
+                        timeZoneIdentifier: passTimeZone.identifier
+                    )
+                    if !Task.isCancelled,
+                       persistMorningHealthProgress(progress) {
+                        await runMorningHealthRefreshPass(
+                            owner,
+                            progress: progress,
+                            pass: 0,
+                            timeZone: passTimeZone
+                        )
+                        return
+                    }
+                    if !Task.isCancelled {
+                        clearMorningHealthProgress(for: userID)
+                        recordHealthSyncFailure(capturedBy: accountFetch)
+                    }
+                    finishMorningHealthRefresh(owner: owner)
+                }
+            }
+        }
+
+        guard !Task.isCancelled else { return }
+        lastHealthRefreshStartedAt = monotonicNow
         do {
-            try await computeAndPublishReadiness(
+            guard let result = try await computeAndPublishReadiness(
                 userID: userID,
                 trigger: trigger.syncTrigger,
-                capturedBy: accountFetch
+                capturedBy: accountFetch,
+                timeZone: passTimeZone
+            ) else { return }
+            let observation = result.observation
+            guard !Task.isCancelled else { return }
+            recordHealthSync(
+                observation,
+                capturedBy: accountFetch,
+                showAutomaticConfirmation: trigger != .manual
             )
         } catch is CancellationError {
             return
         } catch let error as URLError where error.code == .cancelled {
             return
         } catch {
-            // Deliberately keep the last reading and swallow this background
-            // refresh failure; it must not interrupt the dashboard or pollute
-            // the auth-forensics ring.
-            _ = error
-        }
-    }
-
-    /// A background HealthKit observer fire. Same path as foreground sync:
-    /// recompute via RecoveryEngine, upsert `health_metrics`, relay to the
-    /// watch. Single-flight with the other triggers — a fire during a
-    /// foreground sync coalesces into at most one follow-up instead of
-    /// double-computing.
-    private func handleHealthBackgroundUpdate() async {
-        guard let userID = currentUserID else { return }
-        let accountFetch = AccountScopedFetch(
-            accountUserID: userID,
-            accountEpoch: accountEpoch
-        )
-        do {
-            try await self.computeAndPublishReadiness(
-                userID: userID,
-                trigger: .automatic,
-                capturedBy: accountFetch
-            )
-        } catch {
-            if accountFetch.canApply(
+            // Keep the last reading and expose a failed health state without
+            // turning a background HealthKit/transport problem into an auth
+            // diagnostic or a disruptive error banner.
+            if !Task.isCancelled, accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) {
-                surface(error)
+                recordHealthSyncFailure(capturedBy: accountFetch)
             }
         }
+    }
+
+    /// A background HealthKit observer fire uses the same observable automatic
+    /// path as foreground refresh. The morning branch performs one pass before
+    /// returning to HealthKit's observer completion; persisted later passes
+    /// are picked up by a subsequent supported event.
+    private func handleHealthBackgroundUpdate() async {
+        await silentHealthRefresh(trigger: .background)
+    }
+
+    private func claimMorningHealthRefresh(
+        now: Date,
+        startedAt: Date,
+        pass: Int,
+        accountFetch: AccountScopedFetch,
+        calendar: Calendar,
+        mode: HealthMorningRefreshClaimMode,
+        progress: HealthMorningRefreshProgress?
+    ) -> AccountScopedCompletion? {
+        guard !Task.isCancelled, accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ), morningHealthRefreshState.claim(
+            mode: mode,
+            pass: pass,
+            at: now,
+            currentUserID: currentUserID,
+            accountUserID: accountFetch.accountUserID,
+            lastStartedAt: lastMorningRefreshStartedAt,
+            progress: progress,
+            policy: healthMorningRefreshPolicy,
+            calendar: calendar
+        )
+        else { return nil }
+
+        // These are all synchronous MainActor mutations before the first
+        // HealthKit/repository await. The account owner and dedupe marker can
+        // therefore reject every later callback from this window. The start
+        // marker survives relaunch so a completed window is still once/day.
+        let owner = AccountScopedCompletion(fetch: accountFetch)
+        if mode == .newWindow {
+            lastMorningRefreshStartedAt = startedAt
+            UserDefaults.standard.set(
+                startedAt.timeIntervalSince1970,
+                forKey: healthMorningStartedDefaultsKey(for: accountFetch.accountUserID)
+            )
+        }
+        morningHealthRefreshOwner = owner
+        lastHealthRefreshStartedAt = ProcessInfo.processInfo.systemUptime
+        return owner
+    }
+
+    private func runMorningHealthRefreshPass(
+        _ owner: AccountScopedCompletion,
+        progress initialProgress: HealthMorningRefreshProgress,
+        pass: Int,
+        timeZone: TimeZone
+    ) async {
+        var progress = initialProgress
+        do {
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
+            guard let result = try await computeAndPublishReadiness(
+                userID: owner.fetch.accountUserID,
+                trigger: .automatic,
+                capturedBy: owner.fetch,
+                timeZone: timeZone
+            ) else {
+                // The recompute gate may already have an owner. The durable
+                // progress remains at this pass so a later lifecycle event
+                // retries it after the competing work has settled.
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
+            progress.add(
+                result.observation,
+                acknowledgedReconciledDates: result.acknowledgedReconciledDates
+            )
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
+            recordHealthSync(
+                result.observation,
+                capturedBy: owner.fetch,
+                showAutomaticConfirmation: false
+            )
+        } catch is CancellationError {
+            finishMorningHealthRefresh(owner: owner)
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            finishMorningHealthRefresh(owner: owner)
+            return
+        } catch {
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
+            progress.markFailure()
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
+            recordHealthSyncFailure(capturedBy: owner.fetch)
+        }
+
+        let ownerIsCurrent = owner.owns(
+            currentUserID: currentUserID,
+            accountEpoch: accountEpoch,
+            activeOwner: morningHealthRefreshOwner
+        )
+        guard morningHealthRefreshState.continueAfterResult(
+            isCancelled: Task.isCancelled,
+            ownerIsCurrent: ownerIsCurrent
+        ) else {
+            // A cancelled/stale continuation must release its active owner;
+            // the Core decision only releases the gate when this owner is
+            // still current, so an older completion cannot clear a newer one.
+            finishMorningHealthRefresh(owner: owner)
+            return
+        }
+
+        guard !Task.isCancelled else {
+            finishMorningHealthRefresh(owner: owner)
+            return
+        }
+        progress.nextPass = pass + 1
+        guard progress.nextPass < healthMorningRefreshPolicy.passCount else {
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
+            clearMorningHealthProgress(for: owner.fetch.accountUserID)
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
+            finishMorningHealthRefresh(owner: owner, progress: progress)
+            return
+        }
+
+        guard !Task.isCancelled else {
+            finishMorningHealthRefresh(owner: owner)
+            return
+        }
+        guard persistMorningHealthProgress(progress) else {
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
+            clearMorningHealthProgress(for: owner.fetch.accountUserID)
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
+            recordHealthSyncFailure(capturedBy: owner.fetch)
+            finishMorningHealthRefresh(owner: owner)
+            return
+        }
+        guard !Task.isCancelled else {
+            finishMorningHealthRefresh(owner: owner)
+            return
+        }
+        scheduleMorningHealthProgress(progress, now: Date())
+        guard !Task.isCancelled else {
+            finishMorningHealthRefresh(owner: owner)
+            return
+        }
+        finishMorningHealthRefresh(owner: owner)
+    }
+
+    private func scheduleMorningHealthProgress(
+        _ progress: HealthMorningRefreshProgress,
+        now: Date
+    ) {
+        guard let delay = healthMorningRefreshPolicy.delay(
+            forPass: progress.nextPass
+        ) else { return }
+        let dueAt = progress.startedAt.addingTimeInterval(delay)
+        let remaining = max(60, dueAt.timeIntervalSince(now))
+        // BGAppRefresh is only an eligibility request. The actual pass still
+        // re-checks the persisted due time when a supported event reaches the
+        // app, so this call never owns a timer or a completion.
+        BackgroundSyncService.schedule(minimumInterval: remaining)
+    }
+
+    private func finishMorningHealthRefresh(
+        owner: AccountScopedCompletion,
+        progress: HealthMorningRefreshProgress? = nil
+    ) {
+        guard morningHealthRefreshOwner == owner else { return }
+        // Releasing the owner/gate is cancellation cleanup. A completion
+        // observation, however, is a visible state mutation and must never be
+        // published after an expired BG task has cancelled this pass.
+        if !Task.isCancelled, let observation = progress?.finalObservation {
+            if observation == .failed {
+                recordHealthSyncFailure(capturedBy: owner.fetch)
+            } else {
+                recordHealthSync(
+                    observation,
+                    capturedBy: owner.fetch,
+                    showAutomaticConfirmation: true
+                )
+            }
+        }
+        morningHealthRefreshOwner = nil
+        morningHealthRefreshState.release()
     }
 
     /// The one recompute path, owned by `ReadinessRecomputeGate`: exactly one
@@ -5288,130 +5621,299 @@ public final class AppModel {
     private func computeAndPublishReadiness(
         userID: UUID,
         trigger: SyncTrigger,
-        capturedBy capturedAccountFetch: AccountScopedFetch? = nil
-    ) async throws {
+        capturedBy capturedAccountFetch: AccountScopedFetch? = nil,
+        timeZone: TimeZone
+    ) async throws -> HealthSyncPassResult? {
         let accountFetch = capturedAccountFetch ?? AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        guard accountFetch.canApply(
+        guard !Task.isCancelled, accountFetch.canApply(
             to: currentUserID,
             accountEpoch: accountEpoch
-        ) else { return }
-        guard recomputeGate.request() == .start else { return }
+        ) else { return nil }
+        guard recomputeGate.request() == .start else { return nil }
+        var acknowledgedReconciledDates = Set<String>()
+        var sourceDataCount = 0
         do {
             while true {
+                guard !Task.isCancelled else {
+                    recomputeGate.cancel()
+                    return nil
+                }
                 let now = Date()
-                // Fail-open (plugin parity): a fetch blip means "not yet
-                // locked", i.e. an automatic sync may still overwrite.
-                let existing = try? await repository.fetchTodayHealthMetric()
-                guard accountFetch.canApply(
+                let passTimeZone = timeZone
+                let localCalendar = LocalDateSupport.calendar(timeZone: passTimeZone)
+                // The full existing window is required for historical
+                // insert-if-missing reconciliation. A failed fetch aborts the
+                // pass rather than risking duplicate or destructive writes.
+                let existing = try await repository.fetchHealthMetrics(
+                    limit: HealthMetricReadWindow.candidateDays
+                )
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else {
                     recomputeGate.cancel()
-                    return
+                    return nil
                 }
+                let today = LocalDateSupport.string(
+                    from: now,
+                    timeZone: localCalendar.timeZone
+                )
+                let existingToday = existing.first { $0.date == today }
                 let allowOverwrite = ReadinessWritePolicy.shouldOverwriteReadiness(
-                    existingReadiness: existing?.readiness,
-                    existingRowDate: existing?.date,
+                    existingReadiness: existingToday?.readiness,
+                    existingRowDate: existingToday?.date,
                     now: now,
-                    trigger: trigger
+                    trigger: trigger,
+                    calendar: localCalendar
                 )
-                let acwr = try await serverACWRRatio()
-                guard accountFetch.canApply(
+                let acwrByDate = try await serverACWRSeries(
+                    referenceDate: now,
+                    timeZone: passTimeZone
+                )
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else {
                     recomputeGate.cancel()
-                    return
+                    return nil
                 }
-                let fresh = try await health.computeTodayMetric(acwr: acwr)
-                guard accountFetch.canApply(
+                guard !Task.isCancelled else {
+                    recomputeGate.cancel()
+                    return nil
+                }
+                let fresh = try await health.computeMetrics(
+                    acwrByDate: acwrByDate,
+                    timeZone: passTimeZone
+                )
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else {
                     recomputeGate.cancel()
-                    return
+                    return nil
                 }
-                let plan = ReadinessSyncPolicy.plan(
-                    existingToday: existing,
-                    freshlyComputed: fresh,
-                    allowReadinessOverwrite: allowOverwrite
+                let plan = HealthMetricReconciliationPolicy.plan(
+                    freshMetrics: fresh,
+                    existingMetrics: existing,
+                    today: today,
+                    allowTodayReadinessOverwrite: allowOverwrite,
+                    timeZone: passTimeZone
                 )
-                guard accountFetch.canApply(
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else {
                     recomputeGate.cancel()
-                    return
+                    return nil
                 }
-                let previousToday = healthMetrics.first { $0.date == fresh.date }
-                let optimisticRevision = cacheUpsertLocal(
-                    plan.relayMetric,
-                    accountUserID: userID,
-                    entityType: .healthMetrics,
-                    entityID: CacheEntityID.healthMetric(plan.relayMetric)
-                )
-                do {
-                    try await repository.upsertHealthMetric(plan.upsertMetric, userID: userID)
-                    let stillCurrent = accountFetch.canApply(
+
+                for upsert in plan.upserts {
+                    guard !Task.isCancelled, accountFetch.canApply(
                         to: currentUserID,
                         accountEpoch: accountEpoch
+                    ) else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
+                    let operation = HealthMetricWritePolicy.operation(
+                        for: upsert.date,
+                        today: today
                     )
-                    // The server accepted this exact A-owned revision. Even
-                    // if the user switched accounts while the request was
-                    // suspended, acknowledge A's durable cache row; only
-                    // visible-memory publication is fenced by the epoch.
-                    cacheConfirmServerUpsert(
-                        plan.relayMetric,
+                    if operation == .historicalInsert {
+                        do {
+                            guard !Task.isCancelled else {
+                                recomputeGate.cancel()
+                                return nil
+                            }
+                            let inserted = try await repository
+                                .insertHealthMetricIfMissing(
+                                    upsert,
+                                    userID: userID
+                                )
+                            guard !Task.isCancelled else {
+                                recomputeGate.cancel()
+                                return nil
+                            }
+                            let stillCurrent = accountFetch.canApply(
+                                to: currentUserID,
+                                accountEpoch: accountEpoch
+                            )
+                            if inserted {
+                                guard !Task.isCancelled else {
+                                    recomputeGate.cancel()
+                                    return nil
+                                }
+                                // This is an acknowledged server row, not a
+                                // local pending write. Keep it in the durable
+                                // account cache, but publish only to the
+                                // account/epoch that initiated the request.
+                                cacheUpsertServer(
+                                    upsert,
+                                    accountUserID: userID,
+                                    entityType: .healthMetrics,
+                                    entityID: CacheEntityID.healthMetric(upsert)
+                                )
+                                guard !Task.isCancelled, stillCurrent else {
+                                    recomputeGate.cancel()
+                                    return nil
+                                }
+                                publishHealthMetric(upsert)
+                                guard !Task.isCancelled else {
+                                    recomputeGate.cancel()
+                                    return nil
+                                }
+                                acknowledgedReconciledDates.insert(upsert.date)
+                            }
+                            guard !Task.isCancelled, stillCurrent else {
+                                recomputeGate.cancel()
+                                return nil
+                            }
+                        } catch {
+                            if Task.isCancelled {
+                                recomputeGate.cancel()
+                                return nil
+                            }
+                            if accountFetch.canApply(
+                                to: currentUserID,
+                                accountEpoch: accountEpoch
+                            ) {
+                                throw error
+                            }
+                            recomputeGate.cancel()
+                            return nil
+                        }
+                        continue
+                    }
+
+                    let publishedMetric = plan.relayMetric ?? upsert
+                    let previousMetric = healthMetrics.first {
+                        $0.date == upsert.date
+                    }
+                    guard !Task.isCancelled else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
+                    let optimisticRevision = cacheUpsertLocal(
+                        publishedMetric,
                         accountUserID: userID,
                         entityType: .healthMetrics,
-                        entityID: CacheEntityID.healthMetric(plan.relayMetric),
-                        confirmingLocalRevision: optimisticRevision,
-                        publishPendingCount: stillCurrent
+                        entityID: CacheEntityID.healthMetric(publishedMetric)
                     )
-                    guard stillCurrent else {
-                        recomputeGate.cancel()
-                        return
-                    }
-                } catch {
-                    if accountFetch.canApply(
-                        to: currentUserID,
-                        accountEpoch: accountEpoch
-                    ) {
-                        if let previousToday {
-                            cacheConfirmServerUpsert(
-                                previousToday,
-                                accountUserID: userID,
-                                entityType: .healthMetrics,
-                                entityID: CacheEntityID.healthMetric(previousToday),
-                                confirmingLocalRevision: optimisticRevision
-                            )
-                        } else {
-                            cacheConfirmServerDelete(
-                                accountUserID: userID,
-                                entityType: .healthMetrics,
-                                entityID: CacheEntityID.healthMetric(plan.relayMetric),
-                                confirmingLocalRevision: optimisticRevision
-                            )
+                    do {
+                        guard !Task.isCancelled else {
+                            recomputeGate.cancel()
+                            return nil
                         }
-                        throw error
+                        try await repository.upsertHealthMetric(upsert, userID: userID)
+                        guard !Task.isCancelled else {
+                            recomputeGate.cancel()
+                            return nil
+                        }
+                        let stillCurrent = accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        )
+                        guard !Task.isCancelled else {
+                            recomputeGate.cancel()
+                            return nil
+                        }
+                        // The server accepted this exact A-owned revision. Even
+                        // if the user switched accounts while the request was
+                        // suspended, acknowledge A's durable cache row; only
+                        // visible-memory publication is fenced by the epoch.
+                        cacheConfirmServerUpsert(
+                            publishedMetric,
+                            accountUserID: userID,
+                            entityType: .healthMetrics,
+                            entityID: CacheEntityID.healthMetric(publishedMetric),
+                            confirmingLocalRevision: optimisticRevision,
+                            publishPendingCount: stillCurrent
+                        )
+                        guard !Task.isCancelled, stillCurrent else {
+                            recomputeGate.cancel()
+                            return nil
+                        }
+                        acknowledgedReconciledDates.insert(upsert.date)
+                    } catch {
+                        if Task.isCancelled {
+                            recomputeGate.cancel()
+                            return nil
+                        }
+                        if accountFetch.canApply(
+                            to: currentUserID,
+                            accountEpoch: accountEpoch
+                        ) {
+                            if let previousMetric {
+                                cacheConfirmServerUpsert(
+                                    previousMetric,
+                                    accountUserID: userID,
+                                    entityType: .healthMetrics,
+                                    entityID: CacheEntityID.healthMetric(previousMetric),
+                                    confirmingLocalRevision: optimisticRevision
+                                )
+                            } else {
+                                cacheConfirmServerDelete(
+                                    accountUserID: userID,
+                                    entityType: .healthMetrics,
+                                    entityID: CacheEntityID.healthMetric(publishedMetric),
+                                    confirmingLocalRevision: optimisticRevision
+                                )
+                            }
+                            throw error
+                        }
+                        recomputeGate.cancel()
+                        return nil
                     }
-                    recomputeGate.cancel()
-                    return
+                    guard !Task.isCancelled else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
+                    publishHealthMetric(publishedMetric)
                 }
-                guard accountFetch.canApply(
+
+                guard !Task.isCancelled else {
+                    recomputeGate.cancel()
+                    return nil
+                }
+                if !plan.sourceDataDates.isEmpty {
+                    sourceDataCount += plan.sourceDataDates.count
+                }
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else {
                     recomputeGate.cancel()
-                    return
+                    return nil
                 }
-                healthMetrics.removeAll { $0.date == fresh.date }
-                healthMetrics.insert(plan.relayMetric, at: 0)
-                watch.publishReadiness(plan.relayMetric)
-                guard recomputeGate.complete() == .rerun else { return }
+                if let relayMetric = plan.relayMetric {
+                    guard !Task.isCancelled else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
+                    publishHealthMetric(relayMetric)
+                    guard !Task.isCancelled else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
+                    watch.publishReadiness(relayMetric)
+                }
+                guard !Task.isCancelled else {
+                    recomputeGate.cancel()
+                    return nil
+                }
+                guard recomputeGate.complete() == .rerun else {
+                    let observation = HealthSyncObservation.successful(
+                        reconciledCount: acknowledgedReconciledDates.count,
+                        sourceDataCount: sourceDataCount
+                    )
+                    return HealthSyncPassResult(
+                        observation: observation,
+                        acknowledgedReconciledDates: acknowledgedReconciledDates
+                    )
+                }
             }
         } catch {
             recomputeGate.cancel()
@@ -5419,19 +5921,168 @@ public final class AppModel {
         }
     }
 
-    /// ACWR ratio from the server's session loads over the EWMA lookback
-    /// window (#661 F2) — never from the in-memory `sessions`.
-    private func serverACWRRatio() async throws -> Double? {
-        let loads = try await repository.fetchSessionLoads()
+    private func publishHealthMetric(_ metric: HealthMetric) {
+        healthMetrics.removeAll { $0.date == metric.date }
+        healthMetrics.append(metric)
+        healthMetrics.sort { $0.date > $1.date }
+    }
+
+    /// ACWR ratios from server session loads for every date in the HealthKit
+    /// window. The oldest health date needs its own 90-day EWMA history, so the
+    /// server read extends beyond the current-day lookback.
+    private func serverACWRSeries(
+        referenceDate: Date,
+        timeZone: TimeZone
+    ) async throws -> [String: Double] {
+        let days = TrainingMetrics.ewmaLookbackDays
+            + HealthMetricReadWindow.candidateDays - 1
+        let loads = try await repository.fetchSessionLoads(days: days)
         var loadByDate: [String: Double] = [:]
-        for load in loads { loadByDate[load.date, default: 0] += load.load }
-        var dailyLoads: [Double] = []
-        dailyLoads.reserveCapacity(TrainingMetrics.ewmaLookbackDays)
-        for offset in stride(from: TrainingMetrics.ewmaLookbackDays - 1, through: 0, by: -1) {
-            let day = LocalDateSupport.daysAgo(offset)
-            dailyLoads.append(loadByDate[day] ?? 0)
+        for load in loads {
+            guard let date = LocalDateSupport.canonicalDayKey(
+                load.date,
+                timeZone: timeZone
+            ) else { continue }
+            loadByDate[date, default: 0] += load.load
         }
-        return TrainingMetrics.acwrRatio(dailyLoads: dailyLoads)
+        var result: [String: Double] = [:]
+        for targetOffset in HealthMetricReadWindow.candidateOffsets {
+            let targetDate = LocalDateSupport.daysAgo(
+                targetOffset,
+                from: referenceDate,
+                timeZone: timeZone
+            )
+            var dailyLoads: [Double] = []
+            dailyLoads.reserveCapacity(TrainingMetrics.ewmaLookbackDays)
+            for historyOffset in stride(
+                from: TrainingMetrics.ewmaLookbackDays - 1,
+                through: 0,
+                by: -1
+            ) {
+                let date = LocalDateSupport.daysAgo(
+                    targetOffset + historyOffset,
+                    from: referenceDate,
+                    timeZone: timeZone
+                )
+                dailyLoads.append(loadByDate[date] ?? 0)
+            }
+            if let ratio = TrainingMetrics.acwrRatio(dailyLoads: dailyLoads) {
+                result[targetDate] = ratio
+            }
+        }
+        return result
+    }
+
+    private func healthLastSyncedDefaultsKey(for userID: UUID) -> String {
+        "\(Self.healthLastSyncedDefaultsPrefix)\(userID.uuidString)"
+    }
+
+    private func healthMorningStartedDefaultsKey(for userID: UUID) -> String {
+        "\(Self.healthMorningStartedDefaultsPrefix)\(userID.uuidString)"
+    }
+
+    private func healthMorningProgressDefaultsKey(for userID: UUID) -> String {
+        "\(Self.healthMorningProgressDefaultsPrefix)\(userID.uuidString)"
+    }
+
+    private func loadMorningHealthProgress(
+        for userID: UUID
+    ) -> HealthMorningRefreshProgress? {
+        let key = healthMorningProgressDefaultsKey(for: userID)
+        guard let data = UserDefaults.standard.data(forKey: key) else {
+            return nil
+        }
+        do {
+            let progress = try JSONDecoder().decode(
+                HealthMorningRefreshProgress.self,
+                from: data
+            )
+            guard progress.accountUserID == userID else {
+                UserDefaults.standard.removeObject(forKey: key)
+                return nil
+            }
+            return progress
+        } catch {
+            // Corrupt progress cannot safely be attributed to a new pass. Drop
+            // only this account's malformed marker; the next supported event
+            // can start a fresh window subject to the normal day gate.
+            UserDefaults.standard.removeObject(forKey: key)
+            if currentUserID == userID {
+                lastHealthSyncObservation = .failed
+            }
+            return nil
+        }
+    }
+
+    private func persistMorningHealthProgress(
+        _ progress: HealthMorningRefreshProgress
+    ) -> Bool {
+        do {
+            let data = try JSONEncoder().encode(progress)
+            UserDefaults.standard.set(
+                data,
+                forKey: healthMorningProgressDefaultsKey(
+                    for: progress.accountUserID
+                )
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func clearMorningHealthProgress(for userID: UUID) {
+        UserDefaults.standard.removeObject(
+            forKey: healthMorningProgressDefaultsKey(for: userID)
+        )
+    }
+
+    private func restoreHealthSyncState(for userID: UUID) {
+        let key = healthLastSyncedDefaultsKey(for: userID)
+        if let timestamp = UserDefaults.standard.object(forKey: key) as? Double {
+            lastHealthSyncedAt = Date(timeIntervalSince1970: timestamp)
+        } else {
+            lastHealthSyncedAt = nil
+        }
+        let morningKey = healthMorningStartedDefaultsKey(for: userID)
+        if let timestamp = UserDefaults.standard.object(forKey: morningKey) as? Double {
+            lastMorningRefreshStartedAt = Date(timeIntervalSince1970: timestamp)
+        } else {
+            lastMorningRefreshStartedAt = nil
+        }
+        lastHealthSyncObservation = nil
+    }
+
+    private func recordHealthSync(
+        _ observation: HealthSyncObservation,
+        capturedBy accountFetch: AccountScopedFetch,
+        showAutomaticConfirmation: Bool
+    ) {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        let now = Date()
+        lastHealthSyncedAt = now
+        UserDefaults.standard.set(
+            now.timeIntervalSince1970,
+            forKey: healthLastSyncedDefaultsKey(for: accountFetch.accountUserID)
+        )
+        lastHealthSyncObservation = observation
+        if showAutomaticConfirmation,
+           let message = observation.automaticConfirmationMessage {
+            toastMessage = message
+        }
+    }
+
+    private func recordHealthSyncFailure(
+        capturedBy accountFetch: AccountScopedFetch
+    ) {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        lastHealthSyncObservation = .failed
     }
 
     public func deleteAccount() async {
@@ -5656,6 +6307,15 @@ public final class AppModel {
     /// wrong account or advance a cursor after partial work.
     public func runBackgroundSync() async -> BackgroundSyncOutcome {
         guard let userID = currentUserID else { return .accountChanged }
+        // The app-refresh task is another supported lifecycle signal for the
+        // HealthKit path. Run its first pass before the cache engine so a
+        // background wake can reconcile Apple Health even when no local cache
+        // workspace is available; delayed morning re-polls are scheduled by
+        // the same account-scoped window owner.
+        if UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") {
+            await silentHealthRefresh(trigger: .background)
+        }
+        guard !Task.isCancelled else { return .cancelled }
         guard let workspace = cachedWorkspace else {
             await drainQueue()
             return .failed
@@ -8565,6 +9225,17 @@ public final class AppModel {
 
     private func resetAccountState() {
         accountEpoch &+= 1
+        // A HealthKit read can be suspended across sign-out/account switch.
+        // Invalidate its owner before clearing the visible account snapshot;
+        // a stale completion can then neither publish a toast nor release a
+        // newer account's gate. The persisted progress remains under the old
+        // account key so a later same-account sign-in can resume it.
+        morningHealthRefreshOwner = nil
+        morningHealthRefreshState.release()
+        lastMorningRefreshStartedAt = nil
+        lastHealthRefreshStartedAt = nil
+        lastHealthSyncedAt = nil
+        lastHealthSyncObservation = nil
         // Keep the WatchConnectivity transport on the same account boundary
         // as the in-memory/cache snapshot. Stamped completions for other
         // accounts remain durably parked, but live force, queue telemetry, and
