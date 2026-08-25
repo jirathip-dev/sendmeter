@@ -246,6 +246,64 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertTrue(gate.claim(), "cancellation/release permits a fresh account-scoped window")
     }
 
+    func testLaterReconciliationWinsOverEarlierMorningPassFailure() {
+        var progress = HealthMorningRefreshProgress(
+            accountUserID: UUID(),
+            startedAt: Date(timeIntervalSince1970: 1_000),
+            timeZoneIdentifier: timeZone.identifier
+        )
+        progress.markFailure()
+        progress.add(.reconciled(1))
+
+        XCTAssertEqual(progress.finalObservation, .reconciled(1))
+        XCTAssertEqual(
+            progress.finalObservation?.automaticConfirmationMessage,
+            "Apple Health updated · 1 day"
+        )
+    }
+
+    func testMorningProgressUsesItsCapturedGregorianTimezoneForDayBoundaries() {
+        guard let tokyo = TimeZone(identifier: "Asia/Tokyo"),
+              let utc = TimeZone(secondsFromGMT: 0)
+        else {
+            return XCTFail("test time zones should be available")
+        }
+        let utcCalendar = LocalDateSupport.calendar(timeZone: utc)
+        guard let startedAt = utcCalendar.date(from: DateComponents(
+            calendar: utcCalendar,
+            timeZone: utc,
+            year: 2026,
+            month: 8,
+            day: 25,
+            hour: 23,
+            minute: 30
+        )) else {
+            return XCTFail("fixed test date should be constructible")
+        }
+        let progress = HealthMorningRefreshProgress(
+            accountUserID: UUID(),
+            startedAt: startedAt,
+            timeZoneIdentifier: tokyo.identifier
+        )
+        let policy = HealthMorningRefreshPolicy()
+
+        // A pass context owns its boundary: UTC has crossed midnight, while
+        // the persisted Tokyo convenience context has not.
+        XCTAssertFalse(
+            policy.isCurrentLocalDay(
+                progress,
+                at: startedAt.addingTimeInterval(60 * 60),
+                calendar: utcCalendar
+            )
+        )
+        XCTAssertTrue(
+            policy.isCurrentLocalDay(
+                progress,
+                at: startedAt.addingTimeInterval(60 * 60)
+            )
+        )
+    }
+
     func testHistoricalWritesIgnoreConflictsAndTodayMerges() {
         XCTAssertEqual(
             HealthMetricWritePolicy.operation(for: yesterday, today: today),

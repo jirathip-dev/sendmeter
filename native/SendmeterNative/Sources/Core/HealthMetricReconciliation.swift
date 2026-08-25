@@ -318,12 +318,27 @@ public struct HealthMorningRefreshPolicy: Equatable, Sendable {
         at now: Date,
         calendar: Calendar
     ) -> Bool {
-        LocalDateSupport.string(
+        let passCalendar = LocalDateSupport.calendar(timeZone: calendar.timeZone)
+        return LocalDateSupport.string(
             from: progress.startedAt,
-            timeZone: calendar.timeZone
+            timeZone: passCalendar.timeZone
         ) == LocalDateSupport.string(
             from: now,
-            timeZone: calendar.timeZone
+            timeZone: passCalendar.timeZone
+        )
+    }
+
+    /// Convenience for callers that intentionally resume a persisted window
+    /// without an external pass context. AppModel uses the overload above so
+    /// its current pass snapshot also governs the progress day boundary.
+    public func isCurrentLocalDay(
+        _ progress: HealthMorningRefreshProgress,
+        at now: Date
+    ) -> Bool {
+        isCurrentLocalDay(
+            progress,
+            at: now,
+            calendar: LocalDateSupport.calendar(timeZone: progress.timeZone)
         )
     }
 
@@ -355,6 +370,11 @@ public struct HealthMorningRefreshPolicy: Equatable, Sendable {
 public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
     public let accountUserID: UUID
     public let startedAt: Date
+    /// The Gregorian time-zone snapshot used when this refresh window was
+    /// started. It is the deterministic fallback for consumers that resume a
+    /// window without an active pass context; AppModel passes its current
+    /// per-pass snapshot explicitly.
+    public let timeZoneIdentifier: String
     public var nextPass: Int
     public var reconciledCount: Int
     public var sourceDataPasses: Int
@@ -364,6 +384,7 @@ public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
     public init(
         accountUserID: UUID,
         startedAt: Date,
+        timeZoneIdentifier: String = TimeZone.current.identifier,
         nextPass: Int = 0,
         reconciledCount: Int = 0,
         sourceDataPasses: Int = 0,
@@ -372,11 +393,41 @@ public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
     ) {
         self.accountUserID = accountUserID
         self.startedAt = startedAt
+        self.timeZoneIdentifier = timeZoneIdentifier
         self.nextPass = nextPass
         self.reconciledCount = reconciledCount
         self.sourceDataPasses = sourceDataPasses
         self.successfulPasses = successfulPasses
         self.hadFailure = hadFailure
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case accountUserID
+        case startedAt
+        case timeZoneIdentifier
+        case nextPass
+        case reconciledCount
+        case sourceDataPasses
+        case successfulPasses
+        case hadFailure
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accountUserID = try container.decode(UUID.self, forKey: .accountUserID)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        // Progress written before the time-zone snapshot was introduced is
+        // still safe to resume; interpret it in the zone current at decode
+        // time rather than discarding an otherwise valid account marker.
+        timeZoneIdentifier = try container.decodeIfPresent(
+            String.self,
+            forKey: .timeZoneIdentifier
+        ) ?? TimeZone.current.identifier
+        nextPass = try container.decode(Int.self, forKey: .nextPass)
+        reconciledCount = try container.decode(Int.self, forKey: .reconciledCount)
+        sourceDataPasses = try container.decode(Int.self, forKey: .sourceDataPasses)
+        successfulPasses = try container.decode(Int.self, forKey: .successfulPasses)
+        hadFailure = try container.decode(Bool.self, forKey: .hadFailure)
     }
 
     public mutating func add(_ observation: HealthSyncObservation) {
@@ -392,12 +443,25 @@ public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
     }
 
     public var finalObservation: HealthSyncObservation? {
+        // A later reconciliation is stronger evidence than an earlier
+        // transient pass failure. Do not suppress the confirmation for a day
+        // that was inserted successfully on a subsequent supported event.
+        if reconciledCount > 0 {
+            return .reconciled(reconciledCount)
+        }
         if hadFailure { return .failed }
         guard successfulPasses > 0 else { return nil }
         return .successful(
             reconciledCount: reconciledCount,
             sourceDataCount: sourceDataPasses
         )
+    }
+
+    /// A malformed/legacy identifier falls back to the current time zone at
+    /// the point the progress is read. Date grouping itself remains pinned to
+    /// the Gregorian calendar by `LocalDateSupport`.
+    public var timeZone: TimeZone {
+        TimeZone(identifier: timeZoneIdentifier) ?? .current
     }
 }
 

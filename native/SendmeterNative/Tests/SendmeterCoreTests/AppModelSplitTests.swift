@@ -373,6 +373,53 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertTrue(appModel.contains("repository.upsertHealthMetric"))
     }
 
+    func testHealthBackfillCancellationAndTimezoneOwnershipStayInProductionSeams() {
+        let healthKit = code(source("Sources/Platform/HealthKitService.swift"))
+        XCTAssertTrue(healthKit.contains("HealthKitQueryCancellation"))
+        XCTAssertEqual(
+            healthKit.components(separatedBy: "withTaskCancellationHandler").count - 1,
+            3,
+            "each checked HealthKit query must own a cancellation handler"
+        )
+        XCTAssertTrue(healthKit.contains("store.stop(query)"))
+        XCTAssertTrue(healthKit.contains("continuation?.resume(with: result)"))
+        XCTAssertTrue(healthKit.contains("continuation?.resume(throwing: CancellationError())"))
+        XCTAssertFalse(healthKit.contains("private let calendar: Calendar"))
+        XCTAssertTrue(healthKit.contains("timeZone: TimeZone = .current"))
+        XCTAssertTrue(healthKit.contains("LocalDateSupport.calendar(timeZone: timeZone)"))
+
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        XCTAssertTrue(appModel.contains("timeZoneIdentifier: passTimeZone.identifier"))
+        XCTAssertTrue(appModel.contains("health.computeMetrics(\n                    acwrByDate: acwrByDate,\n                    timeZone: passTimeZone"))
+        XCTAssertTrue(appModel.contains("guard !Task.isCancelled, accountFetch.canApply"))
+        XCTAssertTrue(appModel.contains("if !Task.isCancelled, let observation = progress?.finalObservation"))
+
+        guard let computeStart = appModel.range(
+            of: "private func computeAndPublishReadiness("
+        ) else {
+            return XCTFail("production reconciliation seam is missing")
+        }
+        let compute = appModel[computeStart.lowerBound...]
+        for marker in [
+            "insertHealthMetricIfMissing",
+            "repository.upsertHealthMetric",
+            "cacheUpsertServer",
+            "cacheConfirmServerUpsert",
+            "publishHealthMetric",
+            "watch.publishReadiness",
+            "recomputeGate.complete()"
+        ] {
+            guard let markerStart = compute.range(of: marker) else {
+                return XCTFail("reconciliation marker is missing: \(marker)")
+            }
+            let beforeMarker = compute[..<markerStart.lowerBound]
+            XCTAssertTrue(
+                beforeMarker.contains("!Task.isCancelled"),
+                "reconciliation must fence cancellation before \(marker)"
+            )
+        }
+    }
+
     func testSwiftPMExcludedSourcesAreSwiftSyntaxParseable() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

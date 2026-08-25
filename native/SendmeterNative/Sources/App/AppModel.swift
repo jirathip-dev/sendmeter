@@ -5191,23 +5191,25 @@ public final class AppModel {
         do {
             if requestAuthorization {
                 try await self.health.requestAuthorization()
-                guard accountFetch.canApply(
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else { return }
                 UserDefaults.standard.set(true, forKey: "sendmeter.native.health-authorized")
             }
-            guard accountFetch.canApply(
+            guard !Task.isCancelled, accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
             self.lastHealthRefreshStartedAt = ProcessInfo.processInfo.systemUptime
+            let passTimeZone = TimeZone.current
             guard let observation = try await self.computeAndPublishReadiness(
                 userID: userID,
                 trigger: .manual,
-                capturedBy: accountFetch
+                capturedBy: accountFetch,
+                timeZone: passTimeZone
             ) else { return }
-            guard accountFetch.canApply(
+            guard !Task.isCancelled, accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
@@ -5216,13 +5218,13 @@ public final class AppModel {
                 capturedBy: accountFetch,
                 showAutomaticConfirmation: false
             )
-            if let message = observation.manualMessage {
+            if !Task.isCancelled, let message = observation.manualMessage {
                 self.toastMessage = message
             }
         } catch is CancellationError {
             return
         } catch {
-            if accountFetch.canApply(
+            if !Task.isCancelled, accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) {
@@ -5244,7 +5246,9 @@ public final class AppModel {
     /// `.manual` maps to the authoritative #109 trigger and so may surface the
     /// honest empty state; appear/foreground/background are automatic.
     public func silentHealthRefresh(trigger: HealthRefreshTrigger) async {
-        guard UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") else { return }
+        guard !Task.isCancelled,
+              UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized")
+        else { return }
         let monotonicNow = ProcessInfo.processInfo.systemUptime
         guard healthRefreshPolicy.shouldRefresh(
             trigger: trigger,
@@ -5253,20 +5257,21 @@ public final class AppModel {
         ) else { return }
         guard let userID = currentUserID else { return }
         let wallNow = Date()
+        let passTimeZone = TimeZone.current
+        let passCalendar = LocalDateSupport.calendar(timeZone: passTimeZone)
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
 
         if trigger != .manual {
-            let calendar = LocalDateSupport.calendar()
             var persistedProgress = loadMorningHealthProgress(for: userID)
             if let progress = persistedProgress,
                progress.accountUserID != userID
                 || !healthMorningRefreshPolicy.isCurrentLocalDay(
                     progress,
                     at: wallNow,
-                    calendar: calendar
+                    calendar: passCalendar
                 )
                 || progress.nextPass < 0
                 || progress.nextPass >= healthMorningRefreshPolicy.passCount {
@@ -5279,38 +5284,48 @@ public final class AppModel {
                 // later supported lifecycle/observer/BGAppRefresh event
                 // arrives after its persisted eligibility time.
                 guard !morningHealthRefreshGate.isClaimed else { return }
-                guard let pass = healthMorningRefreshPolicy.duePass(
+                guard !Task.isCancelled,
+                      let pass = healthMorningRefreshPolicy.duePass(
                     for: progress,
                     at: wallNow
                 ), let owner = claimMorningHealthRefresh(
                     now: wallNow,
                     startedAt: progress.startedAt,
                     pass: pass,
-                    accountFetch: accountFetch
+                    accountFetch: accountFetch,
+                    calendar: passCalendar
                 ) else { return }
                 await runMorningHealthRefreshPass(
                     owner,
                     progress: progress,
-                    pass: pass
+                    pass: pass,
+                    timeZone: passTimeZone
                 )
                 return
             }
-            if healthMorningRefreshPolicy.isMorning(at: wallNow, calendar: calendar) {
+            if healthMorningRefreshPolicy.isMorning(at: wallNow, calendar: passCalendar) {
                 // A completed morning window is represented by the persisted
                 // start marker and the absence of progress. A concurrent
                 // owner is also a no-op; neither path can create a duplicate
                 // window.
                 guard !morningHealthRefreshGate.isClaimed else { return }
-                guard let owner = claimMorningHealthRefresh(
+                guard !Task.isCancelled,
+                      let owner = claimMorningHealthRefresh(
                     now: wallNow,
                     startedAt: wallNow,
                     pass: 0,
-                    accountFetch: accountFetch
+                    accountFetch: accountFetch,
+                    calendar: passCalendar
                 ) else { return }
                 let progress = HealthMorningRefreshProgress(
                     accountUserID: userID,
-                    startedAt: wallNow
+                    startedAt: wallNow,
+                    timeZoneIdentifier: passTimeZone.identifier
                 )
+                guard !Task.isCancelled else {
+                    finishMorningHealthRefresh(owner: owner)
+                    return
+                }
                 guard persistMorningHealthProgress(progress) else {
                     clearMorningHealthProgress(for: userID)
                     recordHealthSyncFailure(capturedBy: accountFetch)
@@ -5320,19 +5335,23 @@ public final class AppModel {
                 await runMorningHealthRefreshPass(
                     owner,
                     progress: progress,
-                    pass: 0
+                    pass: 0,
+                    timeZone: passTimeZone
                 )
                 return
             }
         }
 
+        guard !Task.isCancelled else { return }
         lastHealthRefreshStartedAt = monotonicNow
         do {
             guard let observation = try await computeAndPublishReadiness(
                 userID: userID,
                 trigger: trigger.syncTrigger,
-                capturedBy: accountFetch
+                capturedBy: accountFetch,
+                timeZone: passTimeZone
             ) else { return }
+            guard !Task.isCancelled else { return }
             recordHealthSync(
                 observation,
                 capturedBy: accountFetch,
@@ -5346,7 +5365,7 @@ public final class AppModel {
             // Keep the last reading and expose a failed health state without
             // turning a background HealthKit/transport problem into an auth
             // diagnostic or a disruptive error banner.
-            if accountFetch.canApply(
+            if !Task.isCancelled, accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) {
@@ -5367,10 +5386,10 @@ public final class AppModel {
         now: Date,
         startedAt: Date,
         pass: Int,
-        accountFetch: AccountScopedFetch
+        accountFetch: AccountScopedFetch,
+        calendar: Calendar
     ) -> AccountScopedCompletion? {
-        let calendar = LocalDateSupport.calendar()
-        guard accountFetch.canApply(
+        guard !Task.isCancelled, accountFetch.canApply(
             to: currentUserID,
             accountEpoch: accountEpoch
         ), (pass != 0 || healthMorningRefreshPolicy.shouldStart(
@@ -5398,14 +5417,20 @@ public final class AppModel {
     private func runMorningHealthRefreshPass(
         _ owner: AccountScopedCompletion,
         progress initialProgress: HealthMorningRefreshProgress,
-        pass: Int
+        pass: Int,
+        timeZone: TimeZone
     ) async {
         var progress = initialProgress
         do {
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
             guard let observation = try await computeAndPublishReadiness(
                 userID: owner.fetch.accountUserID,
                 trigger: .automatic,
-                capturedBy: owner.fetch
+                capturedBy: owner.fetch,
+                timeZone: timeZone
             ) else {
                 // The recompute gate may already have an owner. The durable
                 // progress remains at this pass so a later lifecycle event
@@ -5413,7 +5438,15 @@ public final class AppModel {
                 finishMorningHealthRefresh(owner: owner)
                 return
             }
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
             progress.add(observation)
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
             recordHealthSync(
                 observation,
                 capturedBy: owner.fetch,
@@ -5426,11 +5459,19 @@ public final class AppModel {
             finishMorningHealthRefresh(owner: owner)
             return
         } catch {
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
             progress.markFailure()
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
             recordHealthSyncFailure(capturedBy: owner.fetch)
         }
 
-        guard owner.owns(
+        guard !Task.isCancelled, owner.owns(
             currentUserID: currentUserID,
             accountEpoch: accountEpoch,
             activeOwner: morningHealthRefreshOwner
@@ -5438,20 +5479,52 @@ public final class AppModel {
             return
         }
 
+        guard !Task.isCancelled else {
+            finishMorningHealthRefresh(owner: owner)
+            return
+        }
         progress.nextPass = pass + 1
         guard progress.nextPass < healthMorningRefreshPolicy.passCount else {
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
             clearMorningHealthProgress(for: owner.fetch.accountUserID)
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
             finishMorningHealthRefresh(owner: owner, progress: progress)
             return
         }
 
+        guard !Task.isCancelled else {
+            finishMorningHealthRefresh(owner: owner)
+            return
+        }
         guard persistMorningHealthProgress(progress) else {
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
             clearMorningHealthProgress(for: owner.fetch.accountUserID)
+            guard !Task.isCancelled else {
+                finishMorningHealthRefresh(owner: owner)
+                return
+            }
             recordHealthSyncFailure(capturedBy: owner.fetch)
             finishMorningHealthRefresh(owner: owner)
             return
         }
+        guard !Task.isCancelled else {
+            finishMorningHealthRefresh(owner: owner)
+            return
+        }
         scheduleMorningHealthProgress(progress, now: Date())
+        guard !Task.isCancelled else {
+            finishMorningHealthRefresh(owner: owner)
+            return
+        }
         finishMorningHealthRefresh(owner: owner)
     }
 
@@ -5475,7 +5548,10 @@ public final class AppModel {
         progress: HealthMorningRefreshProgress? = nil
     ) {
         guard morningHealthRefreshOwner == owner else { return }
-        if let observation = progress?.finalObservation {
+        // Releasing the owner/gate is cancellation cleanup. A completion
+        // observation, however, is a visible state mutation and must never be
+        // published after an expired BG task has cancelled this pass.
+        if !Task.isCancelled, let observation = progress?.finalObservation {
             if observation == .failed {
                 recordHealthSyncFailure(capturedBy: owner.fetch)
             } else {
@@ -5508,13 +5584,14 @@ public final class AppModel {
     private func computeAndPublishReadiness(
         userID: UUID,
         trigger: SyncTrigger,
-        capturedBy capturedAccountFetch: AccountScopedFetch? = nil
+        capturedBy capturedAccountFetch: AccountScopedFetch? = nil,
+        timeZone: TimeZone
     ) async throws -> HealthSyncObservation? {
         let accountFetch = capturedAccountFetch ?? AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        guard accountFetch.canApply(
+        guard !Task.isCancelled, accountFetch.canApply(
             to: currentUserID,
             accountEpoch: accountEpoch
         ) else { return nil }
@@ -5523,15 +5600,20 @@ public final class AppModel {
         var sourceDataCount = 0
         do {
             while true {
+                guard !Task.isCancelled else {
+                    recomputeGate.cancel()
+                    return nil
+                }
                 let now = Date()
-                let localCalendar = LocalDateSupport.calendar()
+                let passTimeZone = timeZone
+                let localCalendar = LocalDateSupport.calendar(timeZone: passTimeZone)
                 // The full existing window is required for historical
                 // insert-if-missing reconciliation. A failed fetch aborts the
                 // pass rather than risking duplicate or destructive writes.
                 let existing = try await repository.fetchHealthMetrics(
                     limit: HealthMetricReadWindow.candidateDays
                 )
-                guard accountFetch.canApply(
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else {
@@ -5552,17 +5634,24 @@ public final class AppModel {
                 )
                 let acwrByDate = try await serverACWRSeries(
                     referenceDate: now,
-                    timeZone: localCalendar.timeZone
+                    timeZone: passTimeZone
                 )
-                guard accountFetch.canApply(
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else {
                     recomputeGate.cancel()
                     return nil
                 }
-                let fresh = try await health.computeMetrics(acwrByDate: acwrByDate)
-                guard accountFetch.canApply(
+                guard !Task.isCancelled else {
+                    recomputeGate.cancel()
+                    return nil
+                }
+                let fresh = try await health.computeMetrics(
+                    acwrByDate: acwrByDate,
+                    timeZone: passTimeZone
+                )
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else {
@@ -5574,9 +5663,9 @@ public final class AppModel {
                     existingMetrics: existing,
                     today: today,
                     allowTodayReadinessOverwrite: allowOverwrite,
-                    timeZone: localCalendar.timeZone
+                    timeZone: passTimeZone
                 )
-                guard accountFetch.canApply(
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else {
@@ -5585,7 +5674,7 @@ public final class AppModel {
                 }
 
                 for upsert in plan.upserts {
-                    guard accountFetch.canApply(
+                    guard !Task.isCancelled, accountFetch.canApply(
                         to: currentUserID,
                         accountEpoch: accountEpoch
                     ) else {
@@ -5598,16 +5687,28 @@ public final class AppModel {
                     )
                     if operation == .historicalInsert {
                         do {
+                            guard !Task.isCancelled else {
+                                recomputeGate.cancel()
+                                return nil
+                            }
                             let inserted = try await repository
                                 .insertHealthMetricIfMissing(
                                     upsert,
                                     userID: userID
                                 )
+                            guard !Task.isCancelled else {
+                                recomputeGate.cancel()
+                                return nil
+                            }
                             let stillCurrent = accountFetch.canApply(
                                 to: currentUserID,
                                 accountEpoch: accountEpoch
                             )
                             if inserted {
+                                guard !Task.isCancelled else {
+                                    recomputeGate.cancel()
+                                    return nil
+                                }
                                 // This is an acknowledged server row, not a
                                 // local pending write. Keep it in the durable
                                 // account cache, but publish only to the
@@ -5618,18 +5719,26 @@ public final class AppModel {
                                     entityType: .healthMetrics,
                                     entityID: CacheEntityID.healthMetric(upsert)
                                 )
-                                guard stillCurrent else {
+                                guard !Task.isCancelled, stillCurrent else {
                                     recomputeGate.cancel()
                                     return nil
                                 }
                                 publishHealthMetric(upsert)
+                                guard !Task.isCancelled else {
+                                    recomputeGate.cancel()
+                                    return nil
+                                }
                                 reconciledCount += 1
                             }
-                            guard stillCurrent else {
+                            guard !Task.isCancelled, stillCurrent else {
                                 recomputeGate.cancel()
                                 return nil
                             }
                         } catch {
+                            if Task.isCancelled {
+                                recomputeGate.cancel()
+                                return nil
+                            }
                             if accountFetch.canApply(
                                 to: currentUserID,
                                 accountEpoch: accountEpoch
@@ -5646,6 +5755,10 @@ public final class AppModel {
                     let previousMetric = healthMetrics.first {
                         $0.date == upsert.date
                     }
+                    guard !Task.isCancelled else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
                     let optimisticRevision = cacheUpsertLocal(
                         publishedMetric,
                         accountUserID: userID,
@@ -5653,11 +5766,23 @@ public final class AppModel {
                         entityID: CacheEntityID.healthMetric(publishedMetric)
                     )
                     do {
+                        guard !Task.isCancelled else {
+                            recomputeGate.cancel()
+                            return nil
+                        }
                         try await repository.upsertHealthMetric(upsert, userID: userID)
+                        guard !Task.isCancelled else {
+                            recomputeGate.cancel()
+                            return nil
+                        }
                         let stillCurrent = accountFetch.canApply(
                             to: currentUserID,
                             accountEpoch: accountEpoch
                         )
+                        guard !Task.isCancelled else {
+                            recomputeGate.cancel()
+                            return nil
+                        }
                         // The server accepted this exact A-owned revision. Even
                         // if the user switched accounts while the request was
                         // suspended, acknowledge A's durable cache row; only
@@ -5670,12 +5795,16 @@ public final class AppModel {
                             confirmingLocalRevision: optimisticRevision,
                             publishPendingCount: stillCurrent
                         )
-                        guard stillCurrent else {
+                        guard !Task.isCancelled, stillCurrent else {
                             recomputeGate.cancel()
                             return nil
                         }
                         reconciledCount += 1
                     } catch {
+                        if Task.isCancelled {
+                            recomputeGate.cancel()
+                            return nil
+                        }
                         if accountFetch.canApply(
                             to: currentUserID,
                             accountEpoch: accountEpoch
@@ -5701,13 +5830,21 @@ public final class AppModel {
                         recomputeGate.cancel()
                         return nil
                     }
+                    guard !Task.isCancelled else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
                     publishHealthMetric(publishedMetric)
                 }
 
+                guard !Task.isCancelled else {
+                    recomputeGate.cancel()
+                    return nil
+                }
                 if !plan.sourceDataDates.isEmpty {
                     sourceDataCount += plan.sourceDataDates.count
                 }
-                guard accountFetch.canApply(
+                guard !Task.isCancelled, accountFetch.canApply(
                     to: currentUserID,
                     accountEpoch: accountEpoch
                 ) else {
@@ -5715,8 +5852,20 @@ public final class AppModel {
                     return nil
                 }
                 if let relayMetric = plan.relayMetric {
+                    guard !Task.isCancelled else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
                     publishHealthMetric(relayMetric)
+                    guard !Task.isCancelled else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
                     watch.publishReadiness(relayMetric)
+                }
+                guard !Task.isCancelled else {
+                    recomputeGate.cancel()
+                    return nil
                 }
                 guard recomputeGate.complete() == .rerun else {
                     return .successful(
@@ -6125,6 +6274,7 @@ public final class AppModel {
         if UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") {
             await silentHealthRefresh(trigger: .background)
         }
+        guard !Task.isCancelled else { return .cancelled }
         guard let workspace = cachedWorkspace else {
             await drainQueue()
             return .failed
