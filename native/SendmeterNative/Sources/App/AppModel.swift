@@ -5231,13 +5231,15 @@ public final class AppModel {
                 trigger: trigger.syncTrigger,
                 capturedBy: accountFetch
             )
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
-            // Keep the last reading and record the failure for diagnostics;
-            // automatic refreshes deliberately do not interrupt the dashboard.
-            auth.recordAuthEvent(
-                .failure,
-                detail: "Automatic health refresh failed: \(error.localizedDescription)"
-            )
+            // Deliberately keep the last reading and swallow this background
+            // refresh failure; it must not interrupt the dashboard or pollute
+            // the auth-forensics ring.
+            _ = error
         }
     }
 
@@ -7759,13 +7761,14 @@ public final class AppModel {
                     nowMs: Date().timeIntervalSince1970 * 1_000
                 )
             }
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
-            // Keep the last accepted mirror row, but retain the failure in the
-            // diagnostics ring so a dropped fallback fetch is not invisible.
-            auth.recordAuthEvent(
-                .failure,
-                detail: "Live workout fallback refresh failed: \(error.localizedDescription)"
-            )
+            // Deliberately keep the last accepted mirror row and swallow this
+            // best-effort fallback failure; it is not an auth event.
+            _ = error
         }
     }
 
@@ -7918,14 +7921,14 @@ public final class AppModel {
                 }
                 guard publishedHealth else { return }
             }
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
-            // Keep the last list snapshot, but record the failure for support;
-            // a transient realtime reconcile must not replace it with empty
-            // state or interrupt the current screen.
-            auth.recordAuthEvent(
-                .failure,
-                detail: "Realtime list reconcile failed: \(error.localizedDescription)"
-            )
+            // Deliberately keep the last list snapshot and swallow this
+            // best-effort reconcile failure; it is not an auth event.
+            _ = error
         }
     }
 

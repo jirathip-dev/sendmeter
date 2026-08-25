@@ -218,8 +218,9 @@ The committed `.anti-slop.json` disables exactly `no-any-dictionary-value` and
 `no-any-parameters`. WatchConnectivity's system API requires `[String: Any]`
 payload bridges and `Any?` callback parameters, so those two rules are
 intentional exceptions while the remaining rules stay enabled. The CI step is
-explicitly advisory/non-blocking for this first pass and annotates future
-violations as GitHub warnings.
+advisory for findings: it annotates violations as GitHub warnings without
+blocking this first pass, while missing paths/configuration or a tool-build
+failure remains a real CI failure.
 
 Run the same pinned executable locally from the repository root:
 

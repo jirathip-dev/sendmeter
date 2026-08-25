@@ -261,22 +261,8 @@ struct WorkoutView: View {
         let events = model.manualWorkoutActivity.drainPendingEvents(
             forWorkoutStartedAt: engine?.draft.startedAt
         )
-        guard var current = engine else { return }
-        for event in events {
-            do {
-                switch event.action {
-                case .beginBoulder:
-                    try current.startAttempt(at: event.at)
-                case .endBoulder:
-                    _ = try current.endAttempt(at: event.at)
-                }
-            } catch {
-                // Lock-screen actions are at-least-once and can arrive after
-                // the workout changed. Recover to the last authoritative
-                // snapshot instead of surfacing a stale replay as an error.
-                current = engine ?? current
-            }
-        }
+        guard let engine else { return }
+        let current = ManualWorkoutActivityReplay.applying(events, to: engine)
         guard current != engine else { return }
         engine = current
         model.manualWorkoutActivity.refresh(engine: current, restTarget: restTarget)

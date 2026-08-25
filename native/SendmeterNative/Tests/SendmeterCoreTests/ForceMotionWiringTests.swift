@@ -44,6 +44,15 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertTrue(workout.contains("var structuralHapticLevel: HapticTapLevel { .normal }"))
     }
 
+    func testForceDeviceCardRoutesRefusalsThroughForceView() {
+        let force = code(source("Sources/Features/Force/ForceView.swift"))
+        let deviceCard = exactType(force, startingWith: "private struct ForceDeviceCard: View")
+
+        XCTAssertTrue(deviceCard.contains("let refuseAction: (String) -> Void"))
+        XCTAssertTrue(deviceCard.contains("refuseAction(UserFacingError.message(for: error))"))
+        XCTAssertTrue(force.contains("refuseAction: { message in refuseAction(message) }"))
+    }
+
     private func source(_ relativePath: String) -> String {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

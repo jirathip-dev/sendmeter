@@ -59,8 +59,10 @@ Run it with:
 bash scripts/anti-slop-swift.sh native/SendmeterNative/Sources
 ```
 
-The native CI invocation is advisory and annotated, so it reports findings as
-warnings without blocking this initial adoption pass. A justified forced
+The native CI invocation is advisory and annotated for findings, so violations
+are reported as warnings without blocking this initial adoption pass. Missing
+scan paths/configuration or a vendored-tool build failure remains blocking, so
+a dead quality gate cannot masquerade as a clean scan. A justified forced
 operation must carry a specific `// SAFETY:` comment immediately above it;
 otherwise use an explicit unwrap or recovery path.
 

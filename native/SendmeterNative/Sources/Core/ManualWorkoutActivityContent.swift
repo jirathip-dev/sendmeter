@@ -44,6 +44,34 @@ public enum ManualWorkoutActivityDrain {
     }
 }
 
+/// Replays lock-screen intents into the authoritative phone engine. Delivery
+/// is at-least-once, so an already-applied or no-longer-valid event is an
+/// expected per-event no-op; it must not roll back earlier successful events
+/// from the same drained batch.
+public enum ManualWorkoutActivityReplay {
+    public static func applying(
+        _ events: [ManualWorkoutActivityEvent],
+        to engine: PhoneWorkoutEngine
+    ) -> PhoneWorkoutEngine {
+        var current = engine
+        for event in events {
+            do {
+                switch event.action {
+                case .beginBoulder:
+                    try current.startAttempt(at: event.at)
+                case .endBoulder:
+                    _ = try current.endAttempt(at: event.at)
+                }
+            } catch {
+                // Duplicate/stale lock-screen delivery is deliberately ignored
+                // without undoing transitions already accepted in this batch.
+                continue
+            }
+        }
+        return current
+    }
+}
+
 /// Decides whether a launch/foreground sweep may end manual workout
 /// activities. The in-memory active-workout marker is set by
 /// `ManualWorkoutActivityManager.start` and cleared by `end`, so a live
