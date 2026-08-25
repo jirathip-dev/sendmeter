@@ -981,8 +981,10 @@ public final class SendmeterRepository: @unchecked Sendable {
     /// `sessions` (which can be empty on a cold launch, fabricating a score up
     /// to 20 points high). Same shape/soft-delete exclusion as the shipped
     /// plugin's `computeAcwr`. Filtered to the EWMA lookback window.
-    public func fetchSessionLoads() async throws -> [SessionLoad] {
-        let cutoff = LocalDateSupport.daysAgo(90)
+    public func fetchSessionLoads(
+        days: Int = TrainingMetrics.ewmaLookbackDays
+    ) async throws -> [SessionLoad] {
+        let cutoff = LocalDateSupport.daysAgo(max(1, days))
         let rows: [SessionLoadRow] = try await transport.request(
             path: "rest/v1/sessions",
             method: .get,

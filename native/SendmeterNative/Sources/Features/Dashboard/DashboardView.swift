@@ -225,6 +225,20 @@ private struct TodayDecisionCard: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                            if let syncedAt = model.lastHealthSyncedAt {
+                                Text("Last synced \(syncedAt, format: .dateTime.month(.abbreviated).day().hour().minute())")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Apple Health not synced yet")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if model.lastHealthSyncObservation == .failed {
+                                Text("Apple Health refresh failed; previous reading kept")
+                                    .font(.caption)
+                                    .foregroundStyle(SendmeterStyle.caution)
+                            }
                         }
                     }
                 }

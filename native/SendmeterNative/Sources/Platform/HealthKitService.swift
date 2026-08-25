@@ -10,7 +10,7 @@ public final class HealthKitService: ObservableObject {
     @Published public private(set) var lastError: String?
 
     /// Fired on the main actor when a background HealthKit observer query
-    /// detects new data for one of the four observed types. Wired by
+    /// detects new data for one of the observed types. Wired by
     /// `AppModel` to the same recompute path as foreground sync so a
     /// background wake recomputes readiness, upserts `health_metrics` and
     /// relays the result to the watch (parity with the shipped plugin, #629).
@@ -54,7 +54,7 @@ public final class HealthKitService: ObservableObject {
     }
 
     /// Idempotent per-process registration of background delivery + observer
-    /// queries for the four types in `HealthObserverTypes.observedIdentifiers`.
+    /// queries for the types in `HealthObserverTypes.observedIdentifiers`.
     /// Observer queries live only for the current process, so a cold launch —
     /// including a HealthKit background wake that relaunches the app — must
     /// re-register; `AppModel` calls this from launch and on foreground.
@@ -65,64 +65,133 @@ public final class HealthKitService: ObservableObject {
         registerBackgroundObservers()
     }
 
-    public func computeTodayMetric(acwr: Double?) async throws -> HealthMetric {
+    /// Reads the whole local HealthKit window and returns only dates with at
+    /// least one real source-backed value. HealthKit is the merged Apple Health
+    /// store, so samples written by third-party wearables are included by the
+    /// same queries; no source/application filter is applied here.
+    public func computeMetrics(
+        acwrByDate: [String: Double] = [:]
+    ) async throws -> [HealthMetric] {
         isSyncing = true
         lastError = nil
         defer { isSyncing = false }
         do {
-            let now = Date()
-            let todayStart = calendar.startOfDay(for: now)
-            guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart),
-                  let baselineStart = calendar.date(byAdding: .day, value: -28, to: todayStart)
-            else {
+            return try await readMetrics(now: Date(), acwrByDate: acwrByDate)
+        } catch {
+            lastError = UserFacingError.message(for: error)
+            throw error
+        }
+    }
+
+    /// Compatibility wrapper for callers that only need today's value. The
+    /// reconciliation path uses `computeMetrics` so a no-source day can never
+    /// accidentally become an empty persisted row.
+    public func computeTodayMetric(acwr: Double?) async throws -> HealthMetric {
+        let today = LocalDateSupport.string(
+            from: Date(),
+            timeZone: calendar.timeZone
+        )
+        var acwrByDate: [String: Double] = [:]
+        if let acwr {
+            acwrByDate[today] = acwr
+        }
+        let metrics = try await computeMetrics(acwrByDate: acwrByDate)
+        guard let metric = metrics.first(where: { $0.date == today }) else {
+            throw HealthKitError.noSourceData
+        }
+        return metric
+    }
+
+    private func readMetrics(
+        now: Date,
+        acwrByDate: [String: Double]
+    ) async throws -> [HealthMetric] {
+        let todayStart = calendar.startOfDay(for: now)
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart),
+              let baselineStart = calendar.date(
+                  byAdding: .day,
+                  value: -HealthMetricReconciliationPolicy.lookbackDays,
+                  to: todayStart
+              )
+        else {
+            throw HealthKitError.dateCalculationFailed
+        }
+
+        async let hrvMap = dailyAverages(
+            identifier: .heartRateVariabilitySDNN,
+            unit: .secondUnit(with: .milli),
+            start: baselineStart,
+            end: tomorrow
+        )
+        async let rhrMap = dailyAverages(
+            identifier: .restingHeartRate,
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            start: baselineStart,
+            end: tomorrow
+        )
+        async let respMap = dailyAverages(
+            identifier: .respiratoryRate,
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            start: baselineStart,
+            end: tomorrow
+        )
+        async let sleepMap = dailySleep(start: baselineStart, end: tomorrow)
+        async let bodyMassMap = dailyLatestQuantities(
+            identifier: .bodyMass,
+            unit: .gramUnit(with: .kilo),
+            start: baselineStart,
+            end: tomorrow
+        )
+
+        let hrv = try await hrvMap
+        let rhr = try await rhrMap
+        let resp = try await respMap
+        let sleep = try await sleepMap
+        let bodyMass = try await bodyMassMap
+        let today = LocalDateSupport.string(from: now, timeZone: calendar.timeZone)
+        let sourceDates = Set(hrv.keys)
+            .union(rhr.keys)
+            .union(resp.keys)
+            .union(sleep.filter { $0.value.totalHours > 0 }.keys)
+            .union(bodyMass.keys)
+
+        var metrics: [HealthMetric] = []
+        metrics.reserveCapacity(HealthMetricReconciliationPolicy.lookbackDays + 1)
+        for offset in 0...HealthMetricReconciliationPolicy.lookbackDays {
+            guard let dateStart = calendar.date(
+                byAdding: .day,
+                value: -offset,
+                to: todayStart
+            ) else {
                 throw HealthKitError.dateCalculationFailed
             }
+            let date = LocalDateSupport.string(
+                from: dateStart,
+                timeZone: calendar.timeZone
+            )
+            guard sourceDates.contains(date) else { continue }
 
-            async let hrvMap = dailyAverages(
-                identifier: .heartRateVariabilitySDNN,
-                unit: .secondUnit(with: .milli),
-                start: baselineStart,
-                end: tomorrow
-            )
-            async let rhrMap = dailyAverages(
-                identifier: .restingHeartRate,
-                unit: HKUnit.count().unitDivided(by: .minute()),
-                start: baselineStart,
-                end: tomorrow
-            )
-            async let respMap = dailyAverages(
-                identifier: .respiratoryRate,
-                unit: HKUnit.count().unitDivided(by: .minute()),
-                start: baselineStart,
-                end: tomorrow
-            )
-            async let sleepMap = dailySleep(start: baselineStart, end: tomorrow)
-            async let bodyMass = latestQuantity(
-                identifier: .bodyMass,
-                unit: .gramUnit(with: .kilo),
-                start: baselineStart,
-                end: tomorrow
-            )
-
-            let hrv = try await hrvMap
-            let rhr = try await rhrMap
-            let resp = try await respMap
-            let sleep = try await sleepMap
-            let mass = try await bodyMass
-            let today = LocalDateSupport.string(from: now, timeZone: calendar.timeZone)
-
-            let baselineDays = (1...28).reversed().map {
-                LocalDateSupport.daysAgo($0, from: now, timeZone: calendar.timeZone)
-            }
+            let baselineDays = (1...HealthMetricReconciliationPolicy.lookbackDays)
+                .reversed()
+                .map {
+                    LocalDateSupport.daysAgo(
+                        $0,
+                        from: dateStart,
+                        timeZone: calendar.timeZone
+                    )
+                }
             let inputs = DailyHealthInputs(
-                hrvSDNNms: hrv[today],
-                restingHR: rhr[today],
-                sleepHours: sleep[today]?.totalHours,
-                bodyMassKg: mass,
-                sleepDeepHours: sleep[today]?.deepHours,
-                sleepRemHours: sleep[today]?.remHours,
-                respRateBpm: resp[today],
-                hrvLnBaseline: baselineDays.compactMap { hrv[$0] }.filter { $0 > 0 }.map(log),
+                hrvSDNNms: hrv[date],
+                restingHR: rhr[date],
+                sleepHours: sleep[date]?.totalHours,
+                bodyMassKg: latestBodyMass(onOrBefore: date, valuesByDate: bodyMass),
+                sleepDeepHours: sleep[date]?.deepHours,
+                sleepRemHours: sleep[date]?.remHours,
+                respRateBpm: resp[date],
+                hrvLnBaseline: baselineDays
+                    .compactMap { hrv[$0] }
+                    .filter { $0 > 0 }
+                    .map(log),
                 rhrBaseline: baselineDays.compactMap { rhr[$0] },
                 sleepBaseline: baselineDays.compactMap { sleep[$0]?.totalHours },
                 respBaseline: baselineDays.compactMap { resp[$0] },
@@ -131,24 +200,38 @@ public final class HealthKitService: ObservableObject {
                     return day.deepHours + day.remHours
                 }
             )
-            let result = RecoveryEngine.compute(inputs: inputs, acwr: acwr)
-            return HealthMetric(
-                date: today,
-                readiness: result.score,
-                zone: result.zone?.rawValue,
-                computedAt: now,
-                hrvSDNNMilliseconds: inputs.hrvSDNNms,
-                restingHeartRate: inputs.restingHR,
-                sleepHours: inputs.sleepHours,
-                sleepDeepHours: inputs.sleepDeepHours,
-                sleepREMHours: inputs.sleepRemHours,
-                bodyMassKilograms: inputs.bodyMassKg,
-                respiratoryRate: inputs.respRateBpm
+            let result = RecoveryEngine.compute(
+                inputs: inputs,
+                acwr: acwrByDate[date]
             )
-        } catch {
-            lastError = UserFacingError.message(for: error)
-            throw error
+            metrics.append(
+                HealthMetric(
+                    date: date,
+                    readiness: result.score,
+                    zone: result.zone?.rawValue,
+                    computedAt: now,
+                    hrvSDNNMilliseconds: inputs.hrvSDNNms,
+                    restingHeartRate: inputs.restingHR,
+                    sleepHours: inputs.sleepHours,
+                    sleepDeepHours: inputs.sleepDeepHours,
+                    sleepREMHours: inputs.sleepRemHours,
+                    bodyMassKilograms: inputs.bodyMassKg,
+                    respiratoryRate: inputs.respRateBpm
+                )
+            )
         }
+        return metrics
+    }
+
+    private func latestBodyMass(
+        onOrBefore date: String,
+        valuesByDate: [String: Double]
+    ) -> Double? {
+        guard let latestDate = valuesByDate.keys
+            .filter({ $0 <= date })
+            .max()
+        else { return nil }
+        return valuesByDate[latestDate]
     }
 
     private func requiredReadTypes() throws -> Set<HKObjectType> {
@@ -173,7 +256,7 @@ public final class HealthKitService: ObservableObject {
     }
 
     /// One observer query per delivered type, so HealthKit can wake the app
-    /// for each of the four independently (the shipped plugin observes only
+    /// for each independently (the shipped plugin observes only
     /// HRV; observing the full delivered set means a mid-day sleep-stage or
     /// resting-HR write lands too). A fired query funnels into
     /// `onBackgroundUpdate`, which `AppModel` routes through the same
@@ -262,34 +345,46 @@ public final class HealthKitService: ObservableObject {
         }
     }
 
-    private func latestQuantity(
+    private func dailyLatestQuantities(
         identifier: HKQuantityTypeIdentifier,
         unit: HKUnit,
         start: Date,
         end: Date
-    ) async throws -> Double? {
+    ) async throws -> [String: Double] {
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else {
             throw HealthKitError.typeUnavailable(identifier.rawValue)
         }
         let predicate = HKQuery.predicateForSamples(
             withStart: start,
             end: end,
-            options: [.strictEndDate]
+            options: [.strictStartDate]
         )
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
         return try await withCheckedThrowingContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: type,
                 predicate: predicate,
-                limit: 1,
+                limit: HKObjectQueryNoLimit,
                 sortDescriptors: [sort]
-            ) { _, samples, error in
+            ) { [calendar] _, samples, error in
                 if let error {
                     continuation.resume(throwing: error)
                     return
                 }
-                let value = (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit)
-                continuation.resume(returning: value)
+                var values: [String: Double] = [:]
+                for sample in samples as? [HKQuantitySample] ?? [] {
+                    let key = LocalDateSupport.string(
+                        from: sample.endDate,
+                        timeZone: calendar.timeZone
+                    )
+                    // Samples are sorted newest-first, so the first value for
+                    // a local day is the same latest-value semantics as the
+                    // old single-row query.
+                    if values[key] == nil {
+                        values[key] = sample.quantity.doubleValue(for: unit)
+                    }
+                }
+                continuation.resume(returning: values)
             }
             store.execute(query)
         }
@@ -356,6 +451,7 @@ public enum HealthKitError: Error, LocalizedError, FriendlyErrorClassifying {
     case authorizationDenied
     case typeUnavailable(String)
     case dateCalculationFailed
+    case noSourceData
 
     public var errorDescription: String? {
         switch self {
@@ -365,13 +461,15 @@ public enum HealthKitError: Error, LocalizedError, FriendlyErrorClassifying {
             return "Apple Health type is unavailable: \(type)"
         case .dateCalculationFailed:
             return "Apple Health date range could not be calculated."
+        case .noSourceData:
+            return "Apple Health has no source data for this window yet."
         }
     }
 
     public var friendlyErrorClass: FriendlyErrorClass {
         switch self {
         case .authorizationDenied: return .healthPermissionDenied
-        case .typeUnavailable, .dateCalculationFailed: return .healthUnavailable
+        case .typeUnavailable, .dateCalculationFailed, .noSourceData: return .healthUnavailable
         }
     }
 }

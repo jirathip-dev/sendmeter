@@ -2,7 +2,9 @@ import Foundation
 
 /// The HealthKit types whose background delivery wakes the app so readiness
 /// can recompute while backgrounded (parity with the shipped plugin's
-/// observer-driven ingestion, #629).
+/// observer-driven ingestion, #629). Body mass is included because it is a
+/// source-backed health day too, even when a wearable has not delivered an
+/// autonomic sample yet (#801).
 ///
 /// Raw identifier strings rather than HealthKit types keep this package free
 /// of HealthKit so the seam is testable on macOS; `HealthKitService` maps
@@ -11,13 +13,14 @@ import Foundation
 /// cannot drift apart — a type delivered to but not observed (or vice versa)
 /// would silently never recompute.
 public enum HealthObserverTypes {
-    /// Exactly the four types the shipped plugin delivers: HRV SDNN, resting
-    /// heart rate, respiratory rate, and sleep analysis.
+    /// HRV SDNN, resting heart rate, respiratory rate, sleep analysis, and body
+    /// mass from the merged Apple Health store.
     public static let observedIdentifiers: [String] = [
         "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
         "HKQuantityTypeIdentifierRestingHeartRate",
         "HKQuantityTypeIdentifierRespiratoryRate",
         "HKCategoryTypeIdentifierSleepAnalysis",
+        "HKQuantityTypeIdentifierBodyMass",
     ]
 }
 
