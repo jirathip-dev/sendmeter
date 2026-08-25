@@ -264,6 +264,10 @@ public struct ForceProgressCardKey: Hashable, Sendable {
     public let curveRevision: UInt64
     public let targetBand: ForceTargetBand?
     public let emptyActionKey: String
+    /// The title participates in identity only while this boundary owns the
+    /// visible action hero. Suppressed secondary cards keep their stable
+    /// action-mode key and therefore do not rebuild on hands-free rep ticks.
+    public let emptyActionTitle: String?
     public let showsPrimaryEmptyState: Bool
     public let connectionPending: Bool
 
@@ -275,6 +279,7 @@ public struct ForceProgressCardKey: Hashable, Sendable {
         curveRevision: UInt64,
         targetBand: ForceTargetBand? = nil,
         emptyActionKey: String = "",
+        emptyActionTitle: String? = nil,
         showsPrimaryEmptyState: Bool = true,
         connectionPending: Bool = false
     ) {
@@ -285,6 +290,7 @@ public struct ForceProgressCardKey: Hashable, Sendable {
         self.curveRevision = curveRevision
         self.targetBand = targetBand
         self.emptyActionKey = emptyActionKey
+        self.emptyActionTitle = emptyActionTitle
         self.showsPrimaryEmptyState = showsPrimaryEmptyState
         self.connectionPending = connectionPending
     }

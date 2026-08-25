@@ -396,6 +396,53 @@ final class ForceProgressTests: XCTestCase {
             curveRevision: 0
         )
         XCTAssertEqual(afterMovementKey, afterDisplayFrame)
+
+        // A visible primary hero must refresh when its state-specific copy
+        // changes (for example, Record a pull → Stop & save). Secondary cards
+        // pass nil for the title and retain the stable action-mode identity.
+        let visibleRecordAction = ForceProgressCardKey(
+            progressRevision: revision.value,
+            selectedTag: "Crimp",
+            selectedSide: TindeqSide.left.rawValue,
+            hasLoadedRecordings: true,
+            curveRevision: 0,
+            emptyActionKey: "free-pull",
+            emptyActionTitle: "Record a pull",
+            showsPrimaryEmptyState: true
+        )
+        let visibleStopAction = ForceProgressCardKey(
+            progressRevision: revision.value,
+            selectedTag: "Crimp",
+            selectedSide: TindeqSide.left.rawValue,
+            hasLoadedRecordings: true,
+            curveRevision: 0,
+            emptyActionKey: "free-pull",
+            emptyActionTitle: "Stop & save",
+            showsPrimaryEmptyState: true
+        )
+        XCTAssertNotEqual(visibleRecordAction, visibleStopAction)
+
+        let suppressedRecordAction = ForceProgressCardKey(
+            progressRevision: revision.value,
+            selectedTag: "Crimp",
+            selectedSide: TindeqSide.left.rawValue,
+            hasLoadedRecordings: true,
+            curveRevision: 0,
+            emptyActionKey: "free-pull",
+            emptyActionTitle: nil,
+            showsPrimaryEmptyState: false
+        )
+        let suppressedStopAction = ForceProgressCardKey(
+            progressRevision: revision.value,
+            selectedTag: "Crimp",
+            selectedSide: TindeqSide.left.rawValue,
+            hasLoadedRecordings: true,
+            curveRevision: 0,
+            emptyActionKey: "free-pull",
+            emptyActionTitle: nil,
+            showsPrimaryEmptyState: false
+        )
+        XCTAssertEqual(suppressedRecordAction, suppressedStopAction)
     }
 
     func testForceProgressRevisionRestartsCurveKeyAtUploadCompletionBoundary() {

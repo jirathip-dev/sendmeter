@@ -10,7 +10,7 @@ struct ForceConsistencyCard: View {
     let hiddenTags: Set<String>
     let hasLoadedRecordings: Bool
     let connectionPending: Bool
-    let showsPrimaryEmptyState: Bool = true
+    let showsPrimaryEmptyState: Bool
     let emptyActionTitle: String
     let emptyAction: () -> Void
 
@@ -69,7 +69,7 @@ struct ForceConsistencyCard: View {
                                 action: emptyAction
                             )
                         } else {
-                            Text("No recent force recordings match this view.")
+                            Text("No recent force recordings match this exercise filter. Record a pull above to build this rhythm.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }

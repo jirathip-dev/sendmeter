@@ -113,7 +113,7 @@ struct NativeForceCurveCard: View {
                             action: emptyAction
                         )
                     } else {
-                        Text("Keep recording long pulls to shape this force curve.")
+                        Text("No long pulls match this exercise yet. Record one above to shape this force curve.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }

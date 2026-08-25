@@ -1721,7 +1721,7 @@ public final class AppModel {
             // Opening/creating SQLite is not a server boundary. Only a
             // persisted cursor or explicit successful-empty marker can make a
             // cached empty list authoritative after a failed refresh.
-            hasLoadedSessions = sessionsWereSynced
+            hasLoadedSessions = hasLoadedSessions || sessionsWereSynced
             if let cachedSettings = snapshot.settings {
                 settings = cachedSettings
             }
@@ -1754,8 +1754,8 @@ public final class AppModel {
                       let recording = recordingsByID[id] else { continue }
                 pendingRecordings.insert(recording, accountUserID: accountUserID)
             }
-            hasLoadedRecordings = recordingsWereSynced
-            forceModel.hasLoadedRecordings = recordingsWereSynced
+            hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced
+            forceModel.hasLoadedRecordings = hasLoadedRecordings
             publishForceProgressInputMutation(.recordings)
             refreshPendingCacheWriteCount(accountUserID: accountUserID)
         } catch {
@@ -5838,10 +5838,10 @@ public final class AppModel {
                 remote: snapshot.sessions,
                 markLoaded: sessionsWereSynced
             )
-            hasLoadedSessions = sessionsWereSynced
+            hasLoadedSessions = hasLoadedSessions || sessionsWereSynced
             mergeRecordings(remote: snapshot.recordings)
-            hasLoadedRecordings = recordingsWereSynced
-            forceModel.hasLoadedRecordings = recordingsWereSynced
+            hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced
+            forceModel.hasLoadedRecordings = hasLoadedRecordings
             warmTagCurvesIfMissing(capturedBy: accountFetch)
         } catch {
             recordCacheFailure("background cache publish", error)

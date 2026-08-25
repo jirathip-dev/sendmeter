@@ -29,6 +29,7 @@ struct ForceProgressCardBoundary: View, Equatable {
             curveRevision: curveRevision,
             targetBand: targetBand,
             emptyActionKey: emptyActionKey,
+            emptyActionTitle: showsPrimaryEmptyState ? emptyActionTitle : nil,
             showsPrimaryEmptyState: showsPrimaryEmptyState,
             connectionPending: connectionPending
         )
@@ -66,7 +67,7 @@ struct ForceProgressCard: View {
     let forceCurve: ForceCurveModel?
     let hasLoadedRecordings: Bool
     let targetBand: ForceTargetBand?
-    let showsPrimaryEmptyState: Bool = true
+    let showsPrimaryEmptyState: Bool
     let emptyActionTitle: String
     let emptyAction: () -> Void
     let connectionPending: Bool
@@ -109,7 +110,7 @@ struct ForceProgressCard: View {
                         action: emptyAction
                     )
                 } else {
-                    Text("No saved pulls match this exercise and side.")
+                    Text("No saved pulls match this exercise and side. Record one above or choose another view.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

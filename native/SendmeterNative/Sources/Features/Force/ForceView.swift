@@ -1372,6 +1372,10 @@ struct ForceView: View {
         }
     }
 
+    /// The Progressor card is the sole branded/actionable empty-state owner on
+    /// this screen. Analysis cards remain visible only with data (or while
+    /// loading); a selected view with no matching rows gets read-only,
+    /// contextual guidance there and never a second hero/action.
     private var forceDeviceOwnsPrimaryEmptyState: Bool {
         guard !model.tindeq.hasUnsavedRecording,
               model.tindeq.interruptedRecording == nil,
@@ -1379,13 +1383,22 @@ struct ForceView: View {
         else { return false }
 
         switch model.tindeq.status {
-        case .idle, .unavailable:
+        case .idle, .unavailable, .interrupted:
             return true
         case .connected:
             return forceModel.hasLoadedRecordings && model.recordings.isEmpty
         default:
             return false
         }
+    }
+
+    private var showsForceAnalysisCards: Bool {
+        // The Progressor card owns the only illustrated/actionable empty state.
+        // Analysis cards are a contextual layer: keep them for loading or
+        // returning data, but suppress the whole layer for a true first-sync
+        // empty account so the Force screen cannot stack competing heroes.
+        !forceDeviceOwnsPrimaryEmptyState
+            && (!forceModel.hasLoadedRecordings || !model.recordings.isEmpty)
     }
 
     private func startPrimaryForceAction() {
@@ -1669,8 +1682,7 @@ struct ForceView: View {
                     // this expression in reasonable time").
                     recordingContextCard
 
-                    if !forceDeviceOwnsPrimaryEmptyState,
-                       (!forceModel.hasLoadedRecordings || !model.recordings.isEmpty) {
+                    if showsForceAnalysisCards {
                         ForceProgressCardBoundary(
                             recordings: model.recordings,
                             selectedTag: progressTag,
@@ -2517,7 +2529,7 @@ private struct ForceDeviceCard: View {
         else { return false }
 
         switch device.status {
-        case .idle, .unavailable:
+        case .idle, .unavailable, .interrupted:
             return true
         default:
             return false
@@ -2552,6 +2564,10 @@ private struct ForceDeviceCard: View {
                 : "Turn Bluetooth back on in iOS Settings to connect your Progressor."
         case .idle where hasForceRecordings:
             return "Reconnect your Progressor to continue recording and extend your force history."
+        case .interrupted where hasForceRecordings:
+            return "Your saved force history is safe. Reconnect your Progressor to continue recording."
+        case .interrupted:
+            return "Reconnect your Progressor to turn a pull into a force curve."
         case .connected:
             return "Record a Progressor pull to turn your force into a curve and training trend."
         default:
@@ -2781,10 +2797,12 @@ private struct ForceDeviceCard: View {
                     }
                 } else if handsFreeArmed, protocolArmed {
                     VStack(spacing: 8) {
-                        Button(action: start) {
-                            Label("Start Guided Protocol", systemImage: "play.fill")
+                        if !showsPrimaryEmptyState {
+                            Button(action: start) {
+                                Label("Start Guided Protocol", systemImage: "play.fill")
+                            }
+                            .hapticButtonStyle(PrimaryActionButtonStyle())
                         }
-                        .hapticButtonStyle(PrimaryActionButtonStyle())
                         Button("Cancel hands-free arm", role: .destructive, action: cancelArm)
                             .hapticButtonStyle(.bordered)
                     }
@@ -2807,7 +2825,7 @@ private struct ForceDeviceCard: View {
                     }
                     .hapticButtonStyle(PrimaryActionButtonStyle())
                     .disabled(device.hasUnsavedRecording)
-                } else {
+                } else if !showsPrimaryEmptyState {
                     Button(action: start) {
                         Label(
                             protocolArmed ? "Start Guided Protocol" : "Start Pull",

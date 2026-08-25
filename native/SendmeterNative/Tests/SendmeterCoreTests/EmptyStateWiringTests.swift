@@ -84,6 +84,7 @@ final class EmptyStateWiringTests: XCTestCase {
             card,
             startingWith: "struct ForceProgressCardBoundary: View, Equatable"
         )
+        let progress = exactBlock(card, startingWith: "struct ForceProgressCard: View")
         let tile = exactBlock(card, startingWith: "private func tile<Content: View>(")
         let staticTile = exactBlock(card, startingWith: "private func staticTile(")
         let movementTile = exactBlock(card, startingWith: "private func movementTile(")
@@ -93,12 +94,19 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(boundary.contains("let showsPrimaryEmptyState: Bool"))
         XCTAssertTrue(boundary.contains("let emptyAction: () -> Void"))
         XCTAssertTrue(boundary.contains("emptyActionKey: emptyActionKey"))
+        XCTAssertTrue(
+            boundary.contains(
+                "emptyActionTitle: showsPrimaryEmptyState ? emptyActionTitle : nil"
+            )
+        )
         XCTAssertTrue(boundary.contains("showsPrimaryEmptyState: showsPrimaryEmptyState"))
         XCTAssertTrue(boundary.contains("connectionPending: connectionPending"))
         XCTAssertTrue(card.contains("staticProgress.totalCount == 0"))
         XCTAssertTrue(card.contains("movementProgress.latestMetrics == nil"))
         XCTAssertTrue(card.contains("ProductEmptyState("))
-        XCTAssertTrue(card.contains("No saved pulls match this exercise and side."))
+        XCTAssertTrue(card.contains("Record one above or choose another view."))
+        XCTAssertTrue(progress.contains("let showsPrimaryEmptyState: Bool"))
+        XCTAssertFalse(progress.contains("let showsPrimaryEmptyState: Bool = true"))
         XCTAssertTrue(tile.contains("tileSurface("))
         XCTAssertEqual(
             countButtonInvocations(in: tile),
@@ -112,6 +120,7 @@ final class EmptyStateWiringTests: XCTestCase {
         let core = code(source("Sources/Core/ForceProgress.swift"))
         let key = exactBlock(core, startingWith: "public struct ForceProgressCardKey: Hashable, Sendable")
         XCTAssertTrue(key.contains("public let emptyActionKey: String"))
+        XCTAssertTrue(key.contains("public let emptyActionTitle: String?"))
         XCTAssertTrue(key.contains("public let connectionPending: Bool"))
     }
 
@@ -128,7 +137,7 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(curve.contains("ProductEmptyState("))
         XCTAssertTrue(curve.contains("actionTitle: emptyActionTitle"))
         XCTAssertTrue(curve.contains("action: emptyAction"))
-        XCTAssertTrue(curve.contains("Keep recording long pulls"))
+        XCTAssertTrue(curve.contains("No long pulls match this exercise yet"))
         XCTAssertTrue(curve.contains("ProgressView(\"Loading force-duration curve…\")"))
     }
 
@@ -144,6 +153,9 @@ final class EmptyStateWiringTests: XCTestCase {
             "the Progressor card must own the single global Force empty state"
         )
         XCTAssertTrue(device.contains("private var showsPrimaryEmptyState: Bool"))
+        XCTAssertTrue(
+            device.contains("case .idle, .unavailable, .interrupted:")
+        )
         XCTAssertTrue(device.contains("actionTitle: emptyActionTitle"))
         XCTAssertTrue(device.contains("action: emptyAction"))
         XCTAssertTrue(device.contains("Reconnect to your force progress"))
@@ -183,6 +195,30 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(controls.contains("Label(\"Battery\""))
         XCTAssertTrue(controls.contains("device.disconnect()"))
         XCTAssertTrue(controls.contains("$handsFreeEnabled"))
+        XCTAssertTrue(
+            normalizeWhitespace(controls).contains(
+                "else if !showsPrimaryEmptyState { Button(action: start)"
+            )
+        )
+        XCTAssertTrue(
+            normalizeWhitespace(controls).contains(
+                "if !showsPrimaryEmptyState { Button(action: start)"
+            )
+        )
+
+        XCTAssertEqual(
+            countOccurrences("showsPrimaryEmptyState: false", in: force),
+            3,
+            "secondary Force surfaces must stay actionless when the Progressor card owns the hero"
+        )
+        XCTAssertTrue(force.contains("forceDeviceOwnsPrimaryEmptyState"))
+        let hierarchy = exactBlock(
+            force,
+            startingWith: "private var showsForceAnalysisCards: Bool"
+        )
+        XCTAssertTrue(hierarchy.contains("!forceDeviceOwnsPrimaryEmptyState"))
+        XCTAssertTrue(hierarchy.contains("!forceModel.hasLoadedRecordings"))
+        XCTAssertTrue(hierarchy.contains("!model.recordings.isEmpty"))
     }
 
     func testForceDetailSheetsOwnTheirEmptyStateAction() {
@@ -218,8 +254,16 @@ final class EmptyStateWiringTests: XCTestCase {
         )
         XCTAssertTrue(cacheHydration.contains("sessionsWereSynced"))
         XCTAssertTrue(cacheHydration.contains("recordingsWereSynced"))
-        XCTAssertTrue(cacheHydration.contains("hasLoadedSessions = sessionsWereSynced"))
-        XCTAssertTrue(cacheHydration.contains("hasLoadedRecordings = recordingsWereSynced"))
+        XCTAssertTrue(
+            cacheHydration.contains(
+                "hasLoadedSessions = hasLoadedSessions || sessionsWereSynced"
+            )
+        )
+        XCTAssertTrue(
+            cacheHydration.contains(
+                "hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced"
+            )
+        )
         XCTAssertFalse(cacheHydration.contains("markRecordingsLoaded()"))
         let refresh = exactBlock(
             appModel,
@@ -234,8 +278,16 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(background.contains("let sessionsWereSynced"))
         XCTAssertTrue(background.contains("let recordingsWereSynced"))
         XCTAssertTrue(background.contains("markLoaded: sessionsWereSynced"))
-        XCTAssertTrue(background.contains("hasLoadedSessions = sessionsWereSynced"))
-        XCTAssertTrue(background.contains("hasLoadedRecordings = recordingsWereSynced"))
+        XCTAssertTrue(
+            background.contains(
+                "hasLoadedSessions = hasLoadedSessions || sessionsWereSynced"
+            )
+        )
+        XCTAssertTrue(
+            background.contains(
+                "hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced"
+            )
+        )
         XCTAssertFalse(background.contains("markRecordingsLoaded()"))
         let realtime = exactBlock(
             appModel,
@@ -261,7 +313,8 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(consistency.contains("compact: true"))
         XCTAssertTrue(consistency.contains("actionTitle: emptyActionTitle"))
         XCTAssertTrue(consistency.contains("let showsPrimaryEmptyState: Bool"))
-        XCTAssertTrue(consistency.contains("No recent force recordings match this view."))
+        XCTAssertFalse(consistency.contains("let showsPrimaryEmptyState: Bool = true"))
+        XCTAssertTrue(consistency.contains("No recent force recordings match this exercise filter."))
         XCTAssertFalse(consistency.contains("No force recordings in the last 8 weeks"))
 
         let acwr = code(source("Sources/Features/Dashboard/AcwrProjectionCard.swift"))
