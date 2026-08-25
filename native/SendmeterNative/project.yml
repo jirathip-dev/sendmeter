@@ -109,6 +109,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: SendmeterNative.entitlements
         SWIFT_VERSION: 5.0
         IPHONEOS_DEPLOYMENT_TARGET: 17.0
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: SENDMETER_APP
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: 9244PWFYD7
         CODE_SIGN_STYLE: Automatic
@@ -120,7 +121,7 @@ targets:
         Debug:
           base:
             PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native
-            SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG SENDMETER_APP
         Release:
           base:
             PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog
@@ -265,7 +266,14 @@ targets:
     sources:
       - path: Sources/Widgets
       - path: Sources/Shared
-      # XcodeGen ignores the top-level `resources:` block for this spec shape
+      # Xcode 26's explicit-module build currently fails to make a local
+      # Swift package product visible to an app extension (the existing watch
+      # widget shows the same failure). Compile the Foundation-only wire and
+      # presentation contract from its canonical package source instead. The
+      # app still links SendLogHealthCore normally; the extension gets no
+      # HealthKit, Supabase, or native app module dependency.
+      - path: ../../native-plugins/sendlog-health-core/Sources/SendLogHealthCore/ReadinessWidgetContract.swift
+    # XcodeGen ignores the top-level `resources:` block for this spec shape
       # (same quirk as the app above), so the widget's Info.plist + privacy
       # manifest are declared as sources with an explicit buildPhase. The
       # Info.plist lives OUTSIDE the synced Sources/Widgets dir (repo
@@ -282,6 +290,7 @@ targets:
       base:
         PRODUCT_NAME: "$(TARGET_NAME)"
         INFOPLIST_FILE: Resources/WidgetsInfo.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Widgets/SendmeterNativeWidgets.entitlements
         # GENERATE_INFOPLIST_FILE: YES lets Xcode synthesize the CFBundle*
         # keys (identifier, version, package type) on top of the NSExtension
         # dict in WidgetsInfo.plist — the same convention as the Capacitor

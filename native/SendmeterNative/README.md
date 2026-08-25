@@ -38,6 +38,13 @@ in `docs/native-swift-rewrite.md`.
   CLIMBING/RESTING timer ticks natively, the Dynamic Island tap deep-links to
   the Workout tab, Stop/Boulder actions route back into the engine, and the
   card ends on finish, cancel, or relaunch
+- iPhone home-screen/Smart Stack readiness widget (#807): medium and large
+  families show the current-day readiness score/zone, ACWR with acute/chronic
+  load, and the current training block. The WidgetKit process reads only an
+  account/epoch-stamped App Group snapshot written by `AppModel`; it never
+  accesses HealthKit, Supabase, or a refresh token. A missing or previous-day
+  snapshot renders an honest no-data state, and `sendmeter://dashboard` opens
+  the native Dashboard when the widget is tapped.
 
 ## Architecture
 
@@ -47,10 +54,21 @@ SwiftUI application
 ├── Sources/Data       Supabase auth and typed PostgREST repositories
 ├── Sources/Platform   CoreBluetooth, HealthKit, and WatchConnectivity
 ├── Sources/Features   Native product screens
-├── Sources/Shared     ActivityKit wire type shared verbatim with the widget appex (#674)
+├── Sources/Shared     ActivityKit + readiness-widget wire/store types shared with the widget appex
 ├── Sources/Widgets    The WidgetKit app-extension target's rendering code (#674)
 └── Sources/App        App lifecycle, orchestration, design system, and optimistic reconciliation
 ```
+
+The phone WidgetKit extension is also part of the generated `SendmeterNative`
+scheme. Both the app and extension require the App Group
+`group.com.jirathip.sendlog`; the same group is already used by the companion's
+watch-widget bridge, but the phone widget has its own snapshot key. A successful
+foreground, HealthKit, session-load, realtime-health, or phase publication
+rewrites the snapshot and reloads the `SendmeterReadiness` timeline. Sign-out
+and account reset remove it synchronously. The snapshot's current-day check
+uses the shared Gregorian date helpers, so a stale prior-day readiness score is
+never displayed as today's score. App Group capability/profile setup and
+home-screen/Smart Stack rendering remain device-only verification gates.
 
 The generated project also has a `SendLogWatch Watch App` watchOS target. It
 reuses the existing companion sources from `ios/App/SendLogWatch Watch App`,
