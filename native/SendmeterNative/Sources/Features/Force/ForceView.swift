@@ -1353,6 +1353,7 @@ struct ForceView: View {
                 return "Arm Hands-free"
             }
             return selectedPreset == nil ? "Record a pull" : "Start guided pull"
+        case .measuring: return "Stop & save"
         case .unavailable: return "Open Bluetooth Settings"
         case .scanning, .connecting: return "Cancel connection"
         case .interrupted: return "Reconnect Progressor"

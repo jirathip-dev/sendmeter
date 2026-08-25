@@ -221,6 +221,12 @@ final class EmptyStateWiringTests: XCTestCase {
                 "if handsFreeEnabled, selectedPreset == nil { return \"Arm Hands-free\" }"
             )
         )
+        XCTAssertTrue(
+            normalizeWhitespace(deviceTitle).contains(
+                "case .measuring: return \"Stop & save\""
+            ),
+            "the device action-title switch must handle the active measuring state"
+        )
         let emptyAction = exactBlock(
             force,
             startingWith: "private func performForceEmptyAction()"
