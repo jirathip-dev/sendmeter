@@ -380,6 +380,24 @@ export type Database = {
         }
         Relationships: []
       }
+      sync_purge_generations: {
+        Row: {
+          generation: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          generation?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          generation?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       tindeq_presets: {
         Row: {
           alternate_sides: boolean
@@ -692,6 +710,14 @@ export type Database = {
           duration_min: number
           group_id: string
         }[]
+      }
+      purge_recording: {
+        Args: { p_id: string }
+        Returns: boolean
+      }
+      purge_session: {
+        Args: { p_id: string }
+        Returns: boolean
       }
       rename_tindeq_tag: {
         Args: { new_name: string; old_name: string }
