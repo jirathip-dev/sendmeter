@@ -1848,12 +1848,12 @@ public final class AppModel {
     }
 
     /// Hard purges leave no row for an `updated_at > cursor` delta to return.
-    /// The server generation is account-scoped; a mismatch forces both
-    /// Trash-backed entities through full authoritative reconciliation while
-    /// retaining the cache's pending-local-write precedence.
+    /// The server generation is account-scoped; a mismatch or unavailable
+    /// generation forces both Trash-backed entities through full authoritative
+    /// reconciliation while retaining pending-local-write precedence.
     private func cacheNeedsPurgeReconcile(
         accountUserID: UUID,
-        remoteGeneration: Int64
+        remoteGeneration: Int64?
     ) -> Bool {
         guard let cachedWorkspace else { return true }
         do {
@@ -2218,7 +2218,21 @@ public final class AppModel {
             }
         }
         do {
-            let remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
+            let remotePurgeGeneration: Int64?
+            do {
+                remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
+            } catch {
+                // The generation endpoint may lag a staged/older project
+                // schema. Keep the ordinary refresh alive and make both
+                // purge-sensitive entities authoritative until it recovers.
+                if accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
+                    surface(error)
+                }
+                remotePurgeGeneration = nil
+            }
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
@@ -6372,6 +6386,12 @@ public final class AppModel {
         if UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") {
             await silentHealthRefresh(trigger: .background)
         }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else {
+            return .accountChanged
+        }
         guard !Task.isCancelled else { return .cancelled }
         guard let workspace = cachedWorkspace else {
             await drainQueue()
@@ -6390,11 +6410,18 @@ public final class AppModel {
             return .accountChanged
         }
         guard !Task.isCancelled else { return .cancelled }
-        let remotePurgeGeneration: Int64
+        let remotePurgeGeneration: Int64?
         do {
             remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
         } catch {
-            return Task.isCancelled ? .cancelled : .failed
+            if Task.isCancelled { return .cancelled }
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
+            remotePurgeGeneration = nil
         }
         guard accountFetch.canApply(
             to: currentUserID,
@@ -8598,7 +8625,21 @@ public final class AppModel {
             accountEpoch: accountEpoch
         )
         do {
-            let remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
+            let remotePurgeGeneration: Int64?
+            do {
+                remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
+            } catch {
+                // Keep realtime convergence alive when this optional rollout
+                // endpoint is unavailable. The nil generation forces the
+                // foreground path below to reconcile both affected entities.
+                if accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
+                    surface(error)
+                }
+                remotePurgeGeneration = nil
+            }
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch

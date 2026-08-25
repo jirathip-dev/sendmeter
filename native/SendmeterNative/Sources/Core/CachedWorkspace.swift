@@ -148,9 +148,16 @@ public enum PurgeConvergencePolicy {
     public static func requiresFullReconcile(
         localGeneration: Int64?,
         hasCompletedSync: Bool,
-        remoteGeneration: Int64
+        remoteGeneration: Int64?
     ) -> Bool {
-        !hasCompletedSync || localGeneration != remoteGeneration
+        guard let remoteGeneration else {
+            // The generation endpoint is an optional rollout dependency. A
+            // missing answer must never be mistaken for generation zero: a
+            // conservative full pass preserves purge convergence while the
+            // ordinary entity refresh can still proceed.
+            return true
+        }
+        return !hasCompletedSync || localGeneration != remoteGeneration
     }
 }
 
@@ -567,7 +574,7 @@ public struct CachedWorkspace: Sendable {
     /// account's purge signal can never force or satisfy this decision.
     public func needsPurgeReconcile(
         accountUserID: UUID,
-        remoteGeneration: Int64
+        remoteGeneration: Int64?
     ) throws -> Bool {
         for entityType in PurgeConvergencePolicy.affectedEntityTypes {
             let completed = try hasCompletedSync(

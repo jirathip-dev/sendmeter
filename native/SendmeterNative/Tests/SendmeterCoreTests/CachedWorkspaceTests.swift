@@ -1268,6 +1268,13 @@ final class CachedWorkspaceTests: XCTestCase {
             accountUserID: accountA,
             remoteGeneration: 0
         ))
+        XCTAssertTrue(
+            try workspace.needsPurgeReconcile(
+                accountUserID: accountA,
+                remoteGeneration: nil
+            ),
+            "an unavailable generation must force a full pair rather than pretending zero"
+        )
 
         // A hard purge produces no row for the strict updated_at delta to
         // return, so the cursor-only pass leaves both stale rows visible.
@@ -1330,6 +1337,25 @@ final class CachedWorkspaceTests: XCTestCase {
             accountUserID: accountB,
             remoteGeneration: 1
         ))
+    }
+
+    func testPurgeGenerationResponseDecodesPopulatedAndEmptyEndpointShapes() throws {
+        let decoder = JSONDecoder()
+        let populated = try decoder.decode(
+            [PurgeGenerationRow].self,
+            from: Data(#"[{"generation":7}]"#.utf8)
+        )
+        XCTAssertEqual(PurgeGenerationResponse.generation(from: populated), 7)
+
+        let empty = try decoder.decode(
+            [PurgeGenerationRow].self,
+            from: Data("[]".utf8)
+        )
+        XCTAssertEqual(
+            PurgeGenerationResponse.generation(from: empty),
+            0,
+            "RLS before the first purge is a valid generation-zero response"
+        )
     }
 
     private static func pendingFlag(

@@ -961,10 +961,6 @@ public struct LinkRecordingsResult: Decodable, Sendable {
 
 private struct EmptyRPC: Encodable {}
 
-private struct PurgeSyncGenerationRow: Decodable {
-    let generation: Int64
-}
-
 // MARK: - Repository
 
 public final class SendmeterRepository: @unchecked Sendable {
@@ -1833,7 +1829,7 @@ public final class SendmeterRepository: @unchecked Sendable {
     /// recording has no row left for `updated_at > cursor` to return.
     /// Missing state means no purge has happened for this account yet.
     public func fetchPurgeSyncGeneration() async throws -> Int64 {
-        let rows: [PurgeSyncGenerationRow] = try await transport.request(
+        let rows: [PurgeGenerationRow] = try await transport.request(
             path: "rest/v1/sync_purge_generations",
             method: .get,
             queryItems: [
@@ -1841,7 +1837,7 @@ public final class SendmeterRepository: @unchecked Sendable {
                 URLQueryItem(name: "limit", value: "1")
             ]
         )
-        return rows.first?.generation ?? 0
+        return PurgeGenerationResponse.generation(from: rows)
     }
 
     public func fetchSessionDelta(

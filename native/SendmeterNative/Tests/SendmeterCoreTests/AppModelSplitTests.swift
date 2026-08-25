@@ -237,6 +237,11 @@ final class AppModelSplitTests: XCTestCase {
         let appModel = code(source("Sources/App/AppModel.swift"))
         XCTAssertTrue(appModel.contains("fetchPurgeSyncGeneration"))
         XCTAssertTrue(appModel.contains("cacheNeedsPurgeReconcile"))
+        XCTAssertTrue(appModel.contains("let remotePurgeGeneration: Int64?"))
+        XCTAssertTrue(
+            appModel.contains("remotePurgeGeneration = nil"),
+            "generation endpoint failure must fall back instead of aborting refresh"
+        )
         XCTAssertTrue(appModel.contains("forcingFullReconcile: forcePurgeReconcile"))
         XCTAssertTrue(appModel.contains("forceFull: forcePurgeReconcile"))
         XCTAssertTrue(appModel.contains("purgeGeneration: remotePurgeGeneration"))
@@ -266,10 +271,36 @@ final class AppModelSplitTests: XCTestCase {
             XCTAssertTrue(migration.contains("recordings_record_hard_delete_sync_generation"))
             XCTAssertTrue(migration.contains("create or replace function public.purge_session"))
             XCTAssertTrue(migration.contains("create or replace function public.purge_recording"))
+            XCTAssertTrue(migration.contains("if not exists (select 1 from auth.users where id = old.user_id)"))
             XCTAssertTrue(migration.contains("deleted_at is not null"))
         } catch {
             XCTFail("Could not read purge convergence migration: \(error)")
         }
+    }
+
+    func testBackgroundSyncRechecksAccountAfterHealthBeforePreflightDrain() {
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        guard let start = appModel.range(of: "public func runBackgroundSync() async") else {
+            return XCTFail("runBackgroundSync is missing")
+        }
+        guard let end = appModel.range(
+            of: "private func makeBackgroundSyncOperations(",
+            range: start.upperBound..<appModel.endIndex
+        ) else {
+            return XCTFail("runBackgroundSync boundary is missing")
+        }
+        let body = appModel[start.lowerBound..<end.lowerBound]
+        guard let health = body.range(of: "await silentHealthRefresh(trigger: .background)") else {
+            return XCTFail("background health preflight is missing")
+        }
+        guard let drain = body.range(of: "await drainQueue()", range: health.upperBound..<body.endIndex) else {
+            return XCTFail("background queue drain is missing")
+        }
+        let betweenHealthAndDrain = body[health.upperBound..<drain.lowerBound]
+        XCTAssertTrue(
+            betweenHealthAndDrain.contains("accountFetch.canApply"),
+            "an account switch during HealthKit await must abort before the old task drains"
+        )
     }
 
     func testManualQueueRetryWaitsForInFlightOwnerAndPublishesFailureState() {

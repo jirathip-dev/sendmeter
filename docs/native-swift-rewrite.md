@@ -86,13 +86,15 @@ in-flight reads and writes; pending local rows remain visible over either kind
 of server refresh.
 
 The strict comparison has an explicit tie assumption: current cursor requests
-are unpaged and return every changed row in the response, so all rows sharing
-the maximum `updated_at` value arrive in the same batch before that timestamp
-is persisted. A row with the exact cursor timestamp is intentionally treated
-as already applied. If a future endpoint adds pagination, it must replace this
-with a composite `(updated_at, entity_id)` cursor (and retain a replay-safe
-dedupe rule); adding a page limit to the current `updated_at > cursor` query
-would be unsafe.
+have no client-side limit and return every changed row in the response, so all
+rows sharing the maximum `updated_at` value arrive in the same batch before
+that timestamp is persisted. This assumes the hosted PostgREST `max-rows`
+setting is unset (or above any one account's dataset); verify that setting in
+each hosted project before rollout. A row with the exact cursor timestamp is
+intentionally treated as already applied. If a future endpoint adds pagination
+or a hosted row cap is enabled, it must replace this with a composite
+`(updated_at, entity_id)` cursor (and retain a replay-safe dedupe rule); adding
+a page limit to the current `updated_at > cursor` query would be unsafe.
 
 Realtime slices use the same cursor and cache transaction before publishing
 the new in-memory list. Background refresh re-checks account/epoch and task
@@ -115,7 +117,14 @@ reconciliation, so a hard-purged row absent from every delta cannot survive in
 either cache. The generation marker is written only after the snapshot,
 tombstone reconciliation, cursor, and sync boundary are durable. Pending local
 writes, account namespaces/epochs, retry behavior, and the bounded one-row
-server signal are preserved across interruptions.
+server signal are preserved across interruptions. The generation read is an
+optional rollout dependency: a 404/403/schema-cache failure is surfaced but
+does not cancel the ordinary refresh; native conservatively full-reconciles
+sessions and recordings while continuing the other entity work. That fallback
+adds a full pair of fetches (and the preflight generation round trip) until the
+endpoint is available again. The purge RPC returns `false` when a retry finds
+the row already gone or restored; clients intentionally treat that result as a
+successful idempotent no-op.
 
 ### HealthKit morning refresh (#801)
 

@@ -29,6 +29,13 @@ security definer
 set search_path = public
 as $$
 begin
+  -- Account deletion cascades through these tables while the parent auth row
+  -- is being removed. Do not create a generation row that the same cascade
+  -- cannot satisfy; ordinary purges still take the incrementing path below.
+  if not exists (select 1 from auth.users where id = old.user_id) then
+    return old;
+  end if;
+
   insert into public.sync_purge_generations (user_id, generation, updated_at)
   values (old.user_id, 1, now())
   on conflict (user_id) do update set

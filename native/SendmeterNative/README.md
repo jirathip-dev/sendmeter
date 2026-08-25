@@ -78,9 +78,16 @@ Force recording is hard-deleted. Native compares that marker with both
 affected cache boundaries and forces an authoritative full reconcile of
 sessions and recordings together when it changes; the marker is written only
 after those durable writes complete. Cursor requests are strict
-`updated_at > cursor` and currently unpaged: equal-timestamp rows are assumed
-to arrive in the same batch as the maximum timestamp. Any future pagination
-must use a composite `(updated_at, entity_id)` cursor instead.
+`updated_at > cursor` with no client-side limit: equal-timestamp rows are
+assumed to arrive in the same batch as the maximum timestamp. This assumes the
+hosted PostgREST `max-rows` setting is unset (or above one account's dataset),
+which must be verified in each hosted project. Any future pagination or hosted
+row cap must use a composite `(updated_at, entity_id)` cursor instead. The
+generation read is an optional rollout dependency; a failed read is surfaced,
+but the foreground/background pass continues and conservatively
+full-reconciles sessions and recordings. The purge RPC's false return means
+the row was already gone or restored, and is intentionally treated as a
+successful idempotent retry.
 Realtime slices continue through the same reconcile path before the published
 state changes, so a watch/other-device edit survives a relaunch without waiting
 for the next foreground pull. When the app backgrounds, a `BGAppRefreshTask`
