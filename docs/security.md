@@ -3,24 +3,36 @@
 ## Secret scanning
 
 `.github/workflows/secret-scan.yml` runs on every pull request and on pushes to
-`main`. It installs gitleaks 8.30.1 from the versioned release archive, checks
-the archive's SHA-256 digest, runs a disposable-fixture self-test, and then
-scans the checked-out tree with `--no-git`. The gate deliberately checks current
-files rather than replaying repository history; a credential that is found in a
-working tree must still be removed and rotated, even if it was committed in the
-past.
+`main` or `staging`. It uses the repository's standard
+`blacksmith-4vcpu-ubuntu-2404` Linux runner for full CI, but this lightweight
+scan deliberately uses a pinned GitHub `ubuntu-24.04` runner so it does not
+depend on custom-runner availability. It installs gitleaks 8.30.1 from the
+versioned release archive, checks the archive's SHA-256 digest, runs a
+disposable-fixture self-test, and then scans the checked-out tree with
+`--no-git`. The gate deliberately checks current files rather than replaying
+repository history; a credential that is found in a working tree must still be
+removed and rotated, even if it was committed in the past. The CI checkout
+contains tracked files only. The direct local command below is intentionally
+broader: `--no-git` also scans ignored developer files, so it may find a local
+`.env`; `--redact` keeps its value out of the output.
+The CI scan also uses redacted verbose output, so a finding includes its rule,
+file, line, and fingerprint without exposing the value.
 
-Run the same repository check locally with gitleaks installed:
+Run a broader local working-tree check with gitleaks installed:
 
 ```sh
 gitleaks detect --source . --no-git --config .gitleaks.toml \
-  --redact --no-banner --exit-code=1
+  --redact --verbose --no-color --no-banner --exit-code=1
 ```
 
 The committed `.gitleaks.toml` contains only narrow, documented exceptions for
-the two native files' Supabase publishable anon-key assignments and one
-byte-exact upstream anti-slop-swift README example. Supabase anon keys are client-side
-publishable values; row-level security, not key secrecy, protects the data.
+the two native files' three current Supabase publishable anon-key assignments,
+matched byte-for-byte with hex-escaped regular expressions, and one byte-exact
+upstream anti-slop-swift README example. The workflow mutates every allowlisted
+assignment with an `sb_secret_*` value, a generic high-entropy value, and a
+changed publishable value; each must fail as `generic-api-key`. Supabase anon
+keys are client-side publishable values; row-level security, not key secrecy,
+protects the data.
 Do not use these exceptions for service-role keys, access/refresh tokens, App
 Store Connect private keys, or other credentials.
 
