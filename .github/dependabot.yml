@@ -1,0 +1,260 @@
+version: 2
+
+# The repository's default branch is `staging`. Deliberately do not set
+# target-branch: GitHub documents that version-update options then stop applying
+# to security updates, which must continue to use the default branch and these
+# security groups.
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 5
+    groups:
+      npm-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      npm-production:
+        applies-to: "version-updates"
+        dependency-type: "production"
+        update-types:
+          - "patch"
+          - "minor"
+      npm-development:
+        applies-to: "version-updates"
+        dependency-type: "development"
+        update-types:
+          - "patch"
+          - "minor"
+      npm-major:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+
+  - package-ecosystem: "npm"
+    directory: "/mcp"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:20"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 3
+    groups:
+      mcp-npm-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      mcp-npm-production:
+        applies-to: "version-updates"
+        dependency-type: "production"
+        update-types:
+          - "patch"
+          - "minor"
+      mcp-npm-development:
+        applies-to: "version-updates"
+        dependency-type: "development"
+        update-types:
+          - "patch"
+          - "minor"
+      mcp-npm-major:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:40"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      github-actions-updates:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+
+  # SwiftPM is a supported Dependabot ecosystem (Swift v5/v6 in GitHub's
+  # current options reference). Keep one entry per manifest so generated
+  # Capacitor files and the Xcode project's standalone Package.resolved are
+  # not rewritten by a tool that cannot own them.
+  - package-ecosystem: "swift"
+    directory: "/ios/App/SendLogWatchCore"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:00"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 3
+    groups:
+      swift-core-security:
+        applies-to: "security-updates"
+        patterns: ["*"]
+      swift-core-updates:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      swift-core-major:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["major"]
+
+  - package-ecosystem: "swift"
+    directory: "/native-plugins/sendlog-auth-bridge"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:05"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 3
+    groups:
+      swift-auth-security:
+        applies-to: "security-updates"
+        patterns: ["*"]
+      swift-auth-updates:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      swift-auth-major:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["major"]
+
+  - package-ecosystem: "swift"
+    directory: "/native-plugins/sendlog-health-core"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:10"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 3
+    groups:
+      swift-health-core-security:
+        applies-to: "security-updates"
+        patterns: ["*"]
+      swift-health-core-updates:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      swift-health-core-major:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["major"]
+
+  - package-ecosystem: "swift"
+    directory: "/native-plugins/sendlog-health"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:15"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 3
+    groups:
+      swift-health-security:
+        applies-to: "security-updates"
+        patterns: ["*"]
+      swift-health-updates:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      swift-health-major:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["major"]
+
+  - package-ecosystem: "swift"
+    directory: "/native-plugins/sendlog-live-activity"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:20"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 3
+    groups:
+      swift-live-activity-security:
+        applies-to: "security-updates"
+        patterns: ["*"]
+      swift-live-activity-updates:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      swift-live-activity-major:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["major"]
+
+  - package-ecosystem: "swift"
+    directory: "/native-plugins/sendlog-passkey"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:25"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 3
+    groups:
+      swift-passkey-security:
+        applies-to: "security-updates"
+        patterns: ["*"]
+      swift-passkey-updates:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      swift-passkey-major:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["major"]
+
+  - package-ecosystem: "swift"
+    directory: "/native/SendmeterNative"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:30"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 3
+    groups:
+      swift-native-security:
+        applies-to: "security-updates"
+        patterns: ["*"]
+      swift-native-updates:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      swift-native-major:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["major"]
+
+  - package-ecosystem: "swift"
+    directory: "/tools/anti-slop-swift"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:35"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 3
+    groups:
+      swift-tool-security:
+        applies-to: "security-updates"
+        patterns: ["*"]
+      swift-tool-updates:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      swift-tool-major:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["major"]

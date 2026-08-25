@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint .",
+    "audit": "npm audit --audit-level=high",
     "preview": "vite preview",
     "verify:production": "node scripts/verify-production-artifacts.mjs",
     "sync": "cap sync ios",

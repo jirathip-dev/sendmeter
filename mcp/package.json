@@ -14,6 +14,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "audit": "npm audit --audit-level=high",
     "lint": "../node_modules/.bin/eslint src test scripts",
     "mcp": "node dist/index.js",
     "dry-run": "node dist/index.js --dry-run"
