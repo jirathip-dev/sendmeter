@@ -207,6 +207,11 @@ public final class AppModel {
     /// use this to avoid claiming a fresh user has no history on every cold
     /// launch or failed refresh (#652 F2).
     public private(set) var hasLoadedSessions = false
+    /// True once the account's recording list has been hydrated or fetched at
+    /// least once, including an authoritative empty result. History owns the
+    /// shared recording collection on AppModel, so it needs this boundary
+    /// without observing ForceModel's hot stream (#787).
+    public private(set) var hasLoadedRecordings = false
     public private(set) var deletedSessions: [SendmeterCore.Session] = []
     public private(set) var deletedRecordings: [TindeqRecording] = []
     public private(set) var healthMetrics: [HealthMetric] = []
@@ -217,8 +222,8 @@ public final class AppModel {
     )
     /// The shared force-recording list. It is read by the Force tab, History,
     /// and Settings; a fresh account resets it via `resetAccountState()`. The
-    /// force-scoped "has loaded" flag lives on `ForceModel` (see
-    /// `ForceModel.hasLoadedRecordings`).
+    /// force-scoped progress revisions and curves live on `ForceModel`; the
+    /// cold list-load boundary is duplicated here for History.
     public private(set) var recordings: [TindeqRecording] = []
     /// O(1) progress-input identity for the tiles, detail sheets, and selected
     /// Static curve. This is observed only at actual progress mutation
@@ -244,6 +249,11 @@ public final class AppModel {
     // same target and reads it via the internal getter).
     private(set) var passkeys: [PasskeyListItem] = []
     public private(set) var isRefreshing = false
+    /// True while any account-scoped list refresh is in flight, including
+    /// silent foreground/realtime refreshes. `isRefreshing` remains the
+    /// explicit-spinner state; this separate boundary prevents a silent first
+    /// load from being rendered as a retry/empty state (#787).
+    public private(set) var isLoadingData = false
     public private(set) var queuedWriteCount = 0
     /// Active queue entries, including the most recent failure class and
     /// backoff. This is intentionally retained separately from the count so a
@@ -478,6 +488,7 @@ public final class AppModel {
     /// cannot reject a stale A completion after an A→B→A transition.
     public private(set) var accountEpoch: UInt64 = 0
     private var refreshingOwner: AccountScopedCompletion?
+    private var dataRefreshOwners = Set<UUID>()
     private var recomputeGate = ReadinessRecomputeGate()
     /// #661: silent foreground/appear health sync. The policy is pure Core
     /// (`HealthRefreshPolicy`, unit-tested); `lastHealthRefreshStartedAt` is
@@ -1572,6 +1583,10 @@ public final class AppModel {
             watch.relaySession(session)
             if changedUser || didBootstrapUserID != session.user.id {
                 resetAccountState()
+                // Mark the account boundary as loading before the watch inbox
+                // adoption can suspend. Otherwise a signed-in tab can render
+                // a retry/empty state during that pre-refresh window.
+                isLoadingData = true
                 // Adopt persisted watch summaries before any network await so
                 // a relaunch with a delayed Supabase path still renders the
                 // completion in History immediately.
@@ -1691,7 +1706,11 @@ public final class AppModel {
                 accountUserID: accountUserID
             ) else { return }
             sessions = snapshot.sessions
-            hasLoadedSessions = !snapshot.sessions.isEmpty
+            // A readable account snapshot is a real cache boundary even when
+            // the server previously returned no rows. The UI still gives an
+            // in-flight refresh precedence, so this does not flash a false
+            // empty state during the next network pass.
+            hasLoadedSessions = true
             if let cachedSettings = snapshot.settings {
                 settings = cachedSettings
             }
@@ -1724,7 +1743,7 @@ public final class AppModel {
                       let recording = recordingsByID[id] else { continue }
                 pendingRecordings.insert(recording, accountUserID: accountUserID)
             }
-            forceModel.hasLoadedRecordings = !snapshot.recordings.isEmpty
+            markRecordingsLoaded()
             publishForceProgressInputMutation(.recordings)
             refreshPendingCacheWriteCount(accountUserID: accountUserID)
         } catch {
@@ -2057,10 +2076,32 @@ public final class AppModel {
         }
     }
 
+    private func beginDataRefresh() -> UUID {
+        let owner = UUID()
+        dataRefreshOwners.insert(owner)
+        isLoadingData = true
+        return owner
+    }
+
+    private func endDataRefresh(_ owner: UUID) {
+        dataRefreshOwners.remove(owner)
+        isLoadingData = !dataRefreshOwners.isEmpty
+    }
+
+    /// Keep the cold AppModel boundary and the Force-only progress boundary in
+    /// lockstep at a successful cache/network publication. History reads the
+    /// former; Force surfaces read the latter.
+    private func markRecordingsLoaded() {
+        hasLoadedRecordings = true
+        forceModel.hasLoadedRecordings = true
+    }
+
     // MARK: Loading
 
     public func refreshAll(showSpinner: Bool = true) async {
         guard let userID = currentUserID else { return }
+        let dataRefreshOwner = beginDataRefresh()
+        defer { endDataRefresh(dataRefreshOwner) }
         // Cold-start / account-switch path: render the account's local
         // snapshot before any network request starts.
         hydrateCachedWorkspace(accountUserID: userID)
@@ -2260,7 +2301,7 @@ public final class AppModel {
                 // progress task restarts even when the metadata snapshot is
                 // equal.
                 publishForceProgressInputMutation(.recordings)
-                forceModel.hasLoadedRecordings = true
+                markRecordingsLoaded()
             }
             guard publishedLists else { return }
             await refreshQueueCount(for: accountFetch)
@@ -5752,7 +5793,7 @@ public final class AppModel {
             applyCachedNonOverlayLists(accountUserID: accountUserID)
             mergeSessions(remote: snapshot.sessions)
             mergeRecordings(remote: snapshot.recordings)
-            forceModel.hasLoadedRecordings = true
+            markRecordingsLoaded()
             warmTagCurvesIfMissing(capturedBy: accountFetch)
         } catch {
             recordCacheFailure("background cache publish", error)
@@ -7778,7 +7819,7 @@ public final class AppModel {
                     accountEpoch: accountEpoch
                 ) {
                     mergeRecordings(remote: snapshot.recordings)
-                    forceModel.hasLoadedRecordings = true
+                    markRecordingsLoaded()
                 }
                 guard publishedRecordings else { return }
                 warmTagCurvesIfMissing(capturedBy: accountFetch)
@@ -8465,6 +8506,8 @@ public final class AppModel {
         publishForceProgressInputMutation(.accountReset)
         refreshingOwner = nil
         isRefreshing = false
+        dataRefreshOwners.removeAll()
+        isLoadingData = false
         // #673: a fresh account must not inherit the prior account's list
         // freshness — the foreground gate would otherwise treat a full
         // refresh as recent and skip the mandatory bootstrap sweep.
@@ -8475,6 +8518,7 @@ public final class AppModel {
         deletedRecordings = []
         healthMetrics = []
         phasePeriods = []
+        hasLoadedRecordings = false
         forceModel.hasLoadedRecordings = false
         recordings = []
         presets = []

@@ -91,14 +91,19 @@ struct AcwrProjectionCard: View {
     ///   chronic term is zero) → the ratio has nothing to project from.
     @ViewBuilder
     private var emptyState: some View {
-        if !model.hasLoadedSessions {
+        if model.isLoadingData || !model.hasLoadedSessions {
             Text("Your training history is still loading.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         } else if model.sessions.isEmpty {
-            Text("Log a few sessions and this card will show where your ACWR drifts over the coming week if you don't train.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            ProductEmptyState(
+                title: "Your next workout shapes the forecast",
+                message: "Log a few sessions and ACWR will show where your load drifts over the coming week.",
+                actionTitle: "Start a workout",
+                compact: true
+            ) {
+                model.selectedTab = .workout
+            }
         } else {
             Text("Your most recent sessions fall outside the 90-day window this card projects from, so there's no ACWR ratio to extend yet — log a session and this card will show where it drifts over the coming week.")
                 .font(.subheadline)

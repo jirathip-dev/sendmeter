@@ -15,8 +15,7 @@ struct StaticCapacityDetailView: View {
     let forceCurve: ForceCurveModel?
     let hasLoadedRecordings: Bool
     let targetBand: ForceTargetBand?
-    let emptyActionTitle: String
-    let emptyAction: () -> Void
+    let connectionPending: Bool
 
     private var staticEvidence: StaticCapacityEvidence {
         ForceProgress.staticCapacityEvidence(
@@ -37,8 +36,8 @@ struct StaticCapacityDetailView: View {
                         ProductEmptyState(
                             title: "Build your capacity baseline",
                             message: "Two measured Static holds reveal your force trend and curve.",
-                            actionTitle: emptyActionTitle,
-                            action: emptyAction
+                            actionTitle: "Back to Force",
+                            action: dismiss
                         )
                     } else {
                         ForceTrendChart(
@@ -52,8 +51,9 @@ struct StaticCapacityDetailView: View {
                                 model: forceCurve,
                                 hasLoadedRecordings: hasLoadedRecordings,
                                 targetBand: targetBand,
-                                emptyActionTitle: emptyActionTitle,
-                                emptyAction: emptyAction
+                                connectionPending: connectionPending,
+                                emptyActionTitle: "Back to Force",
+                                emptyAction: dismiss
                             )
                             SideAsymmetryCard(recordings: recordings, tag: selectedTag)
                         } else {

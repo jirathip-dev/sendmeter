@@ -31,8 +31,9 @@ final class EmptyStateWiringTests: XCTestCase {
             startingWith: "private struct RecentSessionsCard: View"
         )
 
-        XCTAssertTrue(recent.contains("if !model.hasLoadedSessions"))
-        XCTAssertTrue(recent.contains("if model.isRefreshing"))
+        let normalizedRecent = normalizeWhitespace(recent)
+        XCTAssertTrue(normalizedRecent.contains("model.isLoadingData || !model.hasLoadedSessions"))
+        XCTAssertTrue(normalizedRecent.contains("model.isLoadingData || model.isRefreshing"))
         XCTAssertTrue(recent.contains("ProductEmptyState("))
         XCTAssertTrue(recent.contains("actionTitle: \"Start a workout\""))
         XCTAssertTrue(recent.contains("model.selectedTab = .workout"))
@@ -45,7 +46,10 @@ final class EmptyStateWiringTests: XCTestCase {
         let history = code(source("Sources/Features/History/HistoryView.swift"))
 
         XCTAssertFalse(history.contains("ForceModel"))
-        XCTAssertTrue(history.contains("if !model.hasLoadedSessions"))
+        let normalizedHistory = normalizeWhitespace(history)
+        XCTAssertTrue(normalizedHistory.contains("model.isLoadingData || !model.hasLoadedSessions"))
+        XCTAssertTrue(normalizedHistory.contains("model.isLoadingData || !model.hasLoadedRecordings"))
+        XCTAssertTrue(history.contains("model.isLoadingData || model.isRefreshing"))
         XCTAssertTrue(history.contains("historyLoadState(progressLabel: \"Loading history…\")"))
         XCTAssertTrue(history.contains("historyLoadState(progressLabel: \"Loading sessions…\")"))
         XCTAssertTrue(history.contains("historyLoadState(progressLabel: \"Loading force history…\")"))
@@ -55,6 +59,7 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(history.contains("model.selectedTab = .workout"))
         XCTAssertTrue(history.contains("model.selectedTab = .force"))
         XCTAssertTrue(history.contains("ProductEmptyState("))
+        XCTAssertTrue(history.contains("ScrollView {"))
         XCTAssertFalse(history.contains("No history yet"))
         XCTAssertFalse(history.contains("No sessions yet"))
         XCTAssertFalse(history.contains("No force recordings yet"))
@@ -71,18 +76,22 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(boundary.contains("let emptyActionTitle: String"))
         XCTAssertTrue(boundary.contains("let emptyAction: () -> Void"))
         XCTAssertTrue(boundary.contains("emptyActionTitle: emptyActionTitle"))
+        XCTAssertTrue(boundary.contains("connectionPending: connectionPending"))
         XCTAssertTrue(card.contains("staticProgress.totalCount == 0"))
         XCTAssertTrue(card.contains("movementProgress.latestMetrics == nil"))
         XCTAssertTrue(card.contains("ProductEmptyState("))
-        XCTAssertTrue(tile.contains("if isEmpty"))
-        XCTAssertTrue(tile.contains("ProductEmptyState("))
-        XCTAssertTrue(tile.contains("} else {"))
-        XCTAssertTrue(tile.contains("Button(action:"))
-        XCTAssertFalse(tile.contains("Button(action: emptyAction"))
+        XCTAssertTrue(tile.contains("tileSurface("))
+        XCTAssertEqual(
+            countButtonInvocations(in: tile),
+            1,
+            "a progress tile must have one sheet-opening button, including its empty content"
+        )
+        XCTAssertFalse(tile.contains("ProductEmptyState("))
 
         let core = code(source("Sources/Core/ForceProgress.swift"))
         let key = exactBlock(core, startingWith: "public struct ForceProgressCardKey: Hashable, Sendable")
         XCTAssertTrue(key.contains("public let emptyActionTitle: String"))
+        XCTAssertTrue(key.contains("public let connectionPending: Bool"))
     }
 
     func testNativeCurvePinsEmptySamplesAndItsRecordAction() {
@@ -90,8 +99,10 @@ final class EmptyStateWiringTests: XCTestCase {
 
         XCTAssertTrue(curve.contains("let emptyActionTitle: String"))
         XCTAssertTrue(curve.contains("let emptyAction: () -> Void"))
+        XCTAssertTrue(curve.contains("let connectionPending: Bool"))
         XCTAssertTrue(curve.contains("if let model, !model.points.isEmpty"))
         XCTAssertTrue(curve.contains("} else if hasLoadedRecordings {"))
+        XCTAssertTrue(curve.contains("if connectionPending"))
         XCTAssertTrue(curve.contains("ProductEmptyState("))
         XCTAssertTrue(curve.contains("actionTitle: emptyActionTitle"))
         XCTAssertTrue(curve.contains("action: emptyAction"))
@@ -104,13 +115,89 @@ final class EmptyStateWiringTests: XCTestCase {
 
         XCTAssertTrue(device.contains("private var showsDisconnectedEmptyState: Bool"))
         XCTAssertTrue(device.contains("ProductEmptyState("))
-        XCTAssertTrue(device.contains("actionTitle: \"Connect Progressor\""))
-        XCTAssertTrue(device.contains("action: connect"))
-        XCTAssertTrue(device.contains("if showsDisconnectedEmptyState {\n                EmptyView()"))
+        XCTAssertEqual(
+            countOccurrences("ProductEmptyState(", in: device),
+            1,
+            "the Progressor card must own the single global Force empty state"
+        )
+        XCTAssertTrue(device.contains("private var showsPrimaryEmptyState: Bool"))
+        XCTAssertTrue(device.contains("actionTitle: emptyActionTitle"))
+        XCTAssertTrue(device.contains("action: emptyAction"))
+        let normalizedDevice = normalizeWhitespace(device)
+        XCTAssertTrue(normalizedDevice.contains("if showsPrimaryEmptyState { EmptyView()"))
         XCTAssertTrue(force.contains("private var forceEmptyActionTitle: String"))
         XCTAssertTrue(force.contains("private func performForceEmptyAction()"))
-        XCTAssertTrue(force.contains("case .connected:\n            startMeasurement()"))
-        XCTAssertTrue(force.contains("case .unavailable:\n            model.selectedTab = .settings"))
+        let normalizedForce = normalizeWhitespace(force)
+        XCTAssertTrue(normalizedForce.contains("case .connected: startPrimaryForceAction()"))
+        XCTAssertTrue(normalizedForce.contains("case .unavailable: openBluetoothSettings()"))
+        XCTAssertTrue(normalizedForce.contains("UIApplication.openSettingsURLString"))
+        XCTAssertTrue(normalizedForce.contains("case .scanning, .connecting: break"))
+        XCTAssertFalse(force.contains("model.selectedTab = .settings"))
+    }
+
+    func testForceDetailSheetsOwnTheirEmptyStateAction() {
+        let detail = code(source("Sources/Features/Force/StaticCapacityDetailView.swift"))
+        XCTAssertTrue(detail.contains("@Environment(\\.dismiss) private var dismiss"))
+        XCTAssertTrue(detail.contains("actionTitle: \"Back to Force\""))
+        XCTAssertTrue(detail.contains("action: dismiss"))
+        XCTAssertFalse(detail.contains("let emptyActionTitle: String"))
+        XCTAssertFalse(detail.contains("let emptyAction: () -> Void"))
+
+        let progress = code(source("Sources/Features/Force/ForceProgressCard.swift"))
+        let sheetCall = exactBlock(progress, startingWith: "StaticCapacityDetailView(")
+        XCTAssertTrue(sheetCall.contains("connectionPending: connectionPending"))
+        XCTAssertFalse(sheetCall.contains("emptyAction:"))
+    }
+
+    func testAppModelOwnsIndependentRecordingBoundaryAndRefreshLoadingState() {
+        let appModel = code(source("Sources/App/AppModel.swift"))
+
+        XCTAssertTrue(appModel.contains("public private(set) var hasLoadedRecordings = false"))
+        XCTAssertTrue(appModel.contains("public private(set) var isLoadingData = false"))
+        XCTAssertTrue(appModel.contains("private func markRecordingsLoaded()"))
+        XCTAssertTrue(appModel.contains("hasLoadedSessions = true"))
+        XCTAssertTrue(appModel.contains("markRecordingsLoaded()"))
+        XCTAssertTrue(appModel.contains("dataRefreshOwners.removeAll()"))
+        XCTAssertTrue(appModel.contains("hasLoadedRecordings = false"))
+        XCTAssertTrue(appModel.contains("forceModel.hasLoadedRecordings = false"))
+        let cacheHydration = exactBlock(
+            appModel,
+            startingWith: "private func hydrateCachedWorkspace(accountUserID: UUID)"
+        )
+        XCTAssertTrue(cacheHydration.contains("markRecordingsLoaded()"))
+        let refresh = exactBlock(
+            appModel,
+            startingWith: "public func refreshAll(showSpinner: Bool = true) async"
+        )
+        XCTAssertTrue(refresh.contains("fetchedRecordings.activeValues"))
+        XCTAssertTrue(refresh.contains("markRecordingsLoaded()"))
+        let realtime = exactBlock(
+            appModel,
+            startingWith: "private func refreshReconcileSlices(_ slices: Set<ReconcileSlice>) async"
+        )
+        XCTAssertTrue(realtime.contains("markRecordingsLoaded()"))
+        let reset = exactBlock(appModel, startingWith: "private func resetAccountState()")
+        XCTAssertTrue(reset.contains("hasLoadedRecordings = false"))
+        XCTAssertTrue(reset.contains("forceModel.hasLoadedRecordings = false"))
+        XCTAssertTrue(
+            normalizeWhitespace(appModel).contains(
+                "let dataRefreshOwner = beginDataRefresh() defer { endDataRefresh(dataRefreshOwner) }"
+            )
+        )
+    }
+
+    func testRemainingProductEmptyStatesKeepARealNextStep() {
+        let consistency = code(source("Sources/Features/Force/ForceConsistencyCard.swift"))
+        XCTAssertTrue(consistency.contains("ProductEmptyState("))
+        XCTAssertTrue(consistency.contains("compact: true"))
+        XCTAssertTrue(consistency.contains("actionTitle: emptyActionTitle"))
+        XCTAssertFalse(consistency.contains("No force recordings in the last 8 weeks"))
+
+        let acwr = code(source("Sources/Features/Dashboard/AcwrProjectionCard.swift"))
+        XCTAssertTrue(acwr.contains("title: \"Your next workout shapes the forecast\""))
+        XCTAssertTrue(acwr.contains("actionTitle: \"Start a workout\""))
+        XCTAssertTrue(acwr.contains("model.selectedTab = .workout"))
+        XCTAssertFalse(acwr.contains("Text(\"Log a few sessions"))
     }
 
     private func source(_ relativePath: String) -> String {
@@ -182,5 +269,19 @@ final class EmptyStateWiringTests: XCTestCase {
             searchStart = match.upperBound
         }
         return count
+    }
+
+    private func countButtonInvocations(in source: String) -> Int {
+        let expression = try! NSRegularExpression(pattern: #"\bButton\s*(?:\(|\{)"#)
+        return expression.numberOfMatches(
+            in: source,
+            range: NSRange(source.startIndex..., in: source)
+        )
+    }
+
+    private func normalizeWhitespace(_ source: String) -> String {
+        source
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

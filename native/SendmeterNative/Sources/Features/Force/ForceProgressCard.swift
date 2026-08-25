@@ -16,6 +16,7 @@ struct ForceProgressCardBoundary: View, Equatable {
     let targetBand: ForceTargetBand?
     let emptyActionTitle: String
     let emptyAction: () -> Void
+    let connectionPending: Bool
 
     private var renderKey: ForceProgressCardKey {
         ForceProgressCardKey(
@@ -25,7 +26,8 @@ struct ForceProgressCardBoundary: View, Equatable {
             hasLoadedRecordings: hasLoadedRecordings,
             curveRevision: curveRevision,
             targetBand: targetBand,
-            emptyActionTitle: emptyActionTitle
+            emptyActionTitle: emptyActionTitle,
+            connectionPending: connectionPending
         )
     }
 
@@ -42,7 +44,8 @@ struct ForceProgressCardBoundary: View, Equatable {
             hasLoadedRecordings: hasLoadedRecordings,
             targetBand: targetBand,
             emptyActionTitle: emptyActionTitle,
-            emptyAction: emptyAction
+            emptyAction: emptyAction,
+            connectionPending: connectionPending
         )
     }
 }
@@ -61,6 +64,7 @@ struct ForceProgressCard: View {
     let targetBand: ForceTargetBand?
     let emptyActionTitle: String
     let emptyAction: () -> Void
+    let connectionPending: Bool
 
     @Environment(\.colorScheme) private var scheme
     @State private var detail: Detail?
@@ -89,12 +93,17 @@ struct ForceProgressCard: View {
             if hasLoadedRecordings,
                staticProgress.totalCount == 0,
                movementProgress.latestMetrics == nil {
-                ProductEmptyState(
-                    title: "Your first pull starts the trend",
-                    message: "Connect your Progressor and save a pull to see capacity and movement progress.",
-                    actionTitle: emptyActionTitle,
-                    action: emptyAction
-                )
+                if connectionPending {
+                    ProgressView("Connecting to Progressor…")
+                        .frame(maxWidth: .infinity, minHeight: 150)
+                } else {
+                    ProductEmptyState(
+                        title: "Your first pull starts the trend",
+                        message: "Connect your Progressor and save a pull to see capacity and movement progress.",
+                        actionTitle: emptyActionTitle,
+                        action: emptyAction
+                    )
+                }
             } else {
                 HStack(alignment: .top, spacing: 10) {
                     staticTile(staticProgress)
@@ -113,8 +122,7 @@ struct ForceProgressCard: View {
                         forceCurve: forceCurve,
                         hasLoadedRecordings: hasLoadedRecordings,
                         targetBand: targetBand,
-                        emptyActionTitle: emptyActionTitle,
-                        emptyAction: emptyAction
+                        connectionPending: connectionPending
                     )
                     .onAppear { Haptics.shared.sheetPresented() }
                 case .movement:
@@ -138,12 +146,7 @@ struct ForceProgressCard: View {
             selectedTag: selectedTag,
             systemImage: "waveform.path.ecg",
             color: ChartToken.force.color(scheme),
-            accessibilityLabel: "Open Static capacity progress and insights",
-            isEmpty: hasLoadedRecordings && progress.totalCount == 0,
-            emptyTitle: "Train a measured hold",
-            emptyMessage: "A steady pull gives Static capacity something to track.",
-            emptyActionTitle: emptyActionTitle,
-            emptyAction: emptyAction
+            accessibilityLabel: "Open Static capacity progress and insights"
         ) {
             detail = .staticCapacity
         } content: {
@@ -188,12 +191,7 @@ struct ForceProgressCard: View {
             selectedTag: selectedTag,
             systemImage: "arrow.left.and.right.circle",
             color: ChartToken.optimal.color(scheme),
-            accessibilityLabel: "Open resisted movement progress and insights",
-            isEmpty: hasLoadedRecordings && progress.latestMetrics == nil,
-            emptyTitle: "Make your force move",
-            emptyMessage: "A resisted set turns motion into execution insight.",
-            emptyActionTitle: emptyActionTitle,
-            emptyAction: emptyAction
+            accessibilityLabel: "Open resisted movement progress and insights"
         ) {
             detail = .movement
         } content: {
@@ -239,51 +237,27 @@ struct ForceProgressCard: View {
         systemImage: String,
         color: Color,
         accessibilityLabel: String,
-        isEmpty: Bool,
-        emptyTitle: String,
-        emptyMessage: String,
-        emptyActionTitle: String,
-        emptyAction: @escaping () -> Void,
         action: @escaping () -> Void,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        if isEmpty {
+        Button(action: {
+            Haptics.shared.tap()
+            action()
+        }) {
             tileSurface(
                 title: title,
                 selectedTag: selectedTag,
                 systemImage: systemImage,
                 color: color,
-                showsChevron: false
-            ) {
-                ProductEmptyState(
-                    title: emptyTitle,
-                    message: emptyMessage,
-                    actionTitle: emptyActionTitle,
-                    compact: true,
-                    action: emptyAction
-                )
-            }
-            .accessibilityElement(children: .contain)
-        } else {
-            Button(action: {
-                Haptics.shared.tap()
-                action()
-            }) {
-                tileSurface(
-                    title: title,
-                    selectedTag: selectedTag,
-                    systemImage: systemImage,
-                    color: color,
-                    showsChevron: true,
-                    content: content
-                )
-            }
-            .hapticButtonStyle(.plain)
-            .accessibilityLabel(
-                selectedTag.map { "\(accessibilityLabel), \($0)" } ?? accessibilityLabel
+                showsChevron: true,
+                content: content
             )
-            .accessibilityHint("Opens a full-height detail sheet")
         }
+        .hapticButtonStyle(.plain)
+        .accessibilityLabel(
+            selectedTag.map { "\(accessibilityLabel), \($0)" } ?? accessibilityLabel
+        )
+        .accessibilityHint("Opens a full-height detail sheet")
     }
 
     @ViewBuilder

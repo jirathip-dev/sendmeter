@@ -264,6 +264,7 @@ public struct ForceProgressCardKey: Hashable, Sendable {
     public let curveRevision: UInt64
     public let targetBand: ForceTargetBand?
     public let emptyActionTitle: String
+    public let connectionPending: Bool
 
     public init(
         progressRevision: UInt64,
@@ -272,7 +273,8 @@ public struct ForceProgressCardKey: Hashable, Sendable {
         hasLoadedRecordings: Bool,
         curveRevision: UInt64,
         targetBand: ForceTargetBand? = nil,
-        emptyActionTitle: String = ""
+        emptyActionTitle: String = "",
+        connectionPending: Bool = false
     ) {
         self.progressRevision = progressRevision
         self.selectedTag = selectedTag
@@ -281,6 +283,7 @@ public struct ForceProgressCardKey: Hashable, Sendable {
         self.curveRevision = curveRevision
         self.targetBand = targetBand
         self.emptyActionTitle = emptyActionTitle
+        self.connectionPending = connectionPending
     }
 }
 

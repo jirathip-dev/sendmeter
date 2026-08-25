@@ -140,31 +140,30 @@ struct HistoryView: View {
 
     @ViewBuilder
     private func historyLoadState(progressLabel: String) -> some View {
-        if model.isRefreshing {
+        if model.isLoadingData || model.isRefreshing {
             ProgressView(progressLabel)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ProductEmptyState(
+            HistoryEmptyState(
                 title: "Your history is catching its breath",
                 message: "Sync once to bring your training story back into view.",
                 actionTitle: "Try again",
                 action: retryHistoryLoad
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
     @ViewBuilder
     private var filteredHistoryEmptyState: some View {
         if hasActiveHistoryFilters {
-            ProductEmptyState(
+            HistoryEmptyState(
                 title: "Nothing matches this view",
                 message: "Clear the search or filters to find another send.",
                 actionTitle: "Clear filters",
                 action: clearHistoryFilters
             )
         } else {
-            ProductEmptyState(
+            HistoryEmptyState(
                 title: "Your next send starts here",
                 message: "Start a workout and your effort will appear in History.",
                 actionTitle: "Start a workout",
@@ -295,7 +294,8 @@ struct HistoryView: View {
 
     private var combinedList: some View {
         Group {
-            if !model.hasLoadedSessions {
+            if timelineItems.isEmpty,
+               model.isLoadingData || !model.hasLoadedSessions || !model.hasLoadedRecordings {
                 historyLoadState(progressLabel: "Loading history…")
             } else if timelineItems.isEmpty, model.sessions.isEmpty, model.recordings.isEmpty {
                 HistoryEmptyState(
@@ -324,7 +324,8 @@ struct HistoryView: View {
 
     private var sessionsList: some View {
         Group {
-            if !model.hasLoadedSessions {
+            if model.sessions.isEmpty,
+               model.isLoadingData || !model.hasLoadedSessions {
                 historyLoadState(progressLabel: "Loading sessions…")
             } else if filteredSessions.isEmpty, model.sessions.isEmpty {
                 HistoryEmptyState(
@@ -361,7 +362,8 @@ struct HistoryView: View {
 
     private var forceList: some View {
         Group {
-            if !model.hasLoadedSessions {
+            if model.recordings.isEmpty,
+               model.isLoadingData || !model.hasLoadedRecordings {
                 historyLoadState(progressLabel: "Loading force history…")
             } else if filteredForceRecordings.isEmpty, model.recordings.isEmpty {
                 HistoryEmptyState(
@@ -1407,12 +1409,15 @@ private struct HistoryEmptyState: View {
     let action: () -> Void
 
     var body: some View {
-        ProductEmptyState(
-            title: title,
-            message: message,
-            actionTitle: actionTitle,
-            action: action
-        )
+        ScrollView {
+            ProductEmptyState(
+                title: title,
+                message: message,
+                actionTitle: actionTitle,
+                action: action
+            )
+            .frame(maxWidth: .infinity)
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

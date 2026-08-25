@@ -21,6 +21,7 @@ struct NativeForceCurveCard: View {
     /// ForceView. This card only renders that authoritative band; it never
     /// derives a second target from curve points.
     let targetBand: ForceTargetBand?
+    let connectionPending: Bool
     let emptyActionTitle: String
     let emptyAction: () -> Void
 
@@ -31,6 +32,7 @@ struct NativeForceCurveCard: View {
         model: ForceCurveModel?,
         hasLoadedRecordings: Bool,
         targetBand: ForceTargetBand?,
+        connectionPending: Bool = false,
         emptyActionTitle: String,
         emptyAction: @escaping () -> Void
     ) {
@@ -38,6 +40,7 @@ struct NativeForceCurveCard: View {
         self.model = model
         self.hasLoadedRecordings = hasLoadedRecordings
         self.targetBand = targetBand
+        self.connectionPending = connectionPending
         self.emptyActionTitle = emptyActionTitle
         self.emptyAction = emptyAction
     }
@@ -96,12 +99,17 @@ struct NativeForceCurveCard: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 } else if hasLoadedRecordings {
-                    ProductEmptyState(
-                        title: "Shape your force curve",
-                        message: "Three long pulls reveal how your strength holds over time.",
-                        actionTitle: emptyActionTitle,
-                        action: emptyAction
-                    )
+                    if connectionPending {
+                        ProgressView("Connecting to Progressor…")
+                            .frame(maxWidth: .infinity, minHeight: 150)
+                    } else {
+                        ProductEmptyState(
+                            title: "Shape your force curve",
+                            message: "Three long pulls reveal how your strength holds over time.",
+                            actionTitle: emptyActionTitle,
+                            action: emptyAction
+                        )
+                    }
                 } else {
                     ProgressView("Loading force-duration curve…")
                         .font(.subheadline)
