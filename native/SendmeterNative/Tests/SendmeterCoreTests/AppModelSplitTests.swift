@@ -397,6 +397,9 @@ final class AppModelSplitTests: XCTestCase {
         let appModel = code(source("Sources/App/AppModel.swift"))
         XCTAssertTrue(appModel.contains("timeZoneIdentifier: passTimeZone.identifier"))
         XCTAssertTrue(appModel.contains("health.computeMetrics(\n                    acwrByDate: acwrByDate,\n                    timeZone: passTimeZone"))
+        XCTAssertTrue(appModel.contains("async throws -> HealthSyncPassResult?"))
+        XCTAssertTrue(appModel.contains("acknowledgedReconciledDates"))
+        XCTAssertTrue(appModel.contains("progress.add(\n                result.observation"))
         XCTAssertTrue(appModel.contains("guard !Task.isCancelled, accountFetch.canApply"))
         XCTAssertTrue(appModel.contains("if !Task.isCancelled, let observation = progress?.finalObservation"))
 

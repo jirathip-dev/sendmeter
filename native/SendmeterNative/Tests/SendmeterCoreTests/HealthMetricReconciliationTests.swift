@@ -390,6 +390,71 @@ final class HealthMetricReconciliationTests: XCTestCase {
         )
     }
 
+    func testMorningConfirmationCountsUniqueDatesAcrossRepollsAndRoundTrips() throws {
+        let accountID = UUID()
+        let today = "2026-08-25"
+        let historical = "2026-08-24"
+        var progress = HealthMorningRefreshProgress(
+            accountUserID: accountID,
+            startedAt: Date(timeIntervalSince1970: 1_000),
+            timeZoneIdentifier: timeZone.identifier
+        )
+
+        // Three acknowledged updates to today's row are three passes but one
+        // confirmed day. A later historical insert adds exactly one day.
+        for _ in 0..<3 {
+            progress.add(
+                .reconciled(1),
+                acknowledgedReconciledDates: [today]
+            )
+        }
+        XCTAssertEqual(progress.reconciledDateKeys, Set([today]))
+        XCTAssertEqual(progress.finalObservation, .reconciled(1))
+        XCTAssertEqual(
+            progress.finalObservation?.automaticConfirmationMessage,
+            "Apple Health updated · 1 day"
+        )
+
+        progress.add(
+            .reconciled(1),
+            acknowledgedReconciledDates: [historical]
+        )
+        XCTAssertEqual(
+            progress.reconciledDateKeys,
+            Set([today, historical])
+        )
+        XCTAssertEqual(progress.finalObservation, .reconciled(2))
+        XCTAssertEqual(
+            progress.finalObservation?.automaticConfirmationMessage,
+            "Apple Health updated · 2 days"
+        )
+
+        let encoded = try JSONEncoder().encode(progress)
+        let decoded = try JSONDecoder().decode(
+            HealthMorningRefreshProgress.self,
+            from: encoded
+        )
+        XCTAssertEqual(
+            decoded.reconciledDateKeys,
+            Set([today, historical])
+        )
+        XCTAssertEqual(decoded.finalObservation, .reconciled(2))
+
+        // A pre-ledger record still decodes and keeps its old aggregate
+        // fallback when the optional date-key field is absent.
+        var legacyObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        legacyObject.removeValue(forKey: "reconciledDateKeys")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
+        let legacy = try JSONDecoder().decode(
+            HealthMorningRefreshProgress.self,
+            from: legacyData
+        )
+        XCTAssertNil(legacy.reconciledDateKeys)
+        XCTAssertEqual(legacy.finalObservation, .reconciled(2))
+    }
+
     func testMorningProgressUsesItsCapturedGregorianTimezoneForDayBoundaries() {
         guard let tokyo = TimeZone(identifier: "Asia/Tokyo"),
               let utc = TimeZone(secondsFromGMT: 0)

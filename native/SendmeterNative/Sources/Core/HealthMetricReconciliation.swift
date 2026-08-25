@@ -265,6 +265,23 @@ public enum HealthSyncObservation: Equatable, Sendable {
     }
 }
 
+/// The per-read observation plus the server rows that were actually
+/// acknowledged. The date set is what lets a multi-pass morning window count
+/// a repeated update to one day once, while the observation remains the
+/// user-facing result for the individual pass.
+public struct HealthSyncPassResult: Equatable, Sendable {
+    public let observation: HealthSyncObservation
+    public let acknowledgedReconciledDates: Set<String>
+
+    public init(
+        observation: HealthSyncObservation,
+        acknowledgedReconciledDates: Set<String>
+    ) {
+        self.observation = observation
+        self.acknowledgedReconciledDates = acknowledgedReconciledDates
+    }
+}
+
 /// Best-supported morning refresh schedule. iOS does not promise a precise
 /// wall-clock wake for HealthKit delivery or BGAppRefresh, so the app starts
 /// this bounded window on the first morning lifecycle/observer signal. Each
@@ -376,6 +393,11 @@ public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
     /// per-pass snapshot explicitly.
     public let timeZoneIdentifier: String
     public var nextPass: Int
+    /// `nil` means this is a legacy progress record written before date-key
+    /// tracking existed; retain its aggregate count as the best available
+    /// fallback. A non-nil set is the exact acknowledged-date ledger for the
+    /// current schema, including an empty set before the first reconciliation.
+    public var reconciledDateKeys: Set<String>?
     public var reconciledCount: Int
     public var sourceDataPasses: Int
     public var successfulPasses: Int
@@ -386,6 +408,7 @@ public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
         startedAt: Date,
         timeZoneIdentifier: String = TimeZone.current.identifier,
         nextPass: Int = 0,
+        reconciledDateKeys: Set<String>? = Set<String>(),
         reconciledCount: Int = 0,
         sourceDataPasses: Int = 0,
         successfulPasses: Int = 0,
@@ -395,6 +418,7 @@ public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
         self.startedAt = startedAt
         self.timeZoneIdentifier = timeZoneIdentifier
         self.nextPass = nextPass
+        self.reconciledDateKeys = reconciledDateKeys
         self.reconciledCount = reconciledCount
         self.sourceDataPasses = sourceDataPasses
         self.successfulPasses = successfulPasses
@@ -406,6 +430,7 @@ public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
         case startedAt
         case timeZoneIdentifier
         case nextPass
+        case reconciledDateKeys
         case reconciledCount
         case sourceDataPasses
         case successfulPasses
@@ -424,6 +449,10 @@ public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
             forKey: .timeZoneIdentifier
         ) ?? TimeZone.current.identifier
         nextPass = try container.decode(Int.self, forKey: .nextPass)
+        reconciledDateKeys = try container.decodeIfPresent(
+            Set<String>.self,
+            forKey: .reconciledDateKeys
+        )
         reconciledCount = try container.decode(Int.self, forKey: .reconciledCount)
         sourceDataPasses = try container.decode(Int.self, forKey: .sourceDataPasses)
         successfulPasses = try container.decode(Int.self, forKey: .successfulPasses)
@@ -431,8 +460,31 @@ public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
     }
 
     public mutating func add(_ observation: HealthSyncObservation) {
+        add(observation, acknowledgedReconciledDates: [])
+    }
+
+    public mutating func add(
+        _ observation: HealthSyncObservation,
+        acknowledgedReconciledDates: Set<String>
+    ) {
         successfulPasses += 1
-        reconciledCount += observation.reconciledCount
+        if var knownDates = reconciledDateKeys {
+            if !acknowledgedReconciledDates.isEmpty {
+                knownDates.formUnion(acknowledgedReconciledDates)
+                reconciledDateKeys = knownDates
+                reconciledCount = knownDates.count
+            } else if knownDates.isEmpty {
+                // The compatibility overload has no date ledger. Keep its
+                // old aggregate behavior until a real acknowledged date set
+                // arrives from production reconciliation.
+                reconciledCount += observation.reconciledCount
+            }
+        } else {
+            // A pre-ledger persisted record cannot reconstruct its historical
+            // date keys, so preserve its old count rather than pretending the
+            // newly observed keys describe the entire prior window.
+            reconciledCount += observation.reconciledCount
+        }
         if observation.hasSourceData {
             sourceDataPasses += 1
         }
@@ -446,13 +498,16 @@ public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
         // A later reconciliation is stronger evidence than an earlier
         // transient pass failure. Do not suppress the confirmation for a day
         // that was inserted successfully on a subsequent supported event.
-        if reconciledCount > 0 {
-            return .reconciled(reconciledCount)
+        let distinctReconciledCount = reconciledDateKeys?.isEmpty == false
+            ? reconciledDateKeys?.count ?? 0
+            : reconciledCount
+        if distinctReconciledCount > 0 {
+            return .reconciled(distinctReconciledCount)
         }
         if hadFailure { return .failed }
         guard successfulPasses > 0 else { return nil }
         return .successful(
-            reconciledCount: reconciledCount,
+            reconciledCount: distinctReconciledCount,
             sourceDataCount: sourceDataPasses
         )
     }

@@ -5203,12 +5203,13 @@ public final class AppModel {
             ) else { return }
             self.lastHealthRefreshStartedAt = ProcessInfo.processInfo.systemUptime
             let passTimeZone = TimeZone.current
-            guard let observation = try await self.computeAndPublishReadiness(
+            guard let result = try await self.computeAndPublishReadiness(
                 userID: userID,
                 trigger: .manual,
                 capturedBy: accountFetch,
                 timeZone: passTimeZone
             ) else { return }
+            let observation = result.observation
             guard !Task.isCancelled, accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
@@ -5351,12 +5352,13 @@ public final class AppModel {
         guard !Task.isCancelled else { return }
         lastHealthRefreshStartedAt = monotonicNow
         do {
-            guard let observation = try await computeAndPublishReadiness(
+            guard let result = try await computeAndPublishReadiness(
                 userID: userID,
                 trigger: trigger.syncTrigger,
                 capturedBy: accountFetch,
                 timeZone: passTimeZone
             ) else { return }
+            let observation = result.observation
             guard !Task.isCancelled else { return }
             recordHealthSync(
                 observation,
@@ -5442,7 +5444,7 @@ public final class AppModel {
                 finishMorningHealthRefresh(owner: owner)
                 return
             }
-            guard let observation = try await computeAndPublishReadiness(
+            guard let result = try await computeAndPublishReadiness(
                 userID: owner.fetch.accountUserID,
                 trigger: .automatic,
                 capturedBy: owner.fetch,
@@ -5458,13 +5460,16 @@ public final class AppModel {
                 finishMorningHealthRefresh(owner: owner)
                 return
             }
-            progress.add(observation)
+            progress.add(
+                result.observation,
+                acknowledgedReconciledDates: result.acknowledgedReconciledDates
+            )
             guard !Task.isCancelled else {
                 finishMorningHealthRefresh(owner: owner)
                 return
             }
             recordHealthSync(
-                observation,
+                result.observation,
                 capturedBy: owner.fetch,
                 showAutomaticConfirmation: false
             )
@@ -5602,7 +5607,7 @@ public final class AppModel {
         trigger: SyncTrigger,
         capturedBy capturedAccountFetch: AccountScopedFetch? = nil,
         timeZone: TimeZone
-    ) async throws -> HealthSyncObservation? {
+    ) async throws -> HealthSyncPassResult? {
         let accountFetch = capturedAccountFetch ?? AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
@@ -5612,7 +5617,7 @@ public final class AppModel {
             accountEpoch: accountEpoch
         ) else { return nil }
         guard recomputeGate.request() == .start else { return nil }
-        var reconciledCount = 0
+        var acknowledgedReconciledDates = Set<String>()
         var sourceDataCount = 0
         do {
             while true {
@@ -5744,7 +5749,7 @@ public final class AppModel {
                                     recomputeGate.cancel()
                                     return nil
                                 }
-                                reconciledCount += 1
+                                acknowledgedReconciledDates.insert(upsert.date)
                             }
                             guard !Task.isCancelled, stillCurrent else {
                                 recomputeGate.cancel()
@@ -5815,7 +5820,7 @@ public final class AppModel {
                             recomputeGate.cancel()
                             return nil
                         }
-                        reconciledCount += 1
+                        acknowledgedReconciledDates.insert(upsert.date)
                     } catch {
                         if Task.isCancelled {
                             recomputeGate.cancel()
@@ -5884,9 +5889,13 @@ public final class AppModel {
                     return nil
                 }
                 guard recomputeGate.complete() == .rerun else {
-                    return .successful(
-                        reconciledCount: reconciledCount,
+                    let observation = HealthSyncObservation.successful(
+                        reconciledCount: acknowledgedReconciledDates.count,
                         sourceDataCount: sourceDataCount
+                    )
+                    return HealthSyncPassResult(
+                        observation: observation,
+                        acknowledgedReconciledDates: acknowledgedReconciledDates
                     )
                 }
             }
