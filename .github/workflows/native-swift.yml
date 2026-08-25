@@ -10,6 +10,10 @@ on:
       - "ios/App/SendLogWatchWidgets/**"
       - "ios/App/SendLogWatchWidgets-Info.plist"
       - "native-plugins/sendlog-health-core/**"
+      - "tools/anti-slop-swift/**"
+      - ".anti-slop.json"
+      - "scripts/anti-slop-swift.sh"
+      - "scripts/validate-anti-slop.sh"
       - "scripts/assert-native-watch-project.rb"
       - ".github/workflows/native-swift.yml"
   push:
@@ -25,6 +29,10 @@ on:
       - "ios/App/SendLogWatchWidgets/**"
       - "ios/App/SendLogWatchWidgets-Info.plist"
       - "native-plugins/sendlog-health-core/**"
+      - "tools/anti-slop-swift/**"
+      - ".anti-slop.json"
+      - "scripts/anti-slop-swift.sh"
+      - "scripts/validate-anti-slop.sh"
       - "scripts/assert-native-watch-project.rb"
       - ".github/workflows/native-swift.yml"
 
@@ -41,6 +49,24 @@ jobs:
       - uses: actions/checkout@v4
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Validate anti-slop Swift wiring
+        run: bash scripts/validate-anti-slop.sh
+      - name: Anti-slop Swift (advisory)
+        continue-on-error: true
+        run: |
+          set +e
+          output="$(bash scripts/anti-slop-swift.sh native/SendmeterNative/Sources 2>&1)"
+          status=$?
+          printf '%s\n' "$output"
+          while IFS= read -r diagnostic; do
+            if [[ "$diagnostic" =~ ^(.+):([0-9]+):([0-9]+):\ error:\ (.+)$ ]]; then
+              echo "::warning file=${BASH_REMATCH[1]},line=${BASH_REMATCH[2]},col=${BASH_REMATCH[3]}::${BASH_REMATCH[4]}"
+            fi
+          done <<< "$output"
+          if ((status != 0)); then
+            echo "::warning::anti-slop Swift is advisory; violations do not fail this job."
+          fi
+          exit "$status"
       - name: Run pure Swift tests
         run: swift test --package-path native/SendmeterNative
       - name: Run health-core pure Swift tests

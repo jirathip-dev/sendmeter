@@ -2828,13 +2828,21 @@ private struct ForceDeviceCard: View {
                 }
                 HStack {
                     Button {
-                        do { try device.tare() } catch { }
+                        do {
+                            try device.tare()
+                        } catch {
+                            refuseAction(UserFacingError.message(for: error))
+                        }
                     } label: {
                         Label("Tare", systemImage: "scalemass")
                     }
                     .hapticButtonStyle(.bordered)
                     Button {
-                        do { try device.refreshBattery() } catch { }
+                        do {
+                            try device.refreshBattery()
+                        } catch {
+                            refuseAction(UserFacingError.message(for: error))
+                        }
                     } label: {
                         Label("Battery", systemImage: "battery.100percent")
                     }

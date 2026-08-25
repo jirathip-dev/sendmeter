@@ -43,6 +43,27 @@ new equivalents:
 7. Build the complete iOS target in CI, not only the platform-independent package.
 8. Require real-device verification before promotion.
 
+## Native source-quality gate
+
+Native Swift source uses the vendored MIT `anti-slop-swift` tool under
+`tools/anti-slop-swift/`, with SwiftSyntax pinned by its committed
+`Package.resolved`. The pre-fix baseline was **53 violations across 134 files
+and four rule types** (21 `no-any-dictionary-value`, 14 `no-force-unwrap`, 10
+`no-any-parameters`, and 8 `no-swallowed-errors`). The repository disables only
+the two `Any` rules because WatchConnectivity requires those framework bridge
+shapes; the force-unwrap and swallowed-error rules remain enabled.
+
+Run it with:
+
+```bash
+bash scripts/anti-slop-swift.sh native/SendmeterNative/Sources
+```
+
+The native CI invocation is advisory and annotated, so it reports findings as
+warnings without blocking this initial adoption pass. A justified forced
+operation must carry a specific `// SAFETY:` comment immediately above it;
+otherwise use an explicit unwrap or recovery path.
+
 ## Data refresh & convergence (#673)
 
 The app's authoritative list state (sessions, recordings, workouts, health

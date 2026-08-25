@@ -271,7 +271,10 @@ struct WorkoutView: View {
                     _ = try current.endAttempt(at: event.at)
                 }
             } catch {
-                // Already applied/replayed or no longer valid — ignore.
+                // Lock-screen actions are at-least-once and can arrive after
+                // the workout changed. Recover to the last authoritative
+                // snapshot instead of surfacing a stale replay as an error.
+                current = engine ?? current
             }
         }
         guard current != engine else { return }

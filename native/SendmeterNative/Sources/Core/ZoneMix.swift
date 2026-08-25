@@ -377,9 +377,9 @@ extension ZoneMix {
         }
         let enduranceSide: [ZoneQuality] = [.endurance, .powerEndurance]
         let strengthSide: [ZoneQuality] = [.power, .strength]
-        let curveBias: ZoneCurveBias? = ratio == nil
-            ? nil
-            : (ratio! < Self.curveBiasRatio ? .endurance : .strength)
+        let curveBias: ZoneCurveBias? = ratio.map {
+            $0 < Self.curveBiasRatio ? .endurance : .strength
+        }
         let bias: [ZoneQuality]? = curveBias.map {
             $0 == .endurance ? enduranceSide : strengthSide
         }

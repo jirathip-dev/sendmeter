@@ -35,7 +35,7 @@ public enum WorkoutStats {
             var low: Double?
             for sample in trace {
                 if sample.t > endT, sample.t <= endT + windowS, let hr = sample.hr {
-                    if low == nil || hr < low! { low = hr }
+                    low = min(low ?? hr, hr)
                 }
             }
             if let low, hrEnd - low > 0 {

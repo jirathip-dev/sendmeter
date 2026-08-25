@@ -201,7 +201,9 @@ public final class WeatherService: ObservableObject {
     }
 
     private func fetchCurrent(latitude: Double, longitude: Double) async throws -> (tempC: Double, humidity: Double) {
-        let url = OpenMeteo.forecastURL(latitude: latitude, longitude: longitude)
+        guard let url = OpenMeteo.forecastURL(latitude: latitude, longitude: longitude) else {
+            throw WeatherError.unavailable
+        }
         let data = try await get(url)
         let response = try decoder.decode(OpenMeteo.ForecastResponse.self, from: data)
         guard let reading = OpenMeteo.currentReading(from: response) else {
@@ -221,12 +223,14 @@ public final class WeatherService: ObservableObject {
             return cached
         }
         let window = OpenMeteo.archiveDateWindow(referenceDate: referenceDate)
-        let url = OpenMeteo.archiveURL(
+        guard let url = OpenMeteo.archiveURL(
             latitude: latitude,
             longitude: longitude,
             startDate: window.startDate,
             endDate: window.endDate
-        )
+        ) else {
+            throw WeatherError.unavailable
+        }
         let data = try await get(url)
         let response = try decoder.decode(OpenMeteo.ArchiveResponse.self, from: data)
         guard let summary = OpenMeteo.climateSummary(from: response) else {

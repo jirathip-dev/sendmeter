@@ -277,6 +277,13 @@ public struct SessionTypeDefinition: Codable, Equatable, Sendable, Identifiable 
 }
 
 public enum SessionTypeCatalog {
+    private static let fallbackDefinition = SessionTypeDefinition(
+        id: "custom",
+        label: "Custom",
+        defaultRPE: 6,
+        defaultDurationMinutes: 60
+    )
+
     public static let all: [SessionTypeDefinition] = [
         .init(id: "fingerboard", label: "Fingerboard", defaultRPE: 6, defaultDurationMinutes: 45),
         .init(id: "board", label: "Board Climbing", defaultRPE: 8, defaultDurationMinutes: 60),
@@ -286,13 +293,13 @@ public enum SessionTypeCatalog {
         .init(id: "routine", label: "Routine", defaultRPE: 4, defaultDurationMinutes: 20),
         .init(id: "arc", label: "ARC / Traversing", defaultRPE: 4, defaultDurationMinutes: 40),
         .init(id: "campus", label: "Campus Board", defaultRPE: 9, defaultDurationMinutes: 30),
-        .init(id: "custom", label: "Custom", defaultRPE: 6, defaultDurationMinutes: 60),
+        fallbackDefinition,
         .init(id: "auto", label: "Auto-tracked", defaultRPE: 6, defaultDurationMinutes: 60),
         .init(id: "tindeq", label: "Tindeq", defaultRPE: 5, defaultDurationMinutes: 30)
     ]
 
     public static func definition(for id: String) -> SessionTypeDefinition {
-        all.first(where: { $0.id == id }) ?? all.first(where: { $0.id == "custom" })!
+        all.first(where: { $0.id == id }) ?? fallbackDefinition
     }
 }
 

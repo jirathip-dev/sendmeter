@@ -5232,7 +5232,12 @@ public final class AppModel {
                 capturedBy: accountFetch
             )
         } catch {
-            // Silent: keep the last reading on failure.
+            // Keep the last reading and record the failure for diagnostics;
+            // automatic refreshes deliberately do not interrupt the dashboard.
+            auth.recordAuthEvent(
+                .failure,
+                detail: "Automatic health refresh failed: \(error.localizedDescription)"
+            )
         }
     }
 
@@ -7755,7 +7760,12 @@ public final class AppModel {
                 )
             }
         } catch {
-            // Silent degradation: the mirror keeps whatever it last accepted.
+            // Keep the last accepted mirror row, but retain the failure in the
+            // diagnostics ring so a dropped fallback fetch is not invisible.
+            auth.recordAuthEvent(
+                .failure,
+                detail: "Live workout fallback refresh failed: \(error.localizedDescription)"
+            )
         }
     }
 
@@ -7909,8 +7919,13 @@ public final class AppModel {
                 guard publishedHealth else { return }
             }
         } catch {
-            // Silent degradation, same as the web: a failed reconcile leaves
-            // the list stale until the next event or pull-to-refresh.
+            // Keep the last list snapshot, but record the failure for support;
+            // a transient realtime reconcile must not replace it with empty
+            // state or interrupt the current screen.
+            auth.recordAuthEvent(
+                .failure,
+                detail: "Realtime list reconcile failed: \(error.localizedDescription)"
+            )
         }
     }
 
