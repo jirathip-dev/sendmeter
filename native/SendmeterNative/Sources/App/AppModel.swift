@@ -199,18 +199,19 @@ public final class AppModel {
     public private(set) var bootState: AppBootState = .loading
     public private(set) var authSession: AuthSession?
     public private(set) var sessions: [SendmeterCore.Session] = []
-    /// True once the session list has been fetched at least once for the
-    /// current account (even if it came back empty). Sessions have no disk
-    /// cache — `refreshAll` fetches them over the network and `sessions` stays
-    /// `[]` until that resolves — so `sessions.isEmpty` alone cannot tell "no
-    /// history" from "not loaded yet". Consumers (the ACWR projection card)
-    /// use this to avoid claiming a fresh user has no history on every cold
-    /// launch or failed refresh (#652 F2).
+    /// True once the current account has crossed an authoritative session
+    /// boundary: either a persisted sync cursor/empty-result marker was
+    /// hydrated or a network/realtime refresh published successfully. A
+    /// readable first-launch SQLite file does not qualify, so `sessions.isEmpty`
+    /// and this flag still distinguish "no history" from "not loaded yet".
+    /// Consumers use this to avoid claiming a fresh user has no history after
+    /// an offline or failed refresh (#652 F2, #787).
     public private(set) var hasLoadedSessions = false
-    /// True once the account's recording list has been hydrated or fetched at
-    /// least once, including an authoritative empty result. History owns the
-    /// shared recording collection on AppModel, so it needs this boundary
-    /// without observing ForceModel's hot stream (#787).
+    /// True once the current account has crossed the recordings' authoritative
+    /// sync boundary, including an authoritative empty result. A readable
+    /// first-launch SQLite file does not qualify. History owns the shared
+    /// recording collection on AppModel, so it needs this boundary without
+    /// observing ForceModel's hot stream (#787).
     public private(set) var hasLoadedRecordings = false
     public private(set) var deletedSessions: [SendmeterCore.Session] = []
     public private(set) var deletedRecordings: [TindeqRecording] = []
@@ -1583,15 +1584,18 @@ public final class AppModel {
             watch.relaySession(session)
             if changedUser || didBootstrapUserID != session.user.id {
                 resetAccountState()
-                // Mark the account boundary as loading before the watch inbox
-                // adoption can suspend. Otherwise a signed-in tab can render
-                // a retry/empty state during that pre-refresh window.
-                isLoadingData = true
+                // Claim the same refresh owner that the bootstrap refresh will
+                // finish. Otherwise the watch inbox adoption can suspend with
+                // an ownerless loading latch between signed-in and refresh.
+                let bootstrapRefreshOwner = beginDataRefresh()
                 // Adopt persisted watch summaries before any network await so
                 // a relaunch with a delayed Supabase path still renders the
                 // completion in History immediately.
                 await acceptStoredWatchCompletions()
-                await refreshAll(showSpinner: true)
+                await refreshAll(
+                    showSpinner: true,
+                    dataRefreshOwner: bootstrapRefreshOwner
+                )
                 // #712: load the passkey list for the (newly) signed-in user.
                 await loadPasskeys()
                 didBootstrapUserID = session.user.id
@@ -1705,12 +1709,19 @@ public final class AppModel {
                 workspace: cachedWorkspace,
                 accountUserID: accountUserID
             ) else { return }
+            let sessionsWereSynced = cacheHasCompletedSync(
+                accountUserID: accountUserID,
+                entityType: .sessions
+            )
+            let recordingsWereSynced = cacheHasCompletedSync(
+                accountUserID: accountUserID,
+                entityType: .recordings
+            )
             sessions = snapshot.sessions
-            // A readable account snapshot is a real cache boundary even when
-            // the server previously returned no rows. The UI still gives an
-            // in-flight refresh precedence, so this does not flash a false
-            // empty state during the next network pass.
-            hasLoadedSessions = true
+            // Opening/creating SQLite is not a server boundary. Only a
+            // persisted cursor or explicit successful-empty marker can make a
+            // cached empty list authoritative after a failed refresh.
+            hasLoadedSessions = sessionsWereSynced
             if let cachedSettings = snapshot.settings {
                 settings = cachedSettings
             }
@@ -1743,7 +1754,8 @@ public final class AppModel {
                       let recording = recordingsByID[id] else { continue }
                 pendingRecordings.insert(recording, accountUserID: accountUserID)
             }
-            markRecordingsLoaded()
+            hasLoadedRecordings = recordingsWereSynced
+            forceModel.hasLoadedRecordings = recordingsWereSynced
             publishForceProgressInputMutation(.recordings)
             refreshPendingCacheWriteCount(accountUserID: accountUserID)
         } catch {
@@ -1793,6 +1805,22 @@ public final class AppModel {
         } catch {
             recordCacheFailure("cache cursor read", error)
             return nil
+        }
+    }
+
+    private func cacheHasCompletedSync(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) -> Bool {
+        guard let cachedWorkspace else { return false }
+        do {
+            return try cachedWorkspace.hasCompletedSync(
+                accountUserID: accountUserID,
+                entityType: entityType
+            )
+        } catch {
+            recordCacheFailure("cache sync boundary read", error)
+            return false
         }
     }
 
@@ -2099,9 +2127,16 @@ public final class AppModel {
     // MARK: Loading
 
     public func refreshAll(showSpinner: Bool = true) async {
-        guard let userID = currentUserID else { return }
-        let dataRefreshOwner = beginDataRefresh()
+        await refreshAll(showSpinner: showSpinner, dataRefreshOwner: nil)
+    }
+
+    private func refreshAll(
+        showSpinner: Bool,
+        dataRefreshOwner: UUID?
+    ) async {
+        let dataRefreshOwner = dataRefreshOwner ?? beginDataRefresh()
         defer { endDataRefresh(dataRefreshOwner) }
+        guard let userID = currentUserID else { return }
         // Cold-start / account-switch path: render the account's local
         // snapshot before any network request starts.
         hydrateCachedWorkspace(accountUserID: userID)
@@ -5790,10 +5825,23 @@ public final class AppModel {
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
+            let sessionsWereSynced = cacheHasCompletedSync(
+                accountUserID: accountUserID,
+                entityType: .sessions
+            )
+            let recordingsWereSynced = cacheHasCompletedSync(
+                accountUserID: accountUserID,
+                entityType: .recordings
+            )
             applyCachedNonOverlayLists(accountUserID: accountUserID)
-            mergeSessions(remote: snapshot.sessions)
+            mergeSessions(
+                remote: snapshot.sessions,
+                markLoaded: sessionsWereSynced
+            )
+            hasLoadedSessions = sessionsWereSynced
             mergeRecordings(remote: snapshot.recordings)
-            markRecordingsLoaded()
+            hasLoadedRecordings = recordingsWereSynced
+            forceModel.hasLoadedRecordings = recordingsWereSynced
             warmTagCurvesIfMissing(capturedBy: accountFetch)
         } catch {
             recordCacheFailure("background cache publish", error)
@@ -8329,7 +8377,10 @@ public final class AppModel {
         invalidateTagCurveKeys(affectedKeys)
     }
 
-    private func mergeSessions(remote: [SendmeterCore.Session]) {
+    private func mergeSessions(
+        remote: [SendmeterCore.Session],
+        markLoaded: Bool = true
+    ) {
         let visibleRemote = remote.filter { session in
             !routineUndo.hasPendingDelete(
                 sessionID: session.id,
@@ -8353,10 +8404,13 @@ public final class AppModel {
                 if $0.date != $1.date { return $0.date > $1.date }
                 return $0.id.uuidString > $1.id.uuidString
             }
-        // Whether the fetch came back empty or not, the account's session list
-        // has now been loaded once — consumers can distinguish "no history"
-        // from "not fetched yet" (#652 F2).
-        hasLoadedSessions = true
+        if markLoaded {
+            // Whether the fetch came back empty or not, an authoritative
+            // publication has loaded the account's session list once —
+            // consumers can distinguish "no history" from "not fetched yet"
+            // (#652 F2).
+            hasLoadedSessions = true
+        }
     }
 
     private func replaceSession(_ session: SendmeterCore.Session) {

@@ -366,7 +366,7 @@ private struct RecentSessionsCard: View {
                     }
                 }
                 if model.recentSessions.isEmpty,
-                   model.isLoadingData || !model.hasLoadedSessions {
+                   !model.hasLoadedSessions {
                     if model.isLoadingData || model.isRefreshing {
                         ProgressView("Loading recent sessions…")
                             .frame(maxWidth: .infinity, minHeight: 120)

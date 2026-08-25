@@ -295,7 +295,7 @@ struct HistoryView: View {
     private var combinedList: some View {
         Group {
             if timelineItems.isEmpty,
-               model.isLoadingData || !model.hasLoadedSessions || !model.hasLoadedRecordings {
+               !model.hasLoadedSessions || !model.hasLoadedRecordings {
                 historyLoadState(progressLabel: "Loading history…")
             } else if timelineItems.isEmpty, model.sessions.isEmpty, model.recordings.isEmpty {
                 HistoryEmptyState(
@@ -325,7 +325,7 @@ struct HistoryView: View {
     private var sessionsList: some View {
         Group {
             if model.sessions.isEmpty,
-               model.isLoadingData || !model.hasLoadedSessions {
+               !model.hasLoadedSessions {
                 historyLoadState(progressLabel: "Loading sessions…")
             } else if filteredSessions.isEmpty, model.sessions.isEmpty {
                 HistoryEmptyState(
@@ -363,7 +363,7 @@ struct HistoryView: View {
     private var forceList: some View {
         Group {
             if model.recordings.isEmpty,
-               model.isLoadingData || !model.hasLoadedRecordings {
+               !model.hasLoadedRecordings {
                 historyLoadState(progressLabel: "Loading force history…")
             } else if filteredForceRecordings.isEmpty, model.recordings.isEmpty {
                 HistoryEmptyState(

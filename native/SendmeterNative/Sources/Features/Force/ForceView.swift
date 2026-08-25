@@ -1327,11 +1327,29 @@ struct ForceView: View {
 
     private var forceEmptyActionTitle: String {
         switch model.tindeq.status {
-        case .connected, .measuring: return "Start or finish a pull"
+        case .connected:
+            return selectedPreset == nil ? "Record a pull" : "Start guided pull"
+        case .measuring: return "Stop & save"
         case .unavailable: return "Open Bluetooth Settings"
         case .idle: return "Connect Progressor"
-        case .scanning, .connecting: return "Connecting…"
+        case .scanning, .connecting: return "Cancel connection"
         case .interrupted: return "Reconnect Progressor"
+        }
+    }
+
+    /// The action copy may change between connected and measuring, but the
+    /// progress card must not rebuild on every hands-free rep. Keep its
+    /// Equatable key at the coarser action-mode level. Secondary progress
+    /// surfaces suppress the action hero; the live title remains available to
+    /// the primary empty-state owner and any future standalone consumer.
+    private var forceEmptyActionKey: String {
+        switch model.tindeq.status {
+        case .connected, .measuring:
+            return selectedPreset == nil ? "free-pull" : "guided-pull"
+        case .unavailable: return "bluetooth-settings"
+        case .idle: return "connect"
+        case .scanning, .connecting: return "cancel-connection"
+        case .interrupted: return "reconnect"
         }
     }
 
@@ -1340,7 +1358,10 @@ struct ForceView: View {
         case .connected:
             return selectedPreset == nil ? "Record a pull" : "Start guided pull"
         case .unavailable: return "Open Bluetooth Settings"
-        default: return "Connect Progressor"
+        case .scanning, .connecting: return "Cancel connection"
+        case .interrupted: return "Reconnect Progressor"
+        case .idle:
+            return model.recordings.isEmpty ? "Connect Progressor" : "Reconnect Progressor"
         }
     }
 
@@ -1348,6 +1369,22 @@ struct ForceView: View {
         switch model.tindeq.status {
         case .scanning, .connecting: return true
         default: return false
+        }
+    }
+
+    private var forceDeviceOwnsPrimaryEmptyState: Bool {
+        guard !model.tindeq.hasUnsavedRecording,
+              model.tindeq.interruptedRecording == nil,
+              model.tindeq.completedSummary == nil
+        else { return false }
+
+        switch model.tindeq.status {
+        case .idle, .unavailable:
+            return true
+        case .connected:
+            return forceModel.hasLoadedRecordings && model.recordings.isEmpty
+        default:
+            return false
         }
     }
 
@@ -1370,9 +1407,9 @@ struct ForceView: View {
         case .idle, .interrupted:
             model.requestConnect()
         case .scanning, .connecting:
-            // The device card owns the active Cancel control while a
-            // connection is pending; never restart a scan from an empty card.
-            break
+            // Keep the action contract honest for any future consumer even
+            // though the current cards render a progress indicator instead.
+            model.tindeq.disconnect()
         }
     }
 
@@ -1632,7 +1669,8 @@ struct ForceView: View {
                     // this expression in reasonable time").
                     recordingContextCard
 
-                    if !forceModel.hasLoadedRecordings || !model.recordings.isEmpty {
+                    if !forceDeviceOwnsPrimaryEmptyState,
+                       (!forceModel.hasLoadedRecordings || !model.recordings.isEmpty) {
                         ForceProgressCardBoundary(
                             recordings: model.recordings,
                             selectedTag: progressTag,
@@ -1643,6 +1681,8 @@ struct ForceView: View {
                             curveRevision: sideScopedForceCurveRevision,
                             targetBand: selectedTargetReferenceBand,
                             emptyActionTitle: forceEmptyActionTitle,
+                            emptyActionKey: forceEmptyActionKey,
+                            showsPrimaryEmptyState: false,
                             emptyAction: performForceEmptyAction,
                             connectionPending: forceConnectionPending
                         )
@@ -1653,6 +1693,7 @@ struct ForceView: View {
                             hiddenTags: model.hiddenTagNames,
                             hasLoadedRecordings: forceModel.hasLoadedRecordings,
                             connectionPending: forceConnectionPending,
+                            showsPrimaryEmptyState: false,
                             emptyActionTitle: forceEmptyActionTitle,
                             emptyAction: performForceEmptyAction
                         )
@@ -1664,6 +1705,7 @@ struct ForceView: View {
                                 hasLoadedRecordings: forceModel.hasLoadedRecordings,
                                 targetBand: selectedTargetReferenceBand,
                                 connectionPending: forceConnectionPending,
+                                showsPrimaryEmptyState: false,
                                 emptyActionTitle: forceEmptyActionTitle,
                                 emptyAction: performForceEmptyAction
                             )
@@ -2469,10 +2511,17 @@ private struct ForceDeviceCard: View {
     private var targetRange: ClosedRange<Double>? { targetBand?.range }
 
     private var showsDisconnectedEmptyState: Bool {
-        if case .idle = device.status {
-            return !device.hasUnsavedRecording
+        guard !device.hasUnsavedRecording,
+              device.interruptedRecording == nil,
+              device.completedSummary == nil
+        else { return false }
+
+        switch device.status {
+        case .idle, .unavailable:
+            return true
+        default:
+            return false
         }
-        return false
     }
 
     private var showsForceDataEmptyState: Bool {
@@ -2484,7 +2533,7 @@ private struct ForceDeviceCard: View {
         else { return false }
 
         switch device.status {
-        case .connected, .unavailable:
+        case .connected:
             return true
         default:
             return false
@@ -2498,7 +2547,11 @@ private struct ForceDeviceCard: View {
     private var primaryEmptyMessage: String {
         switch device.status {
         case .unavailable:
-            return "Turn Bluetooth back on in iOS Settings to connect your Progressor."
+            return hasForceRecordings
+                ? "Your saved force history is safe. Turn Bluetooth back on in iOS Settings to reconnect."
+                : "Turn Bluetooth back on in iOS Settings to connect your Progressor."
+        case .idle where hasForceRecordings:
+            return "Reconnect your Progressor to continue recording and extend your force history."
         case .connected:
             return "Record a Progressor pull to turn your force into a curve and training trend."
         default:
@@ -2521,7 +2574,9 @@ private struct ForceDeviceCard: View {
 
                 if showsPrimaryEmptyState {
                     ProductEmptyState(
-                        title: "Your first pull starts here",
+                        title: hasForceRecordings
+                            ? "Reconnect to your force progress"
+                            : "Your first pull starts here",
                         message: primaryEmptyMessage,
                         actionTitle: emptyActionTitle,
                         action: emptyAction
@@ -2682,7 +2737,7 @@ private struct ForceDeviceCard: View {
 
     @ViewBuilder
     private var controls: some View {
-        if showsPrimaryEmptyState {
+        if showsPrimaryEmptyState, device.status != .connected {
             EmptyView()
         } else {
             switch device.status {

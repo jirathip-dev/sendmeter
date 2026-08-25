@@ -22,6 +22,7 @@ struct NativeForceCurveCard: View {
     /// derives a second target from curve points.
     let targetBand: ForceTargetBand?
     let connectionPending: Bool
+    let showsPrimaryEmptyState: Bool
     let emptyActionTitle: String
     let emptyAction: () -> Void
 
@@ -33,6 +34,7 @@ struct NativeForceCurveCard: View {
         hasLoadedRecordings: Bool,
         targetBand: ForceTargetBand?,
         connectionPending: Bool = false,
+        showsPrimaryEmptyState: Bool = true,
         emptyActionTitle: String,
         emptyAction: @escaping () -> Void
     ) {
@@ -41,6 +43,7 @@ struct NativeForceCurveCard: View {
         self.hasLoadedRecordings = hasLoadedRecordings
         self.targetBand = targetBand
         self.connectionPending = connectionPending
+        self.showsPrimaryEmptyState = showsPrimaryEmptyState
         self.emptyActionTitle = emptyActionTitle
         self.emptyAction = emptyAction
     }
@@ -102,13 +105,17 @@ struct NativeForceCurveCard: View {
                     if connectionPending {
                         ProgressView("Connecting to Progressor…")
                             .frame(maxWidth: .infinity, minHeight: 150)
-                    } else {
+                    } else if showsPrimaryEmptyState {
                         ProductEmptyState(
                             title: "Shape your force curve",
                             message: "Three long pulls reveal how your strength holds over time.",
                             actionTitle: emptyActionTitle,
                             action: emptyAction
                         )
+                    } else {
+                        Text("Keep recording long pulls to shape this force curve.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                 } else {
                     ProgressView("Loading force-duration curve…")

@@ -37,7 +37,7 @@ struct StaticCapacityDetailView: View {
                             title: "Build your capacity baseline",
                             message: "Two measured Static holds reveal your force trend and curve.",
                             actionTitle: "Back to Force",
-                            action: dismiss
+                            action: { dismiss() }
                         )
                     } else {
                         ForceTrendChart(
@@ -53,7 +53,7 @@ struct StaticCapacityDetailView: View {
                                 targetBand: targetBand,
                                 connectionPending: connectionPending,
                                 emptyActionTitle: "Back to Force",
-                                emptyAction: dismiss
+                                emptyAction: { dismiss() }
                             )
                             SideAsymmetryCard(recordings: recordings, tag: selectedTag)
                         } else {

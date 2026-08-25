@@ -10,6 +10,7 @@ struct ForceConsistencyCard: View {
     let hiddenTags: Set<String>
     let hasLoadedRecordings: Bool
     let connectionPending: Bool
+    let showsPrimaryEmptyState: Bool = true
     let emptyActionTitle: String
     let emptyAction: () -> Void
 
@@ -59,7 +60,7 @@ struct ForceConsistencyCard: View {
                         if connectionPending {
                             ProgressView("Connecting to Progressor…")
                                 .frame(maxWidth: .infinity, minHeight: 108)
-                        } else {
+                        } else if showsPrimaryEmptyState {
                             ProductEmptyState(
                                 title: "Build your force rhythm",
                                 message: "A recent Progressor pull will fill this eight-week view.",
@@ -67,6 +68,10 @@ struct ForceConsistencyCard: View {
                                 compact: true,
                                 action: emptyAction
                             )
+                        } else {
+                            Text("No recent force recordings match this view.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
                     } else {
                         consistencyBars(data.weeks, selectedTag: activeTag)

@@ -109,9 +109,10 @@ public struct CacheLoadOneResult<T> {
 /// calls this after the DurableQueue successfully uploads. Server deletes are
 /// remembered as tombstones even for keys that have never been cached.
 ///
-/// The schema also has a per-account `sync_cursors` table so later slices can
-/// implement incremental reconcile per entity type. `deleteAccount` purges
-/// both data rows and cursors for the account.
+/// The schema also has per-account `sync_cursors` and `sync_boundaries` tables.
+/// A cursor is optional when a successful server response contains no rows, so
+/// the boundary table separately records that an entity has completed at least
+/// one authoritative sync. `deleteAccount` purges both tables for the account.
 ///
 /// The store is `@unchecked Sendable` because GRDB's `DatabaseQueue` is
 /// documented as thread-safe; callers may share one store across queues or
@@ -231,6 +232,19 @@ public struct LocalCacheStore: @unchecked Sendable {
                     ADD COLUMN local_revision INTEGER NOT NULL DEFAULT 0
                     """)
             }
+        }
+        migrator.registerMigration("addSyncBoundaries") { db in
+            // An empty successful fetch has no updated_at cursor to persist.
+            // Keep that authoritative-empty fact separate from sync_cursors so
+            // a readable SQLite file can never masquerade as a first sync.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS sync_boundaries (
+                    account_user_id TEXT NOT NULL,
+                    entity_type     TEXT NOT NULL,
+                    synced_at       TEXT NOT NULL,
+                    PRIMARY KEY (account_user_id, entity_type)
+                );
+                """)
         }
         try migrator.migrate(dbQueue)
     }
@@ -1046,6 +1060,10 @@ public struct LocalCacheStore: @unchecked Sendable {
                 sql: "DELETE FROM sync_cursors WHERE account_user_id = ?",
                 arguments: [Self.accountIDString(accountUserID)]
             )
+            try db.execute(
+                sql: "DELETE FROM sync_boundaries WHERE account_user_id = ?",
+                arguments: [Self.accountIDString(accountUserID)]
+            )
         }
     }
 
@@ -1107,6 +1125,67 @@ public struct LocalCacheStore: @unchecked Sendable {
                     """,
                 arguments: [Self.accountIDString(accountUserID), entityType.rawValue]
             )
+            try db.execute(
+                sql: """
+                    DELETE FROM sync_boundaries
+                    WHERE account_user_id = ? AND entity_type = ?
+                    """,
+                arguments: [Self.accountIDString(accountUserID), entityType.rawValue]
+            )
+        }
+    }
+
+    /// Records that one account/entity completed an authoritative server sync.
+    /// This is intentionally independent from `sync_cursors`: an empty server
+    /// response has no updated row timestamp and therefore no cursor.
+    public func markSyncComplete(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws {
+        let now = Self.timestamp()
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO sync_boundaries
+                        (account_user_id, entity_type, synced_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(account_user_id, entity_type) DO UPDATE SET
+                        synced_at = excluded.synced_at
+                    """,
+                arguments: [Self.accountIDString(accountUserID), entityType.rawValue, now]
+            )
+        }
+    }
+
+    /// Returns whether an account/entity has crossed an authoritative sync
+    /// boundary. A persisted cursor counts too for caches created before the
+    /// explicit empty-result marker was introduced.
+    public func hasCompletedSync(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws -> Bool {
+        try dbQueue.read { db in
+            let account = Self.accountIDString(accountUserID)
+            let boundary = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT 1 FROM sync_boundaries
+                    WHERE account_user_id = ? AND entity_type = ?
+                    LIMIT 1
+                    """,
+                arguments: [account, entityType.rawValue]
+            )
+            if boundary != nil { return true }
+            let cursor = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT 1 FROM sync_cursors
+                    WHERE account_user_id = ? AND entity_type = ?
+                    LIMIT 1
+                    """,
+                arguments: [account, entityType.rawValue]
+            )
+            return cursor != nil
         }
     }
 

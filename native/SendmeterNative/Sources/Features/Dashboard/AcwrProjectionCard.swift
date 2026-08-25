@@ -84,14 +84,15 @@ struct AcwrProjectionCard: View {
     /// years of history "log a few sessions" on every cold launch.
     ///
     /// `projection` is nil in three materially different situations:
-    /// - sessions not fetched yet → "still loading" (distinct — sessions have
-    ///   no disk cache, so every cold launch renders a pass with `[]`);
+    /// - sessions not authoritative yet → "still loading" (distinct — a
+    ///   readable cache without a completed sync boundary still renders a pass
+    ///   with `[]`);
     /// - genuinely no sessions → the "log a few sessions" explainer;
     /// - sessions exist but all load fell out of the 90-day window (or the
     ///   chronic term is zero) → the ratio has nothing to project from.
     @ViewBuilder
     private var emptyState: some View {
-        if model.isLoadingData || !model.hasLoadedSessions {
+        if !model.hasLoadedSessions {
             Text("Your training history is still loading.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
