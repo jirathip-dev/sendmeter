@@ -75,6 +75,19 @@ public struct CacheLoadOneResult<T> {
     }
 }
 
+/// GRDB deliberately does not declare `DatabaseQueue` as `Sendable`, but its
+/// documented contract is that every access is serialized by the queue. Keep
+/// that non-Sendable implementation detail behind one immutable holder so the
+/// public cache handle can safely cross actors without exposing GRDB or
+/// requiring every caller to carry an unchecked conformance.
+private final class LocalCacheDatabase: @unchecked Sendable {
+    let queue: DatabaseQueue
+
+    init(queue: DatabaseQueue) {
+        self.queue = queue
+    }
+}
+
 /// An account-scoped, SQLite-backed read cache (issue #747 slice 1).
 ///
 /// Every row and cursor is scoped to `account_user_id`: reads and writes are
@@ -114,11 +127,18 @@ public struct CacheLoadOneResult<T> {
 /// the boundary table separately records that an entity has completed at least
 /// one authoritative sync. `deleteAccount` purges both tables for the account.
 ///
-/// The store is `@unchecked Sendable` because GRDB's `DatabaseQueue` is
-/// documented as thread-safe; callers may share one store across queues or
-/// actors.
-public struct LocalCacheStore: @unchecked Sendable {
-    let dbQueue: DatabaseQueue
+/// The cache is a shared reference: all copies of the handle use the same
+/// GRDB queue, and GRDB serializes every access to that queue. The only
+/// unchecked boundary is `LocalCacheDatabase`, whose sole stored reference is
+/// to that queue; no raw GRDB connection or mutable cache state escapes it.
+public final class LocalCacheStore: Sendable {
+    private let database: LocalCacheDatabase
+
+    /// Internal test seam for migration and schema assertions. Production
+    /// callers use the typed cache methods and never receive the GRDB queue.
+    var dbQueue: DatabaseQueue {
+        database.queue
+    }
 
     /// Which server write semantics to apply for a payload or tombstone.
     ///
@@ -140,18 +160,23 @@ public struct LocalCacheStore: @unchecked Sendable {
     }
 
     init(dbQueue: DatabaseQueue) throws {
-        self.dbQueue = dbQueue
+        let database = LocalCacheDatabase(queue: dbQueue)
+        self.database = database
         try Self.migrate(dbQueue)
     }
 
     /// File-backed store at `databaseURL`.
     public init(databaseURL: URL) throws {
-        try self.init(dbQueue: DatabaseQueue(path: databaseURL.path))
+        let database = LocalCacheDatabase(queue: try DatabaseQueue(path: databaseURL.path))
+        self.database = database
+        try Self.migrate(database.queue)
     }
 
     /// In-memory store for tests and one-off scratch databases.
     public init() throws {
-        try self.init(dbQueue: DatabaseQueue())
+        let database = LocalCacheDatabase(queue: try DatabaseQueue())
+        self.database = database
+        try Self.migrate(database.queue)
     }
 
     /// Creates `cache_rows` and `sync_cursors` (and the `grdb_migrations`

@@ -142,7 +142,7 @@ public enum CacheEntityID {
 /// deliberately uses `upsertServer`/`markDeletedServer`, so an unconfirmed
 /// local row survives a remote refresh. Full session snapshots also bound the
 /// lifetime of absent watch-completion placeholders.
-public struct CachedWorkspace: @unchecked Sendable {
+public struct CachedWorkspace: Sendable {
     /// A watch completion is immediately useful as a pending History row, but
     /// a server snapshot that still lacks it must eventually stop counting a
     /// never-uploaded placeholder as training load. After this tombstone is
