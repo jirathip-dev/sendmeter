@@ -579,6 +579,22 @@ public enum HealthMorningRefreshClaimMode: Equatable, Sendable {
     case resumePersisted
 }
 
+/// The caller must continue with the ordinary automatic refresh whenever a
+/// morning attempt was not actually claimed. Keeping that distinction in Core
+/// prevents a contended, not-yet-due, or once-per-day-complete morning window
+/// from accidentally becoming an early return in the lifecycle path.
+public enum HealthMorningRefreshRoute: Equatable, Sendable {
+    case ordinary
+    case morning(pass: Int)
+
+    public static func afterClaim(
+        pass: Int,
+        didClaim: Bool
+    ) -> HealthMorningRefreshRoute {
+        didClaim ? .morning(pass: pass) : .ordinary
+    }
+}
+
 /// Core state machine for the synchronous, pre-await morning claim. Keeping
 /// the distinction here makes the cancellation/relaunch behavior testable
 /// without constructing the production AppModel or HealthKit framework.
@@ -634,5 +650,23 @@ public struct HealthMorningRefreshStateMachine: Equatable, Sendable {
 
     public mutating func release() {
         gate.release()
+    }
+
+    /// Decide what the post-result continuation may do. A cancelled or stale
+    /// owner must finish its lifecycle state before returning. Only release
+    /// the gate when the caller still owns it; an older completion must never
+    /// clear a newer account/window claim.
+    @discardableResult
+    public mutating func continueAfterResult(
+        isCancelled: Bool,
+        ownerIsCurrent: Bool
+    ) -> Bool {
+        guard !isCancelled, ownerIsCurrent else {
+            if ownerIsCurrent {
+                gate.release()
+            }
+            return false
+        }
+        return true
     }
 }

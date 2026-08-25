@@ -5286,36 +5286,40 @@ public final class AppModel {
                 // arrives after its persisted eligibility time. This is a
                 // resume claim even for pass 0: the new-window once/day gate
                 // must not reject a persisted retry after cancellation.
-                guard !morningHealthRefreshState.isClaimed else { return }
-                guard !Task.isCancelled,
-                      let pass = healthMorningRefreshPolicy.duePass(
+                if let pass = healthMorningRefreshPolicy.duePass(
                     for: progress,
                     at: wallNow
-                ), let owner = claimMorningHealthRefresh(
-                    now: wallNow,
-                    startedAt: progress.startedAt,
-                    pass: pass,
-                    accountFetch: accountFetch,
-                    calendar: passCalendar,
-                    mode: .resumePersisted,
-                    progress: progress
-                ) else { return }
-                await runMorningHealthRefreshPass(
-                    owner,
-                    progress: progress,
-                    pass: pass,
-                    timeZone: passTimeZone
-                )
-                return
+                ) {
+                    let owner = claimMorningHealthRefresh(
+                        now: wallNow,
+                        startedAt: progress.startedAt,
+                        pass: pass,
+                        accountFetch: accountFetch,
+                        calendar: passCalendar,
+                        mode: .resumePersisted,
+                        progress: progress
+                    )
+                    let route = HealthMorningRefreshRoute.afterClaim(
+                        pass: pass,
+                        didClaim: owner != nil
+                    )
+                    if case .morning = route, let owner {
+                        await runMorningHealthRefreshPass(
+                            owner,
+                            progress: progress,
+                            pass: pass,
+                            timeZone: passTimeZone
+                        )
+                        return
+                    }
+                }
             }
             if healthMorningRefreshPolicy.isMorning(at: wallNow, calendar: passCalendar) {
                 // A completed morning window is represented by the persisted
                 // start marker and the absence of progress. A concurrent
-                // owner is also a no-op; neither path can create a duplicate
-                // window.
-                guard !morningHealthRefreshState.isClaimed else { return }
-                guard !Task.isCancelled,
-                      let owner = claimMorningHealthRefresh(
+                // owner cannot create a duplicate window; this failed claim
+                // falls through to the ordinary automatic refresh below.
+                let owner = claimMorningHealthRefresh(
                     now: wallNow,
                     startedAt: wallNow,
                     pass: 0,
@@ -5323,29 +5327,33 @@ public final class AppModel {
                     calendar: passCalendar,
                     mode: .newWindow,
                     progress: nil
-                ) else { return }
-                let progress = HealthMorningRefreshProgress(
-                    accountUserID: userID,
-                    startedAt: wallNow,
-                    timeZoneIdentifier: passTimeZone.identifier
                 )
-                guard !Task.isCancelled else {
-                    finishMorningHealthRefresh(owner: owner)
-                    return
-                }
-                guard persistMorningHealthProgress(progress) else {
-                    clearMorningHealthProgress(for: userID)
-                    recordHealthSyncFailure(capturedBy: accountFetch)
-                    finishMorningHealthRefresh(owner: owner)
-                    return
-                }
-                await runMorningHealthRefreshPass(
-                    owner,
-                    progress: progress,
+                let route = HealthMorningRefreshRoute.afterClaim(
                     pass: 0,
-                    timeZone: passTimeZone
+                    didClaim: owner != nil
                 )
-                return
+                if case .morning = route, let owner {
+                    let progress = HealthMorningRefreshProgress(
+                        accountUserID: userID,
+                        startedAt: wallNow,
+                        timeZoneIdentifier: passTimeZone.identifier
+                    )
+                    if !Task.isCancelled,
+                       persistMorningHealthProgress(progress) {
+                        await runMorningHealthRefreshPass(
+                            owner,
+                            progress: progress,
+                            pass: 0,
+                            timeZone: passTimeZone
+                        )
+                        return
+                    }
+                    if !Task.isCancelled {
+                        clearMorningHealthProgress(for: userID)
+                        recordHealthSyncFailure(capturedBy: accountFetch)
+                    }
+                    finishMorningHealthRefresh(owner: owner)
+                }
             }
         }
 
@@ -5492,11 +5500,19 @@ public final class AppModel {
             recordHealthSyncFailure(capturedBy: owner.fetch)
         }
 
-        guard !Task.isCancelled, owner.owns(
+        let ownerIsCurrent = owner.owns(
             currentUserID: currentUserID,
             accountEpoch: accountEpoch,
             activeOwner: morningHealthRefreshOwner
+        )
+        guard morningHealthRefreshState.continueAfterResult(
+            isCancelled: Task.isCancelled,
+            ownerIsCurrent: ownerIsCurrent
         ) else {
+            // A cancelled/stale continuation must release its active owner;
+            // the Core decision only releases the gate when this owner is
+            // still current, so an older completion cannot clear a newer one.
+            finishMorningHealthRefresh(owner: owner)
             return
         }
 

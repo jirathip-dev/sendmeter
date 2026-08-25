@@ -374,6 +374,165 @@ final class HealthMetricReconciliationTests: XCTestCase {
         )
     }
 
+    func testUnclaimedMorningAttemptsFallThroughToOrdinaryRefresh() {
+        let policy = HealthMorningRefreshPolicy()
+        let calendar = LocalDateSupport.calendar(timeZone: timeZone)
+        let accountID = UUID()
+        guard let morning = calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: timeZone,
+            year: 2026,
+            month: 8,
+            day: 25,
+            hour: 7
+        )) else {
+            return XCTFail("fixed test date should be constructible")
+        }
+
+        var state = HealthMorningRefreshStateMachine()
+        XCTAssertTrue(
+            state.claim(
+                mode: .newWindow,
+                pass: 0,
+                at: morning,
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: nil,
+                progress: nil,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+        XCTAssertEqual(
+            HealthMorningRefreshRoute.afterClaim(pass: 0, didClaim: true),
+            .morning(pass: 0)
+        )
+
+        // A competing callback, a not-yet-due persisted pass, and a completed
+        // same-day window all make no morning claim. Each must select the
+        // ordinary refresh route instead of suppressing the lifecycle event.
+        XCTAssertFalse(
+            state.claim(
+                mode: .newWindow,
+                pass: 0,
+                at: morning,
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: nil,
+                progress: nil,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+        XCTAssertEqual(
+            HealthMorningRefreshRoute.afterClaim(pass: 0, didClaim: false),
+            .ordinary
+        )
+        state.release()
+
+        let progress = HealthMorningRefreshProgress(
+            accountUserID: accountID,
+            startedAt: morning,
+            timeZoneIdentifier: timeZone.identifier,
+            nextPass: 1
+        )
+        XCTAssertNil(
+            policy.duePass(
+                for: progress,
+                at: morning.addingTimeInterval(60)
+            )
+        )
+        XCTAssertEqual(
+            HealthMorningRefreshRoute.afterClaim(pass: 1, didClaim: false),
+            .ordinary
+        )
+        XCTAssertFalse(
+            state.claim(
+                mode: .newWindow,
+                pass: 0,
+                at: morning.addingTimeInterval(60),
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: morning,
+                progress: nil,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+        XCTAssertEqual(
+            HealthMorningRefreshRoute.afterClaim(pass: 0, didClaim: false),
+            .ordinary
+        )
+    }
+
+    func testCancelledPostResultReleasesCurrentOwnerWithoutClearingNewOwner() {
+        let policy = HealthMorningRefreshPolicy()
+        let calendar = LocalDateSupport.calendar(timeZone: timeZone)
+        let accountID = UUID()
+        guard let morning = calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: timeZone,
+            year: 2026,
+            month: 8,
+            day: 25,
+            hour: 7
+        )) else {
+            return XCTFail("fixed test date should be constructible")
+        }
+
+        var state = HealthMorningRefreshStateMachine()
+        XCTAssertTrue(
+            state.claim(
+                mode: .newWindow,
+                pass: 0,
+                at: morning,
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: nil,
+                progress: nil,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+        XCTAssertFalse(
+            state.continueAfterResult(
+                isCancelled: true,
+                ownerIsCurrent: true
+            )
+        )
+        XCTAssertFalse(
+            state.isClaimed,
+            "cancellation after the result must release the active morning claim"
+        )
+
+        // A fresh owner may claim after the cancelled owner has released. A
+        // stale completion must not release this newer claim.
+        XCTAssertTrue(
+            state.claim(
+                mode: .newWindow,
+                pass: 0,
+                at: morning.addingTimeInterval(60),
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: nil,
+                progress: nil,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+        XCTAssertFalse(
+            state.continueAfterResult(
+                isCancelled: true,
+                ownerIsCurrent: false
+            )
+        )
+        XCTAssertTrue(
+            state.isClaimed,
+            "a stale completion must not clear a newer morning claim"
+        )
+        state.release()
+    }
+
     func testLaterReconciliationWinsOverEarlierMorningPassFailure() {
         var progress = HealthMorningRefreshProgress(
             accountUserID: UUID(),

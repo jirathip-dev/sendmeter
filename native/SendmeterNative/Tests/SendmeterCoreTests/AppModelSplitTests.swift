@@ -400,6 +400,10 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertTrue(appModel.contains("async throws -> HealthSyncPassResult?"))
         XCTAssertTrue(appModel.contains("acknowledgedReconciledDates"))
         XCTAssertTrue(appModel.contains("progress.add(\n                result.observation"))
+        XCTAssertTrue(appModel.contains("HealthMorningRefreshRoute.afterClaim"))
+        XCTAssertTrue(appModel.contains(
+            "morningHealthRefreshState.continueAfterResult"
+        ))
         XCTAssertTrue(appModel.contains("guard !Task.isCancelled, accountFetch.canApply"))
         XCTAssertTrue(appModel.contains("if !Task.isCancelled, let observation = progress?.finalObservation"))
 
