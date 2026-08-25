@@ -396,6 +396,16 @@ struct SettingsView: View {
     private var accountSecuritySection: some View {
         Section("Account & Security") {
             LabeledContent("Email", value: model.currentUserEmail ?? "Signed in")
+            if let advisory = model.authClockAdvisoryMessage {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Date & Time", systemImage: "clock.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Text(advisory)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("auth-clock-advisory")
+            }
             Button {
                 // #656: a tap arming a password reset ticks once.
                 Haptics.shared.tap()

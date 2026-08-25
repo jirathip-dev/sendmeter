@@ -202,6 +202,10 @@ public final class AppModel {
     /// cross an await in either order. This gate makes the account boundary
     /// idempotent: one failure advances `accountEpoch` at most once.
     private var authRecoveryInProgress = false
+    /// Nonfatal server-time evidence is kept as account-scoped presentation
+    /// state so Settings can give the user the Date & Time nudge without
+    /// clearing an otherwise usable session.
+    public private(set) var authClockAdvisoryMessage: String?
     public private(set) var sessions: [SendmeterCore.Session] = []
     /// True once the current account has crossed an authoritative session
     /// boundary: either a persisted sync cursor/empty-result marker was
@@ -1525,6 +1529,17 @@ public final class AppModel {
         manualWorkoutActivity.reconcileOrphans()
     }
 
+    /// Refresh the nonfatal clock advisory from the live auth service. This is
+    /// deliberately separate from destructive recovery: a device clock lead
+    /// keeps the session and all account state intact while exposing the
+    /// stable Settings copy.
+    public func updateAuthClockAdvisory(for session: AuthSession? = nil) {
+        let session = session ?? authSession
+        authClockAdvisoryMessage = session.flatMap {
+            auth.clockAdvisoryMessage(for: $0)
+        }
+    }
+
     public func becameActive() async {
         // #674 review F7: clear any guided Live Activity stranded by a
         // force-quit / jetsam BEFORE the auth gate — a killed app never ran
@@ -1532,7 +1547,8 @@ public final class AppModel {
         // the card. No-op while a run is in progress.
         guidedActivity.reconcileOrphans()
         manualWorkoutActivity.reconcileOrphans()
-        guard authSession != nil else { return }
+        guard let currentSession = authSession else { return }
+        updateAuthClockAdvisory(for: currentSession)
         // A cache-open/read failure deliberately leaves the WC inbox row in
         // place. Retry it on every foreground pass instead of waiting for a
         // relaunch or an account transition.
@@ -1670,6 +1686,7 @@ public final class AppModel {
                     break
                 }
             }
+            updateAuthClockAdvisory(for: session)
         case .passwordRecovery:
             let preparedSession: AuthSession?
             if let session {
@@ -1713,6 +1730,7 @@ public final class AppModel {
                 // The same-account token is still a recovery boundary.
                 await drainQueue(mode: .authRecovery)
             }
+            updateAuthClockAdvisory(for: preparedSession)
         case .signedOut, .userDeleted:
             await teardownGuidedProtocolBeforeAuthRevocation()
             // #679: sign-out boundary.
@@ -1796,6 +1814,7 @@ public final class AppModel {
                 accountEpoch: accountEpoch
             ), valid.user.id == userID else { return }
             authSession = valid
+            updateAuthClockAdvisory(for: valid)
             watch.setAccountScope(userID)
             watch.relaySession(valid, guaranteed: guaranteed)
         } catch {
@@ -9482,6 +9501,7 @@ public final class AppModel {
 
     private func resetAccountState() {
         accountEpoch &+= 1
+        authClockAdvisoryMessage = nil
         // A HealthKit read can be suspended across sign-out/account switch.
         // Invalidate its owner before clearing the visible account snapshot;
         // a stale completion can then neither publish a toast nor release a

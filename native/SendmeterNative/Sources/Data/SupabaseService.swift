@@ -46,7 +46,6 @@ public final class AuthService {
     /// authoritative.
     public let serverClock: ServerClockStore
     private let sessionGuard: AuthSessionGuardStore
-    private let launchState: AuthLaunchState
     /// Dedupe for `ensureFreshSession`: while a refresh is in flight, concurrent
     /// callers share that one refresh instead of racing one each (repo rule: a
     /// dedupe guard is set BEFORE the first await). Because `AuthService` is
@@ -69,7 +68,7 @@ public final class AuthService {
         let sessionGuard = sessionGuard ?? AuthSessionGuardStore()
         self.sessionGuard = sessionGuard
         let storedSession = client.auth.currentSession
-        self.launchState = sessionGuard.beginLaunch(
+        _ = sessionGuard.beginLaunch(
             hasStoredSession: storedSession != nil,
             storedSessionDescriptor: storedSession.map(Self.descriptor(for:))
         )
@@ -180,12 +179,22 @@ public final class AuthService {
         event: NativeAuthEvent
     ) async throws -> Auth.Session {
         let incomingDescriptor = descriptor(for: incoming)
+        let rejectedSessionKeys = sessionGuard.rejectedSessionKeys()
+        if event == .initialSession,
+           !sessionGuard.launchStateSnapshot().hadInstallationMarker,
+           !rejectedSessionKeys.contains(incomingDescriptor.stableKey) {
+            // A background/locked launch may have seen no Keychain session at
+            // init time. Resolve the first identity at the actual auth-event
+            // boundary instead of consuming the one-time marker window early.
+            sessionGuard.acceptInitialSessionIfUnresolved(incomingDescriptor)
+        }
+        let launchState = sessionGuard.launchStateSnapshot()
         let guardDecision = AuthSessionGuardPolicy.decision(
             event: event,
             descriptor: incomingDescriptor,
             hasInstallationMarker: launchState.hadInstallationMarker,
             acceptedSessionKey: sessionGuard.acceptedSessionKey(),
-            rejectedSessionKeys: sessionGuard.rejectedSessionKeys(),
+            rejectedSessionKeys: rejectedSessionKeys,
             grandfatheredSessionKey: launchState.grandfatheredSessionKey
         )
         switch guardDecision {
@@ -237,6 +246,25 @@ public final class AuthService {
         diagnostics.record(
             AuthEventEntry(category: category, detail: detail, occurredAt: Date())
         )
+    }
+
+    /// A device clock lead is advisory: keep the accepted session alive and
+    /// give the app a stable, user-visible Settings nudge. Server rejection or
+    /// a future-issued token still takes the destructive recovery branch in
+    /// `ensureFreshSession`/`prepareIncomingSession`.
+    public func clockAdvisoryMessage(
+        for session: Auth.Session,
+        deviceDate: Date = Date(),
+        nowContinuousTime: TimeInterval? = nil
+    ) -> String? {
+        guard clockAssessment(
+            for: session,
+            deviceDate: deviceDate,
+            nowContinuousTime: nowContinuousTime
+        ) == .deviceClockAhead else {
+            return nil
+        }
+        return UserFacingError.message(for: .authClockSkew)
     }
 
     private func record(_ category: AuthEventCategory, _ detail: String? = nil) {
@@ -308,13 +336,19 @@ public final class AuthService {
         )
     }
 
-    private func clockAssessment(for session: Auth.Session) -> AuthClockSkewAssessment {
+    private func clockAssessment(
+        for session: Auth.Session,
+        deviceDate: Date = Date(),
+        nowContinuousTime: TimeInterval? = nil
+    ) -> AuthClockSkewAssessment {
         serverClock.assessment(
-            tokenIssuedAt: descriptor(for: session).issuedAt
+            deviceDate: deviceDate,
+            tokenIssuedAt: descriptor(for: session).issuedAt,
+            nowContinuousTime: nowContinuousTime
         )
     }
 
-    private func recoveryDecision(for error: Error) -> AuthRecoveryDecision {
+    func recoveryDecision(for error: Error) -> AuthRecoveryDecision {
         if let recovery = error as? AuthRecoveryError {
             return AuthRecoveryDecision(
                 action: .clearPoisonedSession,
@@ -323,21 +357,36 @@ public final class AuthService {
         }
         switch error {
         case let authError as AuthError:
-            let clockAssessment = client.auth.currentSession.map(clockAssessment(for:))
+            let assessment: AuthClockSkewAssessment = client.auth.currentSession.map {
+                clockAssessment(for: $0)
+            }
                 ?? .insufficientEvidence
             return AuthRecoveryPolicy.decision(
                 errorCode: authError.errorCode.rawValue,
                 message: authError.message,
-                clockAssessment: clockAssessment
+                clockAssessment: assessment
             )
         case let postgRESTError as PostgRESTError:
-            let clockAssessment = client.auth.currentSession.map(clockAssessment(for:))
+            let assessment: AuthClockSkewAssessment = client.auth.currentSession.map {
+                clockAssessment(for: $0)
+            }
                 ?? .insufficientEvidence
             return AuthRecoveryPolicy.decision(
                 errorCode: postgRESTError.code,
                 message: postgRESTError.message,
-                clockAssessment: clockAssessment,
+                clockAssessment: assessment,
                 statusCode: postgRESTError.statusCode
+            )
+        case let httpError as HTTPError:
+            let assessment: AuthClockSkewAssessment = client.auth.currentSession.map {
+                clockAssessment(for: $0)
+            }
+                ?? .insufficientEvidence
+            return AuthRecoveryPolicy.decision(
+                errorCode: nil,
+                message: httpError.localizedDescription,
+                clockAssessment: assessment,
+                statusCode: httpError.response.statusCode
             )
         default:
             // Offline/timeout failures are not auth failures. Keep their

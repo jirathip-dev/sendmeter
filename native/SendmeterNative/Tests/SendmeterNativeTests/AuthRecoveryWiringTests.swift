@@ -3,6 +3,7 @@ import XCTest
 @_spi(Experimental) import Auth
 @testable import Sendmeter
 import SendmeterCore
+import Supabase
 
 private final class WiringClock: AuthMonotonicClock, @unchecked Sendable {
     var now: TimeInterval
@@ -66,7 +67,8 @@ final class AuthRecoveryWiringTests: XCTestCase {
 
     private func makeSession(
         userID: UUID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
-        sessionID: String = "session-1"
+        sessionID: String = "session-1",
+        expiresAt: TimeInterval? = nil
     ) -> Auth.Session {
         let payload = Data(
             #"{"session_id": "\#(sessionID)", "iat": 1_000}"#.utf8
@@ -88,9 +90,25 @@ final class AuthRecoveryWiringTests: XCTestCase {
             accessToken: token,
             tokenType: "bearer",
             expiresIn: 3_600,
-            expiresAt: 4_600,
+            expiresAt: expiresAt ?? Date().timeIntervalSince1970 + 3_600,
             refreshToken: "refresh-token",
             user: user
+        )
+    }
+
+    @MainActor
+    private func makeAuthService(
+        serverClock: ServerClockStore? = nil,
+        sessionGuard: AuthSessionGuardStore? = nil
+    ) -> AuthService {
+        AuthService(
+            client: SupabaseClient(
+                supabaseURL: URL(string: "https://example.test")!,
+                supabaseKey: "test-key"
+            ),
+            diagnostics: AuthDiagnosticsStore(),
+            serverClock: serverClock,
+            sessionGuard: sessionGuard
         )
     }
 
@@ -211,30 +229,6 @@ final class AuthRecoveryWiringTests: XCTestCase {
         )
     }
 
-    func testDelayedOldResponseCannotRemoveReplacementAndRepeatedMarkerStillRetries() {
-        let old = AuthSessionDescriptor(userID: "user-1", sessionID: "old")
-        let replacement = AuthSessionDescriptor(userID: "user-1", sessionID: "new")
-        XCTAssertFalse(
-            AuthSessionRecoveryPolicy.shouldAttemptLocalRemoval(
-                expected: old,
-                current: replacement
-            )
-        )
-
-        let prefix = "sendmeter.tests.transport.retry.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: prefix)!
-        defer { defaults.removePersistentDomain(forName: prefix) }
-        let store = AuthSessionGuardStore(defaults: defaults, keyPrefix: prefix)
-        XCTAssertTrue(store.markRejected(old))
-        XCTAssertFalse(store.markRejected(old))
-        XCTAssertTrue(
-            AuthSessionRecoveryPolicy.shouldAttemptLocalRemoval(
-                expected: old,
-                current: old
-            )
-        )
-    }
-
     @MainActor
     func testLocalRemovalRetriesAfterAFailedAttemptUntilTheExactSessionIsGone() async {
         let expected = AuthSessionDescriptor(userID: "user-1", sessionID: "poison")
@@ -257,45 +251,112 @@ final class AuthRecoveryWiringTests: XCTestCase {
         XCTAssertNil(state.current)
     }
 
-    func testAuthFailureEpochGateAllowsOneBoundaryForEventAndExplicitReset() {
-        XCTAssertTrue(
-            AuthRecoveryEpochPolicy.shouldBegin(
-                hasActiveSession: true,
-                recoveryInProgress: false
+    @MainActor
+    func testAuthServiceSurfacesClockAheadAdvisoryWithoutDroppingSession() async throws {
+        let prefix = "sendmeter.tests.auth-advisory.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: prefix)!
+        defer { defaults.removePersistentDomain(forName: prefix) }
+        let clock = WiringClock(now: 100)
+        let serverDate = Date(timeIntervalSince1970: 1_000)
+        let serverClock = ServerClockStore(
+            defaults: defaults,
+            keyPrefix: prefix,
+            clock: clock
+        )
+        serverClock.record(serverDate: serverDate)
+        let service = makeAuthService(
+            serverClock: serverClock,
+            sessionGuard: AuthSessionGuardStore(defaults: defaults, keyPrefix: prefix + ".guard")
+        )
+        let session = makeSession(expiresAt: Date().timeIntervalSince1970 + 3_600)
+
+        let advisory = service.clockAdvisoryMessage(
+            for: session,
+            deviceDate: serverDate.addingTimeInterval(10 * 60),
+            nowContinuousTime: 100
+        )
+        XCTAssertEqual(
+            advisory,
+            UserFacingError.message(for: .authClockSkew)
+        )
+        XCTAssertTrue(advisory?.contains("Set Automatically") == true)
+
+        let prepared = try await service.prepareIncomingSession(
+            session,
+            event: .initialSession
+        )
+        XCTAssertEqual(prepared.accessToken, session.accessToken)
+        XCTAssertEqual(prepared.user.id, session.user.id)
+    }
+
+    @MainActor
+    func testAuthServiceDefersLaunchMarkerUntilLaterInitialSession() async throws {
+        let prefix = "sendmeter.tests.auth-launch.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: prefix)!
+        defer { defaults.removePersistentDomain(forName: prefix) }
+        let store = AuthSessionGuardStore(defaults: defaults, keyPrefix: prefix)
+
+        _ = makeAuthService(sessionGuard: store)
+        XCTAssertFalse(store.launchStateSnapshot().hadInstallationMarker)
+        XCTAssertNil(store.acceptedSessionKey())
+
+        let laterLaunch = makeAuthService(sessionGuard: store)
+        XCTAssertFalse(laterLaunch.sessionIsFresh())
+        XCTAssertFalse(store.launchStateSnapshot().hadInstallationMarker)
+
+        let session = makeSession(
+            sessionID: "arrived-after-unreadable-launch",
+            expiresAt: Date().timeIntervalSince1970 + 3_600
+        )
+        let prepared = try await laterLaunch.prepareIncomingSession(
+            session,
+            event: .initialSession
+        )
+        XCTAssertEqual(prepared.accessToken, session.accessToken)
+        XCTAssertTrue(store.launchStateSnapshot().hadInstallationMarker)
+        XCTAssertEqual(
+            store.acceptedSessionKey(),
+            AuthSessionDescriptor(
+                userID: session.user.id.uuidString,
+                accessToken: session.accessToken,
+                expiresAt: session.expiresAt
+            ).stableKey
+        )
+    }
+
+    @MainActor
+    func testAuthServiceClassifiesBareHTTP401WithoutClearingOtherFailures() {
+        let service = makeAuthService()
+        func httpError(statusCode: Int) -> HTTPError {
+            HTTPError(
+                data: Data(#"{"message":"failure"}"#.utf8),
+                response: HTTPURLResponse(
+                    url: URL(string: "https://example.test/auth/v1/token")!,
+                    statusCode: statusCode,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+            )
+        }
+
+        XCTAssertEqual(
+            service.recoveryDecision(for: httpError(statusCode: 401)),
+            AuthRecoveryDecision(
+                action: .clearPoisonedSession,
+                friendlyErrorClass: .authExpired
             )
         )
-        XCTAssertFalse(
-            AuthRecoveryEpochPolicy.shouldBegin(
-                hasActiveSession: true,
-                recoveryInProgress: true
-            )
+        XCTAssertEqual(
+            service.recoveryDecision(for: httpError(statusCode: 403)).action,
+            .none
         )
-        XCTAssertFalse(
-            AuthRecoveryEpochPolicy.shouldBegin(
-                hasActiveSession: false,
-                recoveryInProgress: false
-            )
+        XCTAssertEqual(
+            service.recoveryDecision(for: httpError(statusCode: 422)).action,
+            .none
         )
-        XCTAssertFalse(
-            AuthRecoveryEpochPolicy.shouldResetForSignedOut(hasActiveSession: false)
-        )
-        XCTAssertFalse(
-            AuthRecoveryEpochPolicy.shouldRecordBoundaryDiagnostic(
-                isAccountDeletion: false,
-                hasActiveSession: false
-            )
-        )
-        XCTAssertTrue(
-            AuthRecoveryEpochPolicy.shouldRecordBoundaryDiagnostic(
-                isAccountDeletion: false,
-                hasActiveSession: true
-            )
-        )
-        XCTAssertTrue(
-            AuthRecoveryEpochPolicy.shouldRecordBoundaryDiagnostic(
-                isAccountDeletion: true,
-                hasActiveSession: false
-            )
+        XCTAssertEqual(
+            service.recoveryDecision(for: URLError(.notConnectedToInternet)).action,
+            .none
         )
     }
 }

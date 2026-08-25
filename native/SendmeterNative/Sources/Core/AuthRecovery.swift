@@ -154,9 +154,11 @@ public struct AuthLaunchState: Equatable, Sendable {
 
 /// Small durable guard beside the SDK's Keychain session. It deliberately
 /// stores only a marker and session identities. This catches an SDK session
-/// that survived a partial app update/data reset while the app's own auth
-/// state did not, and records a rejection before the first async sign-out so
-/// the same poison cannot be retried forever on the next launch.
+/// that survives after the app has already established its accepted identity,
+/// and records a rejection before the first async sign-out so the same poison
+/// cannot be retried forever on the next launch. The marker is deferred until
+/// an identity is actually readable, because a locked-device/background launch
+/// can observe neither the Keychain session nor its descriptor.
 public final class AuthSessionGuardStore: @unchecked Sendable {
     private static let markerSuffix = ".installation-marker"
     private static let acceptedSuffix = ".accepted-session"
@@ -189,15 +191,11 @@ public final class AuthSessionGuardStore: @unchecked Sendable {
         let markerKey = prefix + Self.markerSuffix
         let hadMarker = defaults.string(forKey: markerKey) != nil
         let grandfatheredKey: String?
-        if !hadMarker {
+        if !hadMarker, hasStoredSession, let storedSessionDescriptor {
             defaults.set(UUID().uuidString, forKey: markerKey)
-            if hasStoredSession, let storedSessionDescriptor {
-                let key = storedSessionDescriptor.stableKey
-                defaults.set(key, forKey: prefix + Self.acceptedSuffix)
-                grandfatheredKey = key
-            } else {
-                grandfatheredKey = nil
-            }
+            let key = storedSessionDescriptor.stableKey
+            defaults.set(key, forKey: prefix + Self.acceptedSuffix)
+            grandfatheredKey = key
         } else {
             grandfatheredKey = nil
         }
@@ -227,6 +225,31 @@ public final class AuthSessionGuardStore: @unchecked Sendable {
         return Set(defaults.stringArray(forKey: prefix + Self.rejectedSuffix) ?? [])
     }
 
+    /// Resolves the first initial-session identity after a launch that could
+    /// not read the SDK session. The rejected-key check deliberately happens
+    /// before this method is called by AuthService, so a known poison can never
+    /// consume the first-identity acceptance window.
+    @discardableResult
+    public func acceptInitialSessionIfUnresolved(
+        _ descriptor: AuthSessionDescriptor
+    ) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let markerKey = prefix + Self.markerSuffix
+        guard defaults.string(forKey: markerKey) == nil else { return false }
+        let key = descriptor.stableKey
+        let rejected = Set(defaults.stringArray(forKey: prefix + Self.rejectedSuffix) ?? [])
+        guard !rejected.contains(key) else { return false }
+        defaults.set(UUID().uuidString, forKey: markerKey)
+        defaults.set(key, forKey: prefix + Self.acceptedSuffix)
+        launchState = AuthLaunchState(
+            hadInstallationMarker: true,
+            hadStoredSession: true,
+            grandfatheredSessionKey: nil
+        )
+        return true
+    }
+
     /// Marks a key before an async local sign-out. Returns false when this
     /// exact key was already rejected, which is the durable retry-loop guard.
     @discardableResult
@@ -250,10 +273,19 @@ public final class AuthSessionGuardStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let key = descriptor.stableKey
+        let markerKey = prefix + Self.markerSuffix
+        if defaults.string(forKey: markerKey) == nil {
+            defaults.set(UUID().uuidString, forKey: markerKey)
+        }
         defaults.set(key, forKey: prefix + Self.acceptedSuffix)
         var rejected = defaults.stringArray(forKey: prefix + Self.rejectedSuffix) ?? []
         rejected.removeAll { $0 == key }
         defaults.set(rejected, forKey: prefix + Self.rejectedSuffix)
+        launchState = AuthLaunchState(
+            hadInstallationMarker: true,
+            hadStoredSession: true,
+            grandfatheredSessionKey: nil
+        )
     }
 }
 
@@ -433,7 +465,16 @@ public enum AuthSessionRecoveryPolicy {
         expected: AuthSessionDescriptor,
         current: AuthSessionDescriptor?
     ) -> Bool {
-        current?.stableKey == expected.stableKey
+        guard let current, current.stableKey == expected.stableKey else {
+            return false
+        }
+        guard let expectedIssuedAt = expected.issuedAt,
+              let currentIssuedAt = current.issuedAt else {
+            // Legacy descriptors may not carry an `iat`; the stable session
+            // family key remains the only identity available in that case.
+            return true
+        }
+        return expectedIssuedAt == currentIssuedAt
     }
 }
 

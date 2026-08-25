@@ -143,13 +143,17 @@ and the exact account's queue/cache is purged only after the server deletion
 has succeeded. Auth or network failure parks data instead of destroying it.
 
 Native auth restoration is guarded by a durable, non-secret install/session
-marker beside the Supabase SDK session. The first rollout seeds that marker and
-the accepted key from an already-current SDK session, preserving valid existing
-installs; later unaccepted restored sessions are dropped locally before they
-reach the UI or the watch. JWT verification, expired-session, refresh-reuse,
-and future-`iat` failures retry exact local credential removal (bounded per
-event and again on later events/relaunch) before returning to fresh sign-in with
-fixed friendly copy. Successful PostgREST responses provide the last
+marker beside the Supabase SDK session. On the first rollout, an already-readable
+SDK session is accepted once; if a locked/background launch cannot read an
+identity, marker creation is deferred until the first auth identity arrives.
+Later unaccepted restored sessions are dropped locally before they reach the UI
+or the watch. The marker and accepted identity are container-local, so this is
+one-time rollout grandfathering, not reinstall detection: a reinstall or local
+container reset that leaves the SDK Keychain session available cannot be
+distinguished from a first install. JWT verification, expired-session,
+refresh-reuse, and future-`iat` failures retry exact local credential removal
+(bounded per event and again on later events/relaunch) before returning to fresh
+sign-in with fixed friendly copy. Successful PostgREST responses provide the last
 known-good HTTP `Date` evidence for a defense-in-depth clock check. The check
 uses a sleep-counting continuous clock, rejects evidence older than 15 minutes,
 and remains inconclusive when there is no trustworthy server sample, so a

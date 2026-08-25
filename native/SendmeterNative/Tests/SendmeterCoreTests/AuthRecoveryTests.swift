@@ -343,6 +343,34 @@ final class AuthClockSkewTests: XCTestCase {
                 current: replacement
             )
         )
+        let staleGeneration = AuthSessionDescriptor(
+            userID: "user-1",
+            sessionID: "same-family",
+            issuedAt: 100
+        )
+        let refreshedGeneration = AuthSessionDescriptor(
+            userID: "user-1",
+            sessionID: "same-family",
+            issuedAt: 200
+        )
+        XCTAssertFalse(
+            AuthSessionRecoveryPolicy.shouldAttemptLocalRemoval(
+                expected: staleGeneration,
+                current: refreshedGeneration
+            ),
+            "The recovery boundary must not sign out T2 when a stale T1 has the same session family key."
+        )
+        XCTAssertTrue(
+            AuthSessionRecoveryPolicy.shouldAttemptLocalRemoval(
+                expected: AuthSessionDescriptor(userID: "user-1", sessionID: "legacy"),
+                current: AuthSessionDescriptor(
+                    userID: "user-1",
+                    sessionID: "legacy",
+                    issuedAt: 200
+                )
+            ),
+            "Legacy descriptors without issuedAt still use their exact stable identity."
+        )
         XCTAssertFalse(
             AuthRecoveryEpochPolicy.shouldBegin(
                 hasActiveSession: true,
@@ -360,6 +388,33 @@ final class AuthClockSkewTests: XCTestCase {
         )
         XCTAssertFalse(
             AuthRecoveryEpochPolicy.shouldResetForSignedOut(hasActiveSession: false)
+        )
+    }
+
+    func testUnreadableFirstLaunchDefersMarkerUntilInitialIdentityArrives() {
+        let prefix = "sendmeter.tests.guard.deferred.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: prefix)!
+        defer { defaults.removePersistentDomain(forName: prefix) }
+        let store = AuthSessionGuardStore(defaults: defaults, keyPrefix: prefix)
+        let firstLaunch = store.beginLaunch(hasStoredSession: false)
+        XCTAssertFalse(firstLaunch.hadInstallationMarker)
+        XCTAssertNil(store.acceptedSessionKey())
+
+        let session = AuthSessionDescriptor(userID: "user-1", sessionID: "later")
+        XCTAssertTrue(store.acceptInitialSessionIfUnresolved(session))
+        let resolved = store.launchStateSnapshot()
+        XCTAssertTrue(resolved.hadInstallationMarker)
+        XCTAssertEqual(store.acceptedSessionKey(), session.stableKey)
+        XCTAssertEqual(
+            AuthSessionGuardPolicy.decision(
+                event: .initialSession,
+                descriptor: session,
+                hasInstallationMarker: resolved.hadInstallationMarker,
+                acceptedSessionKey: store.acceptedSessionKey(),
+                rejectedSessionKeys: store.rejectedSessionKeys(),
+                grandfatheredSessionKey: resolved.grandfatheredSessionKey
+            ),
+            .accept
         )
     }
 
