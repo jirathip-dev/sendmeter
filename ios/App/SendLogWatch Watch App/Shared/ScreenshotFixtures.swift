@@ -48,6 +48,12 @@ enum ScreenshotFixtureState: String, CaseIterable {
     /// *displays* (`ScreenshotFixtures.guidedRun`), the same presentation-
     /// only pattern `ScreenshotForceVisual` already uses for `ForceGaugeView`.
     case forceGuidedRun
+    /// #611: the resisted-movement variant of `forceGuidedRun` — the same
+    /// presentation-only fixture surface, but with `isMovement` true so the
+    /// sparkline strip (the #611 feature) is actually exercised by the layout
+    /// test instead of being structurally unreachable on the one fixture that
+    /// guards this view.
+    case forceGuidedRunMovement
 }
 
 struct ScreenshotWorkoutVisual {
@@ -87,6 +93,11 @@ struct ScreenshotGuidedRunVisual {
     let progress: Double
     let isMeasured: Bool
     let isCadenceOnly: Bool
+    /// #611: whether the display is a reverse-action (movement) run, which
+    /// renders the live sparkline strip. Wired from the fixture so the layout
+    /// test can exercise the strip on the one surface that guards this view
+    /// (F3).
+    let isMovement: Bool
     let protocolName: String
     let currentSet: Int
     let totalSets: Int
@@ -272,19 +283,39 @@ enum ScreenshotFixtures {
     }
 
     static var guidedRun: ScreenshotGuidedRunVisual? {
-        guard state == .forceGuidedRun else { return nil }
-        return ScreenshotGuidedRunVisual(
-            phaseTitle: "Hold",
-            countdownText: "7",
-            progress: 0.42,
-            isMeasured: true,
-            isCadenceOnly: false,
-            protocolName: "Static PR Ladder",
-            currentSet: 2, totalSets: 3,
-            currentRep: 1, totalReps: 2,
-            side: "left",
-            currentKg: 24.6,
-            tag: "Crimp edge"
-        )
+        switch state {
+        case .forceGuidedRun:
+            return ScreenshotGuidedRunVisual(
+                phaseTitle: "Hold",
+                countdownText: "7",
+                progress: 0.42,
+                isMeasured: true,
+                isCadenceOnly: false,
+                isMovement: false,
+                protocolName: "Static PR Ladder",
+                currentSet: 2, totalSets: 3,
+                currentRep: 1, totalReps: 2,
+                side: "left",
+                currentKg: 24.6,
+                tag: "Crimp edge"
+            )
+        case .forceGuidedRunMovement:
+            return ScreenshotGuidedRunVisual(
+                phaseTitle: WatchForceProtocol.Labels.concentric,
+                countdownText: "3",
+                progress: 0.55,
+                isMeasured: true,
+                isCadenceOnly: false,
+                isMovement: true,
+                protocolName: "Movement Starter",
+                currentSet: 1, totalSets: 3,
+                currentRep: 2, totalReps: 10,
+                side: "left",
+                currentKg: 31.4,
+                tag: "Crimp edge"
+            )
+        default:
+            return nil
+        }
     }
 }

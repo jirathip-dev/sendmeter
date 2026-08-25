@@ -27,15 +27,18 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
 
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: tempDir)
+        WatchSessionStore.shared.clear()
         PendingSyncCache.shared.reset()
     }
 
     private func sampleRow(
         runId: UUID = UUID(), sequence: Int = 7, userId: UUID? = nil,
+        ownerless: Bool = false,
         startedAt: Date = Date(timeIntervalSince1970: 1_800_000_000)
     ) -> LiveWorkoutUpsert {
-        LiveWorkoutUpsert(
-            userId: userId ?? testUserId, workoutId: runId, runId: runId, sequence: sequence,
+        let owner: UUID? = ownerless ? nil : (userId ?? testUserId)
+        return LiveWorkoutUpsert(
+            userId: owner, workoutId: runId, runId: runId, sequence: sequence,
             event: "end", terminal: true, status: "ended",
             startedAt: startedAt,
             hr: nil, attemptCount: 3, activeKcal: nil, elevationGainM: nil,
@@ -567,6 +570,8 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
     private func reportOtherQueuesAsEmpty() {
         for queue: PendingSyncQueue in [.workouts, .tindeqSessions, .tindeqRecordings] {
             PendingSyncCache.shared.record(0, for: queue)
+            PendingSyncCache.shared.recordUnscopedPending(0, for: queue)
+            PendingSyncCache.shared.recordUnscopedQuarantined(0, for: queue)
             PendingSyncCache.shared.recordQuarantined(0, for: queue)
             PendingSyncCache.shared.recordQuarantinedStuck(0, for: queue)
         }
@@ -596,6 +601,28 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
         XCTAssertEqual(retry.syncSlot, .liveWorkoutTerminal)
         await retry.refreshReportedCounts()
         XCTAssertEqual(PendingSyncCache.shared.total, 0)
+    }
+
+    func testOwnerlessTerminalRowIsNotAccountPendingButIsVisibleAsUnscoped() async throws {
+        WatchSessionStore.shared.store(
+            RelayedSession(
+                accessToken: "test-token",
+                userId: testUserId,
+                expiresAt: Date().addingTimeInterval(3600).timeIntervalSince1970
+            )
+        )
+        reportOtherQueuesAsEmpty()
+        let uploader = ScriptedTerminalUploader(failing: false)
+        let retry = makeRetry(upload: { try await uploader.upload($0) })
+
+        await retry.handOff(sampleRow(ownerless: true), error: URLError(.notConnectedToInternet))
+
+        XCTAssertEqual(PendingSyncCache.shared.total, 0)
+        XCTAssertEqual(PendingSyncCache.shared.unscopedTotal, 1)
+        let uploaded: [Int] = await uploader.uploaded
+        let pending: Bool = await retry.hasPendingRetry()
+        XCTAssertTrue(uploaded.isEmpty)
+        XCTAssertFalse(pending)
     }
 
     /// This queue never quarantines anything, but must still report zero for

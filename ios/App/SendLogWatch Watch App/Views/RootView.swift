@@ -16,27 +16,54 @@ struct RootView: View {
     @Environment(TindeqManager.self) private var tindeq
     @Environment(WorkoutManager.self) private var workout
     @Environment(GuidedForceRunner.self) private var guidedForceRunner
+    @Environment(ForceRuntimeCoordinator.self) private var forceRuntimeCoordinator
     @State private var path: [WatchDest] = []
     @State private var homePage: WatchHomePage = .status
 
     @ViewBuilder
     var body: some View {
-        if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .waiting {
-            WaitingForPhoneView()
-        } else if ScreenshotFixtures.enabled {
-            screenshotSignedInSurface
-        } else {
-            switch auth.state {
-            case .signedOut:
+        Group {
+            if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .waiting {
                 WaitingForPhoneView()
-            // Deliberately includes `tokenFresh: false` — an expired access token
-            // keeps the watch usable (recording is offline-first and queues), and
-            // HomeView shows the "waiting for iPhone" banner instead of throwing
-            // the user back to a sign-in screen (#265's offline window).
-            case .signedIn(_, _):
-                signedInSurface
+            } else if ScreenshotFixtures.enabled {
+                screenshotSignedInSurface
+            } else {
+                switch auth.state {
+                case .signedOut:
+                    WaitingForPhoneView()
+                // Deliberately includes `tokenFresh: false` — an expired access token
+                // keeps the watch usable (recording is offline-first and queues), and
+                // HomeView shows the "waiting for iPhone" banner instead of throwing
+                // the user back to a sign-in screen (#265's offline window).
+                case .signedIn(_, _):
+                    signedInSurface
+                }
             }
         }
+        // #540: `RootView` is always mounted, so it is the stable place to
+        // observe the app-scoped Force activity state (the gauge status and
+        // the guided runner phase) and drive the one Force runtime coordinator.
+        // The coordinator — not the view's lifetime — owns the runtime session.
+        .onChange(of: tindeq.status) { _, _ in
+            syncForceRuntime()
+        }
+        .onChange(of: tindeq.handsFreeRequested) { _, _ in
+            syncForceRuntime()
+        }
+        .onChange(of: guidedForceRunner.phase) { _, _ in
+            syncForceRuntime()
+        }
+        .onAppear {
+            syncForceRuntime()
+        }
+    }
+
+    /// Reconciles the Force runtime coordinator from live manager state.
+    /// Reads `tindeq` and `guidedForceRunner` synchronously (no captured
+    /// copies) so an `onChange` observer or foreground refresh always reflects
+    /// the current activity.
+    private func syncForceRuntime() {
+        forceRuntimeCoordinator.sync(tindeq: tindeq, runner: guidedForceRunner)
     }
 
     @ViewBuilder
@@ -63,7 +90,9 @@ struct RootView: View {
             // behind the deterministic screenshot launch flag so no
             // production navigation changes.
             WatchIconPrimitiveFixtureView()
-        } else if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .forceGuidedRun {
+        } else if ScreenshotFixtures.enabled,
+                  ScreenshotFixtures.state == .forceGuidedRun ||
+                  ScreenshotFixtures.state == .forceGuidedRunMovement {
             GuidedForceRunnerView()
         } else if guidedForceRunner.isActive {
             GuidedForceRunnerView()

@@ -18,4 +18,5 @@ export type {
   WatchBuildStatus,
   WatchQuarantineStatus,
   WatchSyncStatus,
+  WorkoutCompletedMessage,
 } from "./definitions";

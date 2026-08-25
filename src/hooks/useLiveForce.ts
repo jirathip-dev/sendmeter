@@ -2,9 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
 import {
+  STALE_MS,
   admitLiveForceMessage,
-  isFresh,
+  deriveForceSyncState,
   emptyLiveForceMirrorState,
+  isBeatVisible,
+  type ForceMirrorSyncState,
   type LiveForce,
   type LiveForceMirrorState,
   type LiveForceSample,
@@ -13,19 +16,32 @@ import {
   hasAccountChangedSincePersisted,
   recordStampedPacketAccepted,
 } from "../lib/liveMirrorOwnership";
+import { recordLiveMirrorTrace } from "../lib/liveMirrorTelemetry";
 import { subscribePluginListener } from "./pluginListener";
 
 export type { LiveForce, LiveForceSample };
+export type { ForceMirrorSyncState } from "../lib/liveForceMirror";
 
 /// The watch's live Progressor session, mirrored on the phone Force tab
 /// (SL-87). WatchConnectivity-only via the auth-bridge plugin — sub-second
 /// and network-free, but native-only (always null in a browser) and only
 /// while the phone is reachable from the watch. Device-only to verify.
-export function useLiveForce(userId: string): LiveForce | null {
+/// #614: every accepted/rejected beat is recorded into the bounded telemetry
+/// ring (path + latency + reason, never force values); a mirror that ages out
+/// of `STALE_MS` records one `stale` trace so silence is named; and the
+/// returned sync state is the honest direct / temporarily-unreachable / stale
+/// / unknown verdict, never a hardcoded label.
+export function useLiveForce(userId: string): [LiveForce | null, ForceMirrorSyncState] {
   const [beat, setBeat] = useState<LiveForce | null>(null);
+  const [syncState, setSyncState] = useState<ForceMirrorSyncState>("unknown");
+  // #614 round-2 N3: phone-local receipt time of the last accepted beat, kept
+  // in state (not read off the ref at render) so the visibility gate below is
+  // skew-free — the watch's `updatedAt` would hide a just-accepted card.
+  const [lastAcceptedAtMs, setLastAcceptedAtMs] = useState(0);
   const mirrorRef = useRef<LiveForceMirrorState>(emptyLiveForceMirrorState());
   const activeUserIdRef = useRef(userId);
   const [renderedUserId, setRenderedUserId] = useState(userId);
+  const staleRecordedRunRef = useRef("");
   // Hide the previous account's beat on the transition render; the layout
   // effect then clears the cursor before paint and before the next listener
   // can publish a packet.
@@ -49,6 +65,8 @@ export function useLiveForce(userId: string): LiveForce | null {
   if (accountTransition) {
     setRenderedUserId(userId);
     setBeat(null);
+    setLastAcceptedAtMs(0);
+    setSyncState("unknown");
   }
 
   useLayoutEffect(() => {
@@ -97,7 +115,31 @@ export function useLiveForce(userId: string): LiveForce | null {
           msg,
           activeUserIdRef.current,
           hasHadAccountTransitionRef.current,
+          Date.now(),
         );
+        // #614: record whether or not it was accepted — a rejected packet is
+        // the trace a diagnosis needs. Force beats are WC-only, so the path
+        // is always direct. latencyMs is the TOTAL watch-capture → WebView
+        // span (comparable to the server path); wireMs and bridgeMs break it
+        // into the cross-device and phone-local segments. A missing `event`
+        // (legacy watch) reads as telemetry so it is throttled like one
+        // (#614 review F14).
+        const nowMs = Date.now();
+        recordLiveMirrorTrace({
+          kind: "force",
+          path: "watch-direct",
+          event: msg.event ?? "telemetry",
+          accepted: admission.accepted,
+          rejection: admission.rejection,
+          latencyMs:
+            msg.updated_at !== undefined ? nowMs - msg.updated_at * 1000 : undefined,
+          wireMs:
+            msg.received_at !== undefined && msg.updated_at !== undefined
+              ? msg.received_at * 1000 - msg.updated_at * 1000
+              : undefined,
+          bridgeMs:
+            msg.received_at !== undefined ? nowMs - msg.received_at * 1000 : undefined,
+        });
         if (!admission.accepted) return;
         // #530 round-2 review R2-F1: a genuinely STAMPED (not
         // legacy-absent) acceptance is positive evidence this watch has
@@ -113,9 +155,38 @@ export function useLiveForce(userId: string): LiveForce | null {
         // run. Mutate the ref and publish the accepted snapshot together.
         mirrorRef.current = admission.state;
         setBeat(admission.state.beat);
+        setLastAcceptedAtMs(admission.state.lastAcceptedAtMs);
+        setSyncState(deriveForceSyncState(mirrorRef.current, Date.now()));
       }),
     );
-    const interval = setInterval(() => setNow(Date.now()), 2_000);
+    const interval = setInterval(() => {
+      const atMs = Date.now();
+      setNow(atMs);
+      // #614: a mirror whose last accepted MEASURING beat aged out of
+      // STALE_MS hides (see `isBeatVisible`) — record that once per run so
+      // the telemetry names the silence. A `connected` last beat is a normal
+      // inter-rep rest and must not be recorded as stale (#614 round-2 N1).
+      // The age is DATA age (ageMs), never a latency sample.
+      const m = mirrorRef.current;
+      const age = atMs - m.lastAcceptedAtMs;
+      if (m.beat && !m.beat.terminal && m.beat.status === "measuring" && age > STALE_MS && staleRecordedRunRef.current !== m.beat.runId) {
+        staleRecordedRunRef.current = m.beat.runId;
+        recordLiveMirrorTrace({
+          kind: "force",
+          path: "watch-direct",
+          accepted: false,
+          rejection: "stale",
+          ageMs: age,
+        });
+      }
+      // #614 review F7: recompute the honest transport state on the tick too,
+      // so a quiet-but-not-yet-hidden link reads "paused" instead of the last
+      // accepted beat's verdict.
+      setSyncState((prev) => {
+        const next = deriveForceSyncState(mirrorRef.current, atMs);
+        return next === prev ? prev : next;
+      });
+    }, 2_000);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -123,8 +194,12 @@ export function useLiveForce(userId: string): LiveForce | null {
     };
   }, [userId]);
 
+  // #614 round-2 N3: the visibility gate is the PHONE's own receipt clock —
+  // the watch's `updatedAt` under skew would hide a beat accepted moments
+  // ago, silently reverting to the "card gone, no explanation" symptom.
   const visibleBeat = accountTransition ? null : beat;
-  if (!visibleBeat) return null;
-  if (!isFresh(visibleBeat, now)) return null;
-  return visibleBeat;
+  if (!isBeatVisible(visibleBeat, accountTransition ? 0 : lastAcceptedAtMs, now)) {
+    return [null, syncState];
+  }
+  return [visibleBeat, syncState];
 }

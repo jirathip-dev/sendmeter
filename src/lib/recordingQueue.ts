@@ -37,7 +37,7 @@ const STORAGE_KEY = "sendmeter:pending-recordings";
 // Byte budget for the SYNC LANE only (#269 — before that, for the whole
 // queue). A rep's samples array dominates an entry's size: a 5-min free hold
 // serializes to ~544 KB, and useTindeq.ts's MAX_RECORDING_MS safety cap
-// (30 min) tops out around 3.3 MB. Capping by COUNT let a handful of long holds
+// (10 min) tops out around 1.1 MB. Capping by COUNT let a handful of long holds
 // blow straight through what some WebKit builds allow for a single localStorage
 // value; capping by approximate serialized bytes instead degrades gracefully
 // (drop the oldest entries first) rather than silently failing to persist at
@@ -52,7 +52,7 @@ export const MAX_QUEUE_BYTES = 1_500_000;
 // the heaviest realistic offline session is a guided protocol run end to end —
 // call it 60 holds of 30 s. At the ~1.8 KB/s that samples serialize to, that's
 // ~54 KB a rep, ~3.2 MB for the session. 64 MB is ~20 such sessions stacked up,
-// or ~19 back-to-back recordings at the 30-min MAX_RECORDING_MS cap. Eviction
+// or ~58 back-to-back recordings at the 10-min MAX_RECORDING_MS cap. Eviction
 // is therefore not something a real session reaches — it is the backstop for a
 // queue that has silently failed to drain for weeks, which is a different bug
 // and one we would rather cap than let grow without bound.
@@ -506,6 +506,57 @@ export async function clearRecordingQueue(
   }
   notifyPendingUploadsChanged();
   return removed.size;
+}
+
+/// #613: remove ONE queued recording by id, from BOTH stores, scoped to
+/// `userId` (plus unattributed legacy entries — the same "mine" rule as
+/// `pendingRecordingsCount`).
+///
+/// One caller, about a single rep the user actually recorded, and NOT the
+/// #273 sign-out path (that one stays exclusively `clearRecordingQueue` via
+/// `discardQueueOnUserSignOut`):
+///
+///   * the durable-first save path writes the entry BEFORE the network insert
+///     (`recordingSave.ts`), so a successful insert must dequeue it — an entry
+///     left behind would be re-attempted (harmless 23505) but, worse, counted
+///     in the ambient "waiting to upload" backlog forever. ForceView's
+///     `reconcileSavedRecording` awaits this dequeue, so an Undo tapped
+///     afterwards cannot let the discarded rep drain back into the list.
+///
+/// Best-effort: a store that refuses the delete contributes nothing to the
+/// return, and a lane write that fails is left for the next drain. Idempotent:
+/// removing an id that isn't queued anywhere returns false with no error.
+export async function removeQueuedRecording(
+  id: string,
+  userId: string,
+  loadDb: RecordingDbLoader = openRecordingDb,
+  storage: QueueStorage | null = defaultStorage(),
+): Promise<boolean> {
+  const mine = (p: PendingRecording) => p.userId === null || p.userId === userId;
+  let removed = false;
+  const db = await loadDb().catch(() => null);
+  if (db) {
+    // `delete` is by id, so confirm the entry is this user's BEFORE deleting —
+    // a uuid collision is practically impossible, but the "mine" rule is the
+    // whole point of #484 F3 and costs nothing here.
+    const mineById = await db
+      .getAllForUser(userId)
+      .then((rows) => rows.some((p) => p.id === id))
+      .catch(() => false);
+    if (mineById) {
+      removed = await db.delete([id]).then(
+        () => true,
+        () => false,
+      );
+    }
+  }
+  const lane = loadQueue(storage);
+  const next = lane.filter((p) => !(p.id === id && mine(p)));
+  if (next.length !== lane.length) {
+    if (saveQueue(next, storage)) removed = true;
+  }
+  if (removed) notifyPendingUploadsChanged();
+  return removed;
 }
 
 /// #484: the one way a `rejection.stuck` entry is attempted again outside of

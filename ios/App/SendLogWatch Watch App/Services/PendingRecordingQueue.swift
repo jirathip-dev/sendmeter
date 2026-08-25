@@ -101,6 +101,9 @@ actor PendingRecordingQueue {
     @discardableResult
     func retryQuarantinedItems() async -> Int { await engine.retryQuarantinedItems() }
 
+    /// #606: this queue's quarantine-exit breadcrumb ring, oldest first.
+    func quarantineExitHistory() async -> [QuarantineBreadcrumbEntry] { await engine.quarantineExitHistory() }
+
     func enqueue(_ pending: PendingTindeqRecording) async -> QueuePersistOutcome { await engine.enqueue(pending) }
 
     func drain() async { await engine.drain() }

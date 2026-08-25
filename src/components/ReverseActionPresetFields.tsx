@@ -108,7 +108,7 @@ export default function ReverseActionPresetFields(props: Props) {
           lineHeight: 1.5,
         }}
       >
-        One continuous {setDurationS}s set · max 30m per set for Progressor; clock-guided
+        One continuous {setDurationS}s set · max 10m per set for Progressor; clock-guided
         reps; force does not infer joint position.
         {overCap && " Lower reps or cadence before saving."}
       </div>

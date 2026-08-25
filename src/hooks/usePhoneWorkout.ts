@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from "react";
+import { useCallback, useEffect, useReducer } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App } from "@capacitor/app";
 import { SendLogLiveActivity } from "sendlog-live-activity";
@@ -14,7 +14,22 @@ const KEY = "sendmeter:phone-workout";
 function load(): PhoneWorkoutState {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return JSON.parse(raw) as PhoneWorkoutState;
+    if (raw) {
+      const state = JSON.parse(raw) as PhoneWorkoutState;
+      if (state.phase === "confirming") {
+        // #615: a confirming state persisted by a pre-#615 build carries no
+        // stable ids. Mint them now so the retried save is idempotent — a
+        // fresh pair is fine here (only THIS save attempt will use them).
+        if (!state.sessionId || !state.workoutId) {
+          return {
+            ...state,
+            sessionId: crypto.randomUUID(),
+            workoutId: crypto.randomUUID(),
+          };
+        }
+      }
+      return state;
+    }
   } catch {
     // corrupt/absent → fresh
   }
@@ -31,7 +46,24 @@ export function usePhoneWorkout(): [
   PhoneWorkoutState,
   (action: PhoneWorkoutAction) => void,
 ] {
-  const [state, dispatch] = useReducer(phoneWorkoutReducer, undefined, load);
+  const [state, rawDispatch] = useReducer(phoneWorkoutReducer, undefined, load);
+
+  // #615: mint the stable save ids the moment the workout ENDS (wherever
+  // the end action came from — the fullscreen End button or a replayed
+  // lock-screen intent), so the confirming state persisted to localStorage
+  // carries them and a retried save after a restart replays the same ids.
+  // Minting here (not in the reducer) keeps the reducer pure and testable.
+  const dispatch = useCallback((action: PhoneWorkoutAction) => {
+    if (action.type === "end") {
+      rawDispatch({
+        ...action,
+        sessionId: crypto.randomUUID(),
+        workoutId: crypto.randomUUID(),
+      });
+      return;
+    }
+    rawDispatch(action);
+  }, []);
 
   useEffect(() => {
     try {
@@ -61,7 +93,7 @@ export function usePhoneWorkout(): [
     return () => {
       for (const sub of subs) void sub.then((h) => h.remove());
     };
-  }, []);
+  }, [dispatch]);
 
   return [state, dispatch];
 }

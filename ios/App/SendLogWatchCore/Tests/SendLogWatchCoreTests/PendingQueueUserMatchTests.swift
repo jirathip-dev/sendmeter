@@ -21,20 +21,20 @@ final class PendingQueueUserMatchTests: XCTestCase {
         XCTAssertFalse(shouldDrain(itemUserId: accountA, currentUserId: accountB))
     }
 
-    func testLegacyNilStampTrustsCurrentSession() {
-        // Pre-fix on-disk items never stamped a user id — trust whoever is
-        // currently signed in rather than stranding them forever.
-        XCTAssertTrue(shouldDrain(itemUserId: nil, currentUserId: accountA))
+    func testLegacyNilStampIsQuarantinedWithoutAnOwnerProof() {
+        // Pre-fix on-disk items never stamped a user id. Assigning them to the
+        // current session would make an A→B transition a silent data leak.
+        XCTAssertFalse(shouldDrain(itemUserId: nil, currentUserId: accountA))
     }
 
     func testStampedItemDoesNotDrainWhileSignedOut() {
         XCTAssertFalse(shouldDrain(itemUserId: accountA, currentUserId: nil))
     }
 
-    func testSignedOutBeatsLegacyTrust() {
+    func testSignedOutKeepsLegacyItemQuarantined() {
         // Nobody signed in means nothing drains, even an unstamped legacy
-        // item — the "signed out: never drain" guard fires before the
-        // "legacy stamp: trust current session" guard is ever reached.
+        // item — the signed-out boundary is still explicit even though the
+        // ownerless legacy policy would quarantine it while signed in too.
         XCTAssertFalse(shouldDrain(itemUserId: nil, currentUserId: nil))
     }
 }

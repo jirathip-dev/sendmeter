@@ -225,7 +225,7 @@ private actor AuthorizationGate {
 // thread-safe where it was reachable (`Timer.invalidate()` needs the
 // installing thread; `deinit` carries no isolation) — so the deinit was
 // removed rather than kept as a guard that only looked active. `end()` /
-// `stopRecordingAndAwaitInFlightPartial()` is the one real invalidation path
+// `stopRecording()` is the one real invalidation path
 // now, and `WorkoutManagerPartialFlushOrderingTests` already covers it.
 
 /// #480 review F2: `WorkoutSessionActivationTests` (`SendLogWatchCore`)

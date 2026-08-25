@@ -404,7 +404,15 @@ export type TrainingQuality =
 /// NOT training qualities: they have no set-duration divisor and are always
 /// recorded explicitly rather than inferred from duration/load.
 export type MaintenanceZone = "warmup" | "prehab";
-export type RecordedZone = TrainingQuality | MaintenanceZone;
+
+/// "capacity" is a NATIVE-ONLY recorded zone value (native
+/// `RecordedZone.capacity`, rawValue "capacity") that the native app stamps on
+/// long-hold recordings the web's four-quality model has no protocol for
+/// (#657). It is NOT a trainable quality: it has no `ZONE_PROTOCOLS` entry, so
+/// no set-duration divisor exists to make it its own bucket. The training
+/// balance counts it as endurance — the same bucket native maps it to
+/// (`ZoneMix.swift:64-75`) — see `trainingBalanceZone` in zoneHistory.ts.
+export type RecordedZone = TrainingQuality | MaintenanceZone | "capacity";
 
 export function isMaintenanceZone(
   zone: RecordedZone | null,

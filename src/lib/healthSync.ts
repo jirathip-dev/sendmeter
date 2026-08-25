@@ -5,6 +5,7 @@ import type { ReadinessRefreshResult } from "sendlog-health";
 import { fetchTodayHealthSignature } from "./repo/health";
 import { healthSignaturesEqual } from "./healthSignature";
 import { captureHandledOperationalFailure } from "./monitoring";
+import { foregroundRelayNow } from "./foregroundRelay";
 
 export { healthSignaturesEqual } from "./healthSignature";
 
@@ -445,8 +446,57 @@ export async function startHealthBackgroundSync(): Promise<void> {
 /// call ("locked or not"), so a successful `syncNow()` does not by itself
 /// mean anything new landed — compare today's row content before/after to
 /// decide whether the foreground "Health data synced" toast is warranted.
-export async function syncHealthNow(): Promise<void> {
-  if (!IS_NATIVE) return;
+///
+/// #612 (round 2): the foreground relay dedupes to one call per ~1000ms, but
+/// a slow sync (HealthKit read + readiness compute + upsert + a second
+/// signature fetch) can outlive that window, so two distinct foregrounds can
+/// overlap and fire two concurrent native syncs that both read the same
+/// pre-sync state and both compute `changed: true` — a doubled toast. A
+/// shared single-flight coalesces the overlap into one native sync, one
+/// record, one toast. Coalescing is safe ONLY within one account and one
+/// "foreground moment": the flight is keyed by the current account
+/// (`activeHealthUserId`), so a call for account B never joins a flight
+/// started for A, and it only joins flights started within
+/// `FOREGROUND_SYNC_COALESCE_MS` — a call beyond that bound (including the
+/// suspend/resume case, where an in-flight sync spans a background period and
+/// the resumed foreground would otherwise be joined to a pre-background
+/// HealthKit read) starts its own fresh sync, so a genuinely later sync is
+/// never hidden behind a stale in-flight one. The clock is the same monotonic
+/// `foregroundRelayNow()` the relay dedupe uses.
+export const FOREGROUND_SYNC_COALESCE_MS = 5000;
+
+let syncFlight: {
+  userId: string | null;
+  startedAt: number;
+  promise: Promise<void>;
+} | null = null;
+
+export function syncHealthNow(): Promise<void> {
+  if (!IS_NATIVE) return Promise.resolve();
+  const userId = activeHealthUserId;
+  const now = foregroundRelayNow();
+  const flight = syncFlight;
+  if (
+    flight &&
+    flight.userId === userId &&
+    now - flight.startedAt < FOREGROUND_SYNC_COALESCE_MS
+  ) {
+    return flight.promise;
+  }
+  const promise = runForegroundSync();
+  syncFlight = { userId, startedAt: now, promise };
+  // Clear on BOTH settle paths, and only if this is still the current flight
+  // (a newer flight must not be cleared by the older one finishing). The
+  // dual-handler form — not `.finally` — so a rejection can never surface as
+  // an unhandled rejection (runForegroundSync swallows anyway).
+  const release = () => {
+    if (syncFlight?.promise === promise) syncFlight = null;
+  };
+  void promise.then(release, release);
+  return promise;
+}
+
+async function runForegroundSync(): Promise<void> {
   try {
     const before = await fetchTodayHealthSignature().catch(() => undefined);
     // #109: fired from useAuth's visibilitychange foreground listener, not

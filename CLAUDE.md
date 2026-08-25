@@ -400,7 +400,32 @@ are safe regardless.
     persists or drains, and `WatchBuild.stamp` reads the cached sum. **Any new
     queue whose depth should show up on the phone has to publish there too**,
     and nil (never counted) must keep reading as "not reported", never as an
-    empty queue.
+    empty queue. Native watch queues keep ownerless legacy rows in a separate
+    `watch_unscoped_sync` diagnostic bucket rather than treating them as the
+    current account's pending work.
+- **Native account isolation and cache conflict contract (#747).** The native
+  cache, durable queue, WatchConnectivity completion inbox, realtime slices,
+  background refreshes, and optimistic overlays are all scoped by the pair
+  `(account_user_id, accountEpoch)`. A normal sign-out/auth expiry clears the
+  visible in-memory model and advances the epoch but preserves that account's
+  valid cache, queue entries, and stamped watch completions for a later
+  same-account sign-in; another account can read none of them. Watch payloads
+  and native watch queue telemetry must carry an owner stamp. Intentionally unstamped legacy
+  completions, live beats, and queue entries are retained only as bounded
+  quarantine/diagnostics and are never attributed to the current account.
+  `live_workouts` is a realtime-only mirror and is never placed in the cache.
+  Account deletion is a separate destructive boundary: advance the epoch
+  before the first await, discard only the exact account after the server
+  deletion succeeds, and retain data when auth/network failure prevents that
+  confirmation. Local pending upserts and tombstones win over stale refreshes;
+  server acknowledgements require the matching local origin/revision; deltas
+  advance their cursor only after writes, and authoritative deltas/full
+  refreshes converge watch placeholders (with bounded tombstoning for absent
+  placeholders). This is a client LWW/ownership contract, not a substitute
+  for server-side RLS or a guarantee that background/WatchConnectivity
+  delivery occurs; the existing Capacitor/WebView watch metadata path remains
+  a separate session boundary. Device/E2E verification remains required for
+  those paths.
 - **Migrations auto-apply on merge, to BOTH remote projects (#130).** `.github/workflows/deploy-migrations.yml`
   runs on any push touching `supabase/migrations/**`: `staging` → the **dev/preview**
   project (`mjkndfhjnipomjjhgsxv`, issue #121 — hosted on a second Supabase account),
@@ -635,7 +660,14 @@ are safe regardless.
   `.glass-bar`) shares the translucent blur-glass recipe.
 - **localStorage keys** are prefixed `sendmeter:` — `phone-workout` (resumable
   workout state machine), `rest-target-s`, `gauge-prepare`, `passkey-prompt`,
-  `theme`, `auth-events` (bounded ring of null-session diagnostics, #194/#202).
+  `theme`, `auth-events` (bounded ring of null-session diagnostics, #194/#202),
+  plus `gauge-last-tag`/`gauge-last-side` (#684: the last explicitly-picked
+  Exercise&Side, written on every explicit selection and read as the fallback
+  at the force persist boundary — never `allTags[0]`; the two fields merge
+  independently, so picking a side while the exercise field is empty never
+  wipes the remembered tag. The remembered SIDE applies only to free holds —
+  protocol reps keep their own per-hand side, so a stale remembered side can
+  never contaminate per-side curve fits).
 - **Auth diagnostics don't live in localStorage on native.** `auth-events`,
   `auth-heartbeat` and `webview-canary` go through `authEventStore.ts`:
   Capacitor **Preferences** (NSUserDefaults) on native,

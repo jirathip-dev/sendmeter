@@ -1,7 +1,11 @@
 import { WebPlugin } from "@capacitor/core";
-import type { SendLogAuthBridgePlugin, WatchBuildInfo } from "./definitions";
+import type {
+  SendLogAuthBridgePlugin,
+  WatchBuildInfo,
+  WorkoutCompletedMessage,
+} from "./definitions";
 
-/// No paired watch to relay to from a browser — all three methods are no-ops.
+/// No paired watch to relay to from a browser — all methods are no-ops.
 export class SendLogAuthBridgeWeb extends WebPlugin implements SendLogAuthBridgePlugin {
   async setSession(): Promise<void> {}
   async clearSession(): Promise<void> {}
@@ -18,5 +22,11 @@ export class SendLogAuthBridgeWeb extends WebPlugin implements SendLogAuthBridge
       paired: false,
       appInstalled: false,
     };
+  }
+  /// No watch on web — nothing ever queued.
+  async getPendingWorkoutCompletions(): Promise<{
+    completions: WorkoutCompletedMessage[];
+  }> {
+    return { completions: [] };
   }
 }

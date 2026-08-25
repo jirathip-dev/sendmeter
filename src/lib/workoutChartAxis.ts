@@ -69,9 +69,12 @@ export function workoutXTicks(tMax: number): number[] {
   return [0, tMax / 2, tMax];
 }
 
-/// m:ss for an axis label / tooltip.
+/// m:ss for an axis label / tooltip. Rounds the TOTAL seconds first, so a
+/// tick at 119.6 s reads "2:00" — never a "0:60" remainder (the old
+/// floor-minute + rounded-second split). Aligned with the native
+/// `WorkoutChartAxis.fmtMinSec` (#645 review F15) so both platforms format
+/// the same axis identically.
 export function fmtMinSec(tS: number): string {
-  const m = Math.floor(tS / 60);
-  const s = Math.round(tS % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
+  const total = Math.round(tS);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }

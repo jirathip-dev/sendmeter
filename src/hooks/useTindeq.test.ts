@@ -3,6 +3,7 @@ import {
   interruptionNote,
   recoveredTagSide,
   samplesThrough,
+  shouldDiscardHandsFreeSalvage,
   shouldSalvageOnUnmount,
   snapshotInterruption,
   summarize,
@@ -141,6 +142,66 @@ describe("shouldSalvageOnUnmount", () => {
   });
 });
 
+describe("shouldDiscardHandsFreeSalvage", () => {
+  // #682 follow-up (reviewer blocking finding): the unmount-salvage cleanup is
+  // a persist boundary, so a trivial hands-free-started rep must be dropped
+  // there — it never enters the recording queue and is never reported queued.
+  it("discards a below-min-peak hands-free salvage rep", () => {
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: true,
+        isSpecialized: false,
+        peakKg: 2.9,
+        durationMs: 10_000,
+      }),
+    ).toBe(true);
+  });
+
+  it("discards a below-min-duration hands-free salvage rep", () => {
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: true,
+        isSpecialized: false,
+        peakKg: 4,
+        durationMs: 1_400,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not discard a qualifying hands-free salvage rep", () => {
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: true,
+        isSpecialized: false,
+        peakKg: 3.1,
+        durationMs: 1_600,
+      }),
+    ).toBe(false);
+  });
+
+  it("never gates a manual (hands-free opted-out) salvage rep", () => {
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: false,
+        isSpecialized: false,
+        peakKg: 0.5,
+        durationMs: 200,
+      }),
+    ).toBe(false);
+  });
+
+  it("never gates a specialized (guided/protocol) salvage rep", () => {
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: true,
+        isSpecialized: true,
+        peakKg: 0.5,
+        durationMs: 200,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("interruptionNote", () => {
   // #117: a drop that fired while ForceView was unmounted is recovered on
   // remount as a raw whole-buffer save that may overlap per-rep rows — it
@@ -156,10 +217,17 @@ describe("interruptionNote", () => {
 });
 
 describe("#119 remount-recovery label", () => {
-  function ctx(tag: string, side: TindeqSide): SalvageContext {
-    return { tag, side, groupId: null, userId: "u1", stopInFlight: false };
+  function ctx(tag: string, side: TindeqSide, wasHandsFree = false): SalvageContext {
+    return {
+      tag,
+      side,
+      groupId: null,
+      userId: "u1",
+      stopInFlight: false,
+      wasHandsFree,
+    };
   }
-  const EMPTY = { tag: "", side: "" as TindeqSide };
+  const EMPTY = { tag: "", side: "" as TindeqSide, wasHandsFree: false };
 
   // The whole bug is an ordering problem, so this replays the real lifecycle:
   // TindeqProvider (salvageContextRef + the sample buffer) outlives ForceView,
@@ -185,6 +253,7 @@ describe("#119 remount-recovery label", () => {
     expect(recoveredTagSide(EMPTY, snapshot)).toEqual({
       tag: "Half crimp",
       side: "left",
+      wasHandsFree: false,
     });
     // The note is unchanged by the relabel — a recovered pull must still be
     // distinguishable from a clean one.
@@ -202,7 +271,7 @@ describe("#119 remount-recovery label", () => {
     const snapshot = snapshotInterruption(ctx("Half crimp", "left"));
     expect(
       recoveredTagSide({ tag: "Open hand", side: "right" }, snapshot),
-    ).toEqual({ tag: "Open hand", side: "right" });
+    ).toEqual({ tag: "Open hand", side: "right", wasHandsFree: false });
   });
 
   it("falls back per field, so a half-seeded remount keeps what it has", () => {
@@ -210,10 +279,12 @@ describe("#119 remount-recovery label", () => {
     expect(recoveredTagSide({ tag: "Open hand", side: "" }, snapshot)).toEqual({
       tag: "Open hand",
       side: "left",
+      wasHandsFree: false,
     });
     expect(recoveredTagSide({ tag: "", side: "right" }, snapshot)).toEqual({
       tag: "Half crimp",
       side: "right",
+      wasHandsFree: false,
     });
   });
 
@@ -227,7 +298,65 @@ describe("#119 remount-recovery label", () => {
     expect(snapshotInterruption(ctx("Half crimp", "left"))).toEqual({
       tag: "Half crimp",
       side: "left",
+      wasHandsFree: false,
     });
+  });
+
+  it("snapshots and carries the hands-free flag through a remount recovery", () => {
+    // The hands-free machine started this rep; the drop fires while ForceView
+    // is unmounted. The drop-time snapshot must retain wasHandsFree: true.
+    const snapshot = snapshotInterruption(ctx("Half crimp", "left", true));
+    expect(snapshot).toEqual({
+      tag: "Half crimp",
+      side: "left",
+      wasHandsFree: true,
+    });
+    // The remount recovery resolves the label AND keeps the hands-free flag so
+    // `runStop` below can still apply Guard 1 even though the fresh mount's
+    // `handsFreeActiveRef` is false.
+    const recovered = recoveredTagSide(EMPTY, snapshot);
+    expect(recovered).toEqual({
+      tag: "Half crimp",
+      side: "left",
+      wasHandsFree: true,
+    });
+  });
+
+  it("discards a trivial hands-free rep recovered from the snapshot, but keeps a manual rep", () => {
+    // Drop-time snapshot survives the removal of the provider context.
+    const handsFreeSnapshot = snapshotInterruption(ctx("Half crimp", "left", true));
+    const manualSnapshot = snapshotInterruption(ctx("Half crimp", "left", false));
+    const handsFree = recoveredTagSide(EMPTY, handsFreeSnapshot);
+    const manual = recoveredTagSide(EMPTY, manualSnapshot);
+
+    // A 2.9 kg / 10 s rep is below minPeakKg (3): discarded for hands-free,
+    // kept for manual.
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: handsFree.wasHandsFree,
+        isSpecialized: false,
+        peakKg: 2.9,
+        durationMs: 10_000,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: manual.wasHandsFree,
+        isSpecialized: false,
+        peakKg: 2.9,
+        durationMs: 10_000,
+      }),
+    ).toBe(false);
+
+    // A qualifying 3.1 kg / 10 s rep persists for hands-free too.
+    expect(
+      shouldDiscardHandsFreeSalvage({
+        wasHandsFree: handsFree.wasHandsFree,
+        isSpecialized: false,
+        peakKg: 3.1,
+        durationMs: 10_000,
+      }),
+    ).toBe(false);
   });
 });
 

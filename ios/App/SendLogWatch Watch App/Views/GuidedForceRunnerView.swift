@@ -1,3 +1,4 @@
+import Combine
 import SendLogWatchCore
 import SwiftUI
 
@@ -10,8 +11,23 @@ import SwiftUI
 /// `danger` since it is a destructive/abort control, not decorative.
 struct GuidedForceRunnerView: View {
     @Environment(GuidedForceRunner.self) private var runner
+    @Environment(TindeqManager.self) private var tindeq
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(ForceRuntimeCoordinator.self) private var forceRuntimeCoordinator
+
+    /// #611: the movement mode's live trace, refreshed at the same 10 Hz
+    /// cadence ForceGaugeView uses for its sparkline. The timer is gated on
+    /// `tindeq.status == .measuring` — the same live read ForceGaugeView uses
+    /// (re-evaluated every tick) — and `sparkSamples` is cleared whenever the
+    /// gauge is not measuring, so a set-rest never keeps painting the previous
+    /// set's last 10 s as a "live" trace: the strip simply disappears between
+    /// sets, matching the phone's reverse-action display, and reappears the
+    /// instant a movement set's samples land. `recentSamples()` windows off
+    /// the manager's last sample, so a cadence-only run (no samples ever)
+    /// stays empty — never fabricated data.
+    @State private var sparkSamples: [(t: Double, kg: Double)] = []
+    private let sparkTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     /// Presentation-only override for the screenshot target (SL-538 round-2
     /// review finding 1). `display` reads the fixture when
@@ -24,6 +40,14 @@ struct GuidedForceRunnerView: View {
             return GuidedRunDisplay(fixture: fixture)
         }
         return GuidedRunDisplay(runner: runner)
+    }
+
+    /// #683: the persistent mode header. A guided protocol is a screen the
+    /// user entered, so the line reads `Repeaters · set 2/5` (the protocol
+    /// name plus the live set index), mirroring ForceGaugeView's `Free hold
+    /// · armed` / `· recording` header.
+    private var modeHeaderText: String {
+        "\(display.protocolName ?? "Force protocol") · set \(display.currentSet)/\(display.totalSets)"
     }
 
     // No top-level `.accessibilityIdentifier` here (SL-538 round-2 review
@@ -39,7 +63,9 @@ struct GuidedForceRunnerView: View {
     var body: some View {
         GeometryReader { geometry in
             Group {
-                if geometry.size.height < 205 || geometry.size.width < 170 {
+                if isLuminanceReduced {
+                    reducedLuminanceLayout
+                } else if geometry.size.height < 205 || geometry.size.width < 170 {
                     microLayout
                 } else if geometry.size.height < 220 {
                     compactLayout
@@ -52,6 +78,37 @@ struct GuidedForceRunnerView: View {
         .toolbar(.hidden, for: .navigationBar)
         .interactiveDismissDisabled(true)
         .watchCanvas()
+        .onReceive(sparkTimer) { _ in
+            // Gated on `tindeq.status == .measuring` (a live read, exactly as
+            // ForceGaugeView does it — a movement run that connects mid-run
+            // flips status and the next tick picks the trace up). Clearing
+            // `sparkSamples` when not measuring means a rest between sets
+            // never renders the previous set's stale trace as live. The
+            // screenshot fixture owns its own seeded trace, so the timer
+            // stands down entirely under a fixture launch.
+            guard ScreenshotFixtures.guidedRun == nil else { return }
+            if display.isMovement {
+                if tindeq.status == .measuring {
+                    sparkSamples = tindeq.recentSamples()
+                } else if !sparkSamples.isEmpty {
+                    sparkSamples = []
+                }
+            }
+        }
+        .task {
+            // #611: the movement fixture can't drive the real `TindeqManager`
+            // (it is idle under a screenshot launch), so seed the same
+            // deterministic trace ForceGaugeView's `forceLive` fixture uses —
+            // this is what makes the strip (and F2's layout pressure) actually
+            // reachable by the layout test. Presentation-only.
+            if display.isMovement, ScreenshotFixtures.guidedRun != nil {
+                sparkSamples = [
+                    (0.0, 0.0), (0.2, 5.8), (0.4, 12.4), (0.6, 18.9),
+                    (0.8, 15.7), (1.0, 23.6), (1.2, 20.8), (1.4, 27.1),
+                    (1.6, 24.9), (1.8, 28.4), (2.0, 26.8),
+                ]
+            }
+        }
     }
 
     private var richLayout: some View {
@@ -63,6 +120,51 @@ struct GuidedForceRunnerView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+    }
+
+    /// #540: the minimal reduced-luminance guided Force frame.  When watchOS
+    /// dims (Always On / wrist-down) we render only the essential live info —
+    /// terse state word, phase/countdown, current force when measured, and the
+    /// side — and drop the header, progress bar, sparkline and Stop control,
+    /// which are nonessential for reading a dim pull.
+    private var reducedLuminanceLayout: some View {
+        let spec = forceRuntimeCoordinator.reducedLuminanceSpec
+        return VStack(spacing: 4) {
+            Text(spec.stateWord.uppercased())
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(WatchPalette.textSecondary)
+            if spec.showsPhaseCountdown {
+                Text(display.countdownText)
+                    .font(.system(size: 44, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(WatchPalette.textPrimary)
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+                    .accessibilityLabel("Phase countdown")
+                    .accessibilityValue("\(display.countdownText) seconds")
+            }
+            if spec.showsCurrentForce, let kg = display.currentKg {
+                (Text(String(format: "%.1f", kg))
+                    .font(.system(size: 34, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                + Text(" kg").font(.caption).foregroundStyle(WatchPalette.textSecondary))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .accessibilityLabel("Current force")
+                    .accessibilityValue(String(format: "%.1f kilograms", kg))
+            }
+            if spec.showsSide, !display.side.isEmpty {
+                Text(sideLabel(display.side))
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(WatchPalette.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.horizontal, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("force-guided-reduced-luminance")
     }
 
     /// The smallest 40mm content area can be shorter than the nominal screen
@@ -83,15 +185,16 @@ struct GuidedForceRunnerView: View {
                         compactSetRep
                     }
 
-                    Text(display.countdownText)
-                        .font(.system(size: 38, weight: .heavy, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(WatchPalette.textPrimary)
-                        .minimumScaleFactor(0.56)
-                        .lineLimit(1)
-                        .contentTransition(reduceMotion ? .identity : .numericText())
-                        .accessibilityLabel("Phase countdown")
-                        .accessibilityValue("\(display.countdownText) seconds")
+                    // #611: on micro the movement trace floats BEHIND the
+                    // countdown (ForceGaugeView's 40mm treatment) instead of
+                    // spending a dedicated row — a rigid 20pt strip would be
+                    // the one element in the card that cannot give ground
+                    // while every text element around it scales, and the
+                    // non-scrolling live screen would clip Stop. The countdown
+                    // keeps a subtle backing only while the trace is present
+                    // so the number it is pacing never drowns in it; static
+                    // holds keep the countdown they already had.
+                    microCountdown
 
                     HStack(spacing: 3) {
                         compactWorkStatus
@@ -141,6 +244,11 @@ struct GuidedForceRunnerView: View {
                         .accessibilityLabel("Phase countdown")
                         .accessibilityValue("\(display.countdownText) seconds")
 
+                    // #611: a flexible trace (never a rigid strip) so this
+                    // card yields to the surrounding text under Dynamic Type
+                    // instead of pushing Stop below the fold (F2).
+                    movementSparkline(minHeight: 18, maxHeight: 24)
+
                     HStack(spacing: 4) {
                         compactWorkStatus
                         Spacer(minLength: 2)
@@ -169,7 +277,7 @@ struct GuidedForceRunnerView: View {
                 compact: true
             )
             Spacer(minLength: 2)
-            Text(display.protocolName ?? "Force protocol")
+            Text(modeHeaderText)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(WatchPalette.textSecondary)
                 .lineLimit(1)
@@ -177,7 +285,7 @@ struct GuidedForceRunnerView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(display.isMeasured ? "Measured force protocol" : "Cadence-only force protocol")
-        .accessibilityValue(display.protocolName ?? "Force protocol")
+        .accessibilityValue(modeHeaderText)
     }
 
     private var compactSetRep: some View {
@@ -228,7 +336,7 @@ struct GuidedForceRunnerView: View {
                     compact: true
                 )
                 Spacer(minLength: 0)
-                Text(display.protocolName ?? "Force protocol")
+                Text(modeHeaderText)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(WatchPalette.textSecondary)
                     .lineLimit(1)
@@ -240,7 +348,7 @@ struct GuidedForceRunnerView: View {
                     title: display.isMeasured ? "Measured" : "Cadence only",
                     compact: true
                 )
-                Text(display.protocolName ?? "Force protocol")
+                Text(modeHeaderText)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(WatchPalette.textSecondary)
                     .lineLimit(1)
@@ -249,7 +357,7 @@ struct GuidedForceRunnerView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(display.isMeasured ? "Measured force protocol" : "Cadence-only force protocol")
-        .accessibilityValue(display.protocolName ?? "Force protocol")
+        .accessibilityValue(modeHeaderText)
     }
 
     private var phaseCard: some View {
@@ -262,11 +370,13 @@ struct GuidedForceRunnerView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
                     Spacer(minLength: 3)
-                    Text(display.side.isEmpty ? "Side —" : sideLabel(display.side))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(WatchPalette.textSecondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                    if display.sideMode.isSided {
+                        Text(display.side.isEmpty ? "Side —" : sideLabel(display.side))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(WatchPalette.textSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
                 }
 
                 Text(display.countdownText)
@@ -283,6 +393,10 @@ struct GuidedForceRunnerView: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(WatchPalette.textTertiary)
                     .accessibilityHidden(true)
+
+                // #611: flexible trace — rich screens have room, but it still
+                // yields rather than being the one rigid element (F2).
+                movementSparkline(minHeight: 22, maxHeight: 30)
 
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) {
@@ -371,6 +485,51 @@ struct GuidedForceRunnerView: View {
         .accessibilityIdentifier("force-guided-stop")
     }
 
+    /// #611: the movement mode's live force strip, rendered only when a
+    /// reverse-action run has at least two measured samples — a cadence-only
+    /// run (or the prepare before the first pull) shows nothing, never a
+    /// fabricated trace. Flexible within `minHeight...maxHeight` so it is the
+    /// element that gives ground under Dynamic Type pressure, never the
+    /// rigid strip that pushes Stop off-screen (F2). Decorative: hidden from
+    /// accessibility.
+    @ViewBuilder
+    private func movementSparkline(minHeight: CGFloat, maxHeight: CGFloat) -> some View {
+        if display.isMovement, sparkSamples.count >= 2 {
+            Sparkline(samples: sparkSamples)
+                .frame(minHeight: minHeight, maxHeight: maxHeight)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// The micro countdown with the #611 movement trace layered behind it on
+    /// the smallest 40mm surface — no dedicated row, matching ForceGaugeView's
+    /// behind-the-readout precedent. Static holds render the plain countdown
+    /// unchanged.
+    @ViewBuilder
+    private var microCountdown: some View {
+        ZStack {
+            movementSparkline(minHeight: 16, maxHeight: 22)
+                .opacity(0.55)
+                .allowsHitTesting(false)
+            Text(display.countdownText)
+                .font(.system(size: 38, weight: .heavy, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(WatchPalette.textPrimary)
+                .minimumScaleFactor(0.56)
+                .lineLimit(1)
+                .contentTransition(reduceMotion ? .identity : .numericText())
+                .padding(.horizontal, 6)
+                .background(
+                    display.isMovement
+                        ? AnyShapeStyle(WatchPalette.canvas.opacity(0.55))
+                        : AnyShapeStyle(.clear),
+                    in: Capsule()
+                )
+                .accessibilityLabel("Phase countdown")
+                .accessibilityValue("\(display.countdownText) seconds")
+        }
+    }
+
     private func sideLabel(_ value: String) -> String {
         switch value {
         case "left": return "Left"
@@ -389,12 +548,16 @@ private struct GuidedRunDisplay {
     let progress: Double
     let isMeasured: Bool
     let isCadenceOnly: Bool
+    /// #611: reverse-action runs get the live sparkline strip; static holds
+    /// keep the display they already have.
+    let isMovement: Bool
     let protocolName: String?
     let currentSet: Int
     let totalSets: Int
     let currentRep: Int
     let totalReps: Int
     let side: String
+    let sideMode: ForceSideMode
     let currentKg: Double?
     let tag: String
     let canStop: Bool
@@ -405,12 +568,14 @@ private struct GuidedRunDisplay {
         progress = runner.progress
         isMeasured = runner.isMeasured
         isCadenceOnly = runner.isCadenceOnly
+        isMovement = runner.isMovement
         protocolName = runner.protocolValue?.name
         currentSet = runner.currentSet
         totalSets = runner.totalSets
         currentRep = runner.currentRep
         totalReps = runner.totalReps
         side = runner.side
+        sideMode = runner.sideMode
         currentKg = runner.currentKg
         tag = runner.tag
         canStop = runner.phase != .stopping
@@ -422,12 +587,20 @@ private struct GuidedRunDisplay {
         progress = fixture.progress
         isMeasured = fixture.isMeasured
         isCadenceOnly = fixture.isCadenceOnly
+        // #611: the fixture owns `isMovement` so the movement fixture (and
+        // its sparkline strip) is reachable by the layout test — see the
+        // `forceGuidedRunMovement` fixture comment.
+        isMovement = fixture.isMovement
         protocolName = fixture.protocolName
         currentSet = fixture.currentSet
         totalSets = fixture.totalSets
         currentRep = fixture.currentRep
         totalReps = fixture.totalReps
         side = fixture.side
+        // The presentation fixture has no side-mode concept of its own; it
+        // defaults to the every-side-allowed mode so the side summary renders
+        // exactly as the pre-#543 view did for a sided exercise.
+        sideMode = .unilateralOrBilateral
         currentKg = fixture.currentKg
         tag = fixture.tag
         canStop = true

@@ -190,6 +190,38 @@ private enum QuarantinedStuckSyncStore {
     }
 }
 
+/// #615: bounded store of `workoutCompleted` notifications that arrived while
+/// the WebView was suspended (a WC message delivers to the plugin regardless,
+/// but `notifyListeners` reaches nobody). The WebView drains it on mount and
+/// foreground (`getPendingWorkoutCompletions`), so a workout that finished
+/// while the phone was in a pocket still renders as pending — not silently
+/// lost. The web side upserts by session id, so a duplicate (the watch also
+/// re-sends over a lost direct path) is a no-op.
+private enum WorkoutCompletedStore {
+    static let maxStored = 8
+    private static let key = "sendmeter.workoutCompleted.queue"
+
+    static func enqueue(_ payload: [String: Any]) {
+        var queue = stored
+        queue.append(payload)
+        if queue.count > maxStored { queue.removeFirst(queue.count - maxStored) }
+        UserDefaults.standard.set(queue, forKey: key)
+    }
+
+    /// Reads and CLEARS the store — a drain is a handoff, not a copy: a
+    /// payload drained while the WebView was alive must not be replayed on
+    /// the next foreground (the web side has already reconciled it).
+    static func drain() -> [[String: Any]] {
+        let queue = stored
+        UserDefaults.standard.removeObject(forKey: key)
+        return queue
+    }
+
+    private static var stored: [[String: Any]] {
+        (UserDefaults.standard.array(forKey: key) as? [[String: Any]]) ?? []
+    }
+}
+
 /// Relays the Supabase **access token** to the paired Watch app so it can sign
 /// in without its own login flow (#265 — never the refresh token; see
 /// `setSession`). No token persistence here: supabase-js already owns the
@@ -205,7 +237,8 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "setSession", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearSession", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "getWatchInfo", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "getWatchInfo", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getPendingWorkoutCompletions", returnType: CAPPluginReturnPromise)
     ]
 
     // nil on devices that can never have a paired watch (e.g. iPad) — the
@@ -276,6 +309,16 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
             "event": "signedIn",
             "accessToken": accessToken,
             "expiresAt": expiresAt,
+            // #614 F6: this phone acknowledges watch workout beats over
+            // WatchConnectivity (`didReceiveMessage(_:replyHandler:)` replies
+            // `[:]`). The watch only engages its acknowledged-send/retry
+            // contract when it has seen this stamp — an older phone build
+            // omits it, and the watch then keeps the old fire-and-forget
+            // behavior instead of counting a delivered-but-unacked send as a
+            // failure. No capability negotiation is needed because the
+            // stamp's ABSENCE is the negotiation: it proves nothing about
+            // this phone build, so the watch falls back.
+            "ack_capable": true,
             // Temporary #368 compatibility for pre-#270 watches, whose
             // decoder required this key. This fixed literal never came from
             // Supabase and therefore cannot rotate/revoke a session family.
@@ -374,10 +417,17 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
         call.resolve(result)
     }
 
+    /// #615: drain the bounded store of `workoutCompleted` notifications that
+    /// arrived while the WebView was suspended (see `WorkoutCompletedStore`).
+    /// Read-only handoff: returns them and clears the store, so a payload
+    /// drained once is never replayed — the WebView reconciles by session id.
+    @objc func getPendingWorkoutCompletions(_ call: CAPPluginCall) {
+        call.resolve(["completions": WorkoutCompletedStore.drain()])
+    }
+
     /// Silently no-ops if there's no supported/activated session (no paired
     /// watch, or activation hasn't completed yet) — a later auth event
-    /// (e.g. the next silent token refresh) will relay successfully.
-    ///
+    /// (e.g. the next silent token refresh) will relay successfully.    ///
     /// Every payload is stamped with a fresh `relayId` (#266). Two relays of
     /// the *same* Supabase session — which is what answering a watch's
     /// `requestSession` produces while the phone's access token is still valid
@@ -556,10 +606,35 @@ extension SendLogAuthBridge: WCSessionDelegate {
             // WebView's LiveWorkoutMessage / LiveForceMessage types describe.
             var payload = WatchBuildReport.stripped(message)
             payload.removeValue(forKey: "kind")
+            // #614: stamp the phone-side receipt boundary so the WebView can
+            // split the watch-capture→plugin latency (wireMs) from the
+            // plugin→WebView latency (latencyMs) instead of averaging them.
+            payload["received_at"] = Date().timeIntervalSince1970
             notifyListeners(kind, data: payload as [String: Any])
+            // #614: acknowledge the acknowledged-send contract the watch uses
+            // for workout beats — the watch passes a `replyHandler` so a
+            // failed/unreachable direct send can be retried once instead of
+            // silently falling back to the ~5s Supabase heartbeat. The reply
+            // is deliberately empty (there is no per-beat payload to return).
+            replyHandler?([:])
         case "requestSession":
             // The WebView (useAuth) listens and re-relays the current session.
             notifyListeners("sessionRequested", data: [:])
+        case "workoutCompleted":
+            // #615: the watch's End path sent this after its save bundle was
+            // durably queued. Forward the canonical summary (stripped of the
+            // build/queue report keys — the same shape the WebView's
+            // WorkoutCompletedMessage type describes). The WebView renders it
+            // as a PENDING session and realtime/server data reconciles by
+            // session id; the store catches a notification that arrived while
+            // the WebView was suspended so it is replayed on the next drain
+            // instead of lost.
+            var payload = WatchBuildReport.stripped(message)
+            payload.removeValue(forKey: "kind")
+            payload["received_at"] = Date().timeIntervalSince1970
+            WorkoutCompletedStore.enqueue(payload)
+            notifyListeners("workoutCompleted", data: payload as [String: Any])
+            replyHandler?([:])
         case "queueStatus":
             break
         default:

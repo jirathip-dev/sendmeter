@@ -1,9 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
-import { useLiveForce } from "../hooks/useLiveForce";
+import { useLiveForce, type ForceMirrorSyncState } from "../hooks/useLiveForce";
 import { interruptionNote, recoveredTagSide } from "../hooks/useTindeq";
 import { useTindeqSession } from "../hooks/useTindeqSession";
-import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import {
+  useRealtimeRecordingEvents,
+  useRealtimeRecordingOverflowed,
+  useRealtimeVersion,
+} from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
 import { useWakeLock } from "../hooks/useWakeLock";
 import {
@@ -15,8 +19,8 @@ import {
   fetchTagCurves,
   insertRecording,
   saveTagCurve,
+  type TagCurve,
 } from "../lib/repo";
-import { predictSessionRpe } from "../lib/rpeDepletion";
 import {
   computeForceCurve,
   CURVE_PERIODS,
@@ -35,9 +39,7 @@ import { nextLockedCapabilityFit } from "../lib/capabilityFitLock";
 import {
   curveCandidateRecordings,
   effortPeakKg,
-  isDepletionEffortRecording,
   isMeasuredRecording,
-  recordingCapacityModality,
 } from "../lib/zoneHistory";
 import type { ProtocolSegment } from "../lib/protocol";
 import {
@@ -54,17 +56,41 @@ import {
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
 import type { GaugeInputs } from "../lib/gaugeInputLock";
 import {
+  loadLastUsedGaugeLabel,
+  rememberGaugeLabelSelection,
+  resolveRecordingGaugeLabel,
+  resolveRecordingTag,
+} from "../lib/gaugeTagResolution";
+import {
   endTindeqLiveActivity,
   startTindeqLiveActivity,
   updateTindeqLivePeak,
 } from "../lib/liveActivity";
-import { endGaugeSession } from "../lib/gaugeSessionEnd";
+import {
+  createRepSettlement,
+  endGaugeSession,
+  predictGaugeSessionRpe,
+} from "../lib/gaugeSessionEnd";
+import { captureForceLatency } from "../lib/monitoring";
 import { reportPersistFailure } from "../lib/lostRecordings";
-import { persistRecordingDurable } from "../lib/recordingQueue";
+import {
+  persistRecordingDurable,
+  removeQueuedRecording,
+} from "../lib/recordingQueue";
+import {
+  pendingRecordingMeta,
+  saveRecordingDurableFirst,
+} from "../lib/recordingSave";
+import {
+  applyRecordingRealtimeEvents,
+  recordingEventsAllApplied,
+  recordingListsEqual,
+} from "../lib/realtimeRecordingApply";
 import {
   armedHandsFreeForce,
   handsFreeForceAtInactiveStatus,
   idleHandsFreeForce,
+  recordingVerdict,
   stepHandsFreeForce,
   type HandsFreeForceState,
 } from "../lib/handsFreeForce";
@@ -167,6 +193,16 @@ interface ForceViewProps {
 
 type ForceTimelineSegment = ProtocolSegment | ReverseActionSegment;
 
+/// #614 review F7: honest transport copy for the watch gauge mirror caption.
+/// The verdict comes from `deriveForceSyncState` in `liveForceMirror.ts` —
+/// never a hardcoded string — so a quiet link reads as paused, not healthy.
+const FORCE_SYNC_COPY: Record<ForceMirrorSyncState, string> = {
+  "watch-direct": "watch link",
+  "temporarily-unreachable": "watch link paused",
+  stale: "watch link stale",
+  unknown: "watch link unknown",
+};
+
 export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const toast = useToast();
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
@@ -189,26 +225,82 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     [],
   );
   const [retryingUnqueued, setRetryingUnqueued] = useState(false);
-  // #269: async, and free to be — unlike useTindeq's unmount cleanup this
-  // caller stays mounted for the whole write, so it uses the IndexedDB main
-  // queue rather than the synchronous emergency lane.
-  async function queueFailedRecording(rec: NewTindeqRecording & { id: string }) {
-    const isNewOutage = !outageRef.current;
-    outageRef.current = true;
-    const result = await persistRecordingDurable(rec, userId);
-    reportPersistFailure("save-failed", result, rec.samples.length);
-    if (!result.persisted) {
-      // Always banner (one row per lost rep) but keep the toast on the same
-      // once-per-outage gate as the queued case, so a guided protocol whose
-      // every rep fails doesn't stack a toast per rep.
-      setUnqueued((list) => appendUniqueById(list, rec));
-      if (isNewOutage) {
-        toast("Storage full — this recording is not saved anywhere", "error");
-      }
-      return false;
-    }
-    if (isNewOutage) toast("Couldn't save — recording queued, will sync automatically", "error");
-    return true;
+  // #613: how many per-rep durable saves are still settling, so a Finish tap
+  // or a disconnect can wait for the final rep before ending the session (see
+  // RepSettlement / gaugeSessionEnd.ts). `begin` is called before the save's
+  // first await; `finish` the moment the rep is durable + locally published —
+  // the network insert never blocks the session end.
+  const repSettlementRef = useRef(createRepSettlement());
+
+  /// #613: publish a durable-but-unconfirmed rep as a local pending row — the
+  /// capture shows up (session count, curves, the list) the moment the
+  /// IndexedDB write lands, before the network insert returns. The recordings
+  /// ref is kept in sync by the effect on `recordings`, and the settlement's
+  /// `waitForIdle` resolves AFTER the commit, so a session end in flight reads
+  /// the pending row via that ref with no render round-trip of its own.
+  function publishPendingRecording(rec: NewTindeqRecording & { id: string }) {
+    const meta = pendingRecordingMeta(rec);
+    setRecordings((list) => appendUniqueById(list, meta));
+  }
+
+  /// #613: replace a pending row with the server-confirmed row, by id, and
+  /// clear the rep's queue entry — the durable-first save wrote it BEFORE the
+  /// insert, so a confirmed row must not stay in the "waiting to upload"
+  /// backlog (see removeQueuedRecording in recordingQueue.ts). Awaited, so an
+  /// Undo tapped right after this save lands cannot let the dequeued rep drain
+  /// back into the list.
+  async function reconcileSavedRecording(saved: TindeqRecordingMeta) {
+    setRecordings((list) => list.map((r) => (r.id === saved.id ? saved : r)));
+    setJustSaved(saved);
+    outageRef.current = false;
+    await removeQueuedRecording(saved.id, userId);
+  }
+
+  /// #613: THE durable-first save — the rep is persisted to the offline queue
+  /// BEFORE the network insert, and a local pending row is published the
+  /// moment that write lands. Every await-capable save path (guided per-rep
+  /// holds, free holds, adaptive, reverse-action sets, manual and cadence)
+  /// funnels through this; the policy it enforces lives in recordingSave.ts.
+  ///
+  /// #106/#264 semantics preserved: an insert that fails against a DURABLE rep
+  /// keeps it visibly pending and drains through the idempotent queue (one
+  /// once-per-outage toast), while a rep no store would take is reported
+  /// through the #264 loss path — the honest "not saved" banner, never called
+  /// "queued".
+  async function saveRecording(rec: NewTindeqRecording & { id: string }) {
+    return saveRecordingDurableFirst({
+      rec,
+      persist: (r) => persistRecordingDurable(r, userId),
+      insert: insertRecording,
+      isPublished: (id) => recordingsRef.current.some((r) => r.id === id),
+      publishPending: publishPendingRecording,
+      reconcileSaved: reconcileSavedRecording,
+      onNotPersisted: (r, result) => {
+        reportPersistFailure("save-failed", result, r.samples.length);
+        // Always banner (one row per lost rep) but keep the toast on the same
+        // once-per-outage gate as the queued case, so a guided protocol whose
+        // every rep fails doesn't stack a toast per rep.
+        setUnqueued((list) => appendUniqueById(list, r));
+        const isNewOutage = !outageRef.current;
+        outageRef.current = true;
+        if (isNewOutage) {
+          toast("Storage full — this recording is not saved anywhere", "error");
+        }
+      },
+      onInsertFailure: (error) => {
+        setListError(
+          error instanceof Error ? error.message : "Failed to save recording",
+        );
+        const isNewOutage = !outageRef.current;
+        outageRef.current = true;
+        // The rep is durable and visibly pending; the idempotent queue drains
+        // it. One toast per outage, not per rep.
+        if (isNewOutage) {
+          toast("Couldn't save — recording queued, will sync automatically", "error");
+        }
+      },
+      settlement: repSettlementRef.current,
+    });
   }
 
   /// Retry everything in the banner: the server first (the outage may be
@@ -274,6 +366,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // animation frame. Each emitted action advances the ref to its claimed
   // phase before any callback can await, preventing duplicate Start/Stop.
   const handsFreeControlRef = useRef<HandsFreeForceState>(idleHandsFreeForce());
+  // True while the CURRENT recording was started by the hands-free machine
+  // (#682). Set on the machine's `.start` claim (after `beginArmedRecording`
+  // succeeds), reset in `runStop`. Read as a ref because `runStop` is async:
+  // the persist-boundary verdict must know whether this rep was a hands-free
+  // hold without capture-state races, and it must be claimed before the
+  // first `await`. Only hands-free-started reps are gated by Guard 1, so a
+  // manual (hands-free opted-out) free hold is never silently discarded.
+  const handsFreeActiveRef = useRef(false);
   const adaptiveStaticRef = useRef<AdaptiveStaticState | null>(null);
   const adaptiveHoldsRef = useRef<AdaptiveStaticHold[]>([]);
   const adaptiveRunSnapshotRef = useRef<{
@@ -288,14 +388,89 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const [adaptiveStaticState, setAdaptiveStaticState] = useState<AdaptiveStaticState | null>(null);
   const handsFreeArmInFlightRef = useRef(false);
   // Watch gauge mirror (SL-87) — non-null while the watch's Progressor
-  // screen is connected/measuring and the phone is WC-reachable.
-  const liveForce = useLiveForce(userId);
+  // screen is connected/measuring and the phone is WC-reachable. The second
+  // element is the honest direct / paused / stale / unknown transport verdict
+  // (#614 review F7) — a mirror that goes quiet must say so instead of
+  // silently unmounting.
+  const [liveForce, forceSyncState] = useLiveForce(userId);
   // The just-auto-saved recording, shown as a confirmation so the user can
   // eyeball its tag (and undo if it was wrong). Replaces the old discard/save
   // prompt — a rep now saves the moment you stop, using the tag set beforehand.
   const [justSaved, setJustSaved] = useState<TindeqRecordingMeta | null>(null);
+  // #684: the raw Exercise&Side fields stay empty on mount; the last-used pair
+  // is a persist-boundary FALLBACK for an untagged free hold, never a display
+  // seed — see gaugeTagResolution.ts. Every explicit selection below is
+  // remembered through `rememberGaugeLabel`, and the ref mirrors it
+  // synchronously so the boundary guard reads the latest choice.
   const [pendingTag, setPendingTag] = useState("");
   const [pendingSide, setPendingSide] = useState<TindeqSide>("");
+  // #684: the last-used pair, mirrored in a ref so the persist-boundary guard
+  // in runStop reads a value that can never be stale from an old render (the
+  // repo's closure-race rule). The initial value is read ONCE, through a lazy
+  // `useState` initializer (#684 F3) — `useRef(loadLastUsedGaugeLabel())` would
+  // re-run the two synchronous storage reads on every render, and ForceView
+  // re-renders per animation frame while measuring. The ref is initialized
+  // from that first-render state and written only by `rememberGaugeLabel`,
+  // which is the single write path for both — so the two never drift, and
+  // there is no render-time ref write (react-hooks/refs).
+  const [lastUsedGaugeLabel, setLastUsedGaugeLabel] = useState(loadLastUsedGaugeLabel);
+  const lastUsedGaugeLabelRef = useRef(lastUsedGaugeLabel);
+  // #684: the persist-boundary resolution — a saved rep's tag/side is decided
+  // through this and ONLY this: the raw (explicit) fields win, then the
+  // remembered last-used pair, then untagged `''`. Reads the ref at call time
+  // (never a captured value — repo closure-race rule) so the always-armed
+  // free-hold path is covered even when the raw fields are empty. Every
+  // recording builder below funnels through this so no persist site can drift
+  // from the rule (#684 F4).
+  const resolveBoundaryLabel = (explicit: { tag: string; side: TindeqSide }) =>
+    resolveRecordingGaugeLabel(explicit, lastUsedGaugeLabelRef.current);
+  // #684 NEW-2: the TAG-only boundary — explicit ?? remembered ?? ''. Used at
+  // the PROTOCOL persist sites, where the tag fallback is the F4 design but
+  // the side fallback must NOT apply: a remembered side is an assertion about
+  // which hand did the work, and stamping it onto a protocol rep whose zone
+  // and target were computed all-sides would mislabel physical data and feed
+  // it into per-side curve fits (see chartSideFor). Protocol reps keep the
+  // raw side (`seg.side ?? pendingSide` etc.).
+  const resolveBoundaryTag = (explicitTag: string) =>
+    resolveRecordingTag(explicitTag, lastUsedGaugeLabelRef.current.tag);
+  // #684 NEW-1: the RESOLVED pair for the CURRENT raw fields, derived in
+  // render for the Start gates and the hint. Read from `lastUsedGaugeLabel`
+  // STATE (not the ref — the react-hooks/refs rule bans ref reads in render,
+  // and the state is updated on the same write path as the ref, so they never
+  // drift). The gate must not require a raw tag: untagged is the feature, and
+  // the remembered last-used tag legitimately re-enables Start without being
+  // an explicit selection. The resolved side is what a free hold would stamp;
+  // protocol runs resolve their own side (see the persist sites).
+  const effectiveBoundaryLabel = resolveRecordingGaugeLabel(
+    { tag: pendingTag, side: pendingSide },
+    lastUsedGaugeLabel,
+  );
+  // #684: every explicit Exercise&Side selection is remembered for the next
+  // untagged free hold ("remember rather than repeatedly ask", #546). The ref
+  // is updated synchronously so the persist boundary sees the latest choice
+  // even if it runs before a re-render. Only a real selection is remembered:
+  // deselecting (re-tapping the active chip, or the "—" side) must NOT
+  // clobber the last-used pair — that pair is the "user chose it" default an
+  // empty field falls back to, so it survives until the next explicit pick.
+  // The two fields merge independently (see rememberGaugeLabelSelection), so
+  // picking a side while the Exercise field is empty keeps the remembered tag
+  // (#684 F2) — and vice versa.
+  function rememberGaugeLabel(tag: string, side: TindeqSide) {
+    const merged = rememberGaugeLabelSelection(
+      { tag, side },
+      lastUsedGaugeLabelRef.current,
+    );
+    setLastUsedGaugeLabel(merged);
+    lastUsedGaugeLabelRef.current = merged;
+  }
+  function handlePendingTag(t: string) {
+    setPendingTag(t);
+    if (t.trim()) rememberGaugeLabel(t, pendingSide);
+  }
+  function handlePendingSide(s: TindeqSide) {
+    setPendingSide(s);
+    if (s) rememberGaugeLabel(pendingTag, s);
+  }
   const [saving, setSaving] = useState(false);
   // Guided-protocol clock controls. The protocol position is normally a pure
   // function of the physical measuring clock (tindeq.elapsedMs); these let the
@@ -426,6 +601,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const [curveComputedFor, setCurveComputedFor] = useState<string | null>(null);
   const [curveError, setCurveError] = useState<string | null>(null);
   const realtimeVersion = useRealtimeVersion();
+  // #613: bounded queue of live `tindeq_recordings` realtime events + whether
+  // it ever overflowed — see useRealtimeRecordingEvents/useRealtimeVersion.ts.
+  const recordingEvents = useRealtimeRecordingEvents();
+  const recordingEventsOverflowed = useRealtimeRecordingOverflowed();
+  // #613: the last successfully fetched tag-curve registry, read SYNCHRONOUSLY
+  // by predictGroupRpe at session end — never a fresh `fetchTagCurves()` on the
+  // Finish/disconnect path. Seeded in the background on mount and updated
+  // whenever the curve effect banks a fresh fit; a stale-or-empty registry
+  // simply falls back (predictGaugeSessionRpe's own semantics).
+  const tagCurvesRef = useRef<TagCurve[]>([]);
 
   // Every tag ever used with its rep count, most frequent first (SL-82).
   const tagCounts = (() => {
@@ -451,43 +636,34 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     : 0;
 
   /// Predict this session's RPE from W' depletion (#280), the same model the
-  /// watch runs: every rep against ITS OWN tag's fitted curve, read back from
-  /// the registry the curve effect below keeps up to date. Any failure — a
-  /// dead network, a tag that's never been fitted — falls back rather than
-  /// blocking the log; the caller banks the result unconfirmed either way.
-  /// Bounded to 4s (#295): ending a session now logs immediately, so this
-  /// can no longer sit waiting on a stalled fetch the way the old RPE-prompt
-  /// flow could (that prompt was already open; nothing here is).
+  /// watch runs: every rep against ITS OWN tag's fitted curve. #613: the
+  /// curves come from a cached registry (`tagCurvesRef`), NOT a fresh network
+  /// call — the old path started `fetchTagCurves()` here and could stall the
+  /// Finish/disconnect path for up to 4s. A tag with no cached curve falls
+  /// back immediately, and the caller banks the result unconfirmed either
+  /// way. Synchronous by design: the session end must never wait on the
+  /// network to log.
   ///
-  /// The recordings snapshot is taken AFTER the curve fetch resolves, not
-  /// before — on an involuntary disconnect the final rep's save
-  /// (insertRecording → setRecordings) can still be in flight, and this
-  /// wait is the only grace period it gets. Snapshotting early can miss it,
-  /// so the prediction, note and duration below all read the same
-  /// as-late-as-possible list.
+  /// The recordings snapshot reads `recordingsRef` at call time — the latest
+  /// list, including any rep whose durable save is still settling (the caller
+  /// waits for that settlement before invoking this) — so prediction, note and
+  /// duration all read the same as-late-as-possible list.
+  ///
+  /// The registry is kept current while the view is active: seeded in the
+  /// background on mount (below) and updated synchronously whenever the curve
+  /// effect banks a fresh fit (`saveTagCurve`).
   async function predictGroupRpe(groupId: string) {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const curves = await Promise.race([
-      fetchTagCurves().catch(() => [] as Awaited<ReturnType<typeof fetchTagCurves>>),
-      new Promise<Awaited<ReturnType<typeof fetchTagCurves>>>((resolve) => {
-        timeoutId = setTimeout(() => resolve([]), 4000);
-      }),
-    ]).finally(() => clearTimeout(timeoutId));
     const recs = recordingsRef.current.filter(
       (r) => r.groupId === groupId && isMeasuredRecording(r),
     );
-    const byTagModality = new Map(
-      curves.map((curve) => [`${curve.name}|${curve.modality}`, curve]),
-    );
-    const predicted = predictSessionRpe(
-      recs.map((r) => ({
-        peakKg: r.peakKg!,
-        durationS: r.durationMs / 1000,
-        cf: byTagModality.get(`${r.tag}|${recordingCapacityModality(r)}`)?.cf ?? null,
-        wPrime: byTagModality.get(`${r.tag}|${recordingCapacityModality(r)}`)?.wPrime ?? null,
-        isEffort: isDepletionEffortRecording(r),
-      })),
-    );
+    // Session-end event path, not render: this is the no-network cached
+    // prediction replacing the 4s `fetchTagCurves()` race, and the timing
+    // proves it.
+    // eslint-disable-next-line react-hooks/purity
+    const t0 = performance.now();
+    const predicted = predictGaugeSessionRpe(recs, tagCurvesRef.current);
+    // eslint-disable-next-line react-hooks/purity -- same non-render path
+    captureForceLatency("session.predict", performance.now() - t0);
     return { predicted, recs };
   }
 
@@ -509,16 +685,29 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       1,
       // `endSession` only runs from event/effect paths; this is elapsed wall
       // time, not a render-time value.
+      // eslint-disable-next-line react-hooks/purity -- event/effect path, not render
       Math.round((Date.now() - activeSession.startedAt) / 60000),
     );
     clearSession();
+    // Event/effect path, not render: the only network hop left in the
+    // end-session path is the session insert; the settlement wait and
+    // prediction are local.
+    // eslint-disable-next-line react-hooks/purity
+    const insertStart = performance.now();
     const ok = await endGaugeSession({
       groupId,
       wallClockMin,
       claimed: endedGroupsRef.current,
       predictGroupRpe,
       onLogSession,
+      // #613: wait for any in-flight rep save to become durable + published
+      // before the prediction/duration snapshot — the final rep of a
+      // disconnect must be counted. Bounded by local persistence, never the
+      // network (see RepSettlement).
+      settlement: repSettlementRef.current,
     });
+    // eslint-disable-next-line react-hooks/purity -- same event/effect path
+    captureForceLatency("session.insert", performance.now() - insertStart);
     if (ok === null) return; // lost the race — another call already logged this group
     toast(
       ok ? "Gauge session logged to history" : "Couldn't log gauge session",
@@ -526,20 +715,62 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     );
   }
 
+  // #613: live `tindeq_recordings` changes (our own writes AND other devices')
+  // are applied here directly from the realtime payload — by id — instead of
+  // refetching the whole list. Runs on every queue change and is idempotent,
+  // so the bounded queue is simply re-walked (only the fresh tail is re-applied).
+  const appliedRecordingEventsRef = useRef(0);
   useEffect(() => {
+    if (recordingEvents.length === 0) return;
+    if (appliedRecordingEventsRef.current > recordingEvents.length) {
+      // The bounded queue was trimmed (overflow) — re-walk what's left.
+      appliedRecordingEventsRef.current = 0;
+    }
+    const fresh = recordingEvents.slice(appliedRecordingEventsRef.current);
+    if (fresh.length === 0) return;
+    setRecordings((list) => applyRecordingRealtimeEvents(list, fresh));
+    appliedRecordingEventsRef.current = recordingEvents.length;
+  }, [recordingEvents]);
+
+  useEffect(() => {
+    // #613: skip the whole-list refetch when this bump's recording events were
+    // already applied above — a recording write (our own rep saves included)
+    // must not trigger a coarse refetch. Fall back to the fetch when the queue
+    // is empty (mount), an event couldn't be applied (a row we never loaded,
+    // or one that failed to parse), or the queue overflowed.
+    const allApplied = recordingEventsAllApplied(
+      recordingEvents,
+      recordingsRef.current,
+    );
+    if (recordingEvents.length > 0 && allApplied && !recordingEventsOverflowed) {
+      return;
+    }
     let cancelled = false;
+    // Effect body, not render: the timing runs only when this background
+    // reconciliation fetch actually fires (the refetch guard may skip it).
+    // eslint-disable-next-line react-hooks/purity
+    const refetchStart = performance.now();
     fetchRecordings()
       .then((list) => {
         if (cancelled) return;
+        captureForceLatency("realtime.refetch", performance.now() - refetchStart);
+        // Idempotent: a reconciliation that changed nothing (a redundant
+        // bump for another table, or our own echo) must not churn the list —
+        // the curve key is derived from `recordings.length`. Deep-compares
+        // EVERY meta field, so a real cross-device edit on an already-present
+        // id still lands (see recordingListsEqual).
+        if (recordingListsEqual(list, recordingsRef.current)) return;
         setRecordings(list);
-        // Default the tag input to the most-recorded exercise so the input
-        // matches what the charts below already show (they fall back to it).
-        const counts = new Map<string, number>();
-        for (const r of list) {
-          if (r.tag) counts.set(r.tag, (counts.get(r.tag) ?? 0) + 1);
-        }
-        const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-        if (top) setPendingTag((prev) => (prev.trim() ? prev : top));
+        // #684 F1: the raw Exercise field is DELIBERATELY not seeded from the
+        // most-recorded exercise on mount. The display layer already falls
+        // back to `allTags[0]` for its charts; seeding `pendingTag` with the
+        // same value would make that arbitrary first-in-list exercise an
+        // EXPLICIT selection at the persist boundary, so an untagged free
+        // hold would be stamped under an exercise the user never picked —
+        // the exact "worse than not locking at all" footgun gaugeInputLock.ts
+        // documents. An empty field on mount means the rep resolves to the
+        // remembered last-used pair, or untagged `''` — never the display
+        // fallback.
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -551,7 +782,25 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [realtimeVersion]);
+    // realtimeVersion is the reconciliation signal; recordingEvents/
+    // recordingEventsOverflowed determine whether THIS bump is skippable.
+  }, [realtimeVersion, recordingEvents, recordingEventsOverflowed]);
+
+  // #613: seed the tag-curve registry once, in the background — never on the
+  // session-end critical path. The watch reads the same rows to predict RPE,
+  // so this stays the source of truth; a failed fetch leaves the previous
+  // registry (or an empty one → immediate fallback at predict time).
+  useEffect(() => {
+    let cancelled = false;
+    fetchTagCurves()
+      .then((curves) => {
+        if (!cancelled) tagCurvesRef.current = curves;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Save one hold segment of a guided protocol as its OWN recording — sliced
   // from the live sample buffer, with the segment's hand (L/R when
@@ -613,7 +862,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // reading the raw values here would let a tag change mid-run file
       // later reps under a different tag than the zone/target they were
       // actually performed against.
-      tag: gaugeInputs.pendingTag,
+      // #684 F4/NEW-2: the TAG flows through the shared persist-boundary
+      // resolution (explicit ?? remembered ?? '') so an untagged hold keeps
+      // the remembered tag. The SIDE stays the raw protocol side (`seg.side
+      // ?? pendingSide`) — a remembered side must not stamp a protocol rep
+      // whose zone and target were computed all-sides (the side describes
+      // which hand did the work, and a stale one contaminates per-side curve
+      // fits).
+      tag: resolveBoundaryTag(gaugeInputs.pendingTag),
       side: seg.side ?? gaugeInputs.pendingSide,
       groupId: ensureSession(),
       protocolRunId: protocolRunIdRef.current,
@@ -644,23 +900,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       })(),
       samples: slice,
     };
-    try {
-      const saved = await insertRecording(rec);
-      outageRef.current = false;
-      setRecordings((list) => [saved, ...list]);
-      setJustSaved(saved);
-    } catch (e) {
-      // Insert failed (dead auth session, dropped connection, …) — queue the
-      // slice for retry instead of dropping it (#106). Unlike the "nothing
-      // captured" branch above, KEEP the segment claimed: retrying now
-      // happens via the queue drain, not the live autosave effect, so
-      // un-claiming would let that effect re-walk this same index once more
-      // time has passed and insert the FULL segment — landing both the
-      // queued partial and the live full rep as two rows for one hold (the
-      // exact double-count hazard CLAUDE.md warns about for guided protocols).
-      setListError(e instanceof Error ? e.message : "Failed to save recording");
-      await queueFailedRecording(rec);
-    }
+    // #613: durable-first — the slice is persisted locally and published as a
+    // pending row before the network insert, so the rep shows up immediately
+    // and a failed insert stays visibly pending (drained by the idempotent
+    // queue). Unlike the "nothing captured" branch above, the segment stays
+    // claimed on any outcome: retrying happens via the queue drain, not the
+    // live autosave effect, so un-claiming would let that effect re-walk this
+    // same index once more time has passed and insert the FULL segment —
+    // landing both the queued partial and the live full rep as two rows for
+    // one hold (the exact double-count hazard CLAUDE.md warns about for guided
+    // protocols).
+    await saveRecording(rec);
   }
 
   function buildAdaptiveRecording(
@@ -695,7 +945,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       peakKg: Math.max(...kgs),
       avgKg: Math.round((kgs.reduce((sum, kg) => sum + kg, 0) / kgs.length) * 100) / 100,
       note,
-      tag: snapshot.tag,
+      // #684 F4/NEW-2: the TAG flows through the shared persist-boundary
+      // resolution (explicit ?? remembered ?? '') so the always-armed
+      // hands-free path (the motivating case for #684) keeps the remembered
+      // tag on an untagged hold. The SIDE stays the raw protocol side
+      // (`hold.side || snapshot.side`) — a remembered side must not stamp a
+      // protocol rep whose zone/target were computed all-sides. The adaptive
+      // snapshot holds the raw LOCKED fields at run start; the tag fallback
+      // applies here, at the shared builder, covering both the live save and
+      // the sign-out salvage of the same hold.
+      tag: resolveBoundaryTag(snapshot.tag),
       side: hold.side || snapshot.side,
       groupId: snapshot.groupId,
       protocolRunId: snapshot.runId,
@@ -737,15 +996,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       savedSegsRef.current.delete(hold.segmentIndex);
       return;
     }
-    try {
-      const saved = await insertRecording(rec);
-      outageRef.current = false;
-      setRecordings((list) => [saved, ...list]);
-      setJustSaved(saved);
-    } catch (error) {
-      setListError(error instanceof Error ? error.message : "Failed to save recording");
-      await queueFailedRecording(rec);
-    }
+    await saveRecording(rec);
   }
 
   function buildAdaptiveStaticSalvage(
@@ -813,7 +1064,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       cadenceReturnS: protocol.cadenceReturnS ?? 3,
       base: {
         note,
-        tag: snapshot.tag,
+        // #684 F4/NEW-2: the TAG flows through the shared persist-boundary
+        // resolution (explicit ?? remembered ?? '') so a reverse-action set
+        // never stamps untagged when a tag is remembered. The SIDE stays the
+        // raw protocol side (`snapshot.side`) — a remembered side must not
+        // stamp a movement rep whose target was computed all-sides.
+        tag: resolveBoundaryTag(snapshot.tag),
         side: snapshot.side,
         groupId:
           reverseRunGroupIdRef.current ?? snapshot.groupId ?? ensureSession(),
@@ -828,13 +1084,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       key,
       reverseSetClaimsRef.current,
       rec,
-      async (input) => {
-        const saved = await insertRecording(input);
-        outageRef.current = false;
-        setRecordings((list) => [saved, ...list]);
-        setJustSaved(saved);
-      },
-      queueFailedRecording,
+      saveRecording,
     );
     if (outcome === "lost") {
       setListError("Failed to save resisted-movement set");
@@ -862,6 +1112,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   }
 
   async function runStop(note: string, endMs?: number) {
+    // Claim the hands-free rep identity into a local before any await (#682 &
+    // the repo closure-race rule): `runStop` is async, and the persist-boundary
+    // verdict below must read a ref/snapshot, not captured state. Reset once
+    // claimed so a later path cannot re-discard a hold the machine did not
+    // start. A remount RECOVERY (a BLE drop that fired while this view was
+    // unmounted) runs on a FRESH mount whose `handsFreeActiveRef` is false, so
+    // the drop-time `wasHandsFree` snapshot (`tindeq.interruptionContext`) is
+    // the authority there — read BEFORE `tindeq.stop()` clears the claim.
+    const handsFreeActive =
+      handsFreeActiveRef.current || (tindeq.interruptionContext?.wasHandsFree === true);
+    handsFreeActiveRef.current = false;
     const adaptive = adaptiveStaticRef.current;
     if (adaptive) {
       // Claim the whole adaptive stop before any save/transport await. A
@@ -967,16 +1228,46 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // is only reachable while TagSideEditor is disabled (runActive), so raw
     // and locked agree today, but reading raw here was reachable "only by
     // convention" — exactly the class of bug CLAUDE.md's #196 note warns about.
+    // #684: this is the persist boundary — a saved rep's tag/side is decided
+    // through `resolveBoundaryLabel` and nothing else: the raw fields win,
+    // then the remembered last-used pair, then untagged `''`; the display
+    // fallback `liveEffectiveTag`/`allTags[0]` must never stamp a recording
+    // (see gaugeInputLock.ts's own comment). Read BEFORE `tindeq.stop()` like
+    // everything above, and resolve the last-used fallback here from the ref
+    // (never a captured value — repo closure-race rule) so the always-armed
+    // free-hold path is covered even when the raw fields are empty.
+    // #684 F7 (decision, kept from #119): an interruption-recovery save whose
+    // label is genuinely unknown — recoveredTagSide returned "" because the
+    // drop-time snapshot was also empty — runs through the same boundary as a
+    // normal stop, so it falls back to the remembered last-used pair (and
+    // then to untagged). That is deliberately CONSISTENT with every other
+    // persist site (#684 F4), including the sign-out salvage of the same
+    // interruption; the note ("Recovered after connection loss" / "Recovered
+    // after sign-out") is what marks a blob as a recovery, not an untagged
+    // label.
+    const pending = { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide };
     const { tag, side } =
       note === ""
-        ? { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide }
-        : recoveredTagSide(
-            { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide },
-            tindeq.interruptionContext,
-          );
+        ? resolveBoundaryLabel(pending)
+        : resolveBoundaryLabel(recoveredTagSide(pending, tindeq.interruptionContext));
     const summary = await tindeq.stop(endMs);
     void endTindeqLiveActivity();
     if (!summary) return;
+    // Guard 1 (#682): the persist-boundary verdict runs LAST, on the trimmed
+    // full evidence (a `.staticLoad` termination trims to the flat-window
+    // start; release trims to the release edge). A trivial hands-free rep —
+    // peak below `minPeakKg` or duration below `minDurationMs` — is discarded
+    // silently here, BEFORE `saveRecording`, so it never enters the recording
+    // queue and is never reported as queued. Manual (hands-free opted-out)
+    // free holds are unchanged while hands-free is opt-in. App-layer wiring;
+    // the pure predicate + deterministic `handsFreeForce.test.ts` cases are
+    // the proof.
+    if (
+      handsFreeActive &&
+      recordingVerdict(summary.peakKg, summary.durationMs) !== "persist"
+    ) {
+      return;
+    }
     setSaving(true);
     // Minted up front — see the comment on the equivalent line in
     // saveHoldSlice (retry idempotency via 23505, #106).
@@ -999,16 +1290,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       zone: null,
       samples: summary.samples,
     };
+    // #613: durable-first save (see saveHoldSlice). The `finally` below still
+    // owns `setSaving(false)` regardless of outcome.
     try {
-      const saved = await insertRecording(rec);
-      outageRef.current = false;
-      setRecordings((list) => [saved, ...list]);
-      setJustSaved(saved);
+      await saveRecording(rec);
       // keep tag and side — set once, tweak side between reps
-    } catch (e) {
-      // Queue instead of dropping (#106) — see saveHoldSlice above.
-      setListError(e instanceof Error ? e.message : "Failed to save recording");
-      await queueFailedRecording(rec);
     } finally {
       setSaving(false);
     }
@@ -1251,6 +1537,21 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         // none, and the prediction falls back); nothing here may block or
         // disturb the curve UI.
         if (effectiveTag !== null && chartSide === null && m?.cf != null && m.wPrime != null) {
+          // #613: bank the fit in the LOCAL registry too (synchronously), so a
+          // session ending moments after this fit resolves predicts from it
+          // without any network call — the 4s fetch at Finish is gone.
+          tagCurvesRef.current = [
+            ...tagCurvesRef.current.filter(
+              (c) =>
+                !(c.name === effectiveTag && c.modality === capacityModality),
+            ),
+            {
+              name: effectiveTag,
+              modality: capacityModality,
+              cf: m.cf,
+              wPrime: m.wPrime,
+            },
+          ];
           void saveTagCurve({
             name: effectiveTag,
             modality: capacityModality,
@@ -1734,7 +2035,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         const targetKg = presetTargetKg(protocol, snapshot.refs, set);
         return {
           note: "Recovered after sign-out",
-          tag: snapshot.tag,
+          // #684 F4/NEW-2: same as the live reverse-action save — TAG through
+          // the boundary (so the salvage of a set keeps the remembered tag),
+          // SIDE stays raw (`snapshot.side`); a remembered side must not
+          // stamp a movement rep whose target was computed all-sides.
+          tag: resolveBoundaryTag(snapshot.tag),
           side: snapshot.side,
           groupId: reverseRunGroupIdRef.current ?? snapshot.groupId,
           protocolRunId: runId,
@@ -1955,6 +2260,18 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // throwaway dev accounts, not just hypothetical).
       userId,
       stopInFlight: stopInFlightRef.current,
+      // #684 F4: the sign-out salvage resolves through the SAME
+      // persist-boundary rule as the live saves (explicit ?? last-used ??
+      // ''), read from the ref at salvage time — so the salvaged free hold
+      // keeps the remembered pair, exactly like the same hold's normal Stop.
+      // `resolveBoundaryLabel` is recreated every render but the salvage
+      // reads the ref, and it's a stable-on-purpose function value for this
+      // effect's identity.
+      resolveLabel: resolveBoundaryLabel,
+      // #682: expose whether the in-flight rep was hands-free-started so the
+      // unmount-salvage cleanup can apply Guard 1. Read `handsFreeActiveRef`
+      // at salvage time (a stable ref), not a captured value.
+      wasHandsFree: handsFreeActiveRef.current,
       buildSalvageRecordings: (samples) =>
         buildAdaptiveStaticSalvage(samples) ?? buildReverseSalvageRecordings(samples),
     }));
@@ -2011,9 +2328,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         handsFreeControlRef.current = idleHandsFreeForce();
         return;
       }
+      handsFreeActiveRef.current = true;
       return;
     }
-    if (stepped.action === "stop") void handleStop("", releaseStartedMs ?? undefined);
+    if (stepped.action === "stop") {
+      // Guard 2 (#682): a static-load stop carries the START of the flat
+      // window on the recording clock — pass it as the trim end so the saved
+      // rep ends at the first flat sample, not at termination. `releaseStartedMs`
+      // is the release-edge trim for a normal hands-free release.
+      void handleStop("", stepped.staticLoadEndMs ?? releaseStartedMs ?? undefined);
+    }
     // `handleStop` owns current refs and its own pre-await re-entrancy claim.
     // The hook callbacks are stable; force/elapsed/status are the sample clock.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2107,6 +2431,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
                 {liveForce.side ? ` · ${liveForce.side}` : ""}
               </span>
             )}
+            <span
+              style={{
+                marginLeft: "auto",
+                fontSize: "var(--t-2xs)",
+                color: "var(--ink-faint)",
+                fontWeight: 400,
+                textTransform: "none",
+              }}
+            >
+              {FORCE_SYNC_COPY[forceSyncState]}
+            </span>
           </div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
             <div>
@@ -2158,6 +2493,38 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           {/* SL-95: recent-samples sparkline, accumulated client-side from
               each beat's small trailing window (see useLiveForce). */}
           <LiveForceSparkline samples={liveForce.spark} />
+        </div>
+      )}
+
+      {/* #614 review F7: a mirror that has gone quiet unmounts the live card —
+          that silence is the reported symptom. Say why instead of showing
+          nothing: only rendered when the mirror is known to be mid-run but
+          paused or stale (never for a cleanly-ended run or a never-seen one). */}
+      {!liveForce && (forceSyncState === "temporarily-unreachable" || forceSyncState === "stale") && (
+        <div
+          className="card surface-force"
+          style={{
+            marginBottom: 10,
+            border: "1px solid color-mix(in srgb, var(--warning) 45%, transparent)",
+          }}
+        >
+          <div className="label-eyebrow" style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+            <span
+              aria-hidden="true"
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "var(--warning)",
+              }}
+            />
+            Watch gauge mirror
+          </div>
+          <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", lineHeight: 1.5 }}>
+            {forceSyncState === "stale"
+              ? "The watch link has gone quiet — the last reading was a while ago. Check the watch."
+              : "Watch link paused — showing the last reading. Waiting for the next beat."}
+          </div>
         </div>
       )}
 
@@ -2252,8 +2619,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           tag={pendingTag}
           side={pendingSide}
           allTags={allTags}
-          onTag={setPendingTag}
-          onSide={setPendingSide}
+          onTag={handlePendingTag}
+          onSide={handlePendingSide}
           locked={runActive}
         />
         {runActive && (
@@ -2264,7 +2631,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         {!pendingTag.trim() &&
           (status === "connected" || status === "armed" || status === "measuring") && (
             <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 8 }}>
-              Add an exercise to start recording.
+              {/* #684 NEW-1: no tag required — reps persist untagged, or with
+                  the remembered last-used tag. Only nudge when nothing is
+                  remembered at all. */}
+              {effectiveBoundaryLabel.tag
+                ? `Saving as ${effectiveBoundaryLabel.tag} — pick an exercise to change it.`
+                : "No exercise — the rep will save untagged. Pick one to tag it."}
             </div>
           )}
         {justSaved && status === "connected" && (
@@ -2445,8 +2817,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         {status === "idle" && (
           <button
             className="btn-primary force-start-primary"
-            disabled={!pendingTag.trim()}
-            title={!pendingTag.trim() ? "Add an exercise first" : undefined}
+            // #684 NEW-1: this just CONNECTS the device — the fullscreen's
+            // START (gated separately) begins the run. No tag gate here: a
+            // free hold can persist untagged, and a remembered last-used tag
+            // covers the protocol path at the fullscreen gate.
             onClick={() => void tindeq.connect()}
           >
             {activeProtocol ? "Start with sensor" : "Start free hold"}
@@ -2456,15 +2830,24 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         {sensorlessLaunchAvailable(status) && activeProtocol?.protocolMode === "reverse_action" && (
           <button
             className="btn-secondary force-start-secondary"
-            disabled={!pendingTag.trim() || runActive}
-            title={!pendingTag.trim() ? "Add an exercise first" : undefined}
+            // #684 NEW-1: the cadence run is a PROTOCOL, so it needs a
+            // STAMPABLE tag context — the RESOLVED tag (raw ?? remembered ??
+            // ''), so a remembered tag re-enables Start without being an
+            // explicit selection. runActive still gates it. The side stays
+            // the raw field (NEW-2).
+            disabled={runActive || !effectiveBoundaryLabel.tag}
             onClick={() => {
-              if (!timeline || !activeProtocol || !pendingTag.trim()) return;
+              if (!timeline || !activeProtocol) return;
+              // #684 NEW-1/NEW-2: the TAG resolves (raw ?? remembered ?? '')
+              // so a remembered tag re-enables Start; the SIDE stays the raw
+              // field — a cadence run is a reverse-action PROTOCOL, and the
+              // remembered side must not stamp protocol reps whose target was
+              // computed all-sides (see the protocol persist sites).
               const next: CadenceOnlyRunState = {
                 version: 1,
                 preset: activeProtocol,
                 userId,
-                tag: pendingTag.trim(),
+                tag: resolveBoundaryTag(pendingTag),
                 side: pendingSide,
                 groupId: crypto.randomUUID(),
                 runId: crypto.randomUUID(),
@@ -2605,22 +2988,32 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           globalSide={gaugeInputs.pendingSide}
           tag={gaugeInputs.pendingTag}
           allTags={allTags}
-          onTag={setPendingTag}
-          onSide={setPendingSide}
+          onTag={handlePendingTag}
+          onSide={handlePendingSide}
           onOpenSetupGuide={() => {
             setSetupGuideSensor(true);
             setSetupGuideOpen(true);
           }}
           onClearProtocol={clearProtocol}
           canStart={
-            !!gaugeInputs.pendingTag &&
+            // #684 NEW-1: a free hold (no protocol) never needs a tag — the
+            // untagged free hold is the feature. A PROTOCOL run does need a
+            // tag context (its target/zone are tag-keyed), but the gate is
+            // the RESOLVED tag — raw ?? remembered ?? '' — so a remembered
+            // last-used tag re-enables Start without being an explicit
+            // selection (the returning-user regression NEW-1 is about). With
+            // neither, the protocol stays gated and TagSideEditor's "Pick an
+            // exercise" placeholder carries the nudge.
+            (activeProtocol ? !!effectiveBoundaryLabel.tag : true) &&
             (!presetTargetConfigured || presetKgSet1 !== null) &&
             !zoneCurvePending &&
             !alternatingReferencesPending &&
             (!alternatingTargetNeedsBoth || alternatingPrescription !== null)
           }
           startBlockedReason={
-            activeProtocol?.protocolMode === "reverse_action" && presetTargetConfigured && presetKgSet1 === null
+            activeProtocol && !effectiveBoundaryLabel.tag
+              ? "Pick an exercise above — this protocol needs a tag to resolve its target."
+            : activeProtocol?.protocolMode === "reverse_action" && presetTargetConfigured && presetKgSet1 === null
               ? "This movement target cannot be resolved yet — add the required force reference or choose a fixed kg target."
             : zoneCurvePending
               ? "Updating this exercise's curve — try Start again in a moment, or tap Clear — free hold to start without a target."
@@ -2719,7 +3112,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               peakKg: null,
               avgKg: null,
               note: "Sensorless timed external-load attempt",
-              tag: gaugeInputs.pendingTag,
+              // #684 F4/NEW-2: TAG through the shared persist-boundary
+              // resolution; SIDE stays the raw protocol side (`seg.side ??
+              // pendingSide`) — a remembered side must not stamp a protocol
+              // rep whose target was computed all-sides.
+              tag: resolveBoundaryTag(gaugeInputs.pendingTag),
               side: seg.side ?? gaugeInputs.pendingSide,
               groupId,
               protocolRunId: runId,
@@ -2732,16 +3129,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               actualDurationMs,
               samples: [],
             };
-            try {
-              const saved = await insertRecording(rec);
-              outageRef.current = false;
-              setRecordings((list) => [saved, ...list]);
-              return true;
-            } catch {
-              const durable = await queueFailedRecording(rec);
-              if (!durable) attemptClaims.delete(attemptKey);
-              return durable;
+            const saveOutcome = await saveRecording(rec);
+            if (saveOutcome === "not-persisted") {
+              // Total persistence failure — the rep exists only in this
+              // closure. Release the claim so a later attempt can retry.
+              attemptClaims.delete(attemptKey);
+              return false;
             }
+            return true;
           }}
           onFinish={async (rpe, completedMs) => {
             const groupId = manualGroupRef.current;
@@ -2778,14 +3173,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         <CadenceOnlyReverseActionFullscreen
           run={cadenceRun}
           onRecording={async (rec) => {
-            try {
-              const saved = await insertRecording(rec);
-              outageRef.current = false;
-              setRecordings((list) => appendUniqueById(list, saved));
-              return true;
-            } catch {
-              return await queueFailedRecording(rec);
-            }
+            const outcome = await saveRecording(rec);
+            return outcome !== "not-persisted";
           }}
           onFinish={async (rpe, outcome, elapsedMs) => {
             // Stable sessionId was persisted before the runtime opened. A

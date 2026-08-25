@@ -172,6 +172,10 @@ final class ReadinessManager {
             }
         }
 
+        // Contract: `result.errorMessage` is rendered verbatim in the watch UI.
+        // The phone-side producer must supply user-facing copy (for example via
+        // `ErrorText.message(for:)`), never `error.localizedDescription`, so a
+        // future producer cannot leak raw diagnostics into readiness errors.
         switch result.status {
         case .success:
             syncState = result.freshness == .fresh ? .fresh : .cached
@@ -283,7 +287,10 @@ final class ReadinessManager {
         let now = Date().timeIntervalSince1970
         if !force, let lastSentAt, now - lastSentAt < 0.25 { return }
         lastSentAt = now
-        let stamped = WatchBuild.stamp(request.message())
+        let stamped = WatchBuild.stamp(
+            request.message(),
+            accountUserID: activeRequestAccountUserId
+        )
         switch ReadinessTransportPath.choose(
             activated: session.activationState == .activated,
             reachable: session.isReachable
@@ -303,7 +310,7 @@ final class ReadinessManager {
                     Task { @MainActor in
                         guard let self else { return }
                         self.queueFallback(request)
-                        self.errorMsg = error.localizedDescription
+                        self.errorMsg = ErrorText.message(for: .readinessUnavailable)
                     }
                 }
             )
@@ -337,7 +344,12 @@ final class ReadinessManager {
         queuedFallbackRequestId = request.requestId
         // WatchBuild carries build + queue depth on every watch→phone message;
         // transferUserInfo is the one coalesced guaranteed-delivery fallback.
-        session.transferUserInfo(WatchBuild.stamp(request.message()))
+        session.transferUserInfo(
+            WatchBuild.stamp(
+                request.message(),
+                accountUserID: activeRequestAccountUserId
+            )
+        )
         syncState = .offline
     }
 

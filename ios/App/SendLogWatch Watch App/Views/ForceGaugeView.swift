@@ -27,6 +27,7 @@ struct ForceGaugeView: View {
     @State private var connectAttempt = 0
     @State private var connectAttemptStale = false
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(ForceRuntimeCoordinator.self) private var forceRuntimeCoordinator
 
     // Exercise setup — set once before the first rep, tweak side between reps.
     // Stop always saves with whatever tag/side is set (no post-stop decision).
@@ -73,13 +74,35 @@ struct ForceGaugeView: View {
         selectedStartEligibility == .alternatingSidesUnsupported
     }
 
+    /// #683: the persistent mode header. When a guided runner is active this
+    /// view is replaced by `GuidedForceRunnerView`, so here it only ever
+    /// narrates the always-armed free hold (resting or recording).
+    private var modeHeaderText: String? {
+        if visibleStatus == .measuring { return "Free hold · recording" }
+        if visibleStatus == .connected { return "Free hold · armed" }
+        return nil
+    }
+
     var body: some View {
         GeometryReader { geometry in
             ScrollViewReader { proxy in
-                Group {
+                VStack(spacing: 0) {
+                // #683: one persistent header line naming the live mode — the
+                // always-armed free hold (resting or recording). The guided
+                // screen replaces ForceGaugeView (RootView) while a protocol
+                // is active and carries its own Repeaters · set header.
+                if let headerText = modeHeaderText {
+                    Text(headerText)
+                        .font(.system(.caption2, design: .rounded).weight(.semibold))
+                        .foregroundStyle(WatchPalette.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 9)
+                        .environment(\.dynamicTypeSize, .medium)
+                        .accessibilityIdentifier("force-mode-header")
+                }
                 // Measuring owns the whole screen in a plain, non-scrolling
-                // VStack (issue #149) — the live gauge, peak/timer, and Stop
-                // & Save must all be visible at once without hunting for a
+                // VStack (issue #149) — the live gauge, peak/timer, and
+                // Save now must all be visible at once without hunting for a
                 // scroll position mid-hang. Every other state keeps the
                 // ScrollView (loading/empty/error states legitimately may
                 // need it).
@@ -100,7 +123,7 @@ struct ForceGaugeView: View {
                             case .unsupported:
                                 WatchStateBanner(
                                     state: .danger,
-                                    title: "Bluetooth unavailable",
+                                    title: "Progressor unavailable",
                                     message: tindeq.errorMsg ?? "Turn on Bluetooth to connect a Progressor."
                                 )
 
@@ -140,7 +163,7 @@ struct ForceGaugeView: View {
                                 WatchStateBanner(
                                     state: tindeq.saving
                                         ? .syncing
-                                        : savedMsg.hasPrefix("Rep not saved") ? .danger
+                                        : ErrorText.isFailureMessage(savedMsg) ? .danger
                                             : savedMsg.hasPrefix("Saved") ? .success : .warning,
                                     title: savedMsg,
                                     message: nil
@@ -182,8 +205,28 @@ struct ForceGaugeView: View {
                 }
             }
             // Keep the phone's live Force mirror in sync with the pickers (SL-87).
-                .onChange(of: tag) { _, t in tindeq.liveTag = t }
-                .onChange(of: side) { _, s in tindeq.liveSide = s }
+                .onChange(of: tag) { _, t in
+                    // #543: a newly selected exercise may not permit the
+                    // currently remembered side. Restore per-exercise, then
+                    // force the canonical recorded side so a stale side is
+                    // never armed or persisted.
+                    tindeq.liveTag = t
+                    restoreRememberedSide()
+                    normalizeSideForMode()
+                    tindeq.liveSide = side
+                }
+                .onChange(of: side) { _, s in
+                    tindeq.liveSide = s
+                    persistRememberedSide()
+                }
+                // #720/#543: the exercise's mode can resolve ASYNCHRONOUSLY
+                // (the registry fetch that carries `side_mode` lands after the
+                // tag list). A freshly-selected tag may therefore start at the
+                // default mode and later tighten — re-normalize so a side that
+                // became invalid under the resolver's mode is corrected.
+                .onChange(of: activeSideMode) { _, _ in
+                    normalizeSideForMode()
+                }
             }
             // The watch's accessibility-large title can consume the same
             // navigation-bar area as the back/time affordances. The primary
@@ -239,6 +282,9 @@ struct ForceGaugeView: View {
             }
             tindeq.logSessionNow()
             tindeq.disconnect()
+            // #540: confirm the finish so a dim pull that ends with a
+            // confirmed disconnect is unambiguous.
+            forceRuntimeCoordinator.acknowledge(.finish)
             // A deliberate disconnect means "I'm done" — no auto-reconnect
             // for the rest of this visit (approved design Q5); re-entering
             // the Force screen from Home starts a fresh visit.
@@ -284,9 +330,16 @@ struct ForceGaugeView: View {
             // semantics are unchanged. `LAST_TAG_KEY` keeps being written on
             // save (and cleared by `reconcileLastTag`) but is no longer read
             // here.
-            if side.isEmpty { side = UserDefaults.standard.string(forKey: LAST_SIDE_KEY) ?? "" }
+            // #543: restore a per-exercise remembered side once an exercise is
+            // known; a free hold (no exercise) falls back to the legacy global
+            // last-side key. `normalizeSideForMode` then stamps the canonical
+            // recorded side for the active mode.
+            if side.isEmpty {
+                restoreRememberedSide()
+            }
             tindeq.liveTag = tag
             tindeq.liveSide = side
+            normalizeSideForMode()
             loadTags()
             // SL-584: auto-initiate the connection on entry (issue #589 §1).
             // For real BLE "a device is available" is only discoverable by
@@ -295,7 +348,8 @@ struct ForceGaugeView: View {
             // fixture being absent (fixtures own their displayed state),
             // this visit having no deliberate disconnect, and the manager
             // actually being idle — never fires while connected, scanning,
-            // or measuring. Arming stays behind its explicit tap always.
+            // or measuring. #683: the gauge arms hands-free automatically on
+            // connect, so this only kicks off the connection; no arm tap.
             if ScreenshotFixtures.force == nil, !autoConnectSuppressed, tindeq.status == .idle {
                 startConnectAttempt()
             }
@@ -509,28 +563,35 @@ struct ForceGaugeView: View {
     /// The chooser's full side list (both/none) stays behind the settings
     /// icon; these two cover the mainline. Distinct identifiers from the
     /// chooser's `force-side-*` rows so queries can never straddle screens.
+    @ViewBuilder
     private var sideToggle: some View {
-        HStack(spacing: 2) {
-            sideSegment("left", label: "L")
-            sideSegment("right", label: "R")
+        // #543 (slice 3): the side controls follow the active exercise's side
+        // mode. A non-sided exercise (`not_applicable`) hides the selector
+        // entirely; bilateral-only shows a single selected "Both"; unilateral
+        // and either-or-both show L/R (+ Both for the latter). A legacy
+        // persisted "both"/"" on a non-bilateral exercise renders with no
+        // segment selected; the active mode's deterministic fallback corrects
+        // it on exercise selection and again once the async registry fetch
+        // resolves the mode (a historical "" is never rewritten to "both").
+        if ForceSidePolicy.showsSideSelector(activeSideMode) {
+            HStack(spacing: 2) {
+                ForEach(sideChoices, id: \.self) { value in
+                    sideSegment(value)
+                }
+            }
         }
     }
 
-    private func sideSegment(_ value: String, label: String) -> some View {
+    private func sideSegment(_ value: String) -> some View {
         let selected = side == value
         let accent = WatchPalette.accent(WatchDesignTokens.primary, reducedLuminance: isLuminanceReduced)
         return Button {
-            // SL-585 follow-up: L|R are the only offered sides on the watch
-            // now (the chooser's list is gone; "both"/unspecified stay
-            // web-only). A LEGACY persisted "both"/"" renders with neither
-            // segment selected and is rewritten only here, on an explicit
-            // user tap — never silently on appear. Tapping the already-
-            // selected segment is a no-op: clearing back to unspecified is
-            // deliberately not offered.
+            // Tapping the already-selected segment is a no-op: clearing back
+            // to unspecified is deliberately not offered.
             guard side != value else { return }
             side = value
         } label: {
-            Text(label)
+            Text(sideSegmentLabel(value))
                 .font(.system(size: 12, weight: selected ? .heavy : .semibold, design: .rounded))
                 .foregroundStyle(selected ? WatchPalette.textPrimary : WatchPalette.textTertiary)
                 .frame(width: 24, height: 28)
@@ -548,10 +609,28 @@ struct ForceGaugeView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(value == "left" ? "Left side" : "Right side")
+        .accessibilityLabel(sideSegmentAccessibilityLabel(value))
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("force-main-side-\(value)")
+    }
+
+    private func sideSegmentLabel(_ value: String) -> String {
+        switch value {
+        case ForceSidePolicy.left: return "L"
+        case ForceSidePolicy.right: return "R"
+        case ForceSidePolicy.both: return "B"
+        default: return value
+        }
+    }
+
+    private func sideSegmentAccessibilityLabel(_ value: String) -> String {
+        switch value {
+        case ForceSidePolicy.left: return "Left side"
+        case ForceSidePolicy.right: return "Right side"
+        case ForceSidePolicy.both: return "Both sides"
+        default: return value
+        }
     }
 
     /// Row 2: connection state (pill, with session rep count and low-battery
@@ -680,9 +759,9 @@ struct ForceGaugeView: View {
     // "Connected" chip, disconnect) is either folded into that one card,
     // demoted to a compact top-right context action, or made
     // passive/below-the-fold — see #541's icon-first rule for the same
-    // move. Hands-free arming keeps its exact behavior (TindeqManager owns
-    // it untouched); only its position and the "Free hold" fallback's
-    // visual weight change here.
+    // move. #683: the gauge arms hands-free automatically on connect (the
+    // always-armed resting state), so there is no separate arm button or
+    // mode toggle to place; the ready card is a passive status.
     //
     // Round-1 review (SL-537): every current Watch size measures as
     // `isMicroSetupSize` here once the nav bar is subtracted, so this no
@@ -697,25 +776,25 @@ struct ForceGaugeView: View {
     // No container-level `.accessibilityIdentifier` here — see
     // `GuidedForceRunnerView`'s note on this exact footgun: on this
     // device+OS an identifier on a container silently overwrites every
-    // descendant's own identifier (Free hold, Arm hands-free, disconnect
-    // all reported back as this container's ID during this redesign's own
+    // descendant's own identifier (several `force-*` controls were all
+    // reported back as this container's ID during this redesign's own
     // testing). Every control below already carries its own unique
     // `force-*` identifier, so no container ID is needed.
     @ViewBuilder
     private func setupContent() -> some View {
         VStack(spacing: 3) {
             // SL-584: the whole one-page primary path — selector row,
-            // connection row, the ready card and the start-mode toggle —
-            // is the no-scroll guarantee: cap Dynamic Type here exactly
-            // like the old micro rows did, so an accessibility text size
-            // cannot push the primary start below the fold. Everything
-            // below (Free hold first, then banners) stays free to scale
-            // and may scroll, same as before this redesign.
+            // connection row and the ready card — is the no-scroll
+            // guarantee: cap Dynamic Type here exactly like the old micro
+            // rows did, so an accessibility text size cannot push the
+            // primary start below the fold. Everything below (the guided
+            // start, then banners) stays free to scale and may scroll, same
+            // as before this redesign. (#683 removed the start-mode toggle —
+            // free hold is always armed, so there is nothing to toggle.)
             Group {
                 selectorRow
                 connectionRow
                 readyCard
-                startModeToggle
             }
             .environment(\.dynamicTypeSize, .medium)
             secondaryContent
@@ -744,51 +823,15 @@ struct ForceGaugeView: View {
                 onRetryTags: loadTags
             )
         } label: {
-            Image(systemName: WatchIconSymbol.forceContext)
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(WatchPalette.textSecondary)
-                .frame(width: 30, height: 30)
-                .background {
-                    Circle()
-                        .fill(Color.white.opacity(0.08))
-                        .overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 0.7))
-                }
-                // Inside the link's label, matching the shared primitives'
-                // hit-target contract.
-                .frame(
-                    minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
-                    minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
-                )
-                .contentShape(Rectangle())
+            // Reuses the shared compact circular glyph so this settings entry
+            // stays in lockstep with `WatchIconButton` (circle + 44pt target),
+            // not a one-off styling copy (#541).
+            WatchIconGlyph(systemImage: WatchIconSymbol.forceContext)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Exercise and protocol")
         .accessibilityHint("Choose exercise, side and protocol")
         .accessibilityIdentifier("force-context-button")
-    }
-
-    /// Q2/Q3: the small link that flips the connected ready card between
-    /// arm-hands-free (the default) and classic tap-to-start. The toggle
-    /// itself never starts or arms anything; the preference is per-launch
-    /// (`TindeqManager.preferTapToStart`, not persisted).
-    @ViewBuilder
-    private var startModeToggle: some View {
-        if visibleStatus == .connected && !tindeq.handsFreeRequested {
-            Button {
-                tindeq.preferTapToStart.toggle()
-            } label: {
-                Text(tindeq.preferTapToStart ? "Use hands-free" : "Use tap-to-start")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(WatchPalette.textTertiary)
-                    // Inside the label — a frame chained after `Button`
-                    // grows only the layout box, not the tappable region.
-                    .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Switches how a measurement starts; never starts one")
-            .accessibilityIdentifier("force-start-mode-toggle")
-        }
     }
 
     /// Round-1 review finding 1 (BLOCKER): a movement protocol is runnable
@@ -801,14 +844,11 @@ struct ForceGaugeView: View {
     /// sensor (a static hold) or the protocol can't run on watch at all.
     @ViewBuilder
     private var readyCard: some View {
-        if visibleStatus == .connected && tindeq.handsFreeRequested {
+        if visibleStatus == .connected {
+            // #683: connecting a gauge ALWAYS arms free hold, so the ready
+            // state is a passive status card ("pull to start"), never an
+            // arm button or a tap-to-start toggle.
             armedReadyCard
-        } else if visibleStatus == .connected && !tindeq.preferTapToStart {
-            // SL-584: hands-free is the default start affordance once
-            // connected; the toggle below the card flips to tap-to-start.
-            armHandsFreeCard
-        } else if visibleStatus == .connected {
-            startReadyCard
         } else if isPresentingConnecting {
             connectingCard
         } else if selectedStartEligibility == .allowed && !noExerciseSelected {
@@ -826,35 +866,76 @@ struct ForceGaugeView: View {
 
     /// SL-585: `""` IS the free-hold selection — there is no refused
     /// "Pick an exercise" state any more. With nothing selected the primary
-    /// card arms (or starts) an untagged free hold; picking a chip switches
-    /// to the tagged flow.
+    /// card is the always-armed untagged free hold; picking a chip switches
+    /// to the tagged flow and reveals the guided-protocol start.
     private var noExerciseSelected: Bool {
         tag.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// The default connected primary (SL-584): tap ARMS hands-free — the
-    /// explicit tap the accidental-start guard requires; auto-connect never
-    /// arms. With no exercise picked this is the free-hold primary (SL-585):
-    /// same arm, untagged rep — the dead-end refusal is gone.
-    private var armHandsFreeCard: some View {
-        let refused = tindeq.saving
-        return Button { tindeq.armHandsFree() } label: {
-            readyCardBody(
-                token: WatchDesignTokens.primary,
-                status: noExerciseSelected ? "Arm hands-free · Free hold" : "Arm hands-free",
-                symbol: "hand.raised.fill"
-            )
+    private var activeTag: String {
+        tag.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// #543 (slice 3): the side-applicability policy for the active exercise.
+    /// The single source of truth is `ForceSidePolicy`; views never hardcode a
+    /// mode→side mapping. A tag not yet seen in the registry (or a free hold)
+    /// reads as the default — every side valid, pre-#543 behavior.
+    private var activeSideMode: ForceSideMode {
+        guard !activeTag.isEmpty else { return .defaultMode }
+        return tindeq.tagCurves[activeTag]?.sideMode ?? .defaultMode
+    }
+
+    /// The concrete side choices the active exercise offers, in display order.
+    /// `bilateral_only` yields just `["both"]` — shown as a single selected
+    /// "Both" so it stays explicit rather than implicit.
+    private var sideChoices: [String] {
+        ForceSidePolicy.allowedConcreteSides(activeSideMode)
+    }
+
+    /// #543: the canonical side to stamp on a NEW rep under the active mode.
+    /// Distinct from `normalizeSide`, which keeps `""` as "not chosen yet":
+    /// the WATCH stamps the live side directly at save time, so a
+    /// bilateral-only exercise's unchosen side must become "both", and a
+    /// non-sided exercise must record the no-side value.
+    private var recordedSide: String {
+        ForceSidePolicy.recordedSide(activeSideMode, side)
+    }
+
+    /// Restore the remembered side for the active exercise (or the legacy
+    /// global last-side for a free hold) before normalizing.
+    private func restoreRememberedSide() {
+        if activeTag.isEmpty {
+            if side.isEmpty {
+                side = UserDefaults.standard.string(forKey: LAST_SIDE_KEY) ?? ""
+            }
+            return
         }
-        .buttonStyle(.plain)
-        .disabled(refused)
-        .opacity(refused ? 0.52 : 1)
-        .accessibilityLabel("Arm hands-free")
-        .accessibilityHint(
-            noExerciseSelected
-                ? "Arms the gauge to start an untagged free hold when you pull"
-                : "Arms the gauge to start when you pull"
+        side = ForceSideMemory.restoreValidSide(
+            mode: activeSideMode,
+            name: activeTag
         )
-        .accessibilityIdentifier("force-arm-hands-free")
+    }
+
+    /// #543: nudge a stale/legacy side onto the active exercise's valid set.
+    /// A historical empty side stays empty (never reinterpreted as `both`);
+    /// a side that is simply invalid under the mode falls back to the mode's
+    /// canonical state. Runs on exercise selection and on any mode change.
+    private func normalizeSideForMode() {
+        let normalized = recordedSide
+        if normalized != side {
+            side = normalized
+        }
+        persistRememberedSide()
+    }
+
+    /// Persist the active side per-exercise so the next selection restores a
+    /// valid, non-leaking value; a free hold keeps the legacy global key.
+    private func persistRememberedSide() {
+        if activeTag.isEmpty {
+            UserDefaults.standard.set(side, forKey: LAST_SIDE_KEY)
+            return
+        }
+        ForceSideMemory.store(side: side, for: activeTag)
     }
 
     /// Auto-connect in flight (first ~8s): passive, not a control.
@@ -864,21 +945,17 @@ struct ForceGaugeView: View {
             .accessibilityIdentifier("force-connecting-card")
     }
 
-    /// Tap-to-start mode. With an exercise selected this starts the guided
-    /// protocol exactly as shipped; with nothing selected (SL-585, only
-    /// reachable while connected) the tap starts a manual untagged free
-    /// hold — `tindeq.start()`, the same action the below-the-fold Free
-    /// hold button has always run, with the same `""` tag semantics.
+    /// Disconnected cadence-only Start: a movement protocol is runnable
+    /// without a Progressor, so this card remains the primary when a device
+    /// never answered (or none was sought). #683: connected free hold is
+    /// always armed, so this Start card is only ever the disconnected
+    /// cadence-only path — it enters the guided protocol, not a free hold.
     private var startReadyCard: some View {
         let eligible = !tindeq.saving
             && !guidedForceRunner.isActive
-            && (noExerciseSelected || selectedStartEligibility == .allowed)
+            && selectedStartEligibility == .allowed
         return Button {
-            if noExerciseSelected {
-                tindeq.start()
-            } else {
-                startSelectedProtocol()
-            }
+            startSelectedProtocol()
         } label: {
             readyCardBody(
                 token: WatchDesignTokens.primary,
@@ -889,23 +966,23 @@ struct ForceGaugeView: View {
         .buttonStyle(.plain)
         .disabled(!eligible)
         .opacity(eligible ? 1 : 0.52)
-        .accessibilityLabel(noExerciseSelected ? "Start free hold" : "Start selected protocol")
-        .accessibilityHint(noExerciseSelected ? "Starts one untimed free hold" : startHint)
+        .accessibilityLabel("Start selected protocol")
+        .accessibilityHint(startHint)
         .accessibilityIdentifier("force-start-selected")
     }
 
+    /// #683: the connected resting state — always-armed free hold, so this
+    /// card is a passive status (pull-to-start), not a dismissible chip.
+    /// The "Armed" state lives on the gauge itself; there is no longer a
+    /// tap-to-disarm control to remove.
     private var armedReadyCard: some View {
-        Button { tindeq.cancelHandsFree() } label: {
-            readyCardBody(
-                token: WatchDesignTokens.success,
-                status: tindeq.saving ? "Saving…" : "Armed — pull to start"
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(tindeq.saving)
-        .accessibilityLabel("Hands-free mode")
-        .accessibilityHint("Tap to disarm hands-free mode")
-        .accessibilityIdentifier("force-hands-free-armed")
+        readyCardBody(
+            token: WatchDesignTokens.primary,
+            status: "Armed — pull to start",
+            symbol: "hand.raised.fill"
+        )
+        .accessibilityLabel("Free hold, armed")
+        .accessibilityIdentifier("force-armed-ready")
     }
 
     private var connectReadyCard: some View {
@@ -979,26 +1056,16 @@ struct ForceGaugeView: View {
         }
     }
 
-    /// The clear, explicit manual fallback (#537 AC-3) for the TAGGED flow —
-    /// with an exercise selected, this starts a tagged untimed hold beside
-    /// the guided primary. With nothing selected it is hidden (SL-585): the
-    /// primary card IS free hold then, and duplicating it below the fold
-    /// would be noise. The old empty-tag disable is gone with the refusal
-    /// state itself.
-    private var freeHoldButton: some View {
-        Button("Free hold") { tindeq.start() }
-            .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
-            .disabled(tindeq.saving)
-            .accessibilityLabel("Free hold")
-            .accessibilityHint("Starts one untimed force hold")
-            .accessibilityIdentifier("force-free-hold")
-    }
-
     private func startSelectedProtocol() {
+        // #543: the run/arm path stamps the canonical recorded side for the
+        // active exercise's mode, never the raw selector value — a stale or
+        // invalid side is corrected deterministically at start, not persisted
+        // as-is.
         guidedForceRunner.start(
             protocolValue: protocolCatalog.selected,
             tag: tag,
-            side: side,
+            side: recordedSide,
+            sideMode: activeSideMode,
             manager: tindeq
         )
     }
@@ -1014,17 +1081,24 @@ struct ForceGaugeView: View {
         }
     }
 
-    /// Everything below the no-scroll primary path: Free hold first (the
-    /// manual fallback, approved design Q6), then warnings and hints.
-    /// Reachable by scrolling, same acceptance the pre-#537 design already
-    /// gave its secondary controls. SL-584 removals: the "Arm hands-free"
-    /// button (arming IS the primary card now), the passive connection
-    /// footer (status lives in the connection row's pill), and the separate
-    /// disconnect (unified into the finish flag).
+    /// Everything below the no-scroll primary path: the explicit guided
+    /// protocol start (while connected), then warnings and hints. Reachable
+    /// by scrolling, same acceptance the pre-#537 design already gave its
+    /// secondary controls. #683: the arm and tap-to-start controls are gone —
+    /// connecting always arms free hold, so the only connected secondary
+    /// action is entering a guided protocol.
     @ViewBuilder
     private var secondaryContent: some View {
-        if visibleStatus == .connected && !tindeq.handsFreeRequested && !noExerciseSelected {
-            freeHoldButton
+        // #683: with free hold always-armed on connect, a guided protocol is
+        // an explicit secondary action the user enters (and then exits) — a
+        // "screen", not the resting state. This button renders even while
+        // hands-free is armed (the old `!tindeq.handsFreeRequested` gate is
+        // dropped) so guided remains reachable once the gauge is connected.
+        if visibleStatus == .connected,
+           !noExerciseSelected,
+           !guidedForceRunner.isActive,
+           selectedStartEligibility == .allowed {
+            guidedStartButton
         }
 
         if let error = guidedForceRunner.errorMessage {
@@ -1074,6 +1148,31 @@ struct ForceGaugeView: View {
         }
     }
 
+    /// The connected secondary action that enters the guided protocol screen.
+    /// While the runner is active the Force screen is replaced by
+    /// `GuidedForceRunnerView` (RootView), which suspends free hold entirely.
+    private var guidedStartButton: some View {
+        Button {
+            startSelectedProtocol()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13, weight: .bold))
+                Text(startHint)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.primary))
+        .disabled(tindeq.saving)
+        .accessibilityLabel("Start selected protocol")
+        .accessibilityHint(startHint)
+        .accessibilityIdentifier("force-guided-start")
+    }
+
     @ViewBuilder
     private var noSensorRow: some View {
         ViewThatFits(in: .horizontal) {
@@ -1118,6 +1217,9 @@ struct ForceGaugeView: View {
 
     @ViewBuilder
     private func measuringContent(availableSize: CGSize) -> some View {
+        if isLuminanceReduced {
+            reducedLuminanceMeasuringContent()
+        } else {
         let currentKg = fixtureVisual?.currentKg ?? tindeq.currentKg
         let peakKg = fixtureVisual?.peakKg ?? tindeq.peakKg
         let elapsedS = fixtureVisual?.elapsedS ?? tindeq.elapsedMs / 1000
@@ -1177,7 +1279,7 @@ struct ForceGaugeView: View {
                 .minimumScaleFactor(0.7)
         }
 
-        // The live screen is intentionally non-scrolling so Stop & Save can
+        // The live screen is intentionally non-scrolling so "Save now" can
         // never move out of reach mid-pull. Larger watches have room for a
         // dedicated trace; 40mm renders the same samples behind the readout.
         if !isMicroSetupSize(availableSize) {
@@ -1185,8 +1287,63 @@ struct ForceGaugeView: View {
                 .frame(minHeight: 28, maxHeight: 50)
         }
 
-        Button("Stop & Save") { tindeq.stopAndSave(reason: .userTapped) }
+        // #683: the old save control is demoted to "Save now" — it ends ONE
+        // rep, not the session; release-to-slack still saves + re-arms.
+        Button("Save now") {
+            tindeq.stopAndSave(reason: .userTapped)
+            // #540: a save confirmation makes a dim pull's end trustworthy.
+            forceRuntimeCoordinator.acknowledge(.save)
+        }
             .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.primary))
             .accessibilityIdentifier("force-stop-save")
+        }
+    }
+
+    /// #540: the minimal reduced-luminance Force frame.  When watchOS dims
+    /// (Always On / wrist-down) we render only the essential live numbers
+    /// (current force, peak, hold time, side, terse state word) and drop the
+    /// decorative sparkline / header chip and the nonessential Save control.
+    private func reducedLuminanceMeasuringContent() -> some View {
+        let spec = forceRuntimeCoordinator.reducedLuminanceSpec
+        let currentKg = fixtureVisual?.currentKg ?? tindeq.currentKg
+        let peakKg = fixtureVisual?.peakKg ?? tindeq.peakKg
+        let elapsedS = fixtureVisual?.elapsedS ?? tindeq.elapsedMs / 1000
+        let displaySide = sideLabel(side)
+        return VStack(spacing: 5) {
+            Text(spec.stateWord.uppercased())
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(WatchPalette.textSecondary)
+            if spec.showsCurrentForce {
+                (Text(String(format: "%.1f", currentKg))
+                    .font(.system(size: 46, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                + Text(" kg").font(.footnote).foregroundStyle(WatchPalette.textSecondary))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            if spec.showsPeakForce {
+                Text("peak \(String(format: "%.1f", peakKg))")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(WatchPalette.textSecondary)
+            }
+            if spec.showsPhaseCountdown {
+                (Text(String(format: "%.1f", elapsedS))
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                + Text(" s").font(.footnote).foregroundStyle(.secondary))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            if spec.showsSide, !displaySide.isEmpty, displaySide != "—" {
+                Text(displaySide)
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(WatchPalette.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.horizontal, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("force-reduced-luminance")
     }
 }

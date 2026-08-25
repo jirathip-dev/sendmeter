@@ -151,6 +151,30 @@ final class WorkoutManager: NSObject {
     /// and sequence. Allocation happens synchronously on the manager's state
     /// owner before either transport task can suspend.
     private var liveMirrorSequence = LiveMirrorSequence(runId: UUID())
+    /// #614: direct-send failure bookkeeping for the CURRENT run. Only ever
+    /// touched on the main thread — the WC reply/error handlers hop to main,
+    /// and every `pushBeat` caller is main — matching the existing
+    /// unsynchronized `liveMirrorSequence` access. A success (the phone's
+    /// ack) resets `consecutiveFailures` so a healthy stretch never eats
+    /// into the retry cap; `retryInFlight` dedupes non-terminal re-sends to
+    /// one pending at a time.
+    private var directSendConsecutiveFailures = 0
+    private var directRetryInFlight = false
+    /// #614 review F5: supersedes a pending retry when a terminal failure
+    /// pre-empts it. Every scheduled closure captures the token at schedule
+    /// time and bails when the live token has moved on, so an End failure
+    /// cancels a pending `count`/`phase` retry in favour of its own.
+    private var directRetryToken = 0
+    /// #614 review F5: terminal (End) re-sends this run — a separate budget
+    /// from `directSendConsecutiveFailures` (see `DirectBeatRetryPolicy`).
+    private var directSendTerminalRetries = 0
+    /// Total direct-send failures this run (send error OR unreachable skip
+    /// on an ack-capable phone), reset at `start()`. Surfaced via the
+    /// end-of-workout Console breadcrumb. `internal` on purpose (review F9):
+    /// `WorkoutSavePathResetTests` injects a non-zero value and pins that
+    /// `start()` actually clears it — production only writes it from
+    /// `directSendFailed` (and reads it at `end()`).
+    var directSendFailures = 0
     private var liveSync: LiveWorkoutSync?
     private var fusionTick = 0
     /// Sample-timestamped, monotonic HR — see `HeartRateTimeline`'s doc
@@ -225,6 +249,13 @@ final class WorkoutManager: NSObject {
     var partialUploader: (ClimbWorkoutPartialUpsert) async -> Void = { partial in
         try? await Repo.flushPartialWorkout(partial)
     }
+    /// #615: the settle gate between an in-flight partial flush and the final
+    /// bundle upload — `stopRecording()` registers the partial task here and
+    /// the queue's upload waits on it, so End no longer blocks on the
+    /// network. Injectable so the app-target tests can assert the hold and
+    /// the blocking without touching the production singleton.
+    @ObservationIgnored
+    var partialSettleGate: WorkoutPartialSettleGate = .shared
     /// #481 review F8: extracted out of `phaseWarmer`'s default closure so
     /// the CONDITION — the thing that can regress (inverted, deleted by a
     /// well-meaning "no test-awareness in production code" tidy-up) — is
@@ -300,7 +331,7 @@ final class WorkoutManager: NSObject {
     // `testRootViewReadsWorkoutManagerFromEnvironmentNotState`
     // (`WorkoutOwnershipTests.swift`) — a NEW view needs its own such pin, or
     // its own `deinit` guard, not a free pass from this comment. `end()` (and
-    // `stopRecordingAndAwaitInFlightPartial()`) is the one real invalidation
+    // `stopRecording()`) is the one real invalidation
     // path for every view that follows the rule, and it already runs on
     // MainActor.
 
@@ -392,6 +423,11 @@ final class WorkoutManager: NSObject {
         fusionTick = 0
         workoutId = UUID()
         liveMirrorSequence = LiveMirrorSequence(runId: workoutId)
+        directSendFailures = 0
+        directSendConsecutiveFailures = 0
+        directRetryInFlight = false
+        directRetryToken = 0
+        directSendTerminalRetries = 0
         // #477: a previous workout's partial-flush bookkeeping must not
         // carry into this one — a leftover `partialFlushSuspended = true`
         // would silently disable durable flushing for the entire next
@@ -403,6 +439,14 @@ final class WorkoutManager: NSObject {
         partialFlushTask = nil
         partialFlushSuspended = false
         partialFlushEpoch &+= 1
+        // #615 review F3: deliberately NOT clearing the settle gate here —
+        // the previous run's held partial-flush task may still be in flight
+        // (a single request, up to ~60s), and `hold(nil)` would let that
+        // run's final-bundle drain (delayed behind another in-flight upload)
+        // race ahead of its own partial, reopening #477's partial-overwrites-
+        // final. A stale held task settles itself — bounded by the request
+        // timeout — so leaving it is strictly safer; the next
+        // `stopRecording()` re-holds with this run's own partial.
 
         do {
             try await requestAuthorization()
@@ -461,7 +505,7 @@ final class WorkoutManager: NSObject {
                 phaseSince: start, restTargetS: restTargetS
             )
         } catch {
-            errorMsg = error.localizedDescription
+            errorMsg = ErrorText.message(for: .workoutStartFailed)
         }
     }
 
@@ -539,39 +583,187 @@ final class WorkoutManager: NSObject {
             )
         }
         // Bluetooth-fast path: same shape as the live_workouts row (dates as
-        // epoch seconds). Fire-and-forget; the phone plugin forwards it to
-        // the WebView, which keeps whichever source is newest.
+        // epoch seconds). Acknowledged (#614): the phone replies `[:]` on
+        // receipt, and a failed/unreachable discrete transition gets one
+        // short automatic re-send instead of silently waiting out the ~5s
+        // heartbeat. The Supabase path above remains the durable fallback.
+        sendDirectBeat(
+            beat: beat, terminal: terminal, started: started,
+            hr: hr, count: count, kcal: kcal, gain: gain,
+            climbing: climbing, cs: cs, rs: rs, rt: rt
+        )
+    }
+
+    /// Builds and sends one direct WatchConnectivity workout beat. Kept out
+    /// of `pushBeat` (and shared with `retryDirectBeat`) so a retry can
+    /// re-send the CURRENT snapshot with a fresh monotonic sequence without
+    /// re-touching the Supabase path.
+    private func sendDirectBeat(
+        beat: LiveMirrorBeat,
+        terminal: Bool,
+        started: Date,
+        hr: Double?,
+        count: Int,
+        kcal: Double?,
+        gain: Double,
+        climbing: Bool,
+        cs: Date?,
+        rs: Date?,
+        rt: Int?
+    ) {
         let session = WCSession.default
-        if session.activationState == .activated, session.isReachable {
-            var msg: [String: Any] = [
-                "kind": "liveWorkout",
-                "status": terminal ? "ended" : "live",
-                "started_at": started.timeIntervalSince1970,
-                "attempt_count": terminal ? 0 : count,
-                "climbing": climbing,
-                "elevation_gain_m": gain,
-                "updated_at": Date().timeIntervalSince1970,
-            ]
-            msg.merge(beat.wireFields) { _, new in new }
-            if let rt { msg["rest_target_s"] = rt }
-            // #477 review F1: omitting the key here (rather than sending
-            // NSNull()) is deliberately left as-is — `messageToLive` on the
-            // phone reads `msg.hr ?? null` in JS, where an absent key is
-            // already `undefined`, and `undefined ?? null` is `null`. This
-            // wire format already has no analog of the LiveWorkoutUpsert bug
-            // above. NSNull() is not documented as a valid WCSession
-            // property-list value and risks an invalid-argument crash on
-            // send — not worth it to make two already-correct paths look
-            // more symmetric.
-            if let hr { msg["hr"] = hr }
-            msg["active_kcal"] = kcal
-            if let cs { msg["climbing_since"] = cs.timeIntervalSince1970 }
-            if let rs { msg["rest_started_at"] = rs.timeIntervalSince1970 }
-            // #530: this run's immutable owner (#529), never re-read from
-            // `userIdProvider()` here — see `ownerUserId`'s doc comment.
-            msg = LiveMirrorOwnership.stamped(msg, ownerUserId: ownerUserId)
-            session.sendMessage(WatchBuild.stamp(msg), replyHandler: nil, errorHandler: nil)
+        guard session.activationState == .activated else { return }
+        var msg: [String: Any] = [
+            "kind": "liveWorkout",
+            "status": terminal ? "ended" : "live",
+            "started_at": started.timeIntervalSince1970,
+            "attempt_count": terminal ? 0 : count,
+            "climbing": climbing,
+            "elevation_gain_m": gain,
+            "updated_at": Date().timeIntervalSince1970,
+        ]
+        msg.merge(beat.wireFields) { _, new in new }
+        if let rt { msg["rest_target_s"] = rt }
+        // #477 review F1: omitting the key here (rather than sending
+        // NSNull()) is deliberately left as-is — `messageToLive` on the
+        // phone reads `msg.hr ?? null` in JS, where an absent key is
+        // already `undefined`, and `undefined ?? null` is `null`. This
+        // wire format already has no analog of the LiveWorkoutUpsert bug
+        // above. NSNull() is not documented as a valid WCSession
+        // property-list value and risks an invalid-argument crash on
+        // send — not worth it to make two already-correct paths look
+        // more symmetric.
+        if let hr { msg["hr"] = hr }
+        msg["active_kcal"] = kcal
+        if let cs { msg["climbing_since"] = cs.timeIntervalSince1970 }
+        if let rs { msg["rest_started_at"] = rs.timeIntervalSince1970 }
+        // #530: this run's immutable owner (#529), never re-read from
+        // `userIdProvider()` here — see `ownerUserId`'s doc comment.
+        msg = LiveMirrorOwnership.stamped(msg, ownerUserId: ownerUserId)
+        let stamped = WatchBuild.stamp(msg)
+        let runId = beat.runId
+        // #614 review F6: the acknowledged-send contract is two-sided — the
+        // phone only replies `[:]` on builds that carry the `ack_capable`
+        // relay stamp. An OLD phone build never replies, so an ack'd send
+        // would time out, be counted as a failure on a message that was
+        // actually delivered, and trigger duplicate re-sends. Keep the exact
+        // pre-#614 fire-and-forget behavior for a phone we have not proven
+        // ack-capable.
+        let ackCapable = WatchSessionStore.shared.ackCapable
+        if session.isReachable {
+            if ackCapable {
+                // #614: replyHandler = the phone's ack (resets the failure
+                // backoff so a healthy stretch never eats into the retry
+                // cap); errorHandler = a dropped/disconnected send, which
+                // schedules the bounded retry for a discrete transition.
+                // Both handlers hop to main because the bookkeeping below is
+                // main-only. `started` rides the failure path so a retry
+                // re-sends the run's REAL start time, never a freshly-read
+                // `Date()` after `end()` cleared `startDate`.
+                session.sendMessage(
+                    stamped,
+                    replyHandler: { [weak self] _ in
+                        DispatchQueue.main.async { self?.directSendSucceeded(runId: runId) }
+                    },
+                    errorHandler: { [weak self] _ in
+                        DispatchQueue.main.async { self?.directSendFailed(runId: runId, event: beat.event, started: started) }
+                    }
+                )
+            } else {
+                session.sendMessage(stamped, replyHandler: nil, errorHandler: nil)
+            }
+        } else if ackCapable {
+            // Not reachable right now — treat as a failed direct send so the
+            // discrete transition still gets its one retry once the link is
+            // back, instead of silently parking until the next heartbeat.
+            // (An old phone gets no failure counting at all, matching its
+            // pre-#614 behavior.)
+            directSendFailed(runId: runId, event: beat.event, started: started)
         }
+    }
+
+    /// The phone acknowledged the direct beat. `WCSession` may report the
+    /// same send's success after a failure callback raced in — harmless:
+    /// resetting the counter is idempotent.
+    private func directSendSucceeded(runId: UUID) {
+        guard liveMirrorSequence.runId == runId else { return }
+        directSendConsecutiveFailures = 0
+    }
+
+    /// A direct send failed (or was skipped as unreachable on an ack-capable
+    /// phone). Counts the failure and, under the retry policy, schedules ONE
+    /// re-send of the current snapshot shortly. Run-guarded: a failure
+    /// callback that arrives after a new run began must not act for the old
+    /// run, and the retry must not fire once the run it belonged to is gone
+    /// (a new run has a new `liveMirrorSequence.runId`). `started` is the
+    /// failed beat's run start, carried through so a late re-send never
+    /// stamps a wrong started-at.
+    ///
+    /// #614 review F5: a TERMINAL failure pre-empts a pending non-terminal
+    /// retry (bumping `directRetryToken` invalidates its closure) and bypasses
+    /// the consecutive-failure cap via its own budget — the End beat is the
+    /// one with no later heartbeat to recover it, so it must never be starved
+    /// by a `count` retry that grabbed the single slot first.
+    private func directSendFailed(runId: UUID, event: LiveMirrorEvent, started: Date) {
+        guard liveMirrorSequence.runId == runId else { return }
+        directSendFailures += 1
+        directSendConsecutiveFailures += 1
+        guard DirectBeatRetryPolicy.shouldRetry(
+            event: event,
+            consecutiveFailures: directSendConsecutiveFailures,
+            retryInFlight: directRetryInFlight,
+            endRetries: directSendTerminalRetries
+        ) else { return }
+        if event.isTerminal { directSendTerminalRetries += 1 }
+        directRetryToken &+= 1
+        directRetryInFlight = true
+        let token = directRetryToken
+        let runIdAtSchedule = runId
+        let retryEvent = event
+        let retryStarted = started
+        DispatchQueue.main.asyncAfter(deadline: .now() + DirectBeatRetryPolicy.retryDelayS) {
+            [weak self] in
+            guard let self else { return }
+            // A later (higher-priority) failure superseded this retry — e.g.
+            // End pre-empting a pending count retry. It owns the slot now.
+            guard self.directRetryToken == token else { return }
+            self.directRetryInFlight = false
+            guard self.liveMirrorSequence.runId == runIdAtSchedule else { return }
+            self.retryDirectBeat(event: retryEvent, started: retryStarted)
+        }
+    }
+
+    /// Re-send the CURRENT workout state over WatchConnectivity only (the
+    /// original beat already went to Supabase). Allocates a fresh monotonic
+    /// sequence — a phone that saw the failed beat's sequence still accepts
+    /// this one, and terminal dominance on the phone rejects it if the run
+    /// already ended there. Direct-only: avoids a duplicate Supabase write.
+    ///
+    /// #614 round-2 N2: a TERMINAL retry fires even when `liveSync` is
+    /// already gone — `end()` tears it down fast when `markEnded()` 401s
+    /// (the #472 scenario), which is exactly when the durable fallback also
+    /// failed and the direct terminal beat is the last hope. The retry
+    /// closure's runId guard still prevents it acting on a newer run, and the
+    /// phone's terminal dominance keeps it from resurrecting the ended run.
+    private func retryDirectBeat(event: LiveMirrorEvent, started: Date) {
+        if !DirectBeatRetryPolicy.mayRetryWithoutLiveSync(event: event) {
+            // A non-terminal retry needs the live sync actor — once end() has
+            // torn it down there is no live state worth re-sending.
+            guard liveSync != nil else { return }
+        }
+        guard let beat = liveMirrorSequence.nextIfAvailable(event: event) else { return }
+        let terminal = beat.terminal
+        sendDirectBeat(
+            beat: beat, terminal: terminal, started: started,
+            hr: terminal ? nil : heartRate,
+            count: liveAttempts,
+            kcal: terminal ? nil : activeKcal,
+            gain: terminal ? 0 : detector.totalElevationGainM,
+            climbing: terminal ? false : detector.snapshot.isClimbing,
+            cs: terminal ? nil : climbingSince,
+            rs: terminal ? nil : restStartedAt,
+            rt: terminal ? nil : restTargetS
+        )
     }
 
     // MARK: Rest alarm (#476 F5: hoisted out of WorkoutLiveView)
@@ -646,19 +838,27 @@ final class WorkoutManager: NSObject {
 
         guard let session, let builder, let startDate else { return nil }
 
-        // #477 review F2: stop the workout FIRST, and only then await the
-        // in-flight partial — extracted into its own method (not inlined
+        // #477 review F2: stop the workout FIRST, and only then do the local
+        // HealthKit finalization — extracted into its own method (not inlined
         // here) specifically so this ordering is independently testable.
         // Constructing a real HKWorkoutSession/HKLiveWorkoutBuilder is
         // impossible off-device, so `end()` itself can never be driven past
-        // the guard above in this test host; `stopRecordingAndAwaitInFlightPartial()`
-        // needs neither, so SendLogWatchTests calls it directly. See its doc
-        // comment for why the ordering matters: a Timer on the main run loop
-        // is NOT paused by a suspended MainActor async function, so awaiting
-        // first (the original #477 fix) kept the workout fully live —
+        // the guard above in this test host; `stopRecording()` needs neither,
+        // so SendLogWatchTests calls it directly. See its doc comment for why
+        // the ordering matters: a Timer on the main run loop is NOT paused by
+        // a suspended MainActor async function, so awaiting first (the
+        // original #477 fix's mistake) kept the workout fully live —
         // rawTrace growing, elapsed advancing, detector ticking, the phone
         // mirror still told "live" — for as long as the partial upload took.
-        let endDate = await stopRecordingAndAwaitInFlightPartial()
+        //
+        // #615: `stopRecording()` no longer awaits the in-flight partial at
+        // all — it registers the partial on `partialSettleGate`, and the
+        // queue's final upload waits there instead. The End tap → durable
+        // queue commit → phone notification path is now pure local work plus
+        // HealthKit finalization; the #477 ordering guarantee (a late partial
+        // must never overwrite the final row) is preserved on the upload
+        // path, where the race actually lives.
+        let endDate = await stopRecording()
 
         session.end()
         do {
@@ -666,7 +866,7 @@ final class WorkoutManager: NSObject {
             try await builder.finishWorkout() // saves the workout to Health
         } catch {
             // Health save failure shouldn't lose the climbing data
-            errorMsg = error.localizedDescription
+            errorMsg = ErrorText.message(for: .workoutHealthSaveFailed)
         }
 
         let attempts = detector.finalize()
@@ -693,6 +893,14 @@ final class WorkoutManager: NSObject {
         if missingDateIntervalCount > 0 {
             Self.log.warning("HR quantity delivered with no mostRecentQuantityDateInterval() \(missingDateIntervalCount) time(s) this workout — readings discarded, not trusted (#477/#481)")
         }
+        // #614 review F9: the direct WC mirror failures are now observably
+        // surfaced (this breadcrumb), and only ever counted on a phone that
+        // participates in the acknowledged-send contract (F6) — an old phone
+        // build would otherwise make this count lie about link health.
+        let directSendFailures = directSendFailures
+        if directSendFailures > 0 {
+            Self.log.warning("\(directSendFailures) direct WC mirror send(s) failed this workout (#614)")
+        }
         let avgHR = builder.statistics(for: HKQuantityType(.heartRate))?
             .averageQuantity()?
             .doubleValue(for: .count().unitDivided(by: .minute()))
@@ -703,11 +911,13 @@ final class WorkoutManager: NSObject {
             .sumQuantity()?
             .doubleValue(for: .kilocalorie())
 
-        // Mark the live row ended — this runs before the confirm screen, so it
-        // covers both Save and Discard (no separate Discard hook needed).
-        await liveSync?.markEnded()
-        liveSync = nil
-
+        // The live row's terminal upsert is NOT awaited here any more
+        // (#615): the terminal direct beat already closed the phone mirror
+        // at `stopRecording()`, and the durable Supabase fallback runs after
+        // the save bundle is committed (see `save`), with its own durable
+        // retry handoff (`LiveWorkoutTerminalRetry`, #531) on failure.
+        // `liveSync` stays alive until `save` tears it down, so nothing
+        // re-derives or re-creates it.
         self.session = nil
         self.builder = nil
         self.startDate = nil
@@ -746,53 +956,55 @@ final class WorkoutManager: NSObject {
         )
     }
 
-    /// Stops everything that would otherwise keep recording, THEN awaits
-    /// whatever partial flush is already in flight. Order matters (#477
-    /// review F2): a `Timer` on the main run loop is not paused by a
-    /// suspended MainActor `async` function — the main thread just returns
-    /// to the run loop while this is parked, so if the await ran first,
-    /// `fusionTimer` would keep firing, `rawTrace` would keep growing,
-    /// `detector.ingest` would keep running, and `pushBeat()` would keep
-    /// telling the phone the workout is "live", all for as long as the
-    /// partial upload takes. Tearing down first closes that regardless of
-    /// how long the await takes.
+    /// Stops everything that would otherwise keep recording, emits the
+    /// terminal direct-mirror beat, and stamps the end date — WITHOUT waiting
+    /// on the network. Order matters (#477 review F2): a `Timer` on the main
+    /// run loop is not paused by a suspended MainActor `async` function — the
+    /// main thread just returns to the run loop while this is parked, so if
+    /// an await ran first, `fusionTimer` would keep firing, `rawTrace` would
+    /// keep growing, `detector.ingest` would keep running, and `pushBeat()`
+    /// would keep telling the phone the workout is "live", all for as long as
+    /// the partial upload takes. Tearing down first closes that regardless of
+    /// how long anything after takes.
+    ///
+    /// #615: the in-flight partial flush is handed to `partialSettleGate`
+    /// (synchronously, before this returns) instead of being awaited here —
+    /// the queue's upload of the final bundle waits on that gate, which
+    /// preserves #477's invariant (a partial that lands after the final row
+    /// would overwrite it with provisional data) without parking the End tap
+    /// behind a network call that can take up to 60s. The terminal
+    /// `live_workouts` upsert moved off this path too — it runs after the
+    /// durable queue commit in `save`, with the #531 durable retry handoff
+    /// for failures.
     ///
     /// Not `private`: `end()` can only reach this after a guard that needs a
     /// real `HKWorkoutSession`/`HKLiveWorkoutBuilder`, which this test host
     /// cannot construct (no HealthKit entitlement) — so `end()` itself can
     /// never be driven past that guard here. This method needs neither;
     /// SendLogWatchTests calls it directly to prove the ordering.
-    func stopRecordingAndAwaitInFlightPartial() async -> Date {
+    func stopRecording() async -> Date {
         fusionTimer?.invalidate()
         fusionTimer = nil
         cancelRestAlarm() // no more rest to alarm for once the workout is ending
         altimeter.stopRelativeAltitudeUpdates()
         motion.stopDeviceMotionUpdates()
         // Close the phone's WC mirror immediately. The same terminal beat is
-        // queued into the actor-backed Supabase path; the actor waits behind
-        // any in-flight telemetry so the durable row cannot be reopened.
+        // queued into the actor-backed Supabase path; the actor drains it in
+        // the background (and hands a failure to `LiveWorkoutTerminalRetry`),
+        // so the durable server-side row cannot be reopened by telemetry.
         pushBeat(event: .end)
-        // Stamped now — before the network wait below, not after it, so a
-        // slow partial can no longer inflate the saved duration.
+        // Stamped now — before any network wait, not after it, so a slow
+        // partial can no longer inflate the saved duration.
         let endDate = Date()
 
-        // #477: cancelling a detached Task after its request is already on
-        // the wire can't stop the server committing it, so this must AWAIT,
-        // not cancel. Deliberately UNBOUNDED: supabase-swift does not retry
-        // POSTs (`PostgrestBuilder.retryableMethods` excludes `.post`) and
-        // times a single request out at 60s on its own
-        // (`HTTPRequest`'s per-request timeout) — that third-party default
-        // is the real bound on how long this can park, not something this
-        // function imposes. A shorter, self-imposed timeout here would
-        // reopen the exact bug #477 closes: an abandoned-but-still-in-flight
-        // partial could still land on the server after the final row this
-        // method's caller is about to write, with nothing left holding it
-        // back. The workout itself is already fully torn down above by the
-        // time this suspends, so the only user-visible cost of the 60s is
-        // the End button staying disabled that long, not stale/growing data.
-        if let partialFlushTask {
-            _ = await partialFlushTask.value
-        }
+        // #615: register the in-flight partial (if any) on the settle gate.
+        // #477's "must AWAIT, not cancel" reasoning still stands — a
+        // cancelled detached Task can't stop the server committing a request
+        // already on the wire — but the wait now happens on the upload path
+        // (the queue's final-row upload cannot start until the partial has
+        // settled), not on the End path. A nil partial (none in flight)
+        // settles immediately.
+        partialSettleGate.hold(partialFlushTask)
         partialFlushTask = nil
         return endDate
     }
@@ -846,11 +1058,34 @@ final class WorkoutManager: NSObject {
     @MainActor
     private func save(_ bundle: WorkoutSaveBundle) async {
         let outcome = await OfflineQueue.shared.enqueue(bundle)
+
+        // The terminal `live_workouts` teardown runs whatever the outcome —
+        // the mirror must end even when the save bundle couldn't be
+        // persisted. Fired as a background task (#615): the terminal direct
+        // beat already closed the phone's WC mirror at `stopRecording()`;
+        // the actor's failure handoff to `LiveWorkoutTerminalRetry` (#531)
+        // is durable and runs inside the task. `liveSync` is deliberately
+        // captured before niling, so the task keeps the actor alive.
+        let liveSyncToEnd = liveSync
+        liveSync = nil
+        if let liveSyncToEnd {
+            Task { await liveSyncToEnd.markEnded() }
+        }
+
         guard outcome != .lost else {
             failedBundle = bundle
             ending = false
             WKInterfaceDevice.current().play(.failure)
             return
+        }
+
+        // #615: durable-before-notify — only now that the bundle is on disk
+        // (or uploaded directly) does the phone hear about the completed
+        // workout, so its pending row always has a durable bundle behind it
+        // to reconcile with. Pure policy in Core (`WorkoutCompletedNotify`),
+        // pinned on Linux CI.
+        if WorkoutCompletedNotify.shouldNotify(after: outcome) {
+            notifyWorkoutCompleted(bundle)
         }
 
         // Re-review R1: only clear THIS bundle's failure. `failedBundle` can
@@ -889,6 +1124,45 @@ final class WorkoutManager: NSObject {
         WKInterfaceDevice.current().play(.success)
         try? await Task.sleep(for: .seconds(1.6))
         justSaved = false
+    }
+
+    /// #615: tell the phone a workout completed, AFTER its save bundle is
+    /// durably queued. Only safe canonical summary fields + the stable ids
+    /// ride the wire (`WorkoutCompletedReport`) — no raw trace, no health
+    /// values — stamped with this run's immutable owner (#529) and the build/
+    /// queue-depth report keys. Best-effort: the phone renders a PENDING
+    /// session and realtime/server data reconciles it by session id, so a
+    /// lost notification costs latency, never data. `transferUserInfo`
+    /// delivers even when the phone app is backgrounded (the plugin stores
+    /// it for the WebView to drain); `sendMessage` is the live path. The
+    /// phone's ACK contract (#614) is deliberately not engaged — this is a
+    /// one-shot notification, not a beat with a retry budget.
+    private func notifyWorkoutCompleted(_ bundle: WorkoutSaveBundle) {
+        let session = WCSession.default
+        guard session.activationState == .activated else { return }
+        let summary = WorkoutCompletedReport.Summary(
+            sessionId: bundle.session.id,
+            workoutId: bundle.workout.id,
+            startedAt: bundle.workout.startedAt,
+            endedAt: bundle.workout.endedAt,
+            attemptCount: bundle.attempts.count,
+            durationMin: bundle.session.durationMin,
+            rpe: bundle.session.rpe,
+            phase: bundle.session.phase,
+            type: bundle.session.type,
+            typeLabel: bundle.session.typeLabel,
+            note: bundle.session.note,
+            rpeConfirmed: bundle.session.rpeConfirmed
+        )
+        var message = WorkoutCompletedReport.payload(summary: summary)
+        // #529: the run's immutable owner, never the currently-relayed
+        // account — same stamp as the live beats and the row itself.
+        message = LiveMirrorOwnership.stamped(message, ownerUserId: bundle.enqueuedUserId)
+        message = WatchBuild.stamp(message)
+        session.transferUserInfo(message)
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+        }
     }
 
     // MARK: Sensors
@@ -1218,7 +1492,7 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
             // over whatever workout is actually running by the time this
             // Task resumes on MainActor.
             guard workoutSession === self.session else { return }
-            self.errorMsg = error.localizedDescription
+            self.errorMsg = ErrorText.message(for: .workoutFailed)
         }
     }
 }

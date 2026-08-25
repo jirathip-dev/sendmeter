@@ -14,12 +14,13 @@ export const MOVEMENT_PROTOCOL_LABELS = Object.freeze({
   eccentric: ECCENTRIC_LABEL,
 } as const);
 
-/// A Progressor recording cannot run for more than 30 minutes. Reverse Action
+/// A Progressor recording cannot run for more than 10 minutes (#682, cut from
+/// 30). Reverse Action
 /// stores one continuous recording per set, so this is a per-set contract (the
 /// inter-set rest and the prepare countdown do not consume the recording
 /// buffer). Keep one second of headroom in normalization: a sample arriving
 /// exactly on the BLE cap can race the wall-clock boundary handler otherwise.
-export const TINDEQ_MAX_MOVEMENT_SET_S = 30 * 60;
+export const TINDEQ_MAX_MOVEMENT_SET_S = 10 * 60;
 const TINDEQ_SAFE_MOVEMENT_SET_S = TINDEQ_MAX_MOVEMENT_SET_S - 1;
 export const TINDEQ_MIN_MOVEMENT_CADENCE_S = 0.5;
 export const TINDEQ_MAX_MOVEMENT_CADENCE_S = 30;
@@ -71,7 +72,7 @@ export function movementSetExceedsTindeqCap(p: MovementPresetFields): boolean {
 /// Normalize a server/local-storage preset at every decode/runtime boundary.
 /// Historical rows remain untouched in Supabase, while the runtime drops only
 /// the tail reps that cannot fit the Progressor's recording window. This is
-/// deterministic and keeps the Watch from starting a set it will stop at 30m
+/// deterministic and keeps the Watch from starting a set it will stop at 10m
 /// without a matching guided boundary. The generic return preserves callers'
 /// richer row shape (id/name/targets) without duplicating this helper.
 export function normalizeMovementPreset<T extends MovementPresetFields>(p: T): T {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { LiveWorkout } from "../types";
-import type { LiveWorkoutSyncState } from "../hooks/useLiveWorkout";
+import type { LiveWorkoutSyncState } from "../lib/liveWorkoutMirror";
 
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -11,6 +11,17 @@ function fmtElapsed(ms: number): string {
     ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
     : `${m}:${String(sec).padStart(2, "0")}`;
 }
+
+/// Honest transport copy (#614): `watch-direct` and `server-fallback` name
+/// the last accepted message's transport; `temporarily-unreachable` means
+/// the row is older than one heartbeat cadence (neither path fresh) and the
+/// mirror is showing the last update; `unknown` must not read as healthy.
+const SYNC_COPY: Record<LiveWorkoutSyncState, string> = {
+  "watch-direct": "Instant watch link",
+  "server-fallback": "Catching up through the server",
+  "temporarily-unreachable": "Wrist link paused — showing the last update",
+  unknown: "Link state unknown",
+};
 
 /// Live mirror of the in-progress watch workout (SL-41) — heartbeat data
 /// from the live_workouts row, re-rendered every second for the clock.
@@ -78,9 +89,7 @@ export default function LiveWorkoutCard({
       </div>
 
       <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 8 }}>
-        {syncState === "watch-direct"
-          ? "Instant watch link"
-          : "Catching up through the server"}
+        {SYNC_COPY[syncState]}
       </div>
 
       <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>

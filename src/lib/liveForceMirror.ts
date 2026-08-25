@@ -7,11 +7,31 @@ import type {
   LiveMirrorEvent,
 } from "sendlog-auth-bridge";
 import { acceptsPacketOwner } from "./liveMirrorOwnership";
+import type { LiveMirrorRejection } from "./liveMirrorTelemetry";
 
 /// How long the beat may go quiet before the mirror hides. The watch beats
 /// ~2 Hz while measuring and on every status change; 8s of silence means the
 /// gauge screen closed, the watch app died, or the phone went unreachable.
 export const STALE_MS = 8_000;
+
+/// How long the phone may accept nothing (its OWN clock since the last
+/// accepted beat — `lastAcceptedAtMs`) before the Force mirror stops claiming
+/// a working link. Beats land ~2 Hz, so ~6 missed beats ≈ 3s; phone-local so
+/// device clock skew cannot trip it (#614 review F8). The mirror is still
+/// within `STALE_MS` here, so the beat remains visible but is labelled paused.
+export const FORCE_DIRECT_QUIET_MS = 3_000;
+
+/// Honest transport state for the Force mirror (#614 review F7):
+/// `watch-direct` while the last accepted beat is fresh, `temporarily-
+/// unreachable` while it is quiet but still within `STALE_MS`,
+/// `stale` once it has aged out (the mirror hides), and `unknown` when
+/// nothing is known or the run has ended. Unknown must never be presented as
+/// healthy.
+export type ForceMirrorSyncState =
+  | "watch-direct"
+  | "temporarily-unreachable"
+  | "stale"
+  | "unknown";
 
 /// How far back the phone's own sparkline buffer reaches (SL-95).
 export const SPARK_WINDOW_MS = 45_000;
@@ -48,6 +68,10 @@ export interface LiveForceCursor {
 export interface LiveForceMirrorState {
   beat: LiveForce | null;
   cursor: LiveForceCursor;
+  /// Phone-local wall-clock ms when the last beat was ACCEPTED into this
+  /// cursor — quiet-state derivation compares against this (same clock),
+  /// never `beat.updatedAt` (a watch clock), #614 review F8.
+  lastAcceptedAtMs: number;
 }
 
 /// Empty cursor state for a newly authenticated account. The hook applies
@@ -57,12 +81,31 @@ export function emptyLiveForceMirrorState(): LiveForceMirrorState {
   return {
     beat: null,
     cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null },
+    lastAcceptedAtMs: 0,
   };
 }
 
 export interface LiveForceReduceResult {
   state: LiveForceMirrorState;
   accepted: boolean;
+  /// Why a packet was rejected, present only when `accepted` is false.
+  rejection?: LiveMirrorRejection;
+}
+
+/// Classifies a rejected force packet. Deliberately mirrors the guards in
+/// `accepts` in order: run identity first, then terminal dominance, then
+/// sequence ordering.
+export function rejectionForForce(
+  cursor: LiveForceCursor,
+  runId: string,
+  sequence: number | null,
+): LiveMirrorRejection {
+  if (cursor.runId !== null && cursor.runId !== runId) return "staleRun";
+  if (cursor.terminal) return "afterTerminal";
+  if (sequence !== null && cursor.sequence !== null) {
+    return sequence < cursor.sequence ? "outOfOrder" : "duplicate";
+  }
+  return "notFresh";
 }
 
 const EVENTS: ReadonlySet<string> = new Set([
@@ -146,6 +189,7 @@ function mergedSpark(
 export function mergeForceBeat(
   prev: LiveForce | null,
   msg: LiveForceMessage,
+  nowMs: number = Date.now(),
 ): LiveForce | null {
   const result = reduceForceBeat(
     {
@@ -156,17 +200,26 @@ export function mergeForceBeat(
         terminal: prev?.terminal ?? false,
         updatedAtMs: prev?.updatedAt ?? null,
       },
+      // #614 round-2 N4: the seed is the phone's OWN clock, never the
+      // watch-clock `prev.updatedAt` — `reduceForceBeat` overwrites this
+      // field with the `nowMs` it is given anyway, so the seed must at least
+      // stay in the right clock domain.
+      lastAcceptedAtMs: nowMs,
     },
     msg,
+    nowMs,
   );
   return result.accepted ? result.state.beat : prev;
 }
 
 /// Reducer used by the hook. It keeps a terminal cursor even when `beat` is
-/// null, so End/Disconnect dominates late live force data.
+/// null, so End/Disconnect dominates late live force data. `nowMs` (phone
+/// wall clock) stamps the state's `lastAcceptedAtMs` so quiet-state
+/// derivation is clock-skew-free (#614 F8).
 export function reduceForceBeat(
   previous: LiveForceMirrorState,
   msg: LiveForceMessage,
+  nowMs: number = Date.now(),
 ): LiveForceReduceResult {
   const updatedAtMs = msg.updated_at * 1000;
   const explicitRunId = normalizeRunId(msg.run_id);
@@ -187,7 +240,11 @@ export function reduceForceBeat(
   const sequence = safeSequence(msg.sequence);
   const terminal = isTerminal(msg);
   if (!accepts(previous.cursor, runId, sequence, terminal, updatedAtMs)) {
-    return { state: previous, accepted: false };
+    return {
+      state: previous,
+      accepted: false,
+      rejection: rejectionForForce(previous.cursor, runId, sequence),
+    };
   }
 
   const nextCursor: LiveForceCursor = {
@@ -199,7 +256,7 @@ export function reduceForceBeat(
   if (terminal) {
     return {
       accepted: true,
-      state: { beat: null, cursor: nextCursor },
+      state: { beat: null, cursor: nextCursor, lastAcceptedAtMs: nowMs },
     };
   }
 
@@ -230,7 +287,7 @@ export function reduceForceBeat(
   };
   return {
     accepted: true,
-    state: { beat: next, cursor: nextCursor },
+    state: { beat: next, cursor: nextCursor, lastAcceptedAtMs: nowMs },
   };
 }
 
@@ -253,15 +310,64 @@ export function admitLiveForceMessage(
   msg: LiveForceMessage,
   currentUserId: string,
   hasHadAccountTransition: boolean,
+  nowMs: number = Date.now(),
 ): LiveForceAdmissionResult {
   if (!acceptsPacketOwner(msg.account_user_id, currentUserId, hasHadAccountTransition)) {
-    return { state: previous, accepted: false, stampedAcceptance: false };
+    return {
+      state: previous,
+      accepted: false,
+      stampedAcceptance: false,
+      rejection: "ownerMismatch",
+    };
   }
-  const reduced = reduceForceBeat(previous, msg);
+  const reduced = reduceForceBeat(previous, msg, nowMs);
   return { ...reduced, stampedAcceptance: msg.account_user_id !== undefined };
 }
 
-/// Whether the given beat is still within the staleness window.
+/// Whether the given beat is still within the staleness window, measured
+/// against the beat's OWN (watch-clock) `updatedAt`. See `isBeatVisible` for
+/// the phone-local gate the hook actually renders with.
 export function isFresh(beat: LiveForce, nowMs: number): boolean {
   return nowMs - beat.updatedAt <= STALE_MS;
+}
+
+/// Whether the last accepted beat should render (#614 round-2 N3). Measured
+/// by the PHONE's own receipt clock (`lastAcceptedAtMs`), never the watch's
+/// `updatedAt` — under clock skew the watch timestamp would hide a beat the
+/// phone accepted milliseconds ago, silently reverting to the original
+/// "card gone, no explanation" symptom. A `connected` last beat (the normal
+/// inter-rep rest) renders while its receipt is fresh — it just never
+/// escalates to an alarm (see `deriveForceSyncState`).
+export function isBeatVisible(
+  beat: LiveForce | null,
+  lastAcceptedAtMs: number,
+  nowMs: number,
+): boolean {
+  return beat !== null && !beat.terminal && nowMs - lastAcceptedAtMs <= STALE_MS;
+}
+
+/// Honest transport state for the Force mirror, derived from the cursor and
+/// the phone clock at render time (#614 review F7/F8). Quietness is measured
+/// from `lastAcceptedAtMs` — the phone's OWN clock — never `beat.updatedAt`
+/// (a watch clock), so device clock skew cannot trip it.
+///
+/// #614 round-2 N1: the quiet/stale alarm is gated on the last accepted
+/// beat's `status === "measuring"`. The ~2 Hz cadence only exists while
+/// measuring; between reps the watch is `connected` and sends NO periodic
+/// beats, so 60–180 s of silence there is a normal rest, not a stall, and
+/// must stay healthy/non-alarming. A mid-hold stall (the #148 symptom this
+/// state exists to name) still escalates.
+export function deriveForceSyncState(
+  state: LiveForceMirrorState,
+  nowMs: number,
+): ForceMirrorSyncState {
+  const { beat, cursor, lastAcceptedAtMs } = state;
+  if (cursor.terminal || !cursor.runId) return "unknown";
+  if (!beat) return "unknown";
+  // A connected inter-rep rest never alarms, no matter how long it lasts.
+  if (beat.status !== "measuring") return "watch-direct";
+  const quietAgeMs = nowMs - lastAcceptedAtMs;
+  if (quietAgeMs > STALE_MS) return "stale";
+  if (quietAgeMs > FORCE_DIRECT_QUIET_MS) return "temporarily-unreachable";
+  return "watch-direct";
 }

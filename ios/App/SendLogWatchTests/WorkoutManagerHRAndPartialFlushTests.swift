@@ -305,23 +305,30 @@ private actor Gate {
 
 /// Issue #477, finding "detached partial upserts can overwrite the final
 /// row". "Cancel-or-await" is struck (cancelling a `Task.detached` after its
-/// request is on the wire cannot stop the server committing it) — `end()`
-/// must AWAIT the in-flight partial. Proven via completion ORDER under a
-/// deferred fake uploader, not a generation-counter compare, since the real
-/// network isn't testable here.
+/// request is on the wire cannot stop the server committing it) — the
+/// ordering guarantee must survive.
 ///
-/// Both tests below drive `stopRecordingAndAwaitInFlightPartial()` directly
-/// rather than `end()` — `end()` can only reach that call after a guard
-/// requiring a real `HKWorkoutSession`/`HKLiveWorkoutBuilder`/`startDate`,
-/// and the first two cannot be constructed off-device (no HealthKit
-/// entitlement in this test host). `end()`'s own body is a single
-/// unconditional delegation to this method (`let endDate = await
-/// stopRecordingAndAwaitInFlightPartial()`), so proving the method's
+/// #615 moved the wait: `stopRecording()` no longer awaits the in-flight
+/// partial at all (End must not park behind a network call); instead it
+/// registers the partial on `partialSettleGate`, and the queue's final-row
+/// upload waits there. The two invariants are now proven separately:
+/// (1) `stopRecording()` returns BEFORE the partial commits, and the gate
+/// blocks an upload-path waiter until it settles — proven via completion
+/// ORDER under a deferred fake uploader, not a generation-counter compare,
+/// since the real network isn't testable here; (2) teardown still runs
+/// synchronously ahead of anything else.
+///
+/// Both tests below drive `stopRecording()` directly rather than `end()` —
+/// `end()` can only reach that call after a guard requiring a real
+/// `HKWorkoutSession`/`HKLiveWorkoutBuilder`/`startDate`, and the first two
+/// cannot be constructed off-device (no HealthKit entitlement in this test
+/// host). `end()`'s own body is a single unconditional delegation to this
+/// method (`let endDate = await stopRecording()`), so proving the method's
 /// property proves `end()`'s by construction — there is no second code path
 /// that could apply the ordering differently.
 final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
     @MainActor
-    func testStopRecordingAwaitsTheInFlightPartialBeforeReturning() async {
+    func testStopRecordingReturnsImmediatelyAndTheGateBlocksUploadUntilSettled() async {
         // #529 slice-2 review R3: `start()` is never called in this test, so
         // `ownerUserId` stays nil — an explicit signed-out provider (rather
         // than the default's ambient `WatchSessionStore.shared.userId`)
@@ -330,44 +337,62 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
         // in this process left signed in.
         let manager = WorkoutManager(userIdProvider: { nil })
         manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
+        // Per-manager gate, not the production singleton — the shared gate
+        // must never be held by a test.
+        let gate = WorkoutPartialSettleGate()
+        manager.partialSettleGate = gate
         let order = OrderLog()
-        let gate = Gate()
+        let uploadGate = Gate()
 
         manager.partialUploader = { _ in
             await order.append("partial-start")
-            await gate.wait()
+            await uploadGate.wait()
             await order.append("partial-committed")
         }
 
         manager.flushPartial() // starts the in-flight upload, blocked on the gate
 
-        async let endDate: Date = manager.stopRecordingAndAwaitInFlightPartial()
-        // Wait until the upload has demonstrably started — this is the
-        // point at which unfixed code (no await before returning) would
-        // already have raced ahead and returned.
-        _ = await order.waitUntilCount(1, orTimeout: .seconds(10))
-        await gate.release()
+        // The End tap must NOT wait for the partial: stopRecording returns
+        // while the upload is still blocked.
+        async let endDate: Date = manager.stopRecording()
+        _ = await order.waitUntilCount(1, orTimeout: .seconds(10)) // partial started
         _ = await endDate
         await order.append("stopRecording-returned")
 
+        // The upload path (a queue drain, or the direct-upload fallback)
+        // waits on the settle gate instead: a waiter cannot proceed until
+        // the partial commits.
+        let waiter = Task { await gate.waitForCurrent(); await order.append("upload-proceeded") }
+        try? await Task.sleep(for: .milliseconds(100))
+        let eventsBeforeRelease = await order.snapshot()
+        XCTAssertEqual(
+            eventsBeforeRelease,
+            ["partial-start", "stopRecording-returned"],
+            "the upload path must stay blocked until the in-flight partial settles (#477)"
+        )
+        await uploadGate.release()
+        _ = await waiter.value
+
         let events = await order.snapshot()
         XCTAssertEqual(
-            events, ["partial-start", "partial-committed", "stopRecording-returned"],
-            "stopRecordingAndAwaitInFlightPartial() must not return until the in-flight partial has actually completed"
+            events, ["partial-start", "stopRecording-returned", "partial-committed", "upload-proceeded"],
+            "stopRecording() must return before the partial commits, and the upload must wait for it"
         )
     }
 
     /// #477 review F2: a `Timer` on the main run loop is not paused by a
-    /// suspended MainActor `async` function — so if teardown ran AFTER the
-    /// await (the original #477 fix's mistake), `fusionTimer` would still be
-    /// live and able to fire for as long as the partial upload takes.
-    /// Reproduces exactly the shape the reviewer's probe found
+    /// suspended MainActor `async` function — so if teardown ran AFTER an
+    /// await, `fusionTimer` would still be live and able to fire for as long
+    /// as the partial upload takes. Under #615 teardown is fully synchronous
+    /// (there is no await left in `stopRecording()`), so the timer must be
+    /// dead by the time the method returns while the partial is still
+    /// blocked. Reproduces exactly the shape the reviewer's probe found
     /// (`rowsBefore=0 rowsAfter=2`): drives a bounded number of scheduling
     /// turns — not wall-clock time — to give the in-flight call every
-    /// reasonable chance to reach ITS OWN internal await before checking
+    /// reasonable chance to reach its own internal await before checking
     /// whether teardown already ran.
     @MainActor
-    func testStopRecordingInvalidatesTheTimerBeforeAwaitingTheInFlightPartial() async {
+    func testStopRecordingInvalidatesTheTimerBeforeReturning() async {
         // #529 slice-2 review R3: `start()` is never called in this test, so
         // `ownerUserId` stays nil — an explicit signed-out provider (rather
         // than the default's ambient `WatchSessionStore.shared.userId`)
@@ -383,27 +408,78 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
         manager.partialUploader = { _ in await gate.wait() }
         manager.flushPartial() // starts the in-flight upload, blocked on the gate
 
-        async let endDate: Date = manager.stopRecordingAndAwaitInFlightPartial()
+        async let endDate: Date = manager.stopRecording()
 
         // Bounded scheduling-turn loop, not a sleep: on fixed code, teardown
-        // is entirely synchronous ahead of the one await in
-        // `stopRecordingAndAwaitInFlightPartial()`, so it needs at most a
-        // couple of turns once the child task is scheduled at all. On
-        // broken code (await-then-teardown), the call is fully parked on
-        // `gate.wait()` and never reaches teardown until the gate is
-        // released below — `fusionTimer` stays non-nil through every
-        // iteration and this loop exhausts without ever seeing it cleared.
+        // is entirely synchronous inside `stopRecording()` with no await, so
+        // it needs at most a couple of turns once the child task is
+        // scheduled at all. On broken code (an await before teardown), the
+        // call is fully parked on `gate.wait()` and never reaches teardown
+        // until the gate is released below — `fusionTimer` stays non-nil
+        // through every iteration and this loop exhausts without ever seeing
+        // it cleared.
         for _ in 0..<50 where manager.fusionTimer != nil {
             await Task.yield()
         }
 
         XCTAssertNil(
             manager.fusionTimer,
-            "fusionTimer must be invalidated BEFORE awaiting the in-flight partial, or the run loop keeps firing it while the upload is stalled"
+            "fusionTimer must be invalidated before stopRecording() returns, or the run loop keeps firing it while the upload is stalled"
         )
 
         await gate.release()
         _ = await endDate
+    }
+
+    /// #615 review F3: `start()` used to clear the settle gate with
+    /// `hold(nil)`, reopening #477 — a previous run's in-flight partial
+    /// (held at `stopRecording()`, a single request up to ~60s) could still
+    /// be on the wire, and clearing the gate let that run's final-bundle
+    /// drain proceed past it, so the partial's merge-upsert could clobber
+    /// the final row with provisional data. An ACCEPTED start() must leave
+    /// an unsettled gate alone: a waiter on the previous bundle's upload
+    /// path must still block until the partial settles. The held task
+    /// settles itself (bounded by the request timeout), so leaving it is
+    /// strictly safer than replacing it with nil.
+    @MainActor
+    func testAnAcceptedStartLeavesAnUnsettledSettleGateIntact() async {
+        let manager = makeAuthorizationFailingWorkoutManager()
+        // Per-manager gate, not the production singleton — the shared gate
+        // must never be held by a test.
+        let gate = WorkoutPartialSettleGate()
+        manager.partialSettleGate = gate
+        await manager.start() // accepted (auth fails later) — the reset block runs
+        manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        // Workout N's in-flight partial flush — blocked on a test gate.
+        let uploadGate = Gate()
+        manager.partialUploader = { _ in await uploadGate.wait() }
+        manager.flushPartial()
+
+        // The End path registers the partial on the settle gate, then the
+        // workout N+1 start happens while it is still in flight.
+        _ = await manager.stopRecording()
+        await manager.start()
+        manager.startDate = Date(timeIntervalSince1970: 1_700_001_000)
+
+        // Workout N's bundle drain reaches the gate AFTER the new start — it
+        // must still wait for N's partial (#477's invariant), not sail
+        // through a gate the start cleared.
+        let order = OrderLog()
+        let waiter = Task {
+            await gate.waitForCurrent()
+            await order.append("upload-proceeded")
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+        let eventsBeforeRelease = await order.snapshot()
+        XCTAssertEqual(
+            eventsBeforeRelease, [],
+            "the previous bundle's upload must stay blocked after a new start()"
+        )
+        await uploadGate.release()
+        _ = await waiter.value
+        let events = await order.snapshot()
+        XCTAssertEqual(events, ["upload-proceeded"])
     }
 
     /// #477 finding 5: a skipped flush (one requested while another is

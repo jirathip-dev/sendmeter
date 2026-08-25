@@ -292,6 +292,21 @@ export function zoneSetDurationS(zone: TrainingQuality): number {
   return zp.holdS * zp.reps;
 }
 
+/// The training-balance BUCKET a recorded zone counts toward (#657): the one
+/// place a recorded zone that isn't a trainable quality becomes one.
+/// Maintenance zones are excluded (always recorded, never counted); a
+/// native-only recorded "capacity" zone maps to endurance — long holds — the
+/// exact bucket native's `ZoneMix.zone(for:)` assigns it
+/// (`ZoneMix.swift:64-75`), so the SAME recording badges the same bucket on
+/// both sides instead of vanishing from balance (the web previously wrote
+/// its seconds into a key nothing ever read).
+export function trainingBalanceZone(
+  zone: RecordedZone | null,
+): TrainingQuality | null {
+  if (!zone || isMaintenanceZone(zone)) return null;
+  return zone === "capacity" ? "endurance" : zone;
+}
+
 /// Duration-normalised set count per zone (#182, extracted for #214): total
 /// hold time recorded in a zone, divided by that zone's own protocol set
 /// length, so training balance is weighted by how much time you actually
@@ -304,7 +319,9 @@ export function zoneSetDurationS(zone: TrainingQuality): number {
 /// Buckets by `recordingZone` (#259), so a hold that stored its zone counts
 /// toward THAT zone; only holds without one are bucketed by duration. Time is
 /// still the weight either way — a recorded zone changes which bucket a hold
-/// lands in, never how much it's worth.
+/// lands in, never how much it's worth. A recorded "capacity" zone (native-
+/// only, #657) counts toward endurance via `trainingBalanceZone`, never into
+/// a key the returned record ignores.
 export function zoneSets(
   recs: ZonedHold[],
 ): Record<TrainingQuality, number> {
@@ -316,10 +333,10 @@ export function zoneSets(
   };
   for (const r of recs) {
     const durationS = r.durationMs / 1000;
-    const { zone } = recordingZone(r);
+    const bucket = trainingBalanceZone(recordingZone(r).zone);
     // Maintenance protocols are recorded outside training balance by design.
-    if (!zone || isMaintenanceZone(zone)) continue;
-    secondsByZone[zone] += durationS;
+    if (!bucket) continue;
+    secondsByZone[bucket] += durationS;
   }
   return {
     power: secondsByZone.power / zoneSetDurationS("power"),

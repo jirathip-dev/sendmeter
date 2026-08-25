@@ -8,6 +8,7 @@ import {
 import {
   classifyZone,
   recordingZone,
+  trainingBalanceZone,
   zoneSetDurationS,
   type ZonedHold,
   type ZoneSource,
@@ -82,6 +83,8 @@ export function zoneBreakdown<T extends HoldLike>(recs: T[]): ZoneBreakdown<T> {
   for (const rec of recs) {
     const durationS = rec.durationMs / 1000;
     const { zone, source } = recordingZone(rec);
+    // #657: the same bucket mapping as `zoneSets` — a native-only recorded
+    // "capacity" zone counts toward endurance (see trainingBalanceZone).
     // Maintenance zones are recorded facts, but deliberately not trainable.
     if (isMaintenanceZone(zone)) {
       excluded.push({ rec, durationS, source });
@@ -91,7 +94,12 @@ export function zoneBreakdown<T extends HoldLike>(recs: T[]): ZoneBreakdown<T> {
       unclassified.push({ rec, durationS, source });
       continue;
     }
-    holdsByZone[zone].push({ rec, durationS, source });
+    const bucket = trainingBalanceZone(zone);
+    if (!bucket) {
+      excluded.push({ rec, durationS, source });
+      continue;
+    }
+    holdsByZone[bucket].push({ rec, durationS, source });
   }
 
   const entries = {} as Record<TrainingQuality, ZoneBreakdownEntry<T>>;

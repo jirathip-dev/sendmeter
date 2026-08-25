@@ -19,6 +19,7 @@
 		36FA170B7A251B81A1502E7B /* GuidedForceRunnerOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220863B963764B1C32974A33 /* GuidedForceRunnerOwnershipTests.swift */; };
 		37845A5B0C017FA359DFDF8E /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CA278E81C6E14A40B4C9C69 /* Foundation.framework */; };
 		3A856EED4D66D4946E91DCAA /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 481650BBB5C256BE2759C477 /* Foundation.framework */; };
+		3AB5B57C5DE346518E02E70C /* DirectBeatRetryPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BBC77E5077484101EE950E0 /* DirectBeatRetryPolicyTests.swift */; };
 		3D2E258EE085F4CDEEDE765F /* PendingRecordingQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A753F3846B503B8E1997ACA /* PendingRecordingQueueTests.swift */; };
 		40B1A8847484519ACCBC6BAE /* SendmeterWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 32A305250A36E690BA4EB57B /* SendmeterWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		4544E159901794DC3E085205 /* LiveActivityIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56044BF7621E26700DF3ACBC /* LiveActivityIntents.swift */; };
@@ -214,6 +215,7 @@
 		906892CDB6C18118BDF95638 /* RPEDepletionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/RPEDepletionTests.swift; sourceTree = "<group>"; };
 		929803D573A0FA4074230787 /* DateExtensionsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/DateExtensionsTests.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		9BBC77E5077484101EE950E0 /* DirectBeatRetryPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DirectBeatRetryPolicyTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/DirectBeatRetryPolicyTests.swift; sourceTree = "<group>"; };
 		9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/TindeqProtocolTests.swift; sourceTree = "<group>"; };
 		9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendLogWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9FCBB53FFD92A5507EAFF66B /* ForceProtocolTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ForceProtocolTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/ForceProtocolTests.swift; sourceTree = "<group>"; };
@@ -374,6 +376,7 @@
 				C78BAA80A2F314497A5BD91A /* LiveWorkoutTerminalRetryTests.swift */,
 				48F79679DFA82552B469F247 /* TindeqManualOwnershipTests.swift */,
 				51AF3A49C0285EA8AF8E964D /* FakeTindeqTests.swift */,
+				9BBC77E5077484101EE950E0 /* DirectBeatRetryPolicyTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = SOURCE_ROOT;
@@ -766,6 +769,7 @@
 				4D84C3B92A3D75B9FBA09DE3 /* LiveWorkoutTerminalRetryTests.swift in Sources */,
 				64FB2430181FB9A5B9F53287 /* TindeqManualOwnershipTests.swift in Sources */,
 				C083B3C8AFABE16B9E5C727C /* FakeTindeqTests.swift in Sources */,
+				3AB5B57C5DE346518E02E70C /* DirectBeatRetryPolicyTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -17,6 +17,13 @@ import {
   type WatchStatusPresentation,
 } from "../lib/watchBuild";
 import { useWatchInfo } from "../hooks/useWatchInfo";
+import {
+  snapshotLiveMirrorDiagnostics,
+  type LiveMirrorKindDiagnostics,
+  type LiveMirrorPath,
+  type LiveMirrorPathStats,
+  type LiveMirrorRejection,
+} from "../lib/liveMirrorTelemetry";
 import type { QueueRemainderChoice, SignOut, SignOutPhase } from "../lib/signOut";
 import {
   addPasskey,
@@ -63,6 +70,102 @@ const NULL_SESSION_LABELS: Record<NullSessionReason, string> = {
   "user-signed-out": "Signed out (by you)",
   "storage-wiped": "App storage wiped",
 };
+
+// #614: mirror telemetry copy. Paths and rejections are the whole message —
+// the ring deliberately never carries force/HR values.
+const MIRROR_PATH_LABELS: Record<LiveMirrorPath, string> = {
+  "watch-direct": "direct",
+  "server-fallback": "server",
+};
+
+const MIRROR_REJECTION_LABELS: Record<LiveMirrorRejection, string> = {
+  duplicate: "dup",
+  outOfOrder: "reorder",
+  staleRun: "old run",
+  afterTerminal: "post-end",
+  ownerMismatch: "owner",
+  notFresh: "not fresh",
+  stale: "stale",
+};
+
+function mirrorLatency(ms: number | null): string {
+  return ms === null ? "–" : `${Math.round(ms)}ms`;
+}
+
+/// One path's summary line (#614 review F2). `watch→screen` is the TOTAL
+/// watch-capture → this screen latency, computed identically for the direct
+/// and server paths (both span the watch's clock to the phone's), so the two
+/// transports are directly comparable. The direct path additionally breaks
+/// that total into its segments: `watch→phone` (the WC wire, cross-device
+/// clocks) and `phone→app` (the plugin → WebView hop, phone-local).
+function mirrorPathLine(path: LiveMirrorPath, stats: LiveMirrorPathStats): string {
+  const segments: string[] = [`${MIRROR_PATH_LABELS[path]}: ${stats.accepted} ok / ${stats.rejected} rejected`];
+  if (stats.latency.n > 0) {
+    segments.push(
+      `watch→screen ${mirrorLatency(stats.latency.avg)} avg · p95 ${mirrorLatency(stats.latency.p95)}`,
+    );
+  }
+  if (path === "watch-direct") {
+    const wire = stats.wire.n > 0 ? `watch→phone ${mirrorLatency(stats.wire.avg)} avg` : null;
+    const bridge = stats.bridge.n > 0 ? `phone→app ${mirrorLatency(stats.bridge.avg)} avg` : null;
+    const breakdown = [wire, bridge].filter((s): s is string => s !== null);
+    if (breakdown.length > 0) segments.push(breakdown.join(" · "));
+  }
+  return segments.join(" · ");
+}
+
+function MirrorKindDiagnostics({
+  label,
+  diag,
+}: {
+  label: string;
+  diag: LiveMirrorKindDiagnostics;
+}) {
+  const rejectionSummary = Object.entries(diag.rejections) as [LiveMirrorRejection, number][];
+  const recent = diag.traces.slice(-4).reverse();
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontWeight: 600, fontSize: "var(--t-xs)", color: "var(--ink)" }}>
+        {label}
+      </div>
+      {diag.traces.length === 0 ? (
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6 }}>
+          No live mirror activity this session.
+        </div>
+      ) : (
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6 }}>
+          {(Object.entries(diag.byPath) as [LiveMirrorPath, LiveMirrorPathStats][]).map(
+            ([path, stats]) => (
+              <div key={path}>{mirrorPathLine(path, stats)}</div>
+            ),
+          )}
+          {rejectionSummary.length > 0 && (
+            <div>
+              rejected:{" "}
+              {rejectionSummary
+                .map(([reason, count]) => `${MIRROR_REJECTION_LABELS[reason]} ×${count}`)
+                .join(", ")}
+            </div>
+          )}
+        </div>
+      )}
+      {recent.length > 0 && (
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", lineHeight: 1.7, marginTop: 4 }}>
+          {recent.map((t, i) => (
+            <div key={i}>
+              {new Date(t.atMs).toLocaleTimeString()} · {MIRROR_PATH_LABELS[t.path]} ·{" "}
+              {t.event ?? "–"} · {t.accepted ? "✓" : "✗"}
+              {t.rejection ? ` (${MIRROR_REJECTION_LABELS[t.rejection]})` : ""} ·{" "}
+              {t.ageMs !== undefined
+                ? `age ${Math.round(t.ageMs / 1000)}s`
+                : mirrorLatency(t.latencyMs ?? null)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /// Where the diagnostics ring is being kept. Worth showing: "nothing
 /// recorded" means something very different on a ring that only ever lived in
@@ -154,6 +257,10 @@ export default function AccountSheet({ onClose, onSignOut, email }: Props) {
   // interval; a relaunch remounts this sheet fresh anyway.
   const [authEvents] = useState(() => getAuthDiagnosticEvents());
   const [diagStatus] = useState(() => getAuthDiagnosticsStatus());
+  // #614: read once at mount, same convention as the auth events above. The
+  // ring is in-memory (see liveMirrorTelemetry.ts), so a sheet open during an
+  // incident shows exactly what the live session has observed so far.
+  const [mirrorDiagnostics] = useState(() => snapshotLiveMirrorDiagnostics());
   // App version + build (#202): a recorded event is only attributable if the
   // build that produced it can be read off the same screen. Native-only —
   // `loadBuildTag` resolves to null on web.
@@ -594,6 +701,32 @@ export default function AccountSheet({ onClose, onSignOut, email }: Props) {
                       </div>
                     ))
                   )}
+                </div>
+              </details>
+
+              {/* #614: the live Workout/Force mirror's transport and latency,
+                  read from the bounded in-memory telemetry ring. Opens as a
+                  second entry under Troubleshooting so a report of "the
+                  mirror is slow" can name the active path and split direct
+                  vs server delay on the spot. */}
+              <details className="troubleshooting-details">
+                <summary>Watch mirror diagnostics</summary>
+                <div className="troubleshooting-body">
+                  <MirrorKindDiagnostics label="Workout mirror" diag={mirrorDiagnostics.workout} />
+                  <MirrorKindDiagnostics label="Force mirror" diag={mirrorDiagnostics.force} />
+                  {mirrorDiagnostics.dropped > 0 && (
+                    <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6 }}>
+                      Ring full — {mirrorDiagnostics.dropped} older trace(s) dropped.
+                    </div>
+                  )}
+                  {/* #614 review F2: totals and the watch→phone segment span
+                      the watch's and the phone's own clocks — a small negative
+                      value just means the watch clock runs ahead. The phone→app
+                      segment is the same phone clock end to end. */}
+                  <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6 }}>
+                    watch→screen and watch→phone span the watch's and phone's
+                    own clocks; phone→app is phone-local.
+                  </div>
                 </div>
               </details>
             </div>

@@ -241,6 +241,17 @@ final class PendingSyncCacheTests: XCTestCase {
         XCTAssertNil(cache.total)
     }
 
+    func testOwnerlessQueueRowsHaveTheirOwnCompleteDiagnosticTotal() {
+        let cache = PendingSyncCache()
+        for queue in PendingSyncQueue.allCases {
+            cache.recordUnscopedPending(1, for: queue)
+            cache.recordUnscopedQuarantined(2, for: queue)
+        }
+
+        XCTAssertEqual(cache.unscopedTotal, PendingSyncQueue.allCases.count * 3)
+        XCTAssertNil(PendingSyncCache().unscopedTotal)
+    }
+
     // MARK: #475 — quarantined count is tracked separately from `total`
 
     private func fullyQuarantineReported(_ counts: [PendingSyncQueue: Int] = [:]) -> PendingSyncCache {
@@ -354,9 +365,11 @@ final class QuarantinedSyncStampingTests: XCTestCase {
             ["kind": "liveWorkout", "status": "live"],
             with: identity,
             pendingSync: 3,
+            unscopedSync: 1,
             quarantinedSync: 1
         )
         XCTAssertEqual(WatchBuildReport.pendingSync(in: msg), 3)
+        XCTAssertEqual(WatchBuildReport.unscopedSync(in: msg), 1)
         XCTAssertEqual(WatchBuildReport.quarantinedSync(in: msg), 1)
         XCTAssertEqual(WatchBuildReport.identity(in: msg), identity)
     }
@@ -393,6 +406,7 @@ final class QuarantinedSyncStampingTests: XCTestCase {
             ["kind": "liveForce", "kg": 12.5],
             with: identity,
             pendingSync: 3,
+            unscopedSync: 1,
             quarantinedSync: 1
         )
         let stripped = WatchBuildReport.stripped(stamped)
@@ -400,6 +414,7 @@ final class QuarantinedSyncStampingTests: XCTestCase {
         XCTAssertEqual(stripped["kg"] as? Double, 12.5)
         XCTAssertNil(stripped[WatchBuildReport.quarantinedSyncKey])
         XCTAssertNil(stripped[WatchBuildReport.pendingSyncKey])
+        XCTAssertNil(stripped[WatchBuildReport.unscopedSyncKey])
     }
 
     // MARK: #475 F13 — the .stuckRetrying subset rides the same channel, separately

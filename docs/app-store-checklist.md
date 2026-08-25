@@ -3,6 +3,64 @@
 Everything code-side is done in this repo. This file is the copy-paste guide
 for the App Store Connect forms.
 
+## Native app submission (the current path — #719)
+
+App Review prep is now scoped to the **native** app. The canonical reviewer
+notes are `docs/app-review-notes.md` (paste-verbatim Notes). The two
+`[FILL IN]` placeholders (demo credentials, tested devices/OS) and the physical
+iPhone + Watch screen recording are the human/Apple-only steps; everything else
+is in-repo.
+
+- **Bundle / app record**: the native Release target ships to the existing
+  Sendmeter TestFlight record under `com.jirathip.sendlog` (fastlane
+  `native_beta`, #637) and embeds the `com.jirathip.sendlog.watchkitapp`
+  companion. The lane provisions profiles for the phone app, embedded watch
+  app, and phone widget appex. Debug keeps `com.jirathip.sendlog.native` only
+  for side-by-side development; it cannot pair with the watch companion.
+- **Privacy manifests** (`PrivacyInfo.xcprivacy`, one per shipped bundle):
+  app `native/SendmeterNative/Resources/PrivacyInfo.xcprivacy` (required-reason
+  UserDefaults `CA92.1` + SystemBootTime `35F9.1`), the embedded Watch app
+  `ios/App/SendLogWatch Watch App/PrivacyInfo.xcprivacy` (UserDefaults and
+  FileTimestamp reasons), and the Live Activity appex
+  `native/SendmeterNative/Resources/Widgets/PrivacyInfo.xcprivacy` (no
+  required-reason API). All declare `NSPrivacyTracking = false`, no
+  `NSPrivacyTrackingDomains`.
+- **App Privacy answers** ("nutrition label"): Email Address, Health, Fitness,
+  Other User Content and Coarse Location, all **Used for Tracking: No** and
+  **Purpose: App Functionality only**; linked to identity **Yes** except
+  **Coarse Location, which is No** (rounded to ~1 km for the Open-Meteo Send
+  Conditions lookup, never tied to the account). There is **no Diagnostics
+  row** — the native target omits the web Sentry SDK, so no error/diagnostic
+  data leaves the device — and **no App Tracking Transparency prompt** (no
+  advertising/analytics/attribution SDK, no IDFA).
+- **No-tracking verification**: `rg -i
+  'ATTrackingManager|AppTrackingTransparency|AdSupport|IDFA|asIdentifierManager|GoogleAnalytics|Mixpanel|Amplitude|AppsFlyer'
+  native/SendmeterNative` should return nothing. The only required-reason APIs
+  are `UserDefaults` (`CA92.1`, plain `.standard` — no App Group) and
+  `SystemBootTime` (`35F9.1`, `ProcessInfo.systemUptime` for elapsed-time
+  measurement); there is no file-metadata or disk-space API.
+
+> **This file is now the native submission checklist.** Everything below this
+> banner documents the **superseded Capacitor build** (`ios/App/App`,
+> `src/lib/*`, `@capacitor/*`, the web Sentry SDK, and bundled Inter). It is
+> **NOT the submission path** and is
+> kept for reference only.
+>
+> Items that **also apply to the native submission**: privacy policy URL
+> (`public/privacy.html`), support URL (`public/support.html`), in-app account
+> deletion, password sign-in, Sign in with Apple, export compliance, and the age
+> rating questionnaire.
+>
+> Capacitor-only items that do **NOT describe the native binary**: the
+> `ios/App/App` privacy manifests, web Sentry / Diagnostics, and the bundled
+> Inter typeface. The native Release configuration includes the shared Apple
+> Watch companion under `com.jirathip.sendlog.watchkitapp` and its existing
+> watch-widget extension under `com.jirathip.sendlog.watchkitapp.widgets`; it
+> uses the native privacy manifests (`native/SendmeterNative/Resources/…`) and
+> declares no
+> Diagnostics data type, and its phone required-reason APIs are only
+> `UserDefaults` (`CA92.1`) + `SystemBootTime` (`35F9.1`).
+
 ## Already handled in the repo ✅
 
 - **App icons**: generated from `scripts/icon.svg` via `node scripts/generate-icons.mjs`
@@ -165,6 +223,13 @@ error monitoring only.
 
 ## Review notes (paste into "Notes" for the reviewer)
 
+**→ The full answer now lives in `docs/app-review-notes.md`.** App Review
+rejected a submission for missing this information (2026-08), and asked for all
+seven items — functionality, tested devices, audience, setup instructions,
+external services, regional differences, regulated-industry status — to be in
+the Notes field for *every* future submission. Paste that document, not the
+short blurb below, which is kept only as the source of the privacy wording.
+
 > Sign in with the demo account below (email + password on the login screen —
 > tap "Sign in with password instead" if the magic-link form shows).
 > The Tindeq tab connects to a physical Tindeq Progressor strain gauge over
@@ -195,6 +260,18 @@ Put that email/password in the review notes.
    `com.jirathip.sendlog`. The watch app is an **embedded companion**
    (`com.jirathip.sendlog.watchkitapp`) that ships inside the iOS app — it is
    **not** a separate App Store record.
+   Before `native_beta` can fetch profiles, manually enable **HealthKit** and
+   **App Groups** on `com.jirathip.sendlog.watchkitapp`, and **App Groups** on
+   `com.jirathip.sendlog.watchkitapp.widgets`; attach
+   `group.com.jirathip.sendlog` to both App IDs in Apple Developer →
+   Certificates, IDs & Profiles. For signed Debug device builds, also create
+   `com.jirathip.sendlog.native.watchkitapp` with **HealthKit** + **App Groups**
+   and `com.jirathip.sendlog.native.watchkitapp.widgets` with **App Groups**;
+   attach the same group to both Debug IDs. Unsigned simulator Debug builds do
+   not need portal profiles, but code-signed Debug device builds do. Fastlane
+   can register the IDs and verify the capability flags, but cannot toggle App
+   Groups or attach the group container; it fails before profile fetch when the
+   flags are absent.
 3. Deploy the web app so the privacy-policy and support URLs are live; paste
    `https://sendmeter.app/privacy.html` under App Privacy and
    `https://sendmeter.app/support.html` under the iOS version's Support URL.
@@ -226,6 +303,11 @@ For iPhone testing before promotion, use `npm run sync:local` with paired
 simulators. A physical-device build cannot reach the laptop's local Supabase
 stack and currently uses production; use a throwaway production account for
 device-only Bluetooth, HealthKit, and signing checks.
+
+- **Password reset email** (Settings → Account & Security → Send Password Reset
+  Email): device-only — verify the reset email's link reopens the app into the
+  password-recovery flow via `com.jirathip.sendlog://login-callback`. No unit
+  test covers this (email/deep-link dependent).
 
 ## App Store screenshot automation
 

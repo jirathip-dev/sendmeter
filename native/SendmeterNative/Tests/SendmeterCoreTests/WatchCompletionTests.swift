@@ -1,0 +1,556 @@
+import Foundation
+import GRDB
+import XCTest
+@testable import SendmeterCore
+
+final class WatchCompletionTests: XCTestCase {
+    private let accountA = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+    private let accountB = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+    private let sessionID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+    private let workoutID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+
+    private func completion(
+        sessionID: UUID? = nil,
+        workoutID: UUID? = nil,
+        accountUserID: UUID? = nil,
+        receivedAt: Date = Date(timeIntervalSince1970: 1_700_000_000)
+    ) -> WatchWorkoutCompletion {
+        WatchWorkoutCompletion(
+            sessionID: sessionID ?? self.sessionID,
+            workoutID: workoutID ?? self.workoutID,
+            accountUserID: accountUserID,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            endedAt: Date(timeIntervalSince1970: 1_700_060_000),
+            attemptCount: 4,
+            durationMinutes: 40,
+            rpe: 7,
+            phase: .strength,
+            type: "bouldering",
+            typeLabel: "Bouldering",
+            note: "watch summary",
+            rpeConfirmed: true,
+            receivedAt: receivedAt
+        )
+    }
+
+    private func generatedCompletions(
+        accountUserID: UUID?,
+        count: Int,
+        startingAt: Int
+    ) -> [WatchWorkoutCompletion] {
+        (0..<count).map { offset in
+            let number = startingAt + offset
+            let suffix = String(format: "%012x", number)
+            return completion(
+                sessionID: UUID(uuidString: "00000000-0000-0000-0000-\(suffix)"),
+                workoutID: UUID(uuidString: "10000000-0000-0000-0000-\(suffix)"),
+                accountUserID: accountUserID,
+                receivedAt: Date(timeIntervalSince1970: Double(number))
+            )
+        }
+    }
+
+    private func authoritativeSession(
+        id: UUID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+        accountUserID: UUID
+    ) -> Session {
+        Session(
+            id: id,
+            date: "2026-08-20",
+            type: "bouldering",
+            typeLabel: "Bouldering",
+            durationMinutes: 40,
+            rpe: 7,
+            rpeConfirmed: true,
+            note: "server summary",
+            phase: .strength,
+            workoutSource: .watch,
+            pending: false,
+            accountUserID: accountUserID
+        )
+    }
+
+    func testInboxDedupesDirectAndTransferDeliveriesAndAcknowledgesByStableIdentity() {
+        var inbox = WatchCompletionInbox(limit: 2)
+        let first = completion()
+        let duplicate = completion(receivedAt: Date(timeIntervalSince1970: 1_700_000_001))
+        let second = completion(
+            sessionID: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            workoutID: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+        )
+        let third = completion(
+            sessionID: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+            workoutID: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
+        )
+
+        XCTAssertTrue(inbox.retain(first))
+        XCTAssertFalse(inbox.retain(duplicate))
+        XCTAssertTrue(inbox.retain(second))
+        XCTAssertTrue(inbox.retain(third))
+        XCTAssertEqual(inbox.values.map(\.identity), [second.identity, third.identity])
+
+        XCTAssertFalse(inbox.acknowledge(first))
+        XCTAssertTrue(inbox.acknowledge(second))
+        XCTAssertEqual(inbox.values.map(\.identity), [third.identity])
+    }
+
+    func testInboxRelaunchModelDedupesPersistedValuesAndKeepsNewestBoundedEntries() {
+        let first = completion()
+        let duplicate = completion(receivedAt: Date(timeIntervalSince1970: 1_700_000_001))
+        let second = completion(
+            sessionID: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            workoutID: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+        )
+        let third = completion(
+            sessionID: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+            workoutID: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
+        )
+
+        let relaunched = WatchCompletionInbox(
+            limit: 2,
+            values: [first, duplicate, second, third]
+        )
+
+        XCTAssertEqual(relaunched.values.map(\.identity), [second.identity, third.identity])
+    }
+
+    func testRelaunchBoundsEachStampedOwnerIndependentlyAndPreservesInterleavedOrder() {
+        let a = generatedCompletions(accountUserID: accountA, count: 10, startingAt: 1)
+        let b = generatedCompletions(accountUserID: accountB, count: 10, startingAt: 101)
+        var persisted: [WatchWorkoutCompletion] = []
+        for index in 0..<10 {
+            persisted.append(a[index])
+            persisted.append(b[index])
+        }
+
+        let relaunched = WatchCompletionInbox(limit: 8, values: persisted)
+        let expected = (2..<10).flatMap { [a[$0], b[$0]] }
+
+        XCTAssertEqual(relaunched.values.map(\.identity), expected.map(\.identity))
+        XCTAssertEqual(relaunched.values(for: accountA).count, 8)
+        XCTAssertEqual(relaunched.values(for: accountB).count, 8)
+    }
+
+    func testRelaunchKeepsSmallerInterleavedOwnerSetsWhenCombinedCountExceedsLimit() {
+        let a = generatedCompletions(accountUserID: accountA, count: 5, startingAt: 201)
+        let b = generatedCompletions(accountUserID: accountB, count: 4, startingAt: 301)
+        var persisted: [WatchWorkoutCompletion] = []
+        for index in 0..<5 {
+            persisted.append(a[index])
+            if index < b.count {
+                persisted.append(b[index])
+            }
+        }
+
+        let relaunched = WatchCompletionInbox(limit: 8, values: persisted)
+
+        XCTAssertEqual(relaunched.values.map(\.identity), persisted.map(\.identity))
+        XCTAssertEqual(relaunched.values(for: accountA).count, 5)
+        XCTAssertEqual(relaunched.values(for: accountB).count, 4)
+    }
+
+    func testRelaunchBoundsLegacyQuarantineSeparatelyFromEachStampedOwner() {
+        let a = generatedCompletions(accountUserID: accountA, count: 8, startingAt: 401)
+        let b = generatedCompletions(accountUserID: accountB, count: 8, startingAt: 501)
+        let legacy = generatedCompletions(accountUserID: nil, count: 10, startingAt: 601)
+        var persisted: [WatchWorkoutCompletion] = []
+        for index in 0..<10 {
+            if index < a.count { persisted.append(a[index]) }
+            if index < b.count { persisted.append(b[index]) }
+            persisted.append(legacy[index])
+        }
+
+        let relaunched = WatchCompletionInbox(limit: 8, values: persisted)
+        let retainedLegacy = relaunched.values.filter { $0.accountUserID == nil }
+
+        XCTAssertEqual(relaunched.values(for: accountA).count, 8)
+        XCTAssertEqual(relaunched.values(for: accountB).count, 8)
+        XCTAssertEqual(retainedLegacy.map(\.identity), legacy.suffix(8).map(\.identity))
+    }
+
+    func testInboxExposesOnlyStampedCompletionsToTheirOwnerAndKeepsLegacyUnscoped() {
+        let ownedByA = completion(accountUserID: accountA)
+        let ownedByB = completion(
+            sessionID: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            workoutID: UUID(uuidString: "44444444-4444-4444-4444-444444444444"),
+            accountUserID: accountB
+        )
+        let legacy = completion(
+            sessionID: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+            workoutID: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
+        )
+        var inbox = WatchCompletionInbox(values: [ownedByA, ownedByB, legacy])
+
+        XCTAssertEqual(inbox.values(for: accountA).map(\.identity), [ownedByA.identity])
+        XCTAssertEqual(inbox.values(for: accountB).map(\.identity), [ownedByB.identity])
+        XCTAssertTrue(inbox.values(for: nil).isEmpty)
+        XCTAssertFalse(inbox.acknowledge(ownedByA, accountUserID: accountB))
+        XCTAssertTrue(inbox.values.contains(where: { $0.identity == legacy.identity }))
+    }
+
+    func testScopedAcknowledgeCannotRemoveStoredACompletionWithBPayload() {
+        let stored = completion(accountUserID: accountA)
+        let forged = completion(accountUserID: accountB)
+        var inbox = WatchCompletionInbox(values: [stored])
+
+        XCTAssertFalse(inbox.acknowledge(forged, accountUserID: accountB))
+        XCTAssertEqual(inbox.values, [stored])
+    }
+
+    func testStampedReplayIsAcceptedAfterOwnerlessLegacyCompletion() {
+        let legacy = completion()
+        let stamped = completion(accountUserID: accountA)
+        var inbox = WatchCompletionInbox(limit: 1)
+
+        XCTAssertTrue(inbox.retain(legacy))
+        XCTAssertTrue(inbox.retain(stamped))
+        XCTAssertTrue(inbox.values.contains(legacy))
+        XCTAssertTrue(inbox.values.contains(stamped))
+        XCTAssertEqual(inbox.values(for: accountA), [stamped])
+    }
+
+    func testLegacyQuarantineDoesNotEvictParkedStampedCompletions() {
+        let parkedA = completion(accountUserID: accountA)
+        let parkedB = completion(
+            sessionID: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            workoutID: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            accountUserID: accountB
+        )
+        var inbox = WatchCompletionInbox(limit: 2)
+        XCTAssertTrue(inbox.retain(parkedA))
+        XCTAssertTrue(inbox.retain(parkedB))
+
+        for index in 0..<4 {
+            XCTAssertTrue(inbox.retain(completion(
+                sessionID: UUID(),
+                workoutID: UUID(),
+                receivedAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(index))
+            )))
+        }
+
+        XCTAssertEqual(inbox.values(for: accountA), [parkedA])
+        XCTAssertEqual(inbox.values(for: accountB), [parkedB])
+    }
+
+    func testDiscardRemovesOnlyDeletedAccountAndPreservesOtherOwnersAndLegacy() {
+        let ownedByA = completion(accountUserID: accountA)
+        let ownedByB = completion(
+            sessionID: UUID(),
+            workoutID: UUID(),
+            accountUserID: accountB
+        )
+        let legacy = completion(sessionID: UUID(), workoutID: UUID())
+        var inbox = WatchCompletionInbox(values: [ownedByA, ownedByB, legacy])
+
+        XCTAssertEqual(inbox.discard(accountUserID: accountA), 1)
+        XCTAssertEqual(inbox.values(for: accountB), [ownedByB])
+        XCTAssertTrue(inbox.values.contains(legacy))
+    }
+
+    func testAdoptionGateRejectsWrongAccountAndClosesConcurrentDuplicateWindow() {
+        var gate = WatchCompletionAdoptionGate()
+        let identity = completion().identity
+
+        XCTAssertEqual(
+            gate.claim(
+                identity,
+                stampedOwner: accountA,
+                currentUserID: accountB,
+                alreadyAdopted: false
+            ),
+            .wrongAccount
+        )
+        XCTAssertEqual(
+            gate.claim(
+                identity,
+                stampedOwner: accountA,
+                currentUserID: nil,
+                alreadyAdopted: false
+            ),
+            .signedOut
+        )
+        XCTAssertEqual(
+            gate.claim(
+                identity,
+                stampedOwner: accountA,
+                currentUserID: accountA,
+                alreadyAdopted: false
+            ),
+            .adopt
+        )
+        XCTAssertEqual(
+            gate.claim(
+                identity,
+                stampedOwner: accountA,
+                currentUserID: accountA,
+                alreadyAdopted: false
+            ),
+            .inFlightDuplicate
+        )
+
+        gate.finish(identity)
+        XCTAssertEqual(
+            gate.claim(
+                identity,
+                stampedOwner: accountA,
+                currentUserID: accountA,
+                alreadyAdopted: true
+            ),
+            .alreadyAdopted
+        )
+    }
+
+    func testAdoptionGateRejectsUnstampedLegacyInsteadOfAttributingItToCurrentAccount() {
+        var gate = WatchCompletionAdoptionGate()
+
+        XCTAssertEqual(
+            gate.claim(
+                completion().identity,
+                stampedOwner: nil,
+                currentUserID: accountA,
+                alreadyAdopted: false
+            ),
+            .unscopedLegacy
+        )
+    }
+
+    func testAccountEpochInvalidatesCompletionContinuationAfterSwitchOrSignOut() {
+        let fetch = AccountScopedFetch(accountUserID: accountA, accountEpoch: 12)
+
+        XCTAssertTrue(fetch.canApply(to: accountA, accountEpoch: 12))
+        XCTAssertFalse(fetch.canApply(to: accountB, accountEpoch: 12))
+        XCTAssertFalse(fetch.canApply(to: accountA, accountEpoch: 13))
+        XCTAssertFalse(fetch.canApply(to: nil, accountEpoch: 12))
+    }
+
+    func testPendingServerPlaceholderIsVisibleThroughRefreshAndConvergesToAuthoritativeRow() throws {
+        let workspace = CachedWorkspace(store: try LocalCacheStore())
+        let received = completion(accountUserID: accountA)
+        let placeholder = received.pendingSession(accountUserID: accountA)
+
+        try workspace.upsertPendingServer(
+            placeholder,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: placeholder.id.uuidString
+        )
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [placeholder])
+
+        // A full refresh that races the watch's upload must not infer a delete
+        // from the placeholder's absence in that response.
+        try workspace.reconcileServer(
+            CachedWorkspaceSnapshot(),
+            accountUserID: accountA,
+            updatedAt: Date(timeIntervalSince1970: 2_000_000_000)
+        )
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [placeholder])
+        XCTAssertEqual(try pendingFlag(in: workspace, accountID: accountA, entityID: placeholder.id), 1)
+        XCTAssertEqual(try originFlag(in: workspace, accountID: accountA, entityID: placeholder.id), "server")
+
+        // Repeated direct/transfer adoption is idempotent and cannot replace
+        // the first locally visible summary before the server row arrives.
+        var duplicate = placeholder
+        duplicate.note = "duplicate delivery"
+        try workspace.upsertPendingServer(
+            duplicate,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: duplicate.id.uuidString
+        )
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [placeholder])
+
+        // Server convergence is authoritative even when its timestamp is older
+        // than the phone's placeholder timestamp.
+        let authoritative = authoritativeSession(accountUserID: accountA)
+        try workspace.reconcileServer(
+            CachedWorkspaceSnapshot(sessions: [authoritative]),
+            accountUserID: accountA,
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [authoritative])
+        XCTAssertEqual(try pendingFlag(in: workspace, accountID: accountA, entityID: authoritative.id), 0)
+        XCTAssertEqual(try originFlag(in: workspace, accountID: accountA, entityID: authoritative.id), "server")
+        XCTAssertTrue(try workspace.load(accountUserID: accountB).sessions.isEmpty)
+    }
+
+    func testPendingServerPlaceholderConvergesThroughAuthoritativeDelta() throws {
+        let workspace = CachedWorkspace(store: try LocalCacheStore())
+        let received = completion(accountUserID: accountA)
+        let placeholder = received.pendingSession(accountUserID: accountA)
+        try workspace.upsertPendingServer(
+            placeholder,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: placeholder.id.uuidString
+        )
+
+        let authoritative = authoritativeSession(accountUserID: accountA)
+        let deltaAt = Date(timeIntervalSince1970: 2_000_000_001)
+        try workspace.reconcileDelta(
+            RemoteEntityDelta(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: authoritative.id.uuidString,
+                        value: authoritative,
+                        updatedAt: deltaAt
+                    )
+                ],
+                activeValues: [authoritative],
+                cursor: LocalCacheStore.syncCursorString(from: deltaAt)
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [authoritative])
+        XCTAssertEqual(
+            try workspace.cursor(accountUserID: accountA, entityType: .sessions),
+            LocalCacheStore.syncCursorString(from: deltaAt)
+        )
+        XCTAssertEqual(try pendingFlag(in: workspace, accountID: accountA, entityID: authoritative.id), 0)
+    }
+
+    func testExpiredServerPlaceholderIsBoundedThroughSteadyStateCursorDelta() throws {
+        let workspace = CachedWorkspace(store: try LocalCacheStore())
+        let received = completion(accountUserID: accountA)
+        let placeholder = received.pendingSession(accountUserID: accountA)
+        let insertedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try workspace.upsertPendingServer(
+            placeholder,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: placeholder.id.uuidString,
+            insertedAt: insertedAt
+        )
+
+        let emptySnapshot = RemoteEntityDelta<Session>(
+            changes: [],
+            activeValues: [],
+            cursor: "steady-state-cursor"
+        )
+        let beforeExpiry = insertedAt.addingTimeInterval(
+            CachedWorkspace.watchCompletionPlaceholderTTL - 1
+        )
+        try workspace.reconcileDelta(
+            emptySnapshot,
+            accountUserID: accountA,
+            entityType: .sessions,
+            now: beforeExpiry
+        )
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [placeholder])
+
+        let expiredAt = insertedAt.addingTimeInterval(
+            CachedWorkspace.watchCompletionPlaceholderTTL + 1
+        )
+        try workspace.reconcileDelta(
+            emptySnapshot,
+            accountUserID: accountA,
+            entityType: .sessions,
+            now: expiredAt
+        )
+        XCTAssertTrue(try workspace.load(accountUserID: accountA).sessions.isEmpty)
+        XCTAssertEqual(try pendingFlag(in: workspace, accountID: accountA, entityID: placeholder.id), 0)
+        XCTAssertEqual(try originFlag(in: workspace, accountID: accountA, entityID: placeholder.id), "server")
+
+        // The TTL writes a tombstone, so a stale server refresh cannot bring
+        // the phantom back. A later authoritative delta remains allowed to
+        // converge the real session.
+        try workspace.upsertServer(
+            authoritativeSession(accountUserID: accountA),
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: placeholder.id.uuidString,
+            updatedAt: insertedAt.addingTimeInterval(1)
+        )
+        XCTAssertTrue(try workspace.load(accountUserID: accountA).sessions.isEmpty)
+
+        let authoritative = authoritativeSession(accountUserID: accountA)
+        try workspace.reconcileDelta(
+            RemoteEntityDelta<Session>(
+                changes: [
+                    RemoteEntityChange(
+                        entityID: authoritative.id.uuidString,
+                        value: authoritative,
+                        updatedAt: expiredAt.addingTimeInterval(1)
+                    )
+                ],
+                activeValues: [authoritative],
+                cursor: "authoritative-cursor"
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [authoritative])
+    }
+
+    func testExplicitServerDeltaDeleteReplacesRemotePlaceholder() throws {
+        let workspace = CachedWorkspace(store: try LocalCacheStore())
+        let received = completion(accountUserID: accountA)
+        let placeholder = received.pendingSession(accountUserID: accountA)
+        try workspace.upsertPendingServer(
+            placeholder,
+            accountUserID: accountA,
+            entityType: .sessions,
+            entityID: placeholder.id.uuidString
+        )
+
+        try workspace.reconcileDelta(
+            RemoteEntityDelta<Session>(
+                changes: [
+                    RemoteEntityChange<Session>(
+                        entityID: placeholder.id.uuidString,
+                        value: nil,
+                        updatedAt: Date(timeIntervalSince1970: 1_700_000_100)
+                    )
+                ],
+                activeValues: [],
+                cursor: nil
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+
+        XCTAssertTrue(try workspace.load(accountUserID: accountA).sessions.isEmpty)
+        XCTAssertEqual(try pendingFlag(in: workspace, accountID: accountA, entityID: placeholder.id), 0)
+    }
+
+    func testPendingSessionUsesLivePhoneAccountAndAppearsInHistoryTimeline() {
+        let pending = completion(accountUserID: accountB).pendingSession(accountUserID: accountA)
+
+        XCTAssertEqual(pending.accountUserID, accountA)
+        let items = HistoryTimeline.combinedItems(sessions: [pending], recordings: [])
+        guard case let .session(session) = items.first else {
+            return XCTFail("watch completion should be immediately visible as a session")
+        }
+        XCTAssertEqual(session.id, pending.id)
+        XCTAssertTrue(session.pending)
+    }
+
+    private func pendingFlag(
+        in workspace: CachedWorkspace,
+        accountID: UUID,
+        entityID: UUID
+    ) throws -> Int {
+        try workspace.store.dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT pending FROM cache_rows WHERE account_user_id = ? AND entity_id = ?",
+                arguments: [accountID.uuidString, entityID.uuidString]
+            )!
+        }
+    }
+
+    private func originFlag(
+        in workspace: CachedWorkspace,
+        accountID: UUID,
+        entityID: UUID
+    ) throws -> String {
+        try workspace.store.dbQueue.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT write_origin FROM cache_rows WHERE account_user_id = ? AND entity_id = ?",
+                arguments: [accountID.uuidString, entityID.uuidString]
+            )!
+        }
+    }
+}

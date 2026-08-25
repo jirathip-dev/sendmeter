@@ -156,7 +156,10 @@ final class AuthManager: NSObject {
         syncing = true
         // Stamped with this install's build + queue depth (#228, #21) — the
         // account sheet on the phone reads whatever last arrived.
-        let msg = WatchBuild.stamp(["kind": "requestSession"])
+        let msg = WatchBuild.stamp(
+            ["kind": "requestSession"],
+            accountUserID: WatchSessionStore.shared.userId
+        )
         if s.isReachable {
             s.sendMessage(msg, replyHandler: nil) { [weak self] error in
                 Self.log.error("requestSession send failed: \(error.localizedDescription)")
@@ -265,6 +268,7 @@ final class AuthManager: NSObject {
     @MainActor
     func signOutLocally() {
         WatchSessionStore.shared.clear()
+        WatchBuild.resetQueueReportState()
         WidgetBridge.invalidate()
         state = .signedOut
         syncing = false

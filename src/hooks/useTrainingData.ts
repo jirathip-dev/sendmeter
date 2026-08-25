@@ -11,6 +11,22 @@ import * as repo from "../lib/repo";
 import type { UserSettings } from "../lib/repo/settings";
 import { supabase } from "../lib/supabase";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
+import {
+  dropPendingForAccount,
+  mergeFetchedSessions,
+  reconcilePendingSession,
+  rollbackPendingSession,
+  upsertPendingSession,
+  type PendingWorkout,
+} from "../lib/pendingWorkouts";
+import {
+  applySessionRealtimeEvents,
+  sessionEventsAllApplied,
+} from "../lib/sessionRealtimeApply";
+import {
+  useRealtimeSessionEvents,
+  useRealtimeSessionOverflowed,
+} from "./useRealtimeVersion";
 import { useRealtimeVersion } from "./useRealtimeVersion";
 
 export function sortSessions(list: Session[]): Session[] {
@@ -260,17 +276,55 @@ export function useTrainingData(userId: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const realtimeVersion = useRealtimeVersion();
+  const sessionEvents = useRealtimeSessionEvents();
+  const sessionEventsOverflowed = useRealtimeSessionOverflowed();
   // Guards against a stale in-flight reload clobbering a newer one's state
   // (e.g. realtimeVersion bumping again before the first fetch resolves).
   // A ref holding a single stable guard instance for this hook's lifetime —
   // createGenerationGuard's own state (not the ref) is what actually tracks
   // the generation counter (#220).
   const guardRef = useRef(createGenerationGuard());
+  // #615: the account the current render belongs to. Pending (optimistic)
+  // workout rows are stamped with the account that registered them; the
+  // fetch merge and the watch-completion listener both filter on this so an
+  // account switch never carries the old account's pending row into the new
+  // account's view. A ref (not the closed-over `userId`): `runFetch` is a
+  // `[]`-deps callback, and the merge must read the CURRENT account even
+  // after a switch, not the one captured at mount.
+  const userIdRef = useRef(userId);
+  // Mirror of `sessions` for the refetch-guard decision (the guard effect
+  // must not depend on `sessions` itself or it re-runs every render).
+  const sessionsRef = useRef<Session[]>([]);
+  // #615: cursor into the bounded session-events queue (see the apply effect
+  // below) — same pattern as ForceView's recording-events cursor (#613).
+  const appliedSessionEventsRef = useRef(0);
+  // #615 F5: a SEPARATE generation guard for the drain-triggered by-id
+  // reconcile — it must not share runFetch's guard, or the narrower
+  // reconcile starting mid-refetch would invalidate the full fetch (its
+  // whole-list + settings result discarded) under the shared guard's rule.
+  const pendingReconcileGuardRef = useRef(createGenerationGuard());
   // Only the first current load for this hook instance is "initial". A later
   // realtime refetch failure is user-visible but not the launch failure #382
   // asks us to monitor; the monitoring entry point also dedupes across hook
   // remounts for the full app-launch lifecycle.
   const initialLoadPendingRef = useRef(true);
+
+  useEffect(() => {
+    userIdRef.current = userId;
+    // #615 F4: an account switch must not carry the old account's pending
+    // (optimistic) workout rows into the new account's view — without this
+    // they survive until the refetch's merge drops them (and indefinitely if
+    // that refetch fails), rendering the old account's data under the new
+    // account. Written via an async callback per the set-state-in-effect
+    // rule; the functional update applies to whatever list is current.
+    void (async () => {
+      setSessions((list) => dropPendingForAccount(list, userId));
+    })();
+  }, [userId]);
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   // No synchronous setState before the first `await` here — the mount/
   // realtime-version effect below calls this directly (an effect calling
@@ -291,7 +345,13 @@ export function useTrainingData(userId: string) {
       generation,
       onSuccess: (data) => {
         initialLoadPendingRef.current = false;
-        setSessions(data.sessions);
+        // #615: merge — not replace. Pending (optimistic) workout rows that
+        // haven't reached the server yet survive the refetch; rows the
+        // server now has replace their pending placeholder by id, so
+        // realtime echo and optimistic reconcile converge exactly once.
+        setSessions((list) =>
+          mergeFetchedSessions(list, data.sessions, userIdRef.current),
+        );
         setCurrentPhase(data.currentPhase);
         setPhaseStartDate(data.phaseStartDate);
         setPhasePeriods(data.phasePeriods);
@@ -321,12 +381,89 @@ export function useTrainingData(userId: string) {
   }, [runFetch]);
 
   useEffect(() => {
-    void (async () => {
-      await runFetch();
-    })();
+    // #615: skip the coarse refetch when THIS bump was a sessions write the
+    // payload apply path already handled (mirrors ForceView's #613 guard).
+    // The events queue only ever holds session writes; a bump from any other
+    // table (or an un-applied/overflowed session event) still refetches.
+    const allApplied = sessionEventsAllApplied(
+      sessionEvents,
+      sessionsRef.current,
+    );
+    if (sessionEvents.length > 0 && allApplied && !sessionEventsOverflowed) {
+      return;
+    }
+    void runFetch();
     // realtimeVersion bumps on any watch-side write (sessions/tindeq/health) —
     // refetch so the web/iOS app picks it up without a manual reload.
-  }, [userId, realtimeVersion, runFetch]);
+  }, [userId, realtimeVersion, sessionEvents, sessionEventsOverflowed, runFetch]);
+
+  // #615: apply `sessions` realtime INSERT payloads directly, by id — the
+  // pending placeholder for a just-uploaded workout reconciles the instant
+  // its server row lands, without waiting on the refetch. Idempotent, so the
+  // bounded queue is re-walked (only the fresh tail is re-applied).
+  useEffect(() => {
+    if (sessionEvents.length === 0) return;
+    if (appliedSessionEventsRef.current > sessionEvents.length) {
+      // The bounded queue was trimmed (overflow) — re-walk what's left.
+      appliedSessionEventsRef.current = 0;
+    }
+    const fresh = sessionEvents.slice(appliedSessionEventsRef.current);
+    if (fresh.length === 0) return;
+    setSessions((list) => applySessionRealtimeEvents(list, fresh));
+    appliedSessionEventsRef.current = sessionEvents.length;
+  }, [sessionEvents]);
+
+  // #615: optimistic completed-workout plumbing. The registering caller
+  // (WorkoutView's auto-save, or the watch-completion listener) builds the
+  // PendingWorkout with the account stamp; these three functions apply it,
+  // reconcile it by stable id, and roll it back — pure by-id operations, so
+  // overlapping realtime echo / notification replay / retries converge.
+  // useCallback'd (stable identity) so a listener hook can subscribe once.
+
+  /// Show a completed workout immediately (pending marker). Idempotent by id.
+  const addPendingSession = useCallback((pending: PendingWorkout) => {
+    setSessions((list) => upsertPendingSession(list, pending));
+  }, []);
+
+  /// The server row for a pending id landed (RPC return, realtime payload,
+  /// or refetch) — replace by id, dropping the pending marker.
+  const reconcilePendingWorkout = useCallback((saved: Session) => {
+    setSessions((list) => reconcilePendingSession(list, saved));
+  }, []);
+
+  /// The save failed and nothing durable exists — remove the pending row.
+  const rollbackPendingWorkout = useCallback((id: string) => {
+    setSessions((list) => rollbackPendingSession(list, id));
+  }, []);
+
+  /// #615 F5: a watch completion drained after the WebView was suspended had
+  /// its realtime INSERT missed — the pending row registers but nothing
+  /// would ever reconcile it (the refetch guard only runs on a version
+  /// bump). Fetch the drained ids from the server and reconcile what exists:
+  /// a pending placeholder is replaced by its canonical row, a row already
+  /// canonical re-fetched is unchanged. Fenced by its own generation guard
+  /// (see `pendingReconcileGuardRef`), and the account is re-checked at
+  /// resolve time — same #615 F4 rule as the phone save: a switch mid-flight
+  /// must not land the old account's rows in the new account's list.
+  const reconcilePendingByIds = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return;
+    const generation = pendingReconcileGuardRef.current.start();
+    const accountAtStart = userIdRef.current;
+    try {
+      const found = await repo.fetchSessionsByIds(ids);
+      if (!pendingReconcileGuardRef.current.isCurrent(generation)) return;
+      if (userIdRef.current !== accountAtStart) return;
+      if (found.length === 0) return;
+      setSessions((list) => {
+        let next = list;
+        for (const s of found) next = reconcilePendingSession(next, s);
+        return next;
+      });
+    } catch {
+      // Best-effort: the pending row stays; a later realtime event, refetch
+      // or foreground drain retries the reconcile.
+    }
+  }, []);
 
   async function addSession(form: LogFormState): Promise<Session | undefined> {
     const temp: Session = {
@@ -411,6 +548,14 @@ export function useTrainingData(userId: string) {
     // #485 F4: captured once, up front — just the removed row, not the
     // whole list. See `rollbackRemoveSession`.
     const removed = sessions.find((s) => s.id === id);
+    // #615: a pending row has no server row to soft-delete — removing it is
+    // a local drop (the save RPC's stable-id replay is the retry path; a
+    // user delete while pending is a deliberate discard, and the persisted
+    // confirming state is what would re-create it, not this call).
+    if (removed?.pending) {
+      setSessions((list) => rollbackPendingSession(list, id));
+      return;
+    }
     await withOptimisticUpdate({
       apply: () => setSessions((list) => applyRemoveSessionOptimistic(list, id)),
       action: () => repo.deleteSession(id),
@@ -465,5 +610,10 @@ export function useTrainingData(userId: string) {
     removeSession,
     setPhase,
     reload,
+    // #615: optimistic completed-workout plumbing (see their docs above).
+    addPendingSession,
+    reconcilePendingWorkout,
+    rollbackPendingWorkout,
+    reconcilePendingByIds,
   };
 }

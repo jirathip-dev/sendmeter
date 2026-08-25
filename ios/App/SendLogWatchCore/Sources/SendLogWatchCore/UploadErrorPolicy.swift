@@ -38,14 +38,21 @@ public enum QuarantineReason: String, Codable, Sendable, CaseIterable {
 
 /// What `OfflineQueue`'s drain loop should do with a failed upload.
 public enum UploadErrorOutcome: Sendable, Equatable {
-    /// Transient (network / timeout / 5xx / 408 / 429) or ambiguous (403 —
-    /// could be stale auth or RLS; 409 — could be an ordering conflict, not
-    /// poison): stop this drain pass and retry the whole bundle next time.
+    /// Transient (network / timeout / 5xx / 408 / 429) or ambiguous (409 —
+    /// could be an ordering conflict, not poison): stop this drain pass and
+    /// retry the whole bundle next time.
     case retry
-    /// 401, or PostgREST's own JWT-rejection codes (PGRST301/302) — the
-    /// relayed access token is stale. Kept distinct from `.retry` so a
-    /// future build can request a fresh relay instead of just spinning;
-    /// today it behaves the same as `.retry` (stop, try again next drain).
+    /// The relayed access token is likely stale: 401, PostgREST's own
+    /// JWT-rejection codes (PGRST301/302), and — since #605 — HTTP 403,
+    /// whose verdict is usually about the credential rather than the bundle
+    /// (`shouldDrain` has already matched the item's owner to the stored
+    /// account by the time a 403 can happen). The drain loop requests a
+    /// fresh relay instead of counting the failure against the bundle. For
+    /// 403 the auth explanation is bounded by
+    /// `QueueRetryPolicy.max403RelayPasses` — a 403 that keeps failing
+    /// after that many relay refreshes is a genuine server verdict, counted
+    /// in the retry ledger like `.retry`, so #475 F3's quarantine still
+    /// catches a truly permanent 403 instead of stalling forever.
     case needsAuthRelay
     /// The bundle itself violates a DB constraint that no retry will fix.
     /// Take it off the drain path but keep it on disk, reported truthfully —
@@ -116,8 +123,12 @@ public struct UploadFailure: Sendable, Equatable {
 /// A same-stage, same-SQLSTATE failure on a bundle whose attempts are all
 /// positive-duration (e.g. a hypothetical `climb_attempts_source_check`
 /// violation) correctly falls through to `.retry` — (3) alone rules it out.
-/// 403/409 stay ambiguous (stale auth/RLS, or an ordering conflict, not
-/// necessarily poison) and default to `.retry` as before.
+/// 403 is the one ambiguous verdict that now routes to `.needsAuthRelay`
+/// (#605 — a 403 is usually a verdict about the credential, and the drain
+/// loop bounds the auth explanation by `QueueRetryPolicy.max403RelayPasses`
+/// so a genuine RLS denial still reaches the F3 quarantine); 409 stays
+/// ambiguous (an ordering conflict, not necessarily poison) and defaults to
+/// `.retry` as before.
 public enum UploadErrorClassifier {
     private static let checkViolationSQLState = "23514"
     /// PostgREST's own codes for an undecodable/expired JWT. Verified against
@@ -134,7 +145,7 @@ public enum UploadErrorClassifier {
         stage: UploadStage?,
         bundleHasNonPositiveDurationAttempt: Bool
     ) -> UploadErrorOutcome {
-        if failure.httpStatus == 401 { return .needsAuthRelay }
+        if failure.httpStatus == 401 || failure.httpStatus == 403 { return .needsAuthRelay }
         if let code = failure.postgrestCode, authErrorCodes.contains(code) { return .needsAuthRelay }
         if failure.postgrestCode == checkViolationSQLState,
            stage == .climbAttempts,
@@ -208,6 +219,51 @@ public enum QueueRetryPolicy {
     /// F11 note above) — not raw failed attempts, which would include
     /// outages and stale tokens that say nothing about the bundle itself.
     public static let maxConsecutiveFailures = 20
+
+    /// #605 — the permanent-403 answer, stated as a policy.
+    ///
+    /// `UploadErrorClassifier` now routes HTTP 403 to `.needsAuthRelay`:
+    /// with `shouldDrain` having already matched the item's owner to the
+    /// stored account, a 403 is usually a stale-auth artifact (including
+    /// `WatchSessionStore`'s stored `userId` drifting from the actual
+    /// bearer token, which a relay request also repairs), and spending the
+    /// item's F3 budget on it is what twice quarantined a healthy workout
+    /// for 20 consecutive rejections. But a 403 can also be a GENUINE
+    /// server denial — an RLS policy rejecting the insert, a
+    /// permanently-invalid account — and if it is, requesting relays
+    /// forever would stall the queue without ever advancing the ledger:
+    /// the exact #475 F3 defect this backstop exists to close. The chosen
+    /// policy:
+    ///
+    /// 1. The first `max403RelayPasses` consecutive 403 passes on an item
+    ///    each request a fresh relay (throttled by
+    ///    `SessionRelay.shouldRequestRelay` — no new mechanism) and leave
+    ///    the retry ledger untouched.
+    /// 2. Past that budget, a 403 is treated as a genuine server verdict:
+    ///    `UploadQueueEngine` counts it in the retry ledger exactly like
+    ///    `.retry`, and the existing `maxConsecutiveFailures` threshold
+    ///    quarantines the item `.stuckRetrying` as before.
+    ///
+    /// So a truly permanent 403 can never park the queue indefinitely —
+    /// the bound is `max403RelayPasses + maxConsecutiveFailures` rejected
+    /// passes, after which the item is set aside exactly as it would be
+    /// today — and the F3 backstop itself is untouched: its 20-count
+    /// threshold and `.stuckRetrying` semantics are unchanged, merely
+    /// reached later for 403. `10` gives the phone roughly half an hour of
+    /// drain-paced chances to relay a fresh token; a stale-auth 403 is
+    /// repaired by the first relay that lands, so the budget is only ever
+    /// spent in the case that actually needs bounding.
+    public static let max403RelayPasses = 10
+
+    /// Whether the item's 403s are still being trusted as a stale-auth
+    /// explanation — true for the first `max403RelayPasses` consecutive
+    /// 403 passes, false once the budget is exhausted (see the policy
+    /// above). Pure and stateless so the drain loop's per-item counter is
+    /// just a number on disk; this is the decision that turns a permanent
+    /// 403 into a counted verdict instead of a forever-stall.
+    public static func shouldTreat403AsStaleAuth(consecutive403Passes: Int) -> Bool {
+        consecutive403Passes <= max403RelayPasses
+    }
 
     /// #475 F12: `.stuckRetrying` is a bet, not a proof — unlike
     /// `.schemaRejection`, the classifier never recognized WHY the upload

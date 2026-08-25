@@ -1,0 +1,31 @@
+{
+  "name": "sendmeter-mcp",
+  "version": "0.1.0",
+  "description": "Local, per-user, read-only MCP server for Sendmeter training + health data (Supabase Postgres)",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "sendmeter-mcp": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "../node_modules/.bin/eslint src test scripts",
+    "mcp": "node dist/index.js",
+    "dry-run": "node dist/index.js --dry-run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@supabase/supabase-js": "^2.112.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

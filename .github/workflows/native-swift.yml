@@ -1,0 +1,124 @@
+name: Native Swift
+
+on:
+  pull_request:
+    paths:
+      - "native/SendmeterNative/**"
+      - "ios/App/SendLogWatchCore/**"
+      - "ios/App/SendLogWatch Watch App/**"
+      - "ios/App/SendLogWatch Watch App-Info.plist"
+      - "ios/App/SendLogWatchWidgets/**"
+      - "ios/App/SendLogWatchWidgets-Info.plist"
+      - "native-plugins/sendlog-health-core/**"
+      - "tools/anti-slop-swift/**"
+      - ".anti-slop.json"
+      - "scripts/anti-slop-swift.sh"
+      - "scripts/validate-anti-slop-cold.sh"
+      - "scripts/validate-anti-slop.sh"
+      - "scripts/assert-native-watch-project.rb"
+      - ".github/workflows/native-swift.yml"
+  push:
+    branches:
+      - staging
+      - main
+      - "agent/swift-native-rewrite"
+    paths:
+      - "native/SendmeterNative/**"
+      - "ios/App/SendLogWatchCore/**"
+      - "ios/App/SendLogWatch Watch App/**"
+      - "ios/App/SendLogWatch Watch App-Info.plist"
+      - "ios/App/SendLogWatchWidgets/**"
+      - "ios/App/SendLogWatchWidgets-Info.plist"
+      - "native-plugins/sendlog-health-core/**"
+      - "tools/anti-slop-swift/**"
+      - ".anti-slop.json"
+      - "scripts/anti-slop-swift.sh"
+      - "scripts/validate-anti-slop-cold.sh"
+      - "scripts/validate-anti-slop.sh"
+      - "scripts/assert-native-watch-project.rb"
+      - ".github/workflows/native-swift.yml"
+
+concurrency:
+  group: native-swift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-tests:
+    name: Core tests
+    runs-on: blacksmith-6vcpu-macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Validate anti-slop Swift wiring
+        run: bash scripts/validate-anti-slop.sh
+      - name: Anti-slop Swift cold-build regression
+        run: bash scripts/validate-anti-slop-cold.sh
+      - name: Anti-slop Swift (advisory)
+        run: |
+          set +e
+          output="$(bash scripts/anti-slop-swift.sh native/SendmeterNative/Sources 2>&1)"
+          lint_status=$?
+          printf '%s\n' "$output"
+          if [[ "$lint_status" == 0 || "$lint_status" == 1 ]] && \
+            ! grep -F -q -- 'anti-slop: scanned ' <<< "$output"; then
+            echo '::error::anti-slop Swift produced no scanned-file signal'
+            exit 2
+          fi
+          while IFS= read -r diagnostic; do
+            if [[ "$diagnostic" =~ ^(.+):([0-9]+):([0-9]+):\ error:\ (.+)$ ]]; then
+              echo "::warning file=${BASH_REMATCH[1]},line=${BASH_REMATCH[2]},col=${BASH_REMATCH[3]}::${BASH_REMATCH[4]}"
+            fi
+          done <<< "$output"
+          case "$lint_status" in
+            0)
+              ;;
+            1)
+              echo "::warning::anti-slop Swift found violations; findings are advisory and do not fail this job."
+              exit 0
+              ;;
+            *)
+              echo "::error::anti-slop Swift failed to run (exit $lint_status); tool, config, and path failures are blocking."
+              exit "$lint_status"
+              ;;
+          esac
+      - name: Run pure Swift tests
+        run: swift test --package-path native/SendmeterNative
+      - name: Run health-core pure Swift tests
+        run: swift test --package-path native-plugins/sendlog-health-core
+
+  ios-build:
+    name: iOS Simulator build
+    runs-on: blacksmith-6vcpu-macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: native/SendmeterNative
+        run: xcodegen generate
+      - name: Assert generated watch graph
+        run: |
+          gem install xcodeproj --no-document
+          ruby scripts/assert-native-watch-project.rb
+      - name: Resolve Swift packages
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -resolvePackageDependencies
+      - name: Build native app
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

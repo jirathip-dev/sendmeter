@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Sendmeter</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.jirathip.sendlog</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>com.jirathip.sendlog</string>
+            </array>
+        </dict>
+        <!-- #674 review F2: the Live Activity / Dynamic Island taps through
+             sendmeter://force. Auth links arrive on the scheme above; this
+             second, navigation-only scheme must be registered or WidgetKit
+             drops the tap entirely. -->
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.jirathip.sendlog.deeplinks</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>sendmeter</string>
+            </array>
+        </dict>
+    </array>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>NSSupportsLiveActivities</key>
+    <true/>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Connects to your Tindeq Progressor force gauge.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Uses your location to fetch local climbing conditions (temperature and humidity).</string>
+    <key>NSHealthShareUsageDescription</key>
+    <string>Reads heart rate variability, resting heart rate, respiratory rate, sleep, and body weight to compute your daily training readiness.</string>
+    <key>NSHealthUpdateUsageDescription</key>
+    <string>Sendmeter only reads from Apple Health to compute your recovery score; it does not write data back to Health.</string>
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>fetch</string>
+        <string>bluetooth-central</string>
+    </array>
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>com.jirathip.sendlog.background-refresh</string>
+    </array>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>arm64</string>
+    </array>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+</dict>
+</plist>

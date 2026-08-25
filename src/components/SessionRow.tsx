@@ -360,6 +360,22 @@ export default function SessionRow({
                 {s.workoutSource === "watch" ? "AUTO" : "PHONE"}
               </span>
             )}
+            {/* #615: optimistic completed workout — saved on device, not yet
+                reconciled with the server. Rendered as syncing; a later
+                realtime/server reconcile replaces the row by id. */}
+            {s.pending && (
+              <span
+                className="tag"
+                title="Saved on this device — syncing to your account"
+                style={{
+                  background: "var(--surface-2)",
+                  color: "var(--ink-muted)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                SYNCING
+              </span>
+            )}
             {expandable && (
               <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
                 ›
@@ -376,7 +392,7 @@ export default function SessionRow({
             </div>
           )}
         </div>
-        {onEdit && (
+        {onEdit && !s.pending && (
           <button
             className="del-btn"
             aria-label="Edit session"

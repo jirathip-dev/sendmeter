@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { NewTindeqRecording, TindeqSample } from "../types";
+import type { RecordingSaveOutcome } from "./recordingSave";
 import {
   buildReverseActionTimeline,
   buildReverseActionSetRecording,
@@ -317,39 +318,36 @@ describe("Reverse Action exactly-once persistence", () => {
 
   it("claims before the first await so concurrent stop causes save one row", async () => {
     const claims = new Set<string>();
-    const persist = vi.fn(async () => {
-      await Promise.resolve();
-    });
-    const queue = vi.fn(async () => true);
+    const save = vi.fn(async (): Promise<RecordingSaveOutcome> => "saved");
     const key = reverseActionSetKey("run-1", 1);
 
     const outcomes = await Promise.all([
-      persistReverseActionSetOnce(key, claims, recording(), persist, queue),
-      persistReverseActionSetOnce(key, claims, recording(), persist, queue),
-      persistReverseActionSetOnce(key, claims, recording(), persist, queue),
+      persistReverseActionSetOnce(key, claims, recording(), save),
+      persistReverseActionSetOnce(key, claims, recording(), save),
+      persistReverseActionSetOnce(key, claims, recording(), save),
     ]);
 
     expect(outcomes.sort()).toEqual(["already_claimed", "already_claimed", "saved"]);
-    expect(persist).toHaveBeenCalledTimes(1);
-    expect(queue).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a durable queued set claimed and releases a totally lost attempt", async () => {
+  it("keeps a durable pending set claimed and releases a totally lost attempt", async () => {
     const key = reverseActionSetKey("run-1", 1);
-    const persist = vi.fn(async () => {
-      throw new Error("offline");
-    });
+    // Durable-first save: "pending" means the rep is durably queued (the
+    // network insert just failed) — the claim must stay, like the old "queued".
+    const save = vi.fn(async (): Promise<RecordingSaveOutcome> => "pending");
     const durableClaims = new Set<string>();
     await expect(
-      persistReverseActionSetOnce(key, durableClaims, recording(), persist, async () => true),
-    ).resolves.toBe("queued");
+      persistReverseActionSetOnce(key, durableClaims, recording(), save),
+    ).resolves.toBe("saved");
     await expect(
-      persistReverseActionSetOnce(key, durableClaims, recording(), persist, async () => true),
+      persistReverseActionSetOnce(key, durableClaims, recording(), save),
     ).resolves.toBe("already_claimed");
 
     const lostClaims = new Set<string>();
+    const lostSave = vi.fn(async (): Promise<RecordingSaveOutcome> => "not-persisted");
     await expect(
-      persistReverseActionSetOnce(key, lostClaims, recording(), persist, async () => false),
+      persistReverseActionSetOnce(key, lostClaims, recording(), lostSave),
     ).resolves.toBe("lost");
     expect(lostClaims.has(key)).toBe(false);
   });

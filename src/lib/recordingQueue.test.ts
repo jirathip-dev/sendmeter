@@ -11,6 +11,7 @@ import {
   pendingRecordingsCount,
   persistRecording,
   persistRecordingDurable,
+  removeQueuedRecording,
   retryStuckRecordings,
   saveQueue,
   type PendingRecording,
@@ -1243,6 +1244,61 @@ describe("retryStuckRecordings (#484 — the explicit-user-action re-attempt pat
     const insert = vi.fn().mockResolvedValue({});
     expect(await drainPendingRecordingsQueue("user-1", insert, loader, storage)).toBe(1);
     expect(insert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("removeQueuedRecording (#613 — dequeue after a durable-first save succeeds)", () => {
+  it("removes one entry from BOTH stores by id", async () => {
+    const storage = fakeStorage();
+    saveQueue(queueOf("lane-1", "lane-2"), storage);
+    const { loader, map } = fakeDb(queueOf("idb-1"));
+
+    expect(await removeQueuedRecording("lane-2", "user-1", loader, storage)).toBe(true);
+    expect(loadQueue(storage).map((p) => p.id)).toEqual(["lane-1"]);
+    expect([...map.keys()]).toEqual(["idb-1"]);
+  });
+
+  it("removes from IndexedDB too, not just the lane", async () => {
+    const storage = fakeStorage();
+    const { loader, map } = fakeDb(queueOf("idb-1", "idb-2"));
+    expect(await removeQueuedRecording("idb-1", "user-1", loader, storage)).toBe(true);
+    expect([...map.keys()]).toEqual(["idb-2"]);
+  });
+
+  it("is a no-op (returns false) when the id isn't queued", async () => {
+    const storage = fakeStorage();
+    const { loader } = fakeDb(queueOf("idb-1"));
+    expect(await removeQueuedRecording("absent", "user-1", loader, storage)).toBe(false);
+    expect([...loadQueue(storage).map((p) => p.id)]).toEqual([]);
+  });
+
+  it("does NOT remove another account's entry", async () => {
+    const storage = fakeStorage();
+    saveQueue(enqueueRecording([], rec("theirs-lane"), "user-2", () => "t"), storage);
+    const theirs = enqueueRecording([], rec("theirs-idb"), "user-2", () => "t");
+    const { loader, map } = fakeDb(theirs);
+
+    expect(await removeQueuedRecording("theirs-lane", "user-1", loader, storage)).toBe(false);
+    expect(await removeQueuedRecording("theirs-idb", "user-1", loader, storage)).toBe(false);
+    expect(loadQueue(storage).map((p) => p.id)).toEqual(["theirs-lane"]); // untouched
+    expect([...map.keys()]).toEqual(["theirs-idb"]); // untouched
+  });
+
+  it("still removes an unattributed (null-user) legacy entry, matching the drain's attempt rule", async () => {
+    const storage = fakeStorage();
+    saveQueue(enqueueRecording([], rec("legacy"), null, () => "t"), storage);
+    const { loader } = fakeDb();
+    expect(await removeQueuedRecording("legacy", "user-1", loader, storage)).toBe(true);
+    expect(loadQueue(storage)).toEqual([]);
+  });
+
+  it("is a no-op when a store refuses the delete — best-effort, not an error", async () => {
+    const storage = fakeStorage();
+    const { db } = fakeDb(queueOf("idb-1"));
+    db.delete = () => Promise.reject(new DOMException("", "QuotaExceededError"));
+    // Does not throw — the caller (a durable-first reconcile) must never crash
+    // because the dequeue was refused; the stale entry just 23505s harmlessly.
+    expect(await removeQueuedRecording("idb-1", "user-1", () => Promise.resolve(db), storage)).toBe(false);
   });
 });
 

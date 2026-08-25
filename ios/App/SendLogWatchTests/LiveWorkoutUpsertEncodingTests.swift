@@ -21,9 +21,9 @@ final class LiveWorkoutUpsertEncodingTests: XCTestCase {
         return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
-    private func sampleRow(hr: Double?) -> LiveWorkoutUpsert {
+    private func sampleRow(hr: Double?, userId: UUID?) -> LiveWorkoutUpsert {
         LiveWorkoutUpsert(
-            userId: UUID(), workoutId: UUID(), runId: UUID(), status: "live",
+            userId: userId, workoutId: UUID(), runId: UUID(), status: "live",
             startedAt: Date(timeIntervalSince1970: 1_700_000_000),
             hr: hr, attemptCount: 3, activeKcal: nil, elevationGainM: nil,
             climbing: false, climbingSince: nil, restStartedAt: nil,
@@ -34,22 +34,28 @@ final class LiveWorkoutUpsertEncodingTests: XCTestCase {
     /// The load-bearing case: a nil `hr` must be a PRESENT key with a JSON
     /// `null` value — not absent from the body at all.
     func testNilHRIsEncodedAsAnExplicitJSONNullNotOmitted() throws {
-        let object = try encode(sampleRow(hr: nil))
+        let object = try encode(sampleRow(hr: nil, userId: UUID()))
         XCTAssertTrue(object.keys.contains("hr"), "the hr key must be present in the upsert body, not omitted")
         XCTAssertTrue(object["hr"] is NSNull, "a nil hr must serialize as JSON null so PostgREST actually overwrites the column")
     }
 
     /// A present HR value must still round-trip as its numeric value.
     func testFreshHRIsEncodedAsItsNumericValue() throws {
-        let object = try encode(sampleRow(hr: 142))
+        let object = try encode(sampleRow(hr: 142, userId: UUID()))
         XCTAssertEqual(object["hr"] as? Double, 142)
+    }
+
+    func testOwnerlessRowEncodesUserIdAsExplicitJSONNullNotOmitted() throws {
+        let object = try encode(sampleRow(hr: nil, userId: nil))
+        XCTAssertTrue(object.keys.contains("user_id"), "ownerless rows must keep the user_id key")
+        XCTAssertTrue(object["user_id"] is NSNull, "ownerless rows must encode user_id as JSON null")
     }
 
     /// The other optionals deliberately keep the omit-when-nil default
     /// (`markEnded()` relies on this to avoid stomping those columns with
     /// null) — pin that this fix did not flip every field to explicit null.
     func testOtherOptionalFieldsStayOmittedWhenNil() throws {
-        let object = try encode(sampleRow(hr: nil))
+        let object = try encode(sampleRow(hr: nil, userId: UUID()))
         XCTAssertFalse(object.keys.contains("active_kcal"), "active_kcal must stay omitted when nil (markEnded() relies on this)")
         XCTAssertFalse(object.keys.contains("elevation_gain_m"), "elevation_gain_m must stay omitted when nil")
         XCTAssertFalse(object.keys.contains("climbing_since"), "climbing_since must stay omitted when nil")
@@ -57,18 +63,18 @@ final class LiveWorkoutUpsertEncodingTests: XCTestCase {
         XCTAssertFalse(object.keys.contains("rest_target_s"), "rest_target_s must stay omitted when nil")
     }
 
-    /// Every non-optional field must still be present — a hand-written
-    /// `encode(to:)` is exactly the kind of change that can silently drop a
-    /// field on a typo.
+    /// Every required wire field, including the explicit owner key, must
+    /// still be present — a hand-written `encode(to:)` is exactly the kind of
+    /// change that can silently drop a field on a typo.
     func testAllNonOptionalFieldsArePresent() throws {
-        let object = try encode(sampleRow(hr: nil))
+        let object = try encode(sampleRow(hr: nil, userId: UUID()))
         for key in ["user_id", "workout_id", "run_id", "sequence", "event", "terminal", "status", "started_at", "attempt_count", "climbing", "updated_at"] {
             XCTAssertTrue(object.keys.contains(key), "expected \(key) to be present in the encoded body")
         }
     }
 
     func testMirrorIdentityAndSequenceRoundTripOnTheWire() throws {
-        let row = sampleRow(hr: 142)
+        let row = sampleRow(hr: 142, userId: UUID())
         let object = try encode(row)
         XCTAssertEqual(object["run_id"] as? String, row.runId.uuidString)
         XCTAssertEqual(object["sequence"] as? Int, row.sequence)

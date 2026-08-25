@@ -221,6 +221,14 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// reclaimed only under actual disk pressure (`writeWithEviction`'s
     /// last resort), when the alternative is losing a brand-new rep.
     private let stripsPayloadOnQuarantine: Bool
+    /// #606: the bounded ring of records that have LEFT quarantine (manual
+    /// retry or the F12 resurrection) — the header-only breadcrumb that
+    /// survives the restore, so a resolved incident stays diagnosable. One
+    /// file per queue at `baseDir` root
+    /// (`quarantine-exit-history-<directoryName>.json`), deliberately
+    /// OUTSIDE `pendingDir` so no extension-filtered sweep can ever mistake
+    /// it for a queued item (the same rule that governs `lastSyncURL`).
+    private let breadcrumbStore: QuarantineBreadcrumbStore
 
     private var drainState = CoalescingDrain()
     /// #472b: consecutive drain PASSES that stopped early (a `.retry` or
@@ -263,6 +271,10 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         self.evictsOldestOnRefusedWrite = evictsOldestOnRefusedWrite
         self.evictionReporter = evictionReporter
         self.stripsPayloadOnQuarantine = stripsPayloadOnQuarantine
+        self.breadcrumbStore = QuarantineBreadcrumbStore(
+            fileURL: baseDir
+                .appendingPathComponent("quarantine-exit-history-\(directoryName).json")
+        )
     }
 
     private var pendingDir: URL {
@@ -278,7 +290,9 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// would show 0 pending forever, since `shouldDrain` always returns
     /// false with `currentUserId == nil`. `drain()`'s own guard is untouched
     /// (it still never uploads a mismatched or signed-out item) — widening
-    /// this count is display-only.
+    /// this count is display-only. An ownerless legacy file is separately
+    /// published through `PendingSyncCache.unscopedTotal`; once an account is
+    /// signed in it is not counted as that account's pending work.
     ///
     /// Quarantined items (#475) live alongside these under a different
     /// extension, so they're never counted here — see `quarantinedCount()`.
@@ -288,17 +302,27 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         decoder.dateDecodingStrategy = .iso8601
         let files = (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension == "json" } ?? []
+        var unscoped = 0
         let count = files.filter { file in
             guard
                 let data = try? Data(contentsOf: file),
                 let item = try? decoder.decode(Item.self, from: data)
-            else { return true } // unreadable: retained and reported until a later build can decode it
+            else {
+                // Unknown ownership is retained and visible, but is not
+                // presented as this account's upload after sign-in.
+                unscoped += 1
+                return true // retained and reported until a later build can decode it
+            }
+            if item.enqueuedUserId == nil {
+                unscoped += 1
+            }
             return shouldDrain(itemUserId: item.enqueuedUserId, currentUserId: currentUserId)
                 || currentUserId == nil
         }.count
         // Publish for the sync-readable stamp (#21): reading this actor is an
         // await, which the WatchConnectivity send paths can't do.
         PendingSyncCache.shared.record(count, for: slot)
+        PendingSyncCache.shared.recordUnscopedPending(unscoped, for: slot)
         return count
     }
 
@@ -320,7 +344,9 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// or act on). An unreadable/undecodable `.quarantine` file is retained
     /// and counted, same policy as an unreadable pending file — and counted
     /// as `.schemaRejection`-like (the cautious default) since its `reason`
-    /// can't be read.
+    /// can't be read. Ownerless decoded records are excluded from this
+    /// account's total and published in the separate unscoped diagnostic
+    /// bucket instead.
     @discardableResult
     func quarantinedCount() -> Int {
         let currentUserId = WatchSessionStore.shared.userId
@@ -330,6 +356,7 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
             .filter { $0.pathExtension == quarantineExtension } ?? []
         var total = 0
         var stuck = 0
+        var unscoped = 0
         for file in files {
             // #491 review F2: the header-only probe, not the full record —
             // this sweep runs at the end of every drain pass and must not
@@ -339,7 +366,11 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
                 let record = try? decoder.decode(QueueQuarantineProbe.self, from: data)
             else {
                 total += 1 // unreadable: retained and reported, same as pendingCount()
+                unscoped += 1
                 continue
+            }
+            if record.item.enqueuedUserId == nil {
+                unscoped += 1
             }
             guard shouldDrain(itemUserId: record.item.enqueuedUserId, currentUserId: currentUserId)
                 || currentUserId == nil
@@ -349,6 +380,7 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         }
         PendingSyncCache.shared.recordQuarantined(total, for: slot)
         PendingSyncCache.shared.recordQuarantinedStuck(stuck, for: slot)
+        PendingSyncCache.shared.recordUnscopedQuarantined(unscoped, for: slot)
         return total
     }
 
@@ -498,7 +530,8 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
             }
             // The write committed; only now may the quarantine record go.
             try? fileIO.removeItem(at: file)
-            clearRetryLedger(for: record.item) // a fresh budget, same as F12's resurrection
+            clearPerItemLedgers(for: record.item) // a fresh budget, same as F12's resurrection
+            recordQuarantineExit(record) // #606 — the record's header outlives the restore
             restored += 1
         }
         // #600: republish + tell the phone — even a zero-restore outcome is
@@ -647,8 +680,15 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
                 if let oldest = self.oldestOtherFile(excluding: url) {
                     do {
                         try self.fileIO.removeItem(at: oldest)
+                        // The evicted item's `.retry` ledger AND its `.stall403`
+                        // counter (#605) go with it — metadata about a file
+                        // that no longer exists.
+                        let base = oldest.deletingPathExtension()
                         try? self.fileIO.removeItem(
-                            at: oldest.deletingPathExtension().appendingPathExtension(self.retryLedgerExtension)
+                            at: base.appendingPathExtension(self.retryLedgerExtension)
+                        )
+                        try? self.fileIO.removeItem(
+                            at: base.appendingPathExtension(self.stall403Extension)
                         )
                         pendingEvictions += 1
                         return .evicted
@@ -825,7 +865,7 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
             do {
                 try await upload(item)
                 try? fileIO.removeItem(at: file)
-                clearRetryLedger(for: item) // a previously-struggling item finally landed
+                clearPerItemLedgers(for: item) // a previously-struggling item finally landed
                 recordSuccessfulSync(at: clock.now(), userId: currentUserId) // #472b — the "have we synced lately" signal
             } catch {
                 // #475: a generic "stop on any error" treated a permanent
@@ -854,78 +894,67 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
                         failure: classification.failure,
                         attemptCount: nil
                     )
-                    clearRetryLedger(for: item)
+                    clearPerItemLedgers(for: item)
                     continue filesLoop
                 case .needsAuthRelay:
-                    // #475 F11: a stale token means the request was never
-                    // evaluated under a valid credential — it is NOT
-                    // evidence about this item, so it must never advance
-                    // the stuck-retry counter. Shipping this counting every
-                    // failure (including this one) let a sustained #472-style
-                    // stale-relay storm quarantine — and thereby permanently
-                    // abandon — a completely healthy workout. Pure break,
-                    // ledger untouched.
-                    //
-                    // #472b — the core fix that issue was filed for: classifying
-                    // the failure was never enough on its own, since nothing
-                    // then asked the phone for the token that would actually
-                    // unblock the queue. A later drain with the same expired
-                    // token just 401s again. `sessionRelay` already throttles
-                    // on `SessionRelay.shouldRequestRelay`/`lastRequestAt`
-                    // (5s), so this can be called on every stale-token pass
-                    // with no second throttle needed here.
+                    // #605: HTTP 403 is the one ambiguous verdict the
+                    // classifier sends down this branch too. Unlike 401 /
+                    // PGRST301/302, where the server explicitly named the
+                    // JWT as the problem, a 403 may be a stale-auth
+                    // artifact OR a genuine server denial — `shouldDrain`
+                    // has already matched the item's owner to the stored
+                    // account before any of this runs, so a 403 is usually
+                    // about the credential, but "usually" is not a proof.
+                    // The per-item `stall403` counter bounds how long the
+                    // auth explanation is trusted before the 403 becomes a
+                    // counted verdict — see
+                    // `QueueRetryPolicy.shouldTreat403AsStaleAuth` for the
+                    // policy and its permanent-403 answer.
+                    if classification.failure.httpStatus == 403 {
+                        let stalls = (readStall403Count(for: item) ?? 0) + 1
+                        writeStall403Count(stalls, for: item)
+                        if QueueRetryPolicy.shouldTreat403AsStaleAuth(consecutive403Passes: stalls) {
+                            // #472b: asking is what actually unblocks a
+                            // stale-token queue — recognizing the failure
+                            // and going quiet just reproduces the 401 loop.
+                            // `sessionRelay` already throttles on
+                            // `SessionRelay.shouldRequestRelay` /
+                            // `lastRequestAt` (5s), so calling on every
+                            // budgeted pass needs no second throttle here.
+                            // Ledger untouched — a stale credential is a
+                            // property of the pass, not evidence about this
+                            // item (F11).
+                            await sessionRelay.requestSessionRelay()
+                            stalled = true
+                            break filesLoop
+                        }
+                        // The stale-auth explanation is exhausted — this 403
+                        // is a genuine server verdict about the item (RLS
+                        // denial, permanently-invalid account, …). Count it
+                        // exactly like `.retry`: F3's threshold then
+                        // quarantines it `.stuckRetrying`, so a truly
+                        // permanent 403 can never park the queue forever.
+                        if advanceLedgerForUnrecognizedVerdict(classification, item: item, file: file) {
+                            stalled = true
+                            break filesLoop
+                        }
+                        continue filesLoop
+                    }
+                    // 401 / PGRST301/302: the server named the JWT itself —
+                    // always ask for a fresh relay, never count (F11).
                     await sessionRelay.requestSessionRelay()
                     stalled = true
                     break filesLoop
                 case .retry:
-                    // #475 F11: likewise, only count this failure toward the
-                    // stuck-retry budget if the SERVER actually returned
-                    // something identifiable — a transport failure
-                    // (`UploadFailure()`, everything nil: no network, a
-                    // timeout, a dropped connection) reached no server at
-                    // all and is equally not evidence about the item.
-                    //
-                    // #475 F17: nor does a 5xx that arrives as a non-JSON
-                    // body (`HTTPError`, e.g. a gateway's HTML error page
-                    // during a Supabase incident) — the taxonomy's own doc
-                    // comment already calls 5xx/408/429 transient; the
-                    // ledger must agree. A sustained outage shaped this way
-                    // must not quarantine a healthy item any more than a
-                    // transport failure or a stale token does. An outcome
-                    // the guards below can't positively identify as a
-                    // server verdict therefore defaults to RETRY, ledger
-                    // untouched.
-                    let failure = classification.failure
-                    let transientHTTP = failure.httpStatus.map { $0 >= 500 || $0 == 408 || $0 == 429 } ?? false
-                    guard !transientHTTP, failure.postgrestCode != nil || failure.httpStatus != nil else {
+                    // The F11/F17 ledger rules (what counts as a server
+                    // verdict, and when the F3 threshold quarantines) live
+                    // on `advanceLedgerForUnrecognizedVerdict` — shared
+                    // with a 403 whose relay budget is exhausted (#605).
+                    if advanceLedgerForUnrecognizedVerdict(classification, item: item, file: file) {
                         stalled = true
-                        break filesLoop // transport-only or an outage body: no verdict was reached, ledger untouched
+                        break filesLoop
                     }
-                    let previous = readRetryLedger(for: item)?.consecutiveFailures ?? 0
-                    switch QueueRetryPolicy.afterFailedAttempt(previousConsecutiveFailures: previous) {
-                    case .retryLater(let attempts):
-                        writeRetryLedger(
-                            RetryLedgerEntry(
-                                consecutiveFailures: attempts,
-                                lastErrorMessage: failure.message,
-                                lastAttemptAt: clock.now()
-                            ),
-                            for: item
-                        )
-                        stalled = true
-                        break filesLoop // a real rejection, but not one we recognize — stop, retry next drain
-                    case .stuck(let attempts):
-                        quarantine(
-                            item: item,
-                            originalFile: file,
-                            reason: .stuckRetrying,
-                            stage: classification.stage,
-                            failure: failure,
-                            attemptCount: attempts
-                        )
-                        clearRetryLedger(for: item)
-                        continue filesLoop
-                    }
+                    continue filesLoop
                 }
             }
         }
@@ -935,8 +964,75 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         return stalled
     }
 
+    /// #475 F11/F17's ledger rules, shared by the `.retry` outcome and by a
+    /// 403 whose stale-auth relay budget is exhausted (#605 — same counting,
+    /// because an exhausted budget makes the 403 a genuine server verdict).
+    ///
+    /// Only count a failure toward the stuck-retry budget if the SERVER
+    /// actually returned something identifiable — a transport failure
+    /// (`UploadFailure()`, everything nil: no network, a timeout, a dropped
+    /// connection) reached no server at all and is equally not evidence
+    /// about the item. Nor does a 5xx/408/429 that arrives as a non-JSON
+    /// body (`HTTPError`, e.g. a gateway's HTML error page during a
+    /// Supabase incident) — the taxonomy's own doc comment already calls
+    /// 5xx/408/429 transient; the ledger must agree. A sustained outage
+    /// shaped this way must not quarantine a healthy item any more than a
+    /// transport failure or a stale token does. An outcome these guards
+    /// can't positively identify as a server verdict therefore counts for
+    /// nothing: stop the pass, ledger untouched.
+    ///
+    /// A verdict that IS identifiable advances the per-item counter, and
+    /// once `QueueRetryPolicy.maxConsecutiveFailures` consecutive ones have
+    /// accumulated, the item is quarantined `.stuckRetrying` (the F3
+    /// backstop) rather than left to block the queue forever on an error
+    /// this classifier doesn't specifically recognize.
+    ///
+    /// Returns true when the pass must stop (`break filesLoop`, caller sets
+    /// `stalled = true`), false when the loop should continue (this item
+    /// was just quarantined and no longer blocks anything).
+    private func advanceLedgerForUnrecognizedVerdict(
+        _ classification: UploadClassification,
+        item: Item,
+        file: URL
+    ) -> Bool {
+        let failure = classification.failure
+        let transientHTTP = failure.httpStatus.map { $0 >= 500 || $0 == 408 || $0 == 429 } ?? false
+        guard !transientHTTP, failure.postgrestCode != nil || failure.httpStatus != nil else {
+            return true // transport-only or an outage body: no verdict was reached, ledger untouched
+        }
+        let previous = readRetryLedger(for: item)?.consecutiveFailures ?? 0
+        switch QueueRetryPolicy.afterFailedAttempt(previousConsecutiveFailures: previous) {
+        case .retryLater(let attempts):
+            writeRetryLedger(
+                RetryLedgerEntry(
+                    consecutiveFailures: attempts,
+                    lastErrorMessage: failure.message,
+                    lastAttemptAt: clock.now()
+                ),
+                for: item
+            )
+            return true // a real rejection, but not one we recognize — stop, retry next drain
+        case .stuck(let attempts):
+            quarantine(
+                item: item,
+                originalFile: file,
+                reason: .stuckRetrying,
+                stage: classification.stage,
+                failure: failure,
+                attemptCount: attempts
+            )
+            clearPerItemLedgers(for: item)
+            return false // continue the pass; this item no longer blocks anything
+        }
+    }
+
     private let quarantineExtension = "quarantine"
     private let retryLedgerExtension = "retry"
+    /// #605: per-item sidecar (`<uuid>.stall403`) counting consecutive 403
+    /// drain passes while the stale-auth explanation is still trusted —
+    /// see `QueueRetryPolicy.shouldTreat403AsStaleAuth`. A bare Int on
+    /// disk; unknown to older builds, which simply ignore the file.
+    private let stall403Extension = "stall403"
 
     /// Replaces the original pending file with a `QueueQuarantineRecord`
     /// carrying the original item plus the failing stage/error/reason
@@ -1025,10 +1121,41 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
             do {
                 try fileIO.write(itemData, to: pendingURL)
                 try? fileIO.removeItem(at: file)
+                recordQuarantineExit(record) // #606 — same breadcrumb as the manual retry
             } catch {
                 // Left quarantined; eligible again next time isStuckRetryDue is checked.
             }
         }
+    }
+
+    /// #606: one header-only breadcrumb when a record durably leaves
+    /// quarantine — written on BOTH exit paths (the manual retry and the
+    /// F12 resurrection). The item payload is never touched; the breadcrumb
+    /// is the record's header plus when it exited, and it is retained
+    /// across the upload's success on purpose: it exists to explain a
+    /// failure that has since cleared.
+    private func recordQuarantineExit(_ record: QueueQuarantineRecord<Item>) {
+        breadcrumbStore.record(
+            QuarantineBreadcrumbEntry(
+                id: record.item.queueFileId,
+                reason: record.reason,
+                stage: record.stage,
+                httpStatus: record.httpStatus,
+                postgrestCode: record.postgrestCode,
+                errorMessage: record.errorMessage,
+                attemptCount: record.attemptCount,
+                quarantinedAt: record.quarantinedAt,
+                exitedAt: clock.now()
+            )
+        )
+    }
+
+    /// #606: this queue's quarantine-exit ring, oldest first — for the
+    /// diagnostics surface's recent history. Diagnostics, not user data:
+    /// never cleared by a successful upload, an account switch or a
+    /// sign-out, only ever bounded by the ring's own capacity.
+    func quarantineExitHistory() -> [QuarantineBreadcrumbEntry] {
+        breadcrumbStore.history()
     }
 
     // MARK: #475 F3 — per-item retry ledger
@@ -1053,8 +1180,35 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         try? fileIO.write(data, to: retryLedgerURL(for: item))
     }
 
-    private func clearRetryLedger(for item: Item) {
+    /// #605: the consecutive-403 counter behind the stale-auth relay
+    /// budget (`QueueRetryPolicy.shouldTreat403AsStaleAuth`). Read/written
+    /// as a bare Int sidecar; the counter must survive relaunch exactly
+    /// like the retry ledger, or a killed watch app would silently refill
+    /// the relay budget forever.
+    private func stall403URL(for item: Item) -> URL {
+        pendingDir
+            .appendingPathComponent(item.queueFileId.uuidString)
+            .appendingPathExtension(stall403Extension)
+    }
+
+    private func readStall403Count(for item: Item) -> Int? {
+        guard let data = try? Data(contentsOf: stall403URL(for: item)) else { return nil }
+        return try? JSONDecoder().decode(Int.self, from: data)
+    }
+
+    private func writeStall403Count(_ stalls: Int, for item: Item) {
+        guard let data = try? JSONEncoder().encode(stalls) else { return }
+        try? fileIO.write(data, to: stall403URL(for: item))
+    }
+
+    /// Everything that clears the retry ledger (a successful upload, a
+    /// quarantine of either reason, a manual retry's fresh budget) also
+    /// clears the 403 stall counter (#605) — an item that landed must not
+    /// carry a half-spent stale-auth budget into some future, unrelated
+    /// episode, the same reasoning that governs the ledger itself.
+    private func clearPerItemLedgers(for item: Item) {
         try? fileIO.removeItem(at: retryLedgerURL(for: item))
+        try? fileIO.removeItem(at: stall403URL(for: item))
     }
 
     // MARK: #472b — "have we synced in a while", surfaced honestly

@@ -66,7 +66,10 @@ type RecordingRow = {
   completion_status?: string | null;
 };
 
-function toRecording(r: RecordingRow): TindeqRecordingMeta {
+/// Convert a DB row (server fetch or a realtime postgres_changes payload's
+/// `new`/`old`) into the app's recording meta. Exported (#613) so the
+/// ForceView realtime path and the fetch path share one parser.
+export function toRecording(r: RecordingRow): TindeqRecordingMeta {
   return {
     id: r.id,
     recordedAt: r.recorded_at,
@@ -368,7 +371,7 @@ function toPreset(r: PresetRow): TindeqPreset {
 }
 
 function presetToRow(p: Omit<TindeqPreset, "id">) {
-  // Keep direct callers and schema-fallback writes on the same <=30m/set
+  // Keep direct callers and schema-fallback writes on the same <=10m/set
   // contract as the editor. Historical rows are normalized on read; a stale
   // in-memory draft is normalized here before it can be written back.
   const normalized = normalizeMovementPreset({ id: "draft", ...p });
@@ -404,21 +407,25 @@ export async function fetchPresets(): Promise<TindeqPreset[]> {
         supabase
           .from("tindeq_presets")
           .select(PRESET_COLS)
+          .is("deleted_at", null)
           .order("created_at", { ascending: false }),
       () =>
         supabase
           .from("tindeq_presets")
           .select(PRE_CAPACITY_PRESET_COLS)
+          .is("deleted_at", null)
           .order("created_at", { ascending: false }),
       () =>
         supabase
           .from("tindeq_presets")
           .select(PRE_REVERSE_PRESET_COLS)
+          .is("deleted_at", null)
           .order("created_at", { ascending: false }),
       () =>
         supabase
           .from("tindeq_presets")
           .select(LEGACY_PRESET_COLS)
+          .is("deleted_at", null)
           .order("created_at", { ascending: false }),
     ),
   );
@@ -499,7 +506,12 @@ export async function updatePreset(
 }
 
 export async function deletePreset(id: string): Promise<void> {
-  unwrap(await supabase.from("tindeq_presets").delete().eq("id", id));
+  unwrap(
+    await supabase
+      .from("tindeq_presets")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id),
+  );
 }
 
 /// Assign an ungrouped recording to an existing gauge-session group (SL-44).

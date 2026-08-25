@@ -11,8 +11,10 @@ import type {
   WorkoutListItem,
 } from "../../types";
 import { today } from "../dates";
+import { workoutDurationMin } from "../pendingWorkouts";
 import { unwrap } from "./shared";
 import { unwrapOneMutation } from "../mutationInvariant";
+import { toSession, type SessionRow } from "./sessions";
 import { rowToLive } from "../liveWorkoutMirror";
 
 // ---- Routine presets (Workout tab guided routine timer) ----
@@ -26,6 +28,7 @@ export async function fetchRoutinePresets(): Promise<RoutinePreset[]> {
     await supabase
       .from("routine_presets")
       .select(ROUTINE_COLS)
+      .is("deleted_at", null)
       .order("created_at", { ascending: false }),
   );
   return data as RoutineRow[];
@@ -60,7 +63,12 @@ export async function updateRoutinePreset(
 }
 
 export async function deleteRoutinePreset(id: string): Promise<void> {
-  unwrap(await supabase.from("routine_presets").delete().eq("id", id));
+  unwrap(
+    await supabase
+      .from("routine_presets")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id),
+  );
 }
 
 const WORKOUT_DETAIL_COLS =
@@ -197,10 +205,17 @@ export async function fetchLiveWorkout(): Promise<LiveWorkout | null> {
 /// Save a phone-logged workout (SL-41): a sessions row (feeds ACWR/History,
 /// workout_source='phone'), the climb_workouts row (source='phone', no HR /
 /// raw trace), and one manual climb_attempts row per logged boulder.
-/// Sequential inserts — on a mid-flight failure the session may exist
-/// without its workout; acceptable for v1 (retrying save is idempotent-ish
-/// via the user just re-saving, and rows are user-deletable).
+///
+/// #615: the three rows are created by ONE transactional RPC
+/// (`create_phone_workout`) instead of three sequential inserts — partial
+/// rows are impossible, and the caller's stable ids make a retry an
+/// idempotent replay (the RPC returns the already-committed canonical
+/// session for a known id). The ids are minted when the workout ends and
+/// persisted with the confirming state, so a retry after a process restart
+/// replays the same ids.
 export async function insertPhoneWorkout(input: {
+  sessionId: string;
+  workoutId: string;
   startedAt: string;
   endedAt: string;
   attempts: { startedAt: string; durationS: number }[];
@@ -209,81 +224,31 @@ export async function insertPhoneWorkout(input: {
   rpe: number;
   phase: PhaseId;
 }): Promise<Session> {
-  const durationMin = Math.max(
-    1,
-    Math.min(
-      600,
-      Math.round(
-        (new Date(input.endedAt).getTime() -
-          new Date(input.startedAt).getTime()) /
-          60000,
-      ),
-    ),
-  );
+  const durationMin = workoutDurationMin(input.startedAt, input.endedAt);
   const n = input.attempts.length;
-  const session = unwrapOneMutation<{ id: string }>(
+  const data = unwrapOneMutation<SessionRow>(
     await supabase
-      .from("sessions")
-      .insert({
-        date: today(),
-        type: input.type,
-        type_label: input.typeLabel,
-        duration_min: durationMin,
-        rpe: input.rpe,
-        note: `${n} boulder${n === 1 ? "" : "s"}`,
-        phase: input.phase,
-        workout_source: "phone",
-        // Unconfirmed until the user edits it away from the auto-save
-        // default (issue #114) — see EditSessionSheet's rpe_confirmed: true.
-        rpe_confirmed: false,
-      })
-      .select("id")
-      .maybeSingle(),
-  );
-  const workout = unwrapOneMutation<{ id: string }>(
-    await supabase
-      .from("climb_workouts")
-      .insert({
-        started_at: input.startedAt,
-        ended_at: input.endedAt,
-        attempts_detected: 0,
-        attempts_confirmed: n,
-        rpe_confirmed: input.rpe,
-        session_id: session.id,
-        source: "phone",
-      })
-      .select("id")
-      .maybeSingle(),
-  );
-  if (n > 0) {
-    unwrap(
-      await supabase.from("climb_attempts").insert(
-        input.attempts.map((a) => ({
-          workout_id: workout.id,
+      .rpc("create_phone_workout", {
+        p_session_id: input.sessionId,
+        p_workout_id: input.workoutId,
+        p_date: today(),
+        p_type: input.type,
+        p_type_label: input.typeLabel,
+        p_duration_min: durationMin,
+        p_rpe: input.rpe,
+        p_note: `${n} boulder${n === 1 ? "" : "s"}`,
+        p_phase: input.phase,
+        p_started_at: input.startedAt,
+        p_ended_at: input.endedAt,
+        p_attempts: input.attempts.map((a) => ({
           started_at: a.startedAt,
           duration_s: a.durationS,
-          elevation_gain_m: 0,
-          source: "manual",
         })),
-      ),
-    );
-  }
-  // Return the saved session so callers can offer an immediate "Edit" (the
-  // auto-save-on-stop flow toasts with an edit action).
-  return {
-    id: session.id,
-    date: today(),
-    type: input.type,
-    typeLabel: input.typeLabel,
-    duration: durationMin,
-    rpe: input.rpe,
-    rpeConfirmed: false,
-    load: durationMin * input.rpe,
-    note: `${n} boulder${n === 1 ? "" : "s"}`,
-    phase: input.phase,
-    groupId: null,
-    workoutSource: "phone",
-  };
+      })
+      .single(),
+  );
+  // The RPC returns the canonical session row (same shape as SESSION_COLS).
+  return toSession(data);
 }
 
 /// The workout's 1Hz HR trace, from climb_workouts.raw

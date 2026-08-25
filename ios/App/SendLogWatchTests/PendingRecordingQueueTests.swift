@@ -27,10 +27,12 @@ final class PendingRecordingQueueTests: XCTestCase {
             .appendingPathComponent("PendingRecordingQueueTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         signIn(as: testUserId)
+        PendingSyncCache.shared.reset()
     }
 
     override func tearDownWithError() throws {
         WatchSessionStore.shared.clear()
+        PendingSyncCache.shared.reset()
         try? FileManager.default.removeItem(at: tempDir)
     }
 
@@ -334,17 +336,25 @@ final class PendingRecordingQueueTests: XCTestCase {
     /// While signed in, a DIFFERENT account's item must NOT inflate the
     /// current account's badge (#158 — Account B must not see a
     /// permanently-stuck "N pending" for items stranded under Account A),
-    /// but a legacy unstamped (nil) item trusts whoever is currently signed
-    /// in, per `shouldDrain`'s own "legacy stamp: trust current session"
-    /// branch — so only that one is counted here.
-    func testPendingCountExcludesAMismatchedAccountButTrustsAnUnstampedLegacyItem() async throws {
+    /// but a legacy unstamped (nil) item has no ownership proof and is
+    /// quarantined, per `shouldDrain`'s account-boundary policy.
+    func testPendingCountExcludesMismatchedAndUnstampedItems() async throws {
         let otherAccount = UUID()
         try writeFile(makePending(id: UUID(), enqueuedUserId: otherAccount), createdAt: Date())
         try writeFile(makePending(id: UUID(), enqueuedUserId: nil), createdAt: Date())
         let queue = makeQueue(uploader: ScriptedUploader(failing: [:]))
 
         let count = await queue.pendingCount()
-        XCTAssertEqual(count, 1)
+        XCTAssertEqual(count, 0)
+
+        // The nil-owner row is not counted as Account A's pending work, but it
+        // remains visible in the separate ownerless diagnostic bucket.
+        _ = await queue.quarantinedCount()
+        for queueSlot in PendingSyncQueue.allCases where queueSlot != .tindeqRecordings {
+            PendingSyncCache.shared.recordUnscopedPending(0, for: queueSlot)
+            PendingSyncCache.shared.recordUnscopedQuarantined(0, for: queueSlot)
+        }
+        XCTAssertEqual(PendingSyncCache.shared.unscopedTotal, 1)
     }
 
     /// The other half of issue #189: while NOBODY is signed in, an item

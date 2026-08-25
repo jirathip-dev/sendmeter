@@ -81,7 +81,8 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
       Math.log10(p.windowS) >= tMin - 0.01 && Math.log10(p.windowS) <= tMax + 0.01),
     64,
   );
-  const bandPolygon = band.length >= 2
+  const hasConfidenceBand = band.length >= 2;
+  const bandPolygon = hasConfidenceBand
     ? [
         ...band.map((p) => `${px(p.durationS).toFixed(1)},${py(p.highKg).toFixed(1)}`),
         ...[...band].reverse().map((p) => `${px(p.durationS).toFixed(1)},${py(p.lowKg).toFixed(1)}`),
@@ -95,7 +96,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
     <svg
       className="chart-scrub"
       role="group"
-      aria-label="Force duration curve with quality regions, measured envelope, and confidence band"
+      aria-label={`Force duration curve with quality regions and measured envelope${hasConfidenceBand ? ", and confidence band" : ""}`}
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", display: "block" }}
     >
@@ -446,12 +447,11 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
             >
               {model.capabilityFit ? "Hill capability curve" : "Measured envelope"}
             </span>
-            <span title="Pointwise 95% interval from a deterministic recording-level bootstrap">
-              95% band{" "}
-              <span style={{ color: "var(--ink-muted)" }}>
-                {(model.confidenceBand?.length ?? 0) >= 2 ? "shown" : "—"}
+            {(model.confidenceBand?.length ?? 0) >= 2 && (
+              <span title="Pointwise 95% interval from a deterministic recording-level bootstrap">
+                95% band shown
               </span>
-            </span>
+            )}
           </div>
 
           {/* Training zones live in the Gauge Target card up top — this card
