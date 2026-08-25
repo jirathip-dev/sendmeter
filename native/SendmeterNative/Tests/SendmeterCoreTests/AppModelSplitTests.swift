@@ -257,6 +257,14 @@ final class AppModelSplitTests: XCTestCase {
             appModel.contains("reportPurgeGenerationFailure"),
             "foreground generation failures must use the deduplicating policy"
         )
+        XCTAssertFalse(
+            appModel.contains("purgeGenerationFetchFailed"),
+            "the generation-only latch must not suppress a later real refresh failure"
+        )
+        XCTAssertFalse(
+            appModel.contains("if !purgeGenerationFetchFailed"),
+            "the outer refresh catch must surface genuine network failures"
+        )
 
         let repositories = code(source("Sources/Data/Repositories.swift"))
         XCTAssertTrue(repositories.contains("rest/v1/sync_purge_generations"))

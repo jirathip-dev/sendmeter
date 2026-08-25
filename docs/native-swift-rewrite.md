@@ -126,6 +126,17 @@ endpoint is available again. The purge RPC returns `false` when a retry finds
 the row already gone or restored; clients intentionally treat that result as a
 successful idempotent no-op.
 
+The migration-backed account-deletion, purge-trigger, and local RLS/privilege
+regression gate is repeatable with:
+
+```bash
+npm run test:db:purge
+```
+
+It targets only the disposable local Supabase database (`--local`) and rolls
+back its fixtures. The scoped CI job starts and resets its own disposable
+stack; do not replace `--local` with `--linked` or `--db-url`.
+
 ### HealthKit morning refresh (#801)
 
 The phone reconciles the complete local HealthKit read window on each

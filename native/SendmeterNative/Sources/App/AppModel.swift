@@ -2227,7 +2227,6 @@ public final class AppModel {
                 refreshingOwner = nil
             }
         }
-        var purgeGenerationFetchFailed = false
         do {
             let remotePurgeGeneration: Int64?
             do {
@@ -2237,7 +2236,6 @@ public final class AppModel {
                 // The generation endpoint may lag a staged/older project
                 // schema. Keep the ordinary refresh alive and make both
                 // purge-sensitive entities authoritative until it recovers.
-                purgeGenerationFetchFailed = true
                 reportPurgeGenerationFailure(
                     error,
                     context: purgeGenerationContext,
@@ -2456,9 +2454,7 @@ public final class AppModel {
                 // failure. Put the last-known cache snapshot back so a partial
                 // fetch cannot hide a pending local write.
                 applyCachedNonOverlayLists(accountUserID: userID)
-                if !purgeGenerationFetchFailed {
-                    surface(error)
-                }
+                surface(error)
             }
         }
     }
