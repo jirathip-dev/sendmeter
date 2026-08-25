@@ -4,11 +4,10 @@
 
 `.github/workflows/secret-scan.yml` runs on every pull request and on pushes to
 `main` or `staging`. It uses the repository's standard
-`blacksmith-4vcpu-ubuntu-2404` Linux runner for full CI, but this lightweight
-scan deliberately uses a pinned GitHub `ubuntu-24.04` runner so it does not
-depend on custom-runner availability. It installs gitleaks 8.30.1 from the
-versioned release archive, checks the archive's SHA-256 digest, runs a
-disposable-fixture self-test, and then scans the checked-out tree with
+`blacksmith-4vcpu-ubuntu-2404` Linux runner, which is available for the
+repository's existing CI jobs. It installs gitleaks 8.30.1 from the versioned
+release archive, checks the archive's SHA-256 digest, runs a disposable-fixture
+self-test, and then scans the checked-out tree with
 `--no-git`. The gate deliberately checks current files rather than replaying
 repository history; a credential that is found in a working tree must still be
 removed and rotated, even if it was committed in the past. The CI checkout
