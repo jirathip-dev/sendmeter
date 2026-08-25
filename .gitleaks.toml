@@ -1,0 +1,34 @@
+title = "Sendmeter secret-scan config"
+
+[extend]
+useDefault = true
+
+# These are the app's intentionally bundled Supabase publishable anon keys.
+# They are not service-role credentials: row-level security is the security
+# boundary. Keep this exception limited to the two native source files and the
+# exact assignment forms; credentials elsewhere must remain reportable.
+[[allowlists]]
+description = "Intentional Supabase publishable anon-key assignments in native files"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''^ios/App/SendLogWatch Watch App/Services/SupabaseService\.swift$''',
+  '''^native-plugins/sendlog-health/ios/Sources/SendLogHealth/HealthConfig\.swift$''',
+]
+regexTarget = "line"
+regexes = [
+  '''^\s*(?:supabaseKey:|private static let supabaseAnonKey\s*=).*$''',
+]
+
+# This is an upstream anti-slop-swift README example, not application data.
+# Keep the snapshot byte-exact so a changed value remains visible to the
+# default generic-api-key rule.
+[[allowlists]]
+description = "Upstream anti-slop README fake API-key example"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^tools/anti-slop-swift/README\.md$''']
+regexTarget = "line"
+regexes = [
+  '''^\s*let apiKey = "sk-live-abc123"\s*$''',
+]
