@@ -511,7 +511,7 @@ public final class AppModel {
     /// observer, or BGAppRefresh events claim each pass when it is due.
     private let healthMorningRefreshPolicy = HealthMorningRefreshPolicy()
     private var lastMorningRefreshStartedAt: Date?
-    private var morningHealthRefreshGate = HealthRepollGate()
+    private var morningHealthRefreshState = HealthMorningRefreshStateMachine()
     private var morningHealthRefreshOwner: AccountScopedCompletion?
     private static let healthLastSyncedDefaultsPrefix = "sendmeter.native.health-last-synced-at."
     private static let healthMorningStartedDefaultsPrefix = "sendmeter.native.health-morning-started-at."
@@ -5282,8 +5282,10 @@ public final class AppModel {
                 // A completed pass is durable state, not an instruction to
                 // run immediately. The next pass is claimed only when a
                 // later supported lifecycle/observer/BGAppRefresh event
-                // arrives after its persisted eligibility time.
-                guard !morningHealthRefreshGate.isClaimed else { return }
+                // arrives after its persisted eligibility time. This is a
+                // resume claim even for pass 0: the new-window once/day gate
+                // must not reject a persisted retry after cancellation.
+                guard !morningHealthRefreshState.isClaimed else { return }
                 guard !Task.isCancelled,
                       let pass = healthMorningRefreshPolicy.duePass(
                     for: progress,
@@ -5293,7 +5295,9 @@ public final class AppModel {
                     startedAt: progress.startedAt,
                     pass: pass,
                     accountFetch: accountFetch,
-                    calendar: passCalendar
+                    calendar: passCalendar,
+                    mode: .resumePersisted,
+                    progress: progress
                 ) else { return }
                 await runMorningHealthRefreshPass(
                     owner,
@@ -5308,14 +5312,16 @@ public final class AppModel {
                 // start marker and the absence of progress. A concurrent
                 // owner is also a no-op; neither path can create a duplicate
                 // window.
-                guard !morningHealthRefreshGate.isClaimed else { return }
+                guard !morningHealthRefreshState.isClaimed else { return }
                 guard !Task.isCancelled,
                       let owner = claimMorningHealthRefresh(
                     now: wallNow,
                     startedAt: wallNow,
                     pass: 0,
                     accountFetch: accountFetch,
-                    calendar: passCalendar
+                    calendar: passCalendar,
+                    mode: .newWindow,
+                    progress: nil
                 ) else { return }
                 let progress = HealthMorningRefreshProgress(
                     accountUserID: userID,
@@ -5387,16 +5393,24 @@ public final class AppModel {
         startedAt: Date,
         pass: Int,
         accountFetch: AccountScopedFetch,
-        calendar: Calendar
+        calendar: Calendar,
+        mode: HealthMorningRefreshClaimMode,
+        progress: HealthMorningRefreshProgress?
     ) -> AccountScopedCompletion? {
         guard !Task.isCancelled, accountFetch.canApply(
             to: currentUserID,
             accountEpoch: accountEpoch
-        ), (pass != 0 || healthMorningRefreshPolicy.shouldStart(
+        ), morningHealthRefreshState.claim(
+            mode: mode,
+            pass: pass,
             at: now,
+            currentUserID: currentUserID,
+            accountUserID: accountFetch.accountUserID,
             lastStartedAt: lastMorningRefreshStartedAt,
+            progress: progress,
+            policy: healthMorningRefreshPolicy,
             calendar: calendar
-        )), morningHealthRefreshGate.claim()
+        )
         else { return nil }
 
         // These are all synchronous MainActor mutations before the first
@@ -5404,11 +5418,13 @@ public final class AppModel {
         // therefore reject every later callback from this window. The start
         // marker survives relaunch so a completed window is still once/day.
         let owner = AccountScopedCompletion(fetch: accountFetch)
-        lastMorningRefreshStartedAt = startedAt
-        UserDefaults.standard.set(
-            startedAt.timeIntervalSince1970,
-            forKey: healthMorningStartedDefaultsKey(for: accountFetch.accountUserID)
-        )
+        if mode == .newWindow {
+            lastMorningRefreshStartedAt = startedAt
+            UserDefaults.standard.set(
+                startedAt.timeIntervalSince1970,
+                forKey: healthMorningStartedDefaultsKey(for: accountFetch.accountUserID)
+            )
+        }
         morningHealthRefreshOwner = owner
         lastHealthRefreshStartedAt = ProcessInfo.processInfo.systemUptime
         return owner
@@ -5563,7 +5579,7 @@ public final class AppModel {
             }
         }
         morningHealthRefreshOwner = nil
-        morningHealthRefreshGate.release()
+        morningHealthRefreshState.release()
     }
 
     /// The one recompute path, owned by `ReadinessRecomputeGate`: exactly one
@@ -9190,7 +9206,7 @@ public final class AppModel {
         // newer account's gate. The persisted progress remains under the old
         // account key so a later same-account sign-in can resume it.
         morningHealthRefreshOwner = nil
-        morningHealthRefreshGate.release()
+        morningHealthRefreshState.release()
         lastMorningRefreshStartedAt = nil
         lastHealthRefreshStartedAt = nil
         lastHealthSyncedAt = nil

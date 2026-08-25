@@ -485,3 +485,70 @@ public struct HealthRepollGate: Equatable, Sendable {
         claimed = false
     }
 }
+
+/// A morning window has two deliberately different claim paths. A new window
+/// must pass the once-per-local-day start gate; a validated persisted progress
+/// record is a retry of that same window, including when `nextPass == 0`, and
+/// must not re-apply the start gate after a cancellation or contention.
+public enum HealthMorningRefreshClaimMode: Equatable, Sendable {
+    case newWindow
+    case resumePersisted
+}
+
+/// Core state machine for the synchronous, pre-await morning claim. Keeping
+/// the distinction here makes the cancellation/relaunch behavior testable
+/// without constructing the production AppModel or HealthKit framework.
+public struct HealthMorningRefreshStateMachine: Equatable, Sendable {
+    private var gate = HealthRepollGate()
+
+    public init() {}
+
+    public var isClaimed: Bool { gate.isClaimed }
+
+    @discardableResult
+    public mutating func claim(
+        mode: HealthMorningRefreshClaimMode,
+        pass: Int,
+        at now: Date,
+        currentUserID: UUID?,
+        accountUserID: UUID,
+        lastStartedAt: Date?,
+        progress: HealthMorningRefreshProgress?,
+        policy: HealthMorningRefreshPolicy,
+        calendar: Calendar
+    ) -> Bool {
+        guard !gate.isClaimed,
+              currentUserID == accountUserID,
+              policy.delay(forPass: pass) != nil
+        else { return false }
+
+        switch mode {
+        case .newWindow:
+            guard pass == 0,
+                  progress == nil,
+                  policy.shouldStart(
+                      at: now,
+                      lastStartedAt: lastStartedAt,
+                      calendar: calendar
+                  )
+            else { return false }
+        case .resumePersisted:
+            guard let progress,
+                  progress.accountUserID == accountUserID,
+                  progress.nextPass == pass,
+                  policy.isCurrentLocalDay(
+                      progress,
+                      at: now,
+                      calendar: calendar
+                  ),
+                  policy.duePass(for: progress, at: now) == pass
+            else { return false }
+        }
+
+        return gate.claim()
+    }
+
+    public mutating func release() {
+        gate.release()
+    }
+}

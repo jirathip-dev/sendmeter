@@ -246,6 +246,134 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertTrue(gate.claim(), "cancellation/release permits a fresh account-scoped window")
     }
 
+    func testPersistedPassZeroResumesAfterCancellationAndContention() {
+        let policy = HealthMorningRefreshPolicy()
+        let calendar = LocalDateSupport.calendar(timeZone: timeZone)
+        let accountID = UUID()
+        guard let startedAt = calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: timeZone,
+            year: 2026,
+            month: 8,
+            day: 25,
+            hour: 7
+        )) else {
+            return XCTFail("fixed test date should be constructible")
+        }
+        let progress = HealthMorningRefreshProgress(
+            accountUserID: accountID,
+            startedAt: startedAt,
+            timeZoneIdentifier: timeZone.identifier,
+            nextPass: 0
+        )
+        var state = HealthMorningRefreshStateMachine()
+
+        // The marker is stamped and pass 0 is persisted before the first
+        // await. Releasing the synchronous claim models cancellation/BG
+        // expiration while leaving that durable progress untouched.
+        XCTAssertTrue(
+            state.claim(
+                mode: .newWindow,
+                pass: 0,
+                at: startedAt,
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: nil,
+                progress: nil,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+        state.release()
+
+        // A new-window claim is correctly rejected by the same-day marker;
+        // the distinct persisted-resume claim must accept pass 0 instead.
+        XCTAssertFalse(
+            state.claim(
+                mode: .newWindow,
+                pass: 0,
+                at: startedAt.addingTimeInterval(60),
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: startedAt,
+                progress: progress,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+        XCTAssertTrue(
+            state.claim(
+                mode: .resumePersisted,
+                pass: 0,
+                at: startedAt.addingTimeInterval(60),
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: startedAt,
+                progress: progress,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+        XCTAssertFalse(
+            state.claim(
+                mode: .resumePersisted,
+                pass: 0,
+                at: startedAt.addingTimeInterval(60),
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: startedAt,
+                progress: progress,
+                policy: policy,
+                calendar: calendar
+            ),
+            "a concurrent callback cannot claim the persisted retry"
+        )
+        state.release()
+
+        // Release after contention permits the same persisted pass to retry,
+        // while account and local-day validation still reject stale records.
+        XCTAssertTrue(
+            state.claim(
+                mode: .resumePersisted,
+                pass: 0,
+                at: startedAt.addingTimeInterval(120),
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: startedAt,
+                progress: progress,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+        state.release()
+        XCTAssertFalse(
+            state.claim(
+                mode: .resumePersisted,
+                pass: 0,
+                at: startedAt.addingTimeInterval(120),
+                currentUserID: UUID(),
+                accountUserID: accountID,
+                lastStartedAt: startedAt,
+                progress: progress,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+        XCTAssertFalse(
+            state.claim(
+                mode: .resumePersisted,
+                pass: 0,
+                at: startedAt.addingTimeInterval(24 * 60 * 60),
+                currentUserID: accountID,
+                accountUserID: accountID,
+                lastStartedAt: startedAt,
+                progress: progress,
+                policy: policy,
+                calendar: calendar
+            )
+        )
+    }
+
     func testLaterReconciliationWinsOverEarlierMorningPassFailure() {
         var progress = HealthMorningRefreshProgress(
             accountUserID: UUID(),

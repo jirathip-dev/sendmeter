@@ -358,6 +358,12 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertFalse(morning.contains("await self?.runMorningHealthRepolls"))
         XCTAssertTrue(morning.contains("finishMorningHealthRefresh"))
         XCTAssertTrue(appModel.contains("loadMorningHealthProgress(for:"))
+        XCTAssertTrue(appModel.contains(
+            "private var morningHealthRefreshState = HealthMorningRefreshStateMachine()"
+        ))
+        XCTAssertTrue(appModel.contains("mode: .resumePersisted"))
+        XCTAssertTrue(appModel.contains("mode: .newWindow"))
+        XCTAssertFalse(appModel.contains("pass != 0 || healthMorningRefreshPolicy.shouldStart"))
     }
 
     func testHealthRepositoryUsesAtomicHistoricalInsertAndTodayMerge() {
