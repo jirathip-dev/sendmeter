@@ -29,6 +29,14 @@ final class OfflineQueueTests: XCTestCase {
         try? FileManager.default.removeItem(at: tempDir)
     }
 
+    func testSystemQueueClockCanBeCalledOffMainActor() async {
+        let observed = await Task.detached {
+            SystemQueueClock().now()
+        }.value
+
+        XCTAssertLessThanOrEqual(observed, Date())
+    }
+
     private func signIn(as userId: UUID) {
         WatchSessionStore.shared.store(
             RelayedSession(
@@ -2021,7 +2029,7 @@ private actor ScriptedUploader: WorkoutBundleUploading {
     }
 }
 
-private struct FixedClock: QueueClock {
+private nonisolated struct FixedClock: QueueClock {
     let date: Date
     init(_ date: Date) { self.date = date }
     func now() -> Date { date }

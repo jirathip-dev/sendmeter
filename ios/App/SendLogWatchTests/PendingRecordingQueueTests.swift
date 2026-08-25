@@ -817,7 +817,7 @@ private actor ScriptedUploader: TindeqRecordingUploading {
     }
 }
 
-private struct FixedClock: QueueClock {
+private nonisolated struct FixedClock: QueueClock {
     let date: Date
     init(_ date: Date) { self.date = date }
     func now() -> Date { date }

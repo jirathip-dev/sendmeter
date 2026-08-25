@@ -1430,6 +1430,34 @@ final class LocalCacheStoreTests: XCTestCase {
         _ = try LocalCacheStore(databaseURL: url)
     }
 
+    func testFileBackedStoreIsSafeToShareAcrossConcurrentTasks() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-cache-concurrent-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let store = try LocalCacheStore(databaseURL: url)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<32 {
+                group.addTask {
+                    let id = UUID()
+                    try store.upsertLocal(
+                        self.makeSession(id: id, date: "2026-08-\(String(format: "%02d", index + 1))"),
+                        accountUserID: self.accountA,
+                        entityType: .sessions,
+                        entityID: id.uuidString
+                    )
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        XCTAssertEqual(
+            try store.loadAll(Session.self, accountUserID: accountA, entityType: .sessions).count,
+            32
+        )
+    }
+
     func testOriginMigrationBackfillsPreexistingRowsAsLocal() throws {
         let queue = try DatabaseQueue()
         try queue.write { db in
