@@ -333,6 +333,106 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertTrue(restore.contains(".manualWorkout(sessionID: draft.sessionID)"))
     }
 
+    func testHealthBackfillProductionSeamsUseExactWindowAndLifecycleProgress() {
+        let healthKit = code(source("Sources/Platform/HealthKitService.swift"))
+        XCTAssertTrue(healthKit.contains("HealthMetricReadWindow.queryLookbackDays"))
+        XCTAssertTrue(healthKit.contains("HealthMetricReadWindow.candidateOffsets"))
+        XCTAssertTrue(healthKit.contains("HealthMetricReadWindow.baselineOffsets"))
+        XCTAssertFalse(healthKit.contains("0...HealthMetricReconciliationPolicy"))
+
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        guard let morningStart = appModel.range(
+            of: "private func handleHealthBackgroundUpdate()"
+        ), let morningEnd = appModel.range(
+            of: "private func computeAndPublishReadiness(",
+            range: morningStart.upperBound..<appModel.endIndex
+        ) else {
+            return XCTFail("morning health production seam is missing")
+        }
+        let morning = appModel[morningStart.lowerBound..<morningEnd.lowerBound]
+        XCTAssertTrue(morning.contains("persistMorningHealthProgress"))
+        XCTAssertTrue(morning.contains("BackgroundSyncService.schedule"))
+        XCTAssertFalse(morning.contains("Task.sleep"))
+        XCTAssertFalse(morning.contains("morningHealthRefreshTask"))
+        XCTAssertFalse(morning.contains("runMorningHealthRepolls"))
+        XCTAssertFalse(morning.contains("await self?.runMorningHealthRepolls"))
+        XCTAssertTrue(morning.contains("finishMorningHealthRefresh"))
+        XCTAssertTrue(appModel.contains("loadMorningHealthProgress(for:"))
+        XCTAssertTrue(appModel.contains(
+            "private var morningHealthRefreshState = HealthMorningRefreshStateMachine()"
+        ))
+        XCTAssertTrue(appModel.contains("mode: .resumePersisted"))
+        XCTAssertTrue(appModel.contains("mode: .newWindow"))
+        XCTAssertFalse(appModel.contains("pass != 0 || healthMorningRefreshPolicy.shouldStart"))
+    }
+
+    func testHealthRepositoryUsesAtomicHistoricalInsertAndTodayMerge() {
+        let repository = code(source("Sources/Data/Repositories.swift"))
+        XCTAssertTrue(repository.contains("insertHealthMetricIfMissing"))
+        XCTAssertTrue(repository.contains("HealthMetricWriteOperation.historicalInsert.preferHeader"))
+        XCTAssertTrue(repository.contains("HealthMetricWriteOperation.todayMerge.preferHeader"))
+        XCTAssertTrue(repository.contains("return !receipts.isEmpty"))
+
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        XCTAssertTrue(appModel.contains("HealthMetricWritePolicy.operation"))
+        XCTAssertTrue(appModel.contains("insertHealthMetricIfMissing("))
+        XCTAssertTrue(appModel.contains("repository.upsertHealthMetric"))
+    }
+
+    func testHealthBackfillCancellationAndTimezoneOwnershipStayInProductionSeams() {
+        let healthKit = code(source("Sources/Platform/HealthKitService.swift"))
+        XCTAssertTrue(healthKit.contains("HealthKitQueryCancellation"))
+        XCTAssertEqual(
+            healthKit.components(separatedBy: "withTaskCancellationHandler").count - 1,
+            3,
+            "each checked HealthKit query must own a cancellation handler"
+        )
+        XCTAssertTrue(healthKit.contains("store.stop(query)"))
+        XCTAssertTrue(healthKit.contains("continuation?.resume(with: result)"))
+        XCTAssertTrue(healthKit.contains("continuation?.resume(throwing: CancellationError())"))
+        XCTAssertFalse(healthKit.contains("private let calendar: Calendar"))
+        XCTAssertTrue(healthKit.contains("timeZone: TimeZone = .current"))
+        XCTAssertTrue(healthKit.contains("LocalDateSupport.calendar(timeZone: timeZone)"))
+
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        XCTAssertTrue(appModel.contains("timeZoneIdentifier: passTimeZone.identifier"))
+        XCTAssertTrue(appModel.contains("health.computeMetrics(\n                    acwrByDate: acwrByDate,\n                    timeZone: passTimeZone"))
+        XCTAssertTrue(appModel.contains("async throws -> HealthSyncPassResult?"))
+        XCTAssertTrue(appModel.contains("acknowledgedReconciledDates"))
+        XCTAssertTrue(appModel.contains("progress.add(\n                result.observation"))
+        XCTAssertTrue(appModel.contains("HealthMorningRefreshRoute.afterClaim"))
+        XCTAssertTrue(appModel.contains(
+            "morningHealthRefreshState.continueAfterResult"
+        ))
+        XCTAssertTrue(appModel.contains("guard !Task.isCancelled, accountFetch.canApply"))
+        XCTAssertTrue(appModel.contains("if !Task.isCancelled, let observation = progress?.finalObservation"))
+
+        guard let computeStart = appModel.range(
+            of: "private func computeAndPublishReadiness("
+        ) else {
+            return XCTFail("production reconciliation seam is missing")
+        }
+        let compute = appModel[computeStart.lowerBound...]
+        for marker in [
+            "insertHealthMetricIfMissing",
+            "repository.upsertHealthMetric",
+            "cacheUpsertServer",
+            "cacheConfirmServerUpsert",
+            "publishHealthMetric",
+            "watch.publishReadiness",
+            "recomputeGate.complete()"
+        ] {
+            guard let markerStart = compute.range(of: marker) else {
+                return XCTFail("reconciliation marker is missing: \(marker)")
+            }
+            let beforeMarker = compute[..<markerStart.lowerBound]
+            XCTAssertTrue(
+                beforeMarker.contains("!Task.isCancelled"),
+                "reconciliation must fence cancellation before \(marker)"
+            )
+        }
+    }
+
     func testSwiftPMExcludedSourcesAreSwiftSyntaxParseable() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

@@ -325,6 +325,10 @@ private struct HealthMetricUpsert: Encodable {
     }
 }
 
+private struct HealthMetricInsertReceipt: Decodable {
+    let date: String
+}
+
 private struct CadenceMarkerRow: Codable {
     let milliseconds: Int
     let repetition: Int
@@ -981,8 +985,10 @@ public final class SendmeterRepository: @unchecked Sendable {
     /// `sessions` (which can be empty on a cold launch, fabricating a score up
     /// to 20 points high). Same shape/soft-delete exclusion as the shipped
     /// plugin's `computeAcwr`. Filtered to the EWMA lookback window.
-    public func fetchSessionLoads() async throws -> [SessionLoad] {
-        let cutoff = LocalDateSupport.daysAgo(90)
+    public func fetchSessionLoads(
+        days: Int = TrainingMetrics.ewmaLookbackDays
+    ) async throws -> [SessionLoad] {
+        let cutoff = LocalDateSupport.daysAgo(max(1, days))
         let rows: [SessionLoadRow] = try await transport.request(
             path: "rest/v1/sessions",
             method: .get,
@@ -1273,6 +1279,9 @@ public final class SendmeterRepository: @unchecked Sendable {
         return rows.map(\.model)
     }
 
+    /// Merge today's row only. Historical rows use
+    /// `insertHealthMetricIfMissing`, whose PostgREST conflict-ignore request
+    /// is atomic against the `(user_id, date)` unique key.
     public func upsertHealthMetric(_ metric: HealthMetric, userID: UUID) async throws {
         let payload = HealthMetricUpsert(
             userID: userID,
@@ -1294,8 +1303,40 @@ public final class SendmeterRepository: @unchecked Sendable {
             method: .post,
             queryItems: [URLQueryItem(name: "on_conflict", value: "user_id,date")],
             body: body,
-            prefer: "resolution=merge-duplicates,return=minimal"
+            prefer: HealthMetricWriteOperation.todayMerge.preferHeader
         )
+    }
+
+    /// Atomically insert a historical metric if its `(user_id, date)` row is
+    /// still absent. A concurrent writer returns an empty representation and
+    /// leaves the immutable server row untouched.
+    public func insertHealthMetricIfMissing(
+        _ metric: HealthMetric,
+        userID: UUID
+    ) async throws -> Bool {
+        let payload = HealthMetricUpsert(
+            userID: userID,
+            date: metric.date,
+            readiness: metric.readiness,
+            zone: metric.zone,
+            computedAt: metric.computedAt,
+            hrvSDNN: metric.hrvSDNNMilliseconds,
+            restingHR: metric.restingHeartRate,
+            sleepHours: metric.sleepHours,
+            sleepDeepHours: metric.sleepDeepHours,
+            sleepREMHours: metric.sleepREMHours,
+            bodyMassKg: metric.bodyMassKilograms,
+            respiratoryRate: metric.respiratoryRate
+        )
+        let body = try await transport.encode(payload)
+        let receipts: [HealthMetricInsertReceipt] = try await transport.request(
+            path: "rest/v1/health_metrics",
+            method: .post,
+            queryItems: [URLQueryItem(name: "on_conflict", value: "user_id,date")],
+            body: body,
+            prefer: HealthMetricWriteOperation.historicalInsert.preferHeader
+        )
+        return !receipts.isEmpty
     }
 
     // MARK: Recordings

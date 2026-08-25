@@ -4,7 +4,7 @@ import XCTest
 final class HealthBackgroundSyncTests: XCTestCase {
     // MARK: Observed types
 
-    func testObservedIdentifiersAreExactlyTheFourBackgroundDeliveryTypes() {
+    func testObservedIdentifiersCoverEveryHealthSourceType() {
         XCTAssertEqual(
             HealthObserverTypes.observedIdentifiers,
             [
@@ -12,9 +12,10 @@ final class HealthBackgroundSyncTests: XCTestCase {
                 "HKQuantityTypeIdentifierRestingHeartRate",
                 "HKQuantityTypeIdentifierRespiratoryRate",
                 "HKCategoryTypeIdentifierSleepAnalysis",
+                "HKQuantityTypeIdentifierBodyMass",
             ]
         )
-        XCTAssertEqual(HealthObserverTypes.observedIdentifiers.count, 4)
+        XCTAssertEqual(HealthObserverTypes.observedIdentifiers.count, 5)
         XCTAssertEqual(
             Set(HealthObserverTypes.observedIdentifiers).count,
             HealthObserverTypes.observedIdentifiers.count,

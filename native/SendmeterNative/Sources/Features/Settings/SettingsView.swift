@@ -278,6 +278,30 @@ struct SettingsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            if let syncedAt = model.lastHealthSyncedAt {
+                LabeledContent(
+                    "Last synced",
+                    value: syncedAt.formatted(date: .abbreviated, time: .shortened)
+                )
+                .font(.caption)
+            } else {
+                Text("Apple Health has not synced yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if model.lastHealthSyncObservation == .failed {
+                Text("The last Apple Health refresh failed; the previous reading is kept.")
+                    .font(.caption)
+                    .foregroundStyle(SendmeterStyle.caution)
+            } else if model.lastHealthSyncObservation == .noSourceData {
+                Text("The last check found no Apple Health source data.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if model.lastHealthSyncObservation == .noNewData {
+                Text("The last check found no new health days.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Button {
                 syncingHealth = true
                 Task {
