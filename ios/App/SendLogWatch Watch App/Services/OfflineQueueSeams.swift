@@ -23,10 +23,10 @@ struct RepoBundleUploader: WorkoutBundleUploading {
 /// Quarantine records stamp `quarantinedAt`; tests need a deterministic time
 /// instead of the wall clock to assert on it.
 protocol QueueClock: Sendable {
-    func now() -> Date
+    nonisolated func now() -> Date
 }
 
-struct SystemQueueClock: QueueClock {
+nonisolated struct SystemQueueClock: QueueClock {
     func now() -> Date { Date() }
 }
 
