@@ -233,6 +233,45 @@ final class AppModelSplitTests: XCTestCase {
         )
     }
 
+    func testHardPurgeConvergenceIsWiredThroughForegroundBackgroundAndRealtime() {
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        XCTAssertTrue(appModel.contains("fetchPurgeSyncGeneration"))
+        XCTAssertTrue(appModel.contains("cacheNeedsPurgeReconcile"))
+        XCTAssertTrue(appModel.contains("forcingFullReconcile: forcePurgeReconcile"))
+        XCTAssertTrue(appModel.contains("forceFull: forcePurgeReconcile"))
+        XCTAssertTrue(appModel.contains("purgeGeneration: remotePurgeGeneration"))
+        XCTAssertTrue(
+            appModel.contains("await refreshAll(showSpinner: false)"),
+            "a realtime generation mismatch must converge both affected slices"
+        )
+
+        let repositories = code(source("Sources/Data/Repositories.swift"))
+        XCTAssertTrue(repositories.contains("rest/v1/sync_purge_generations"))
+        XCTAssertTrue(repositories.contains("rest/v1/rpc/purge_session"))
+        XCTAssertTrue(repositories.contains("rest/v1/rpc/purge_recording"))
+
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let migrationURL = packageRoot
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(
+                "supabase/migrations/20260825090000_purge_sync_generation.sql"
+            )
+        do {
+            let migration = try code(String(contentsOf: migrationURL, encoding: .utf8))
+            XCTAssertTrue(migration.contains("sessions_record_hard_delete_sync_generation"))
+            XCTAssertTrue(migration.contains("recordings_record_hard_delete_sync_generation"))
+            XCTAssertTrue(migration.contains("create or replace function public.purge_session"))
+            XCTAssertTrue(migration.contains("create or replace function public.purge_recording"))
+            XCTAssertTrue(migration.contains("deleted_at is not null"))
+        } catch {
+            XCTFail("Could not read purge convergence migration: \(error)")
+        }
+    }
+
     func testManualQueueRetryWaitsForInFlightOwnerAndPublishesFailureState() {
         let appModel = code(source("Sources/App/AppModel.swift"))
         XCTAssertTrue(appModel.contains("public private(set) var queuedWriteDiagnostics"))

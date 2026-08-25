@@ -116,6 +116,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native History now converges permanent Trash deletions across signed-in devices, so a session or Force recording deleted forever no longer remains in another device's cached history after sync.
 - Native Force: a mid-pull Progressor disconnect now salvages the interrupted rep as its own recording — persisted with the exercise and side you had set when the pull started (never a fallback), reported as recovered in History, and reported through the durable lost-recording notice if the save itself fails — instead of only offering a manual Save Recovered Pull prompt that could be missed.
 - Native Training Load: the Daily Load heatmap no longer renders all-gray when a session is dated up to a week ahead — a future-dated session no longer inflates the color scale, which was washing real load days down to the faintest level.
 - Native Training Load: the Daily Load heatmap no longer renders training days nearly gray when one unusually large past day dominates the intensity scale — the scale stays anchored to the typical load, so real days keep their activity hue and visible shading.

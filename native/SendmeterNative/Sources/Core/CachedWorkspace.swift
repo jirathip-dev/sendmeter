@@ -135,6 +135,25 @@ public enum CacheEntityID {
     }
 }
 
+/// The server-side invalidation signal for hard purges. A generation is
+/// intentionally shared by sessions and recordings: either Trash entity can
+/// disappear without leaving a delta row, and one bounded counter lets the
+/// next sync repair both affected caches together.
+public enum PurgeConvergencePolicy {
+    public static let affectedEntityTypes: Set<LocalCacheEntityType> = [
+        .sessions,
+        .recordings,
+    ]
+
+    public static func requiresFullReconcile(
+        localGeneration: Int64?,
+        hasCompletedSync: Bool,
+        remoteGeneration: Int64
+    ) -> Bool {
+        !hasCompletedSync || localGeneration != remoteGeneration
+    }
+}
+
 /// Typed facade over `LocalCacheStore` for the app read path.
 ///
 /// The store itself remains opaque and account-scoped. This layer adds the
@@ -416,12 +435,14 @@ public struct CachedWorkspace: Sendable {
     /// retired by `watchCompletionPlaceholderTTL`; their inbox entries remain
     /// durable provenance for a later authoritative convergence. All writes
     /// happen before the cursor advances, so a failure leaves the cache safely
-    /// repairable by another full refresh.
+    /// repairable by another full refresh. The optional purge generation is
+    /// recorded only after that durable full reconcile completes.
     public func reconcileServerDelta<T: Encodable>(
         _ delta: RemoteEntityDelta<T>,
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
-        now: Date = Date()
+        now: Date = Date(),
+        purgeGeneration: Int64? = nil
     ) throws {
         try applyDeltaChanges(
             delta,
@@ -467,6 +488,13 @@ public struct CachedWorkspace: Sendable {
             accountUserID: accountUserID,
             entityType: entityType
         )
+        if let purgeGeneration {
+            try store.setPurgeGeneration(
+                purgeGeneration,
+                accountUserID: accountUserID,
+                entityType: entityType
+            )
+        }
     }
 
     private func applyDeltaChanges<T: Encodable>(
@@ -528,6 +556,47 @@ public struct CachedWorkspace: Sendable {
         entityType: LocalCacheEntityType
     ) throws -> Bool {
         try store.hasCompletedSync(
+            accountUserID: accountUserID,
+            entityType: entityType
+        )
+    }
+
+    /// Returns true until both purge-sensitive entities have completed an
+    /// authoritative full reconcile at the current server generation. The
+    /// account and entity scopes stay inside the cache store, so another
+    /// account's purge signal can never force or satisfy this decision.
+    public func needsPurgeReconcile(
+        accountUserID: UUID,
+        remoteGeneration: Int64
+    ) throws -> Bool {
+        for entityType in PurgeConvergencePolicy.affectedEntityTypes {
+            let completed = try hasCompletedSync(
+                accountUserID: accountUserID,
+                entityType: entityType
+            )
+            let localGeneration = try store.purgeGeneration(
+                accountUserID: accountUserID,
+                entityType: entityType
+            )
+            if PurgeConvergencePolicy.requiresFullReconcile(
+                localGeneration: localGeneration,
+                hasCompletedSync: completed,
+                remoteGeneration: remoteGeneration
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The generation observed for one entity's completed full boundary.
+    /// Exposed for diagnostics/tests; callers should normally use
+    /// `needsPurgeReconcile` for the paired sessions/recordings decision.
+    public func purgeGeneration(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws -> Int64? {
+        try store.purgeGeneration(
             accountUserID: accountUserID,
             entityType: entityType
         )

@@ -686,6 +686,14 @@ export type Database = {
         }[]
       }
       delete_account: { Args: never; Returns: undefined }
+      purge_recording: {
+        Args: { p_id: string }
+        Returns: boolean
+      }
+      purge_session: {
+        Args: { p_id: string }
+        Returns: boolean
+      }
       link_tindeq_recordings_to_session: {
         Args: { p_recording_ids: string[]; p_session_id: string }
         Returns: {

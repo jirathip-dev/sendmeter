@@ -40,14 +40,16 @@ export function makeSoftDeleteOps(table: "sessions" | "tindeq_recordings") {
       );
     },
     /// Permanent delete — used only from the Trash view's "Delete forever".
+    /// The RPC checks that the row is still in Trash and makes an already
+    /// completed purge a successful no-op. Its database trigger advances the
+    /// native clients' bounded purge-generation signal atomically with the
+    /// hard delete.
     async purge(id: string): Promise<void> {
-      unwrapOneMutation(
-        await supabase
-          .from(table)
-          .delete()
-          .eq("id", id)
-          .select("id")
-          .maybeSingle(),
+      unwrap(
+        await supabase.rpc(
+          table === "sessions" ? "purge_session" : "purge_recording",
+          { p_id: id },
+        ),
       );
     },
   };

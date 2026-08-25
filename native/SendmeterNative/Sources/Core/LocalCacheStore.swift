@@ -125,7 +125,9 @@ private final class LocalCacheDatabase: @unchecked Sendable {
 /// The schema also has per-account `sync_cursors` and `sync_boundaries` tables.
 /// A cursor is optional when a successful server response contains no rows, so
 /// the boundary table separately records that an entity has completed at least
-/// one authoritative sync. `deleteAccount` purges both tables for the account.
+/// one authoritative sync. It also records the server's bounded hard-purge
+/// generation for the sessions and recordings full-reconcile boundary.
+/// `deleteAccount` purges all three tables for the account.
 ///
 /// The cache is a shared reference: all copies of the handle use the same
 /// GRDB queue, and GRDB serializes every access to that queue. The only
@@ -270,6 +272,15 @@ public final class LocalCacheStore: Sendable {
                     PRIMARY KEY (account_user_id, entity_type)
                 );
                 """)
+        }
+        migrator.registerMigration("addPurgeGenerationToSyncBoundaries") { db in
+            let hasGeneration = try Self.hasColumn("purge_generation", in: "sync_boundaries", db: db)
+            if !hasGeneration {
+                try db.execute(sql: """
+                    ALTER TABLE sync_boundaries
+                    ADD COLUMN purge_generation INTEGER
+                    """)
+            }
         }
         try migrator.migrate(dbQueue)
     }
@@ -1172,12 +1183,57 @@ public final class LocalCacheStore: Sendable {
             try db.execute(
                 sql: """
                     INSERT INTO sync_boundaries
-                        (account_user_id, entity_type, synced_at)
-                    VALUES (?, ?, ?)
+                        (account_user_id, entity_type, synced_at, purge_generation)
+                    VALUES (?, ?, ?, 0)
                     ON CONFLICT(account_user_id, entity_type) DO UPDATE SET
                         synced_at = excluded.synced_at
                     """,
                 arguments: [Self.accountIDString(accountUserID), entityType.rawValue, now]
+            )
+        }
+    }
+
+    /// Reads the hard-purge generation observed at the last authoritative
+    /// full reconcile for one account/entity. `nil` means that entity has no
+    /// durable sync boundary yet; it must not be treated as generation zero.
+    public func purgeGeneration(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws -> Int64? {
+        try dbQueue.read { db in
+            try Int64.fetchOne(
+                db,
+                sql: """
+                    SELECT purge_generation FROM sync_boundaries
+                    WHERE account_user_id = ? AND entity_type = ?
+                    """,
+                arguments: [Self.accountIDString(accountUserID), entityType.rawValue]
+            )
+        }
+    }
+
+    /// Records the server purge generation only after the caller has durably
+    /// written the full snapshot and advanced that entity's cursor/boundary.
+    /// Updating an absent boundary is deliberately a no-op: a generation
+    /// marker without a completed authoritative snapshot would suppress the
+    /// very full reconcile it is meant to guard.
+    public func setPurgeGeneration(
+        _ generation: Int64,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType
+    ) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE sync_boundaries
+                    SET purge_generation = ?
+                    WHERE account_user_id = ? AND entity_type = ?
+                    """,
+                arguments: [
+                    generation,
+                    Self.accountIDString(accountUserID),
+                    entityType.rawValue
+                ]
             )
         }
     }

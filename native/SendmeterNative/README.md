@@ -72,6 +72,15 @@ rows changed after its persisted `updated_at` cursor, apply active changes and
 soft-delete tombstones as a single batch, and advance the cursor only after the
 cache write succeeds; the first sync after install or cache rebuild still does
 a full hydration so a missing or reset cursor can never strand older rows.
+Permanent Trash deletion has no row left for that cursor to observe, so the
+server increments one bounded per-account purge generation when a session or
+Force recording is hard-deleted. Native compares that marker with both
+affected cache boundaries and forces an authoritative full reconcile of
+sessions and recordings together when it changes; the marker is written only
+after those durable writes complete. Cursor requests are strict
+`updated_at > cursor` and currently unpaged: equal-timestamp rows are assumed
+to arrive in the same batch as the maximum timestamp. Any future pagination
+must use a composite `(updated_at, entity_id)` cursor instead.
 Realtime slices continue through the same reconcile path before the published
 state changes, so a watch/other-device edit survives a relaunch without waiting
 for the next foreground pull. When the app backgrounds, a `BGAppRefreshTask`

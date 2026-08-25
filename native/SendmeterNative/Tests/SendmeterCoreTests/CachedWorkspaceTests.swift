@@ -1224,6 +1224,114 @@ final class CachedWorkspaceTests: XCTestCase {
         XCTAssertNil(try workspace.cursor(accountUserID: accountA, entityType: .tagMetadata))
     }
 
+    func testPurgeGenerationMismatchForcesAuthoritativeReconcileForBothEntities() throws {
+        let workspace = try makeWorkspace()
+        let oldSession = session(sessionID, accountID: accountA)
+        let oldRecording = recording(otherSessionID, accountID: accountA)
+        let firstCursor = LocalCacheStore.syncCursorString(
+            from: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let secondCursor = LocalCacheStore.syncCursorString(
+            from: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+
+        try workspace.reconcileServerDelta(
+            RemoteEntityDelta(
+                changes: [RemoteEntityChange(
+                    entityID: oldSession.id.uuidString,
+                    value: oldSession,
+                    updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                )],
+                activeValues: [oldSession],
+                cursor: firstCursor
+            ),
+            accountUserID: accountA,
+            entityType: .sessions,
+            purgeGeneration: 0
+        )
+        try workspace.reconcileServerDelta(
+            RemoteEntityDelta(
+                changes: [RemoteEntityChange(
+                    entityID: oldRecording.id.uuidString,
+                    value: oldRecording,
+                    updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                )],
+                activeValues: [oldRecording],
+                cursor: firstCursor
+            ),
+            accountUserID: accountA,
+            entityType: .recordings,
+            purgeGeneration: 0
+        )
+
+        XCTAssertFalse(try workspace.needsPurgeReconcile(
+            accountUserID: accountA,
+            remoteGeneration: 0
+        ))
+
+        // A hard purge produces no row for the strict updated_at delta to
+        // return, so the cursor-only pass leaves both stale rows visible.
+        try workspace.reconcileDelta(
+            RemoteEntityDelta<Session>(
+                changes: [],
+                activeValues: [],
+                cursor: secondCursor
+            ),
+            accountUserID: accountA,
+            entityType: .sessions
+        )
+        try workspace.reconcileDelta(
+            RemoteEntityDelta<TindeqRecording>(
+                changes: [],
+                activeValues: [],
+                cursor: secondCursor
+            ),
+            accountUserID: accountA,
+            entityType: .recordings
+        )
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).sessions, [oldSession])
+        XCTAssertEqual(try workspace.load(accountUserID: accountA).recordings, [oldRecording])
+        XCTAssertTrue(try workspace.needsPurgeReconcile(
+            accountUserID: accountA,
+            remoteGeneration: 1
+        ))
+
+        // The generation mismatch switches both entities to a full server
+        // snapshot. The marker is only satisfied after each durable write.
+        try workspace.reconcileServerDelta(
+            RemoteEntityDelta<Session>(changes: [], activeValues: [], cursor: secondCursor),
+            accountUserID: accountA,
+            entityType: .sessions,
+            purgeGeneration: 1
+        )
+        try workspace.reconcileServerDelta(
+            RemoteEntityDelta<TindeqRecording>(changes: [], activeValues: [], cursor: secondCursor),
+            accountUserID: accountA,
+            entityType: .recordings,
+            purgeGeneration: 1
+        )
+
+        let converged = try workspace.load(accountUserID: accountA)
+        XCTAssertTrue(converged.sessions.isEmpty)
+        XCTAssertTrue(converged.recordings.isEmpty)
+        XCTAssertEqual(try workspace.purgeGeneration(
+            accountUserID: accountA,
+            entityType: .sessions
+        ), 1)
+        XCTAssertEqual(try workspace.purgeGeneration(
+            accountUserID: accountA,
+            entityType: .recordings
+        ), 1)
+        XCTAssertFalse(try workspace.needsPurgeReconcile(
+            accountUserID: accountA,
+            remoteGeneration: 1
+        ))
+        XCTAssertTrue(try workspace.needsPurgeReconcile(
+            accountUserID: accountB,
+            remoteGeneration: 1
+        ))
+    }
+
     private static func pendingFlag(
         in workspace: CachedWorkspace,
         accountUserID: UUID,

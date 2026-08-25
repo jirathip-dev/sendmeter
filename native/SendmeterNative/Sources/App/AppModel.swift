@@ -1791,7 +1791,8 @@ public final class AppModel {
         _ delta: RemoteEntityDelta<T>,
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
-        fullSnapshot: CachedWorkspaceSnapshot?
+        fullSnapshot: CachedWorkspaceSnapshot?,
+        purgeGeneration: Int64? = nil
     ) {
         guard let cachedWorkspace else { return }
         do {
@@ -1799,7 +1800,8 @@ public final class AppModel {
                 try cachedWorkspace.reconcileServerDelta(
                     delta,
                     accountUserID: accountUserID,
-                    entityType: entityType
+                    entityType: entityType,
+                    purgeGeneration: purgeGeneration
                 )
             } else {
                 try cachedWorkspace.reconcileDelta(
@@ -1843,6 +1845,38 @@ public final class AppModel {
             recordCacheFailure("cache sync boundary read", error)
             return false
         }
+    }
+
+    /// Hard purges leave no row for an `updated_at > cursor` delta to return.
+    /// The server generation is account-scoped; a mismatch forces both
+    /// Trash-backed entities through full authoritative reconciliation while
+    /// retaining the cache's pending-local-write precedence.
+    private func cacheNeedsPurgeReconcile(
+        accountUserID: UUID,
+        remoteGeneration: Int64
+    ) -> Bool {
+        guard let cachedWorkspace else { return true }
+        do {
+            return try cachedWorkspace.needsPurgeReconcile(
+                accountUserID: accountUserID,
+                remoteGeneration: remoteGeneration
+            )
+        } catch {
+            recordCacheFailure("cache purge-generation read", error)
+            // A missing/corrupt convergence marker is not permission to keep
+            // using a cursor that may have crossed a hard purge.
+            return true
+        }
+    }
+
+    private func cacheCursor(
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        forcingFullReconcile: Bool
+    ) -> String? {
+        forcingFullReconcile
+            ? nil
+            : cacheCursor(accountUserID: accountUserID, entityType: entityType)
     }
 
     /// Re-adopts the reconciled cache values for the collections that do not
@@ -2161,15 +2195,6 @@ public final class AppModel {
         // Cold-start / account-switch path: render the account's local
         // snapshot before any network request starts.
         hydrateCachedWorkspace(accountUserID: userID)
-        let sessionCursor = cacheCursor(accountUserID: userID, entityType: .sessions)
-        let settingsCursor = cacheCursor(accountUserID: userID, entityType: .settings)
-        let phaseCursor = cacheCursor(accountUserID: userID, entityType: .phasePeriods)
-        let healthCursor = cacheCursor(accountUserID: userID, entityType: .healthMetrics)
-        let recordingCursor = cacheCursor(accountUserID: userID, entityType: .recordings)
-        let presetCursor = cacheCursor(accountUserID: userID, entityType: .presets)
-        let routineCursor = cacheCursor(accountUserID: userID, entityType: .routinePresets)
-        let workoutCursor = cacheCursor(accountUserID: userID, entityType: .workoutsAndAttempts)
-        let tagCursor = cacheCursor(accountUserID: userID, entityType: .tagMetadata)
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
@@ -2193,6 +2218,32 @@ public final class AppModel {
             }
         }
         do {
+            let remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            let forcePurgeReconcile = cacheNeedsPurgeReconcile(
+                accountUserID: userID,
+                remoteGeneration: remotePurgeGeneration
+            )
+            let sessionCursor = cacheCursor(
+                accountUserID: userID,
+                entityType: .sessions,
+                forcingFullReconcile: forcePurgeReconcile
+            )
+            let settingsCursor = cacheCursor(accountUserID: userID, entityType: .settings)
+            let phaseCursor = cacheCursor(accountUserID: userID, entityType: .phasePeriods)
+            let healthCursor = cacheCursor(accountUserID: userID, entityType: .healthMetrics)
+            let recordingCursor = cacheCursor(
+                accountUserID: userID,
+                entityType: .recordings,
+                forcingFullReconcile: forcePurgeReconcile
+            )
+            let presetCursor = cacheCursor(accountUserID: userID, entityType: .presets)
+            let routineCursor = cacheCursor(accountUserID: userID, entityType: .routinePresets)
+            let workoutCursor = cacheCursor(accountUserID: userID, entityType: .workoutsAndAttempts)
+            let tagCursor = cacheCursor(accountUserID: userID, entityType: .tagMetadata)
             let today = LocalDateSupport.string(from: Date())
             async let remoteSessions = repository.fetchSessionDelta(
                 since: sessionCursor,
@@ -2254,7 +2305,8 @@ public final class AppModel {
                 entityType: .sessions,
                 fullSnapshot: sessionCursor == nil
                     ? CachedWorkspaceSnapshot(sessions: fetchedSessions.activeValues)
-                    : nil
+                    : nil,
+                purgeGeneration: remotePurgeGeneration
             )
             reconcileEntityRefresh(
                 fetchedSettings,
@@ -2286,7 +2338,8 @@ public final class AppModel {
                 entityType: .recordings,
                 fullSnapshot: recordingCursor == nil
                     ? CachedWorkspaceSnapshot(recordings: fetchedRecordings.activeValues)
-                    : nil
+                    : nil,
+                purgeGeneration: remotePurgeGeneration
             )
             reconcileEntityRefresh(
                 fetchedPresets,
@@ -6307,6 +6360,10 @@ public final class AppModel {
     /// wrong account or advance a cursor after partial work.
     public func runBackgroundSync() async -> BackgroundSyncOutcome {
         guard let userID = currentUserID else { return .accountChanged }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
         // The app-refresh task is another supported lifecycle signal for the
         // HealthKit path. Run its first pass before the cache engine so a
         // background wake can reconcile Apple Health even when no local cache
@@ -6320,9 +6377,35 @@ public final class AppModel {
             await drainQueue()
             return .failed
         }
-        let accountFetch = AccountScopedFetch(
-            accountUserID: userID,
+        // Keep the existing drain-before-reconcile ordering, then take the
+        // bounded server generation that decides whether the two
+        // hard-delete-backed entities need an authoritative pass. The engine
+        // still owns the per-entity account/cancellation guards; its drain is
+        // a no-op here because this preflight has already drained exactly once.
+        await drainQueue()
+        guard accountFetch.canApply(
+            to: currentUserID,
             accountEpoch: accountEpoch
+        ) else {
+            return .accountChanged
+        }
+        guard !Task.isCancelled else { return .cancelled }
+        let remotePurgeGeneration: Int64
+        do {
+            remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
+        } catch {
+            return Task.isCancelled ? .cancelled : .failed
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else {
+            return .accountChanged
+        }
+        guard !Task.isCancelled else { return .cancelled }
+        let forcePurgeReconcile = cacheNeedsPurgeReconcile(
+            accountUserID: userID,
+            remoteGeneration: remotePurgeGeneration
         )
         let run = BackgroundSyncRun(
             accountUserID: userID,
@@ -6334,12 +6417,12 @@ public final class AppModel {
                     accountEpoch: self.accountEpoch
                 )
             },
-            drain: { [weak self] in
-                await self?.drainQueue()
-            },
+            drain: {},
             operations: makeBackgroundSyncOperations(
                 accountUserID: userID,
-                workspace: workspace
+                workspace: workspace,
+                forcePurgeReconcile: forcePurgeReconcile,
+                purgeGeneration: remotePurgeGeneration
             )
         )
         let outcome = await BackgroundSyncEngine.run(run)
@@ -6354,7 +6437,9 @@ public final class AppModel {
 
     private func makeBackgroundSyncOperations(
         accountUserID: UUID,
-        workspace: CachedWorkspace
+        workspace: CachedWorkspace,
+        forcePurgeReconcile: Bool,
+        purgeGeneration: Int64
     ) -> [BackgroundSyncOperation] {
         let repository = repository
         return [
@@ -6362,6 +6447,8 @@ public final class AppModel {
                 entityType: .sessions,
                 accountUserID: accountUserID,
                 workspace: workspace,
+                forceFull: forcePurgeReconcile,
+                purgeGeneration: purgeGeneration,
                 fetch: { cursor in
                     try await repository.fetchSessionDelta(
                         since: cursor,
@@ -6401,6 +6488,8 @@ public final class AppModel {
                 entityType: .recordings,
                 accountUserID: accountUserID,
                 workspace: workspace,
+                forceFull: forcePurgeReconcile,
+                purgeGeneration: purgeGeneration,
                 fetch: { cursor in
                     try await repository.fetchRecordingDelta(since: cursor)
                 },
@@ -6449,14 +6538,18 @@ public final class AppModel {
         entityType: LocalCacheEntityType,
         accountUserID: UUID,
         workspace: CachedWorkspace,
+        forceFull: Bool = false,
+        purgeGeneration: Int64? = nil,
         fetch: @escaping @MainActor @Sendable (String?) async throws -> RemoteEntityDelta<Value>,
         snapshot: @escaping @MainActor @Sendable (RemoteEntityDelta<Value>) -> CachedWorkspaceSnapshot
     ) -> BackgroundSyncOperation {
         BackgroundSyncOperation(entityType: entityType) {
-            let cursor = try workspace.cursor(
-                accountUserID: accountUserID,
-                entityType: entityType
-            )
+            let cursor = forceFull
+                ? nil
+                : try workspace.cursor(
+                    accountUserID: accountUserID,
+                    entityType: entityType
+                )
             let delta = try await fetch(cursor)
             let firstSnapshot = cursor == nil ? snapshot(delta) : nil
             return BackgroundSyncPreparedOperation {
@@ -6464,7 +6557,8 @@ public final class AppModel {
                     try workspace.reconcileServerDelta(
                         delta,
                         accountUserID: accountUserID,
-                        entityType: entityType
+                        entityType: entityType,
+                        purgeGeneration: purgeGeneration
                     )
                 } else {
                     try workspace.reconcileDelta(
@@ -8504,11 +8598,28 @@ public final class AppModel {
             accountEpoch: accountEpoch
         )
         do {
+            let remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+            if cacheNeedsPurgeReconcile(
+                accountUserID: userID,
+                remoteGeneration: remotePurgeGeneration
+            ) {
+                // A realtime event can arrive before the coalesced refresh has
+                // observed the hard-delete generation. Reuse the foreground
+                // authoritative path so sessions and recordings converge
+                // together, even when only one table emitted the event.
+                await refreshAll(showSpinner: false)
+                return
+            }
             if slices.contains(.sessions) {
                 guard let snapshot = try await reconcileRealtimeSlice(
                     accountUserID: userID,
                     capturedBy: accountFetch,
                     entityType: .sessions,
+                    purgeGeneration: remotePurgeGeneration,
                     fetch: { cursor in
                         try await self.repository.fetchSessionDelta(
                             since: cursor,
@@ -8530,6 +8641,7 @@ public final class AppModel {
                     accountUserID: userID,
                     capturedBy: accountFetch,
                     entityType: .recordings,
+                    purgeGeneration: remotePurgeGeneration,
                     fetch: { cursor in
                         try await self.repository.fetchRecordingDelta(since: cursor)
                     },
@@ -8603,6 +8715,7 @@ public final class AppModel {
         accountUserID: UUID,
         capturedBy accountFetch: AccountScopedFetch,
         entityType: LocalCacheEntityType,
+        purgeGeneration: Int64? = nil,
         fetch: @escaping (String?) async throws -> RemoteEntityDelta<Value>,
         fallback: @escaping (RemoteEntityDelta<Value>) -> CachedWorkspaceSnapshot
     ) async throws -> CachedWorkspaceSnapshot? {
@@ -8619,7 +8732,8 @@ public final class AppModel {
             delta,
             accountUserID: accountUserID,
             entityType: entityType,
-            fullSnapshot: cursor == nil ? fallback(delta) : nil
+            fullSnapshot: cursor == nil ? fallback(delta) : nil,
+            purgeGeneration: purgeGeneration
         )
         guard accountFetch.canApply(
             to: currentUserID,

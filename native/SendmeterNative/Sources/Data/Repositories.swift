@@ -164,6 +164,11 @@ private struct SoftDeletePayload: Encodable {
     enum CodingKeys: String, CodingKey { case deletedAt = "deleted_at" }
 }
 
+private struct PurgeIDPayload: Encodable {
+    let id: UUID
+    enum CodingKeys: String, CodingKey { case id = "p_id" }
+}
+
 private struct RestorePayload: Encodable {
     enum CodingKeys: String, CodingKey { case deletedAt = "deleted_at" }
     func encode(to encoder: Encoder) throws {
@@ -956,6 +961,10 @@ public struct LinkRecordingsResult: Decodable, Sendable {
 
 private struct EmptyRPC: Encodable {}
 
+private struct PurgeSyncGenerationRow: Decodable {
+    let generation: Int64
+}
+
 // MARK: - Repository
 
 public final class SendmeterRepository: @unchecked Sendable {
@@ -1145,10 +1154,11 @@ public final class SendmeterRepository: @unchecked Sendable {
     }
 
     public func purgeSession(id: UUID) async throws {
+        let body = try await transport.encode(PurgeIDPayload(id: id))
         try await transport.requestVoid(
-            path: "rest/v1/sessions",
-            method: .delete,
-            queryItems: [URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())")]
+            path: "rest/v1/rpc/purge_session",
+            method: .post,
+            body: body
         )
     }
 
@@ -1521,10 +1531,11 @@ public final class SendmeterRepository: @unchecked Sendable {
     }
 
     public func purgeRecording(id: UUID) async throws {
+        let body = try await transport.encode(PurgeIDPayload(id: id))
         try await transport.requestVoid(
-            path: "rest/v1/tindeq_recordings",
-            method: .delete,
-            queryItems: [URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())")]
+            path: "rest/v1/rpc/purge_recording",
+            method: .post,
+            body: body
         )
     }
 
@@ -1817,6 +1828,22 @@ public final class SendmeterRepository: @unchecked Sendable {
 
     // MARK: Incremental deltas (#747 slice 3)
 
+    /// The one-row server signal for hard purges (#778). It is deliberately
+    /// separate from the per-entity row cursors: a hard-deleted session or
+    /// recording has no row left for `updated_at > cursor` to return.
+    /// Missing state means no purge has happened for this account yet.
+    public func fetchPurgeSyncGeneration() async throws -> Int64 {
+        let rows: [PurgeSyncGenerationRow] = try await transport.request(
+            path: "rest/v1/sync_purge_generations",
+            method: .get,
+            queryItems: [
+                URLQueryItem(name: "select", value: "generation"),
+                URLQueryItem(name: "limit", value: "1")
+            ]
+        )
+        return rows.first?.generation ?? 0
+    }
+
     public func fetchSessionDelta(
         since cursor: String?,
         accountUserID: UUID? = nil
@@ -2052,6 +2079,10 @@ public final class SendmeterRepository: @unchecked Sendable {
         select: String,
         order: String = "updated_at.asc"
     ) -> [URLQueryItem] {
+        // The strict `gt` cursor is safe because these requests are currently
+        // unpaged: every row sharing the response's maximum updated_at is
+        // returned before that timestamp is persisted. If pagination is ever
+        // added, this must become a composite (updated_at, entity id) cursor.
         var queryItems = [
             URLQueryItem(name: "select", value: select),
             URLQueryItem(name: "order", value: order)
