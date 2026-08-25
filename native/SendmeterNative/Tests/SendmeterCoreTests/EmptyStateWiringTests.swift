@@ -65,10 +65,17 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertFalse(history.contains("No force recordings yet"))
 
         let combined = exactBlock(history, startingWith: "private var combinedList: some View")
+        let normalizedCombined = normalizeWhitespace(combined)
         XCTAssertTrue(
-            normalizeWhitespace(combined).contains(
+            normalizedCombined.contains(
                 "if timelineItems.isEmpty, !model.hasLoadedSessions || !model.hasLoadedRecordings"
             )
+        )
+        XCTAssertFalse(
+            normalizedCombined.contains(
+                "if timelineItems.isEmpty, !model.hasLoadedSessions || !model.hasLoadedRecordings ||"
+            ),
+            "the combined-history load gate must not treat a loaded empty force slice as a global load failure"
         )
         let forceList = exactBlock(history, startingWith: "private var forceList: some View")
         XCTAssertTrue(
@@ -89,24 +96,17 @@ final class EmptyStateWiringTests: XCTestCase {
         let staticTile = exactBlock(card, startingWith: "private func staticTile(")
         let movementTile = exactBlock(card, startingWith: "private func movementTile(")
 
-        XCTAssertTrue(boundary.contains("let emptyActionTitle: String"))
-        XCTAssertTrue(boundary.contains("let emptyActionKey: String"))
-        XCTAssertTrue(boundary.contains("let showsPrimaryEmptyState: Bool"))
-        XCTAssertTrue(boundary.contains("let emptyAction: () -> Void"))
-        XCTAssertTrue(boundary.contains("emptyActionKey: emptyActionKey"))
-        XCTAssertTrue(
-            boundary.contains(
-                "emptyActionTitle: showsPrimaryEmptyState ? emptyActionTitle : nil"
-            )
-        )
-        XCTAssertTrue(boundary.contains("showsPrimaryEmptyState: showsPrimaryEmptyState"))
+        XCTAssertFalse(boundary.contains("emptyAction"))
+        XCTAssertFalse(boundary.contains("showsPrimaryEmptyState"))
         XCTAssertTrue(boundary.contains("connectionPending: connectionPending"))
         XCTAssertTrue(card.contains("staticProgress.totalCount == 0"))
         XCTAssertTrue(card.contains("movementProgress.latestMetrics == nil"))
-        XCTAssertTrue(card.contains("ProductEmptyState("))
+        XCTAssertFalse(progress.contains("ProductEmptyState("))
         XCTAssertTrue(card.contains("Record one above or choose another view."))
-        XCTAssertTrue(progress.contains("let showsPrimaryEmptyState: Bool"))
-        XCTAssertFalse(progress.contains("let showsPrimaryEmptyState: Bool = true"))
+        XCTAssertTrue(progress.contains("StaticCapacityDetailView("))
+        XCTAssertTrue(progress.contains("MovementDetailView("))
+        XCTAssertFalse(progress.contains("emptyAction"))
+        XCTAssertFalse(progress.contains("showsPrimaryEmptyState"))
         XCTAssertTrue(tile.contains("tileSurface("))
         XCTAssertEqual(
             countButtonInvocations(in: tile),
@@ -119,8 +119,8 @@ final class EmptyStateWiringTests: XCTestCase {
 
         let core = code(source("Sources/Core/ForceProgress.swift"))
         let key = exactBlock(core, startingWith: "public struct ForceProgressCardKey: Hashable, Sendable")
-        XCTAssertTrue(key.contains("public let emptyActionKey: String"))
-        XCTAssertTrue(key.contains("public let emptyActionTitle: String?"))
+        XCTAssertFalse(key.contains("emptyAction"))
+        XCTAssertFalse(key.contains("showsPrimaryEmptyState"))
         XCTAssertTrue(key.contains("public let connectionPending: Bool"))
     }
 
@@ -141,7 +141,7 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(curve.contains("ProgressView(\"Loading force-duration curve…\")"))
     }
 
-    func testDisconnectedProgressorUsesOneIllustratedConnectAction() {
+    func testDisconnectedProgressorKeepsSavedAnalysisVisibleAndUsesOneIllustratedConnectAction() {
         let force = code(source("Sources/Features/Force/ForceView.swift"))
         let device = exactBlock(force, startingWith: "private struct ForceDeviceCard: View")
 
@@ -165,6 +165,7 @@ final class EmptyStateWiringTests: XCTestCase {
         )
         XCTAssertTrue(forceDataEmpty.contains("hasLoadedRecordings"))
         XCTAssertTrue(forceDataEmpty.contains("!hasForceRecordings"))
+        XCTAssertTrue(forceDataEmpty.contains("!handsFreeArmed"))
         XCTAssertTrue(forceDataEmpty.contains("case .connected:"))
         XCTAssertTrue(forceDataEmpty.contains("return true"))
         let normalizedDevice = normalizeWhitespace(device)
@@ -176,7 +177,9 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(force.contains("private var forceEmptyActionTitle: String"))
         XCTAssertTrue(force.contains("private func performForceEmptyAction()"))
         let normalizedForce = normalizeWhitespace(force)
-        XCTAssertTrue(normalizedForce.contains("case .connected: startPrimaryForceAction()"))
+        XCTAssertTrue(normalizedForce.contains("case .connected: if model.handsFree.isArmed { cancelManualArm() }"))
+        XCTAssertTrue(normalizedForce.contains("else if handsFreeEnabled, selectedPreset == nil { armHandsFree() }"))
+        XCTAssertTrue(normalizedForce.contains("else { startPrimaryForceAction() }"))
         XCTAssertTrue(normalizedForce.contains("case .measuring: stopAndSave()"))
         XCTAssertTrue(normalizedForce.contains("case .unavailable: openBluetoothSettings()"))
         XCTAssertTrue(normalizedForce.contains("UIApplication.openSettingsURLString"))
@@ -205,20 +208,47 @@ final class EmptyStateWiringTests: XCTestCase {
                 "if !showsPrimaryEmptyState { Button(action: start)"
             )
         )
+        XCTAssertTrue(normalizeWhitespace(controls).contains("else if handsFreeEnabled, !protocolArmed {"))
+        XCTAssertTrue(controls.contains("Hands-free is ready — use the action above to arm it"))
+        XCTAssertTrue(force.contains("if handsFreeEnabled, selectedPreset == nil"))
+        XCTAssertTrue(force.contains("return \"Arm Hands-free\""))
+        let deviceTitle = exactBlock(
+            force,
+            startingWith: "private var forceDeviceEmptyActionTitle: String"
+        )
+        XCTAssertTrue(
+            normalizeWhitespace(deviceTitle).contains(
+                "if handsFreeEnabled, selectedPreset == nil { return \"Arm Hands-free\" }"
+            )
+        )
+        let emptyAction = exactBlock(
+            force,
+            startingWith: "private func performForceEmptyAction()"
+        )
+        XCTAssertTrue(
+            normalizeWhitespace(emptyAction).contains(
+                "else if handsFreeEnabled, selectedPreset == nil { armHandsFree() }"
+            )
+        )
 
         XCTAssertEqual(
             countOccurrences("showsPrimaryEmptyState: false", in: force),
-            3,
-            "secondary Force surfaces must stay actionless when the Progressor card owns the hero"
+            1,
+            "only the curve detail card may retain an explicit illustrated empty state"
         )
-        XCTAssertTrue(force.contains("forceDeviceOwnsPrimaryEmptyState"))
         let hierarchy = exactBlock(
             force,
             startingWith: "private var showsForceAnalysisCards: Bool"
         )
-        XCTAssertTrue(hierarchy.contains("!forceDeviceOwnsPrimaryEmptyState"))
-        XCTAssertTrue(hierarchy.contains("!forceModel.hasLoadedRecordings"))
-        XCTAssertTrue(hierarchy.contains("!model.recordings.isEmpty"))
+        XCTAssertFalse(hierarchy.contains("!forceDeviceOwnsPrimaryEmptyState"))
+        XCTAssertEqual(
+            normalizeWhitespace(hierarchy),
+            "private var showsForceAnalysisCards: Bool { !forceModel.hasLoadedRecordings || !model.recordings.isEmpty }"
+        )
+        XCTAssertFalse(hierarchy.contains("device.status"))
+        for disconnectedStatus in ["case .idle", "case .unavailable", "case .interrupted"] {
+            XCTAssertTrue(force.contains(disconnectedStatus))
+        }
     }
 
     func testForceDetailSheetsOwnTheirEmptyStateAction() {
@@ -309,15 +339,17 @@ final class EmptyStateWiringTests: XCTestCase {
 
     func testRemainingProductEmptyStatesKeepARealNextStep() {
         let consistency = code(source("Sources/Features/Force/ForceConsistencyCard.swift"))
-        XCTAssertTrue(consistency.contains("ProductEmptyState("))
-        XCTAssertTrue(consistency.contains("compact: true"))
-        XCTAssertTrue(consistency.contains("actionTitle: emptyActionTitle"))
-        XCTAssertTrue(consistency.contains("let showsPrimaryEmptyState: Bool"))
-        XCTAssertFalse(consistency.contains("let showsPrimaryEmptyState: Bool = true"))
+        XCTAssertFalse(consistency.contains("ProductEmptyState("))
+        XCTAssertFalse(consistency.contains("emptyAction"))
+        XCTAssertFalse(consistency.contains("showsPrimaryEmptyState"))
         XCTAssertTrue(consistency.contains("No recent force recordings match this exercise filter."))
         XCTAssertFalse(consistency.contains("No force recordings in the last 8 weeks"))
 
         let acwr = code(source("Sources/Features/Dashboard/AcwrProjectionCard.swift"))
+        XCTAssertTrue(acwr.contains("model.isLoadingData || model.isRefreshing"))
+        XCTAssertTrue(acwr.contains("title: \"Your training history is catching its breath\""))
+        XCTAssertTrue(acwr.contains("actionTitle: \"Try again\""))
+        XCTAssertTrue(acwr.contains("await model.refreshAll()"))
         XCTAssertTrue(acwr.contains("title: \"Your next workout shapes the forecast\""))
         XCTAssertTrue(acwr.contains("actionTitle: \"Start a workout\""))
         XCTAssertTrue(acwr.contains("model.selectedTab = .workout"))

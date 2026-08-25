@@ -10,9 +10,6 @@ struct ForceConsistencyCard: View {
     let hiddenTags: Set<String>
     let hasLoadedRecordings: Bool
     let connectionPending: Bool
-    let showsPrimaryEmptyState: Bool
-    let emptyActionTitle: String
-    let emptyAction: () -> Void
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.scenePhase) private var scenePhase
@@ -60,14 +57,6 @@ struct ForceConsistencyCard: View {
                         if connectionPending {
                             ProgressView("Connecting to Progressor…")
                                 .frame(maxWidth: .infinity, minHeight: 108)
-                        } else if showsPrimaryEmptyState {
-                            ProductEmptyState(
-                                title: "Build your force rhythm",
-                                message: "A recent Progressor pull will fill this eight-week view.",
-                                actionTitle: emptyActionTitle,
-                                compact: true,
-                                action: emptyAction
-                            )
                         } else {
                             Text("No recent force recordings match this exercise filter. Record a pull above to build this rhythm.")
                                 .font(.subheadline)

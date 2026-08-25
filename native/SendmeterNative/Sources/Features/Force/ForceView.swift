@@ -1328,6 +1328,12 @@ struct ForceView: View {
     private var forceEmptyActionTitle: String {
         switch model.tindeq.status {
         case .connected:
+            if model.handsFree.isArmed {
+                return "Cancel hands-free arm"
+            }
+            if handsFreeEnabled, selectedPreset == nil {
+                return "Arm Hands-free"
+            }
             return selectedPreset == nil ? "Record a pull" : "Start guided pull"
         case .measuring: return "Stop & save"
         case .unavailable: return "Open Bluetooth Settings"
@@ -1337,25 +1343,15 @@ struct ForceView: View {
         }
     }
 
-    /// The action copy may change between connected and measuring, but the
-    /// progress card must not rebuild on every hands-free rep. Keep its
-    /// Equatable key at the coarser action-mode level. Secondary progress
-    /// surfaces suppress the action hero; the live title remains available to
-    /// the primary empty-state owner and any future standalone consumer.
-    private var forceEmptyActionKey: String {
-        switch model.tindeq.status {
-        case .connected, .measuring:
-            return selectedPreset == nil ? "free-pull" : "guided-pull"
-        case .unavailable: return "bluetooth-settings"
-        case .idle: return "connect"
-        case .scanning, .connecting: return "cancel-connection"
-        case .interrupted: return "reconnect"
-        }
-    }
-
     private var forceDeviceEmptyActionTitle: String {
         switch model.tindeq.status {
         case .connected:
+            if model.handsFree.isArmed {
+                return "Cancel hands-free arm"
+            }
+            if handsFreeEnabled, selectedPreset == nil {
+                return "Arm Hands-free"
+            }
             return selectedPreset == nil ? "Record a pull" : "Start guided pull"
         case .unavailable: return "Open Bluetooth Settings"
         case .scanning, .connecting: return "Cancel connection"
@@ -1372,33 +1368,12 @@ struct ForceView: View {
         }
     }
 
-    /// The Progressor card is the sole branded/actionable empty-state owner on
-    /// this screen. Analysis cards remain visible only with data (or while
-    /// loading); a selected view with no matching rows gets read-only,
-    /// contextual guidance there and never a second hero/action.
-    private var forceDeviceOwnsPrimaryEmptyState: Bool {
-        guard !model.tindeq.hasUnsavedRecording,
-              model.tindeq.interruptedRecording == nil,
-              model.tindeq.completedSummary == nil
-        else { return false }
-
-        switch model.tindeq.status {
-        case .idle, .unavailable, .interrupted:
-            return true
-        case .connected:
-            return forceModel.hasLoadedRecordings && model.recordings.isEmpty
-        default:
-            return false
-        }
-    }
-
     private var showsForceAnalysisCards: Bool {
-        // The Progressor card owns the only illustrated/actionable empty state.
-        // Analysis cards are a contextual layer: keep them for loading or
-        // returning data, but suppress the whole layer for a true first-sync
-        // empty account so the Force screen cannot stack competing heroes.
-        !forceDeviceOwnsPrimaryEmptyState
-            && (!forceModel.hasLoadedRecordings || !model.recordings.isEmpty)
+        // Analysis is independent of transport state. Returning users need
+        // progress and detail-sheet entry points while the Progressor is idle,
+        // unavailable, or interrupted. Only a not-yet-authoritative empty
+        // recording collection suppresses this contextual layer.
+        !forceModel.hasLoadedRecordings || !model.recordings.isEmpty
     }
 
     private func startPrimaryForceAction() {
@@ -1412,7 +1387,13 @@ struct ForceView: View {
     private func performForceEmptyAction() {
         switch model.tindeq.status {
         case .connected:
-            startPrimaryForceAction()
+            if model.handsFree.isArmed {
+                cancelManualArm()
+            } else if handsFreeEnabled, selectedPreset == nil {
+                armHandsFree()
+            } else {
+                startPrimaryForceAction()
+            }
         case .measuring:
             stopAndSave()
         case .unavailable:
@@ -1692,10 +1673,6 @@ struct ForceView: View {
                             progressRevision: forceModel.forceProgressRevision,
                             curveRevision: sideScopedForceCurveRevision,
                             targetBand: selectedTargetReferenceBand,
-                            emptyActionTitle: forceEmptyActionTitle,
-                            emptyActionKey: forceEmptyActionKey,
-                            showsPrimaryEmptyState: false,
-                            emptyAction: performForceEmptyAction,
                             connectionPending: forceConnectionPending
                         )
                         .equatable()
@@ -1704,10 +1681,7 @@ struct ForceView: View {
                             recordings: model.recordings,
                             hiddenTags: model.hiddenTagNames,
                             hasLoadedRecordings: forceModel.hasLoadedRecordings,
-                            connectionPending: forceConnectionPending,
-                            showsPrimaryEmptyState: false,
-                            emptyActionTitle: forceEmptyActionTitle,
-                            emptyAction: performForceEmptyAction
+                            connectionPending: forceConnectionPending
                         )
 
                         if !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -2541,7 +2515,8 @@ private struct ForceDeviceCard: View {
               !hasForceRecordings,
               device.interruptedRecording == nil,
               device.completedSummary == nil,
-              !device.hasUnsavedRecording
+              !device.hasUnsavedRecording,
+              !handsFreeArmed
         else { return false }
 
         switch device.status {
@@ -2820,11 +2795,20 @@ private struct ForceDeviceCard: View {
                         .hapticButtonStyle(.bordered)
                     }
                 } else if handsFreeEnabled, !protocolArmed {
-                    Button(action: armHandsFree) {
-                        Label("Arm Hands-free", systemImage: "scope")
+                    if showsPrimaryEmptyState {
+                        Label(
+                            "Hands-free is ready — use the action above to arm it",
+                            systemImage: "scope"
+                        )
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    } else {
+                        Button(action: armHandsFree) {
+                            Label("Arm Hands-free", systemImage: "scope")
+                        }
+                        .hapticButtonStyle(PrimaryActionButtonStyle())
+                        .disabled(device.hasUnsavedRecording)
                     }
-                    .hapticButtonStyle(PrimaryActionButtonStyle())
-                    .disabled(device.hasUnsavedRecording)
                 } else if !showsPrimaryEmptyState {
                     Button(action: start) {
                         Label(

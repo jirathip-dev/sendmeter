@@ -14,10 +14,6 @@ struct ForceProgressCardBoundary: View, Equatable {
     let progressRevision: UInt64
     let curveRevision: UInt64
     let targetBand: ForceTargetBand?
-    let emptyActionTitle: String
-    let emptyActionKey: String
-    let showsPrimaryEmptyState: Bool
-    let emptyAction: () -> Void
     let connectionPending: Bool
 
     private var renderKey: ForceProgressCardKey {
@@ -28,9 +24,6 @@ struct ForceProgressCardBoundary: View, Equatable {
             hasLoadedRecordings: hasLoadedRecordings,
             curveRevision: curveRevision,
             targetBand: targetBand,
-            emptyActionKey: emptyActionKey,
-            emptyActionTitle: showsPrimaryEmptyState ? emptyActionTitle : nil,
-            showsPrimaryEmptyState: showsPrimaryEmptyState,
             connectionPending: connectionPending
         )
     }
@@ -47,9 +40,6 @@ struct ForceProgressCardBoundary: View, Equatable {
             forceCurve: forceCurve,
             hasLoadedRecordings: hasLoadedRecordings,
             targetBand: targetBand,
-            showsPrimaryEmptyState: showsPrimaryEmptyState,
-            emptyActionTitle: emptyActionTitle,
-            emptyAction: emptyAction,
             connectionPending: connectionPending
         )
     }
@@ -67,9 +57,6 @@ struct ForceProgressCard: View {
     let forceCurve: ForceCurveModel?
     let hasLoadedRecordings: Bool
     let targetBand: ForceTargetBand?
-    let showsPrimaryEmptyState: Bool
-    let emptyActionTitle: String
-    let emptyAction: () -> Void
     let connectionPending: Bool
 
     @Environment(\.colorScheme) private var scheme
@@ -102,13 +89,6 @@ struct ForceProgressCard: View {
                 if connectionPending {
                     ProgressView("Connecting to Progressor…")
                         .frame(maxWidth: .infinity, minHeight: 150)
-                } else if showsPrimaryEmptyState {
-                    ProductEmptyState(
-                        title: "Start this force view",
-                        message: "No saved pulls match this exercise and side yet. Record a pull to add one here.",
-                        actionTitle: emptyActionTitle,
-                        action: emptyAction
-                    )
                 } else {
                     Text("No saved pulls match this exercise and side. Record one above or choose another view.")
                         .font(.subheadline)

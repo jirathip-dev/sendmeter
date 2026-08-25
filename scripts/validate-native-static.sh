@@ -65,4 +65,11 @@ if ! rg -q 'recording keeps running in the Force tab until you stop or disconnec
     exit 1
 fi
 
-echo "Native parse, generated-project wiring, and Force invariants passed"
+sdk_probe="$repo_root/scripts/validate-native-empty-state-sdk.sh"
+if [[ ! -x "$sdk_probe" ]]; then
+    echo "Native empty-state SDK probe is missing or not executable" >&2
+    exit 1
+fi
+"$sdk_probe"
+
+echo "Native parse, generated-project wiring, Force invariants, and SDK empty-state seam passed"

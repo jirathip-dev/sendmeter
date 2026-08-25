@@ -93,9 +93,18 @@ struct AcwrProjectionCard: View {
     @ViewBuilder
     private var emptyState: some View {
         if !model.hasLoadedSessions {
-            Text("Your training history is still loading.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            if model.isLoadingData || model.isRefreshing {
+                ProgressView("Loading training history…")
+                    .frame(maxWidth: .infinity, minHeight: 108)
+            } else {
+                ProductEmptyState(
+                    title: "Your training history is catching its breath",
+                    message: "Sync once to bring your ACWR forecast back into view.",
+                    actionTitle: "Try again"
+                ) {
+                    Task { await model.refreshAll() }
+                }
+            }
         } else if model.sessions.isEmpty {
             ProductEmptyState(
                 title: "Your next workout shapes the forecast",
