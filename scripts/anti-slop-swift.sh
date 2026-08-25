@@ -43,13 +43,22 @@ if ((swift_file_count == 0)); then
     exit 2
 fi
 
+if ! swift build \
+    --package-path "$tool_root" \
+    --configuration debug \
+    --product anti-slop
+then
+    echo "anti-slop: vendored tool build failed" >&2
+    exit 2
+fi
+
 if ! tool_bin=$(swift build \
     --package-path "$tool_root" \
     --configuration debug \
     --product anti-slop \
     --show-bin-path
 ); then
-    echo "anti-slop: vendored tool build failed" >&2
+    echo "anti-slop: could not determine vendored tool bin path" >&2
     exit 2
 fi
 

@@ -228,6 +228,14 @@ Run the same pinned executable locally from the repository root:
 bash scripts/anti-slop-swift.sh native/SendmeterNative/Sources
 ```
 
+The native workflow also runs the cold-build regression, which removes the
+vendored tool's debug products before invoking the wrapper and requires both a
+successful rebuild and its positive scanned-file signal. Run it locally with:
+
+```bash
+bash scripts/validate-anti-slop-cold.sh
+```
+
 When a force unwrap, cast, try, or process-termination primitive is genuinely
 required, put a specific `// SAFETY:` explanation in the contiguous comment
 block immediately above it. Prefer an explicit unwrap or error path whenever

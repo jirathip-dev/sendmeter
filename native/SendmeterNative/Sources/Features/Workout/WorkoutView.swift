@@ -264,7 +264,7 @@ struct WorkoutView: View {
         guard let engine else { return }
         let current = ManualWorkoutActivityReplay.applying(events, to: engine)
         guard current != engine else { return }
-        engine = current
+        self.engine = current
         model.manualWorkoutActivity.refresh(engine: current, restTarget: restTarget)
     }
 }

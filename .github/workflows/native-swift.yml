@@ -13,6 +13,7 @@ on:
       - "tools/anti-slop-swift/**"
       - ".anti-slop.json"
       - "scripts/anti-slop-swift.sh"
+      - "scripts/validate-anti-slop-cold.sh"
       - "scripts/validate-anti-slop.sh"
       - "scripts/assert-native-watch-project.rb"
       - ".github/workflows/native-swift.yml"
@@ -32,6 +33,7 @@ on:
       - "tools/anti-slop-swift/**"
       - ".anti-slop.json"
       - "scripts/anti-slop-swift.sh"
+      - "scripts/validate-anti-slop-cold.sh"
       - "scripts/validate-anti-slop.sh"
       - "scripts/assert-native-watch-project.rb"
       - ".github/workflows/native-swift.yml"
@@ -51,12 +53,19 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode.app
       - name: Validate anti-slop Swift wiring
         run: bash scripts/validate-anti-slop.sh
+      - name: Anti-slop Swift cold-build regression
+        run: bash scripts/validate-anti-slop-cold.sh
       - name: Anti-slop Swift (advisory)
         run: |
           set +e
           output="$(bash scripts/anti-slop-swift.sh native/SendmeterNative/Sources 2>&1)"
           lint_status=$?
           printf '%s\n' "$output"
+          if [[ "$lint_status" == 0 || "$lint_status" == 1 ]] && \
+            ! grep -F -q -- 'anti-slop: scanned ' <<< "$output"; then
+            echo '::error::anti-slop Swift produced no scanned-file signal'
+            exit 2
+          fi
           while IFS= read -r diagnostic; do
             if [[ "$diagnostic" =~ ^(.+):([0-9]+):([0-9]+):\ error:\ (.+)$ ]]; then
               echo "::warning file=${BASH_REMATCH[1]},line=${BASH_REMATCH[2]},col=${BASH_REMATCH[3]}::${BASH_REMATCH[4]}"
