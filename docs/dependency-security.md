@@ -1,16 +1,27 @@
 # Dependency security and maintenance
 
-This repository uses Dependabot for dependency version updates and GitHub's
-native dependency security updates. Updates are reviewable pull requests only:
-there is no auto-merge configuration, and dependency updates do not receive
-write permissions beyond the normal Dependabot workflow. A maintainer reviews
-the generated diff, the relevant CI gates, and any lockfile changes before
-merging.
+This repository is configured for Dependabot version updates. Native Dependabot
+security updates are currently inert: a read-only settings check found
+vulnerability alerts unavailable and automated security fixes disabled. The
+human gate is Guy-only: under repository Settings → Advanced Security, Guy must
+enable the dependency graph, Dependabot alerts, and Dependabot security
+updates. GitHub requires those features for grouped security updates. Issue
+#804 remains open until Guy explicitly approves that settings change. Until
+then, the `security-updates` groups in `.github/dependabot.yml` cannot produce
+native security PRs; the CI `npm audit` gates and version-update PRs remain
+active.
+
+All updates are reviewable pull requests only: there is no auto-merge
+configuration, and dependency updates do not receive write permissions beyond
+the normal Dependabot workflow. A maintainer reviews the generated diff, the
+relevant CI gates, and any lockfile changes before merging.
 
 ## Dependabot policy
 
-The choice is Dependabot rather than Renovate. Corral made the same choice in
-issue #212, so the two repositories have one operator model. GitHub's current
+The choice here is Dependabot rather than Renovate. Corral issue #212 defers
+that mechanism choice to Sendmeter; it is not evidence of an independent
+Corral selection. Once this Sendmeter standard lands, Corral should adopt
+Dependabot for the same cross-repo operator model. GitHub's current
 [Dependabot options reference](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#package-ecosystem)
 lists npm, GitHub Actions, and Swift (v5 and v6) as supported ecosystems.
 
@@ -42,6 +53,14 @@ or project-level pins remain reviewable in native CI and must not be replaced
 by a generic updater. The native package's GRDB dependency remains an exact
 `7.9.0` requirement and its resolved revision is preserved in this change.
 
+The four Capacitor plugin directories are included in the expensive
+`.github/workflows/ios-ci.yml` path filter. A change under
+`native-plugins/sendlog-auth-bridge`, `native-plugins/sendlog-health`,
+`native-plugins/sendlog-live-activity`, or `native-plugins/sendlog-passkey`
+therefore runs the macOS lane, which performs `npm ci`, `npx cap sync ios`, and
+a phone `xcodebuild` compile that resolves and builds the generated
+`CapApp-SPM` dependency graph; it is not covered by web CI alone.
+
 ## npm audit gate
 
 The root and `mcp/` projects both expose the same explicit gate:
@@ -72,6 +91,13 @@ The root fix was `npm audit fix --package-lock-only`. It changed only the root
 change must still run `postinstall` and apply
 `patches/@capacitor-community+apple-sign-in+7.1.0.patch`.
 
+The same lockfile-only remediation also materially refreshed the build-tool
+chain: Vite `8.0.14` → `8.2.2`, Rolldown `1.0.2` → `1.2.5`, and
+`@oxc-project/types` `0.132.0` → `0.146.0`. The vulnerable transitive packages
+were refreshed within compatible ranges (`brace-expansion`, `fast-uri`,
+`nanoid`, `postcss`, and `tar`) rather than by changing direct dependency
+ranges.
+
 ## Immutable CI inputs
 
 Third-party GitHub Actions are referenced by commit SHA with the release tag in
@@ -87,16 +113,20 @@ convenience.
 
 ## Operator response
 
-1. Treat a high/critical `npm run audit` failure or Dependabot security PR as a
+1. Do not enable or disable repository security settings from an agent. Keep
+   issue #804 open until Guy approves the Settings → Advanced Security gate
+   for the dependency graph, Dependabot alerts, and Dependabot security
+   updates.
+2. Treat a high/critical `npm run audit` failure or Dependabot security PR as a
    blocking security change.
-2. Reproduce with `npm ci && npm run audit` in the affected project, inspect the
+3. Reproduce with `npm ci && npm run audit` in the affected project, inspect the
    dependency path with `npm explain <package>`, and prefer a compatible
    lockfile or direct-range fix.
-3. Run the normal web gates and any affected SwiftPM tests. Preserve every
+4. Run the normal web gates and any affected SwiftPM/native tests. Preserve every
    `Package.resolved` unless the pin update is deliberate, reviewed, and part
    of the same change.
-4. Review Dependabot's permissions and diff; never enable auto-merge or grant
+5. Review Dependabot's permissions and diff; never enable auto-merge or grant
    dependency-update workflows write access as a shortcut.
-5. If the only available upstream fix is incompatible, document the exact
+6. If the only available upstream fix is incompatible, document the exact
    advisory and temporary exception in this file with an owner and expiry, add
    the regression coverage, and schedule removal before merging.

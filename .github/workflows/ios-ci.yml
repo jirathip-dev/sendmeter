@@ -17,6 +17,13 @@ on:
     branches: [main, staging]
     paths:
       - "ios/**"
+      # These Capacitor plugins are resolved and compiled by the macOS lane
+      # after `npm ci` and `npx cap sync ios`; keep plugin graph changes on
+      # this expensive native validation path instead of web CI alone.
+      - "native-plugins/sendlog-auth-bridge/**"
+      - "native-plugins/sendlog-health/**"
+      - "native-plugins/sendlog-live-activity/**"
+      - "native-plugins/sendlog-passkey/**"
       - ".github/workflows/ios-ci.yml"
   # Manual escape hatch for verifying the lane itself without a native change.
   workflow_dispatch:
