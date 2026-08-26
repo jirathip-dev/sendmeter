@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct SendmeterNativeApp: App {
+    private let structuralHapticMode: StructuralHapticDiagnosticMode
     @State private var model: AppModel
     // #631: the theme choice is read in init — before the first frame —
     // so a saved appearance never flashes the default scheme.
@@ -10,6 +11,15 @@ struct SendmeterNativeApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        #if DEBUG
+        structuralHapticMode = StructuralHapticDiagnosticMode.resolve(
+            arguments: CommandLine.arguments,
+            debugBuild: true
+        )
+        #else
+        // Release/TestFlight has no diagnostic parser or opt-in path.
+        structuralHapticMode = .normal
+        #endif
         let model = AppModel()
         _model = State(wrappedValue: model)
         // #747 slice 4: register before the app finishes launching. The
@@ -20,8 +30,9 @@ struct SendmeterNativeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .buttonStyle(StructuralDefaultButtonStyle())
+            RootView(structuralHapticMode: structuralHapticMode)
+                .buttonStyle(StructuralDefaultButtonStyle(mode: structuralHapticMode))
+                .environment(\.structuralHapticTapPolicy, structuralHapticMode.tapPolicy)
                 .environment(model)
                 .environmentObject(model.forceModel)
                 .environmentObject(theme)
@@ -48,9 +59,14 @@ struct SendmeterNativeApp: App {
 }
 
 struct RootView: View {
+    private let structuralHapticMode: StructuralHapticDiagnosticMode
     @Environment(AppModel.self) private var model
     @EnvironmentObject private var theme: AppThemeController
     @Environment(\.colorScheme) private var systemScheme
+
+    init(structuralHapticMode: StructuralHapticDiagnosticMode = .normal) {
+        self.structuralHapticMode = structuralHapticMode
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -75,6 +91,13 @@ struct RootView: View {
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(10)
+            }
+
+            if let label = structuralHapticMode.displayLabel {
+                StructuralHapticDiagnosticBanner(label: label)
+                    .padding(.top, 4)
+                    .zIndex(20)
+                    .allowsHitTesting(false)
             }
         }
         .overlay(alignment: .bottom) {
@@ -101,6 +124,22 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.2), value: model.errorMessage)
         .animation(.easeInOut(duration: 0.2), value: model.toast?.id)
         .preferredColorScheme(theme.resolvedScheme(prefersDark: systemScheme == .dark))
+    }
+}
+
+private struct StructuralHapticDiagnosticBanner: View {
+    let label: String
+
+    var body: some View {
+        Text(label)
+            .font(.caption2.weight(.bold))
+            .multilineTextAlignment(.center)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.red.opacity(0.9), in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.55), lineWidth: 1))
+            .accessibilityLabel(label)
     }
 }
 

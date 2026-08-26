@@ -5,10 +5,35 @@ private struct HapticTapMutedKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+private struct StructuralHapticTapPolicyKey: EnvironmentKey {
+    static let defaultValue = StructuralHapticTapPolicy.allEnabled
+}
+
 public extension EnvironmentValues {
     var hapticTapMuted: Bool {
         get { self[HapticTapMutedKey.self] }
         set { self[HapticTapMutedKey.self] = newValue }
+    }
+
+    var structuralHapticTapPolicy: StructuralHapticTapPolicy {
+        get { self[StructuralHapticTapPolicyKey.self] }
+        set { self[StructuralHapticTapPolicyKey.self] = newValue }
+    }
+}
+
+private enum HapticTapSource {
+    case rootDefault
+    case explicit
+}
+
+private extension StructuralHapticTapPolicy {
+    func allows(_ source: HapticTapSource) -> Bool {
+        switch source {
+        case .rootDefault:
+            return rootDefaultEnabled
+        case .explicit:
+            return explicitEnabled
+        }
     }
 }
 
@@ -29,19 +54,27 @@ public extension EnvironmentValues {
 public struct HapticTapModifier: ViewModifier {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.hapticTapMuted) private var muted
+    @Environment(\.structuralHapticTapPolicy) private var policy
     @State private var tracking = false
 
     private let level: HapticTapLevel
+    private let source: HapticTapSource
 
     public init(level: HapticTapLevel = .normal) {
         self.level = level
+        self.source = .explicit
+    }
+
+    fileprivate init(level: HapticTapLevel, source: HapticTapSource) {
+        self.level = level
+        self.source = source
     }
 
     public func body(content: Content) -> some View {
         content.simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in
-                    guard isEnabled, !muted else { return }
+                    guard policy.allows(source), isEnabled, !muted else { return }
                     if !tracking {
                         tracking = true
                         Haptics.shared.beginTap(
@@ -58,8 +91,12 @@ public struct HapticTapModifier: ViewModifier {
                     }
                 }
                 .onEnded { _ in
-                    guard tracking, isEnabled, !muted else { return }
+                    guard tracking else { return }
                     tracking = false
+                    guard policy.allows(source), isEnabled, !muted else {
+                        Haptics.shared.cancelTap()
+                        return
+                    }
                     // The dispatcher holds the settled cue for a short
                     // arbitration window, so a Button action that runs after
                     // this callback can still promote the same gesture to its
@@ -75,6 +112,12 @@ public extension View {
     /// into the structural tap tick.
     func hapticTap(_ level: HapticTapLevel = .normal) -> some View {
         modifier(HapticTapModifier(level: level))
+    }
+
+    /// The root default-button style uses a distinct source so B′ can keep
+    /// the root gesture while muting only explicit HapticTapModifier paths.
+    fileprivate func structuralHapticTap(_ level: HapticTapLevel = .normal) -> some View {
+        modifier(HapticTapModifier(level: level, source: .rootDefault))
     }
 
     /// Apply a ButtonStyle and a structural tap tick in one place, so adding
@@ -111,11 +154,22 @@ public extension View {
 /// the same one-tick tap gesture, so implicit list/toolbar controls are not
 /// silent just because they never called `.hapticButtonStyle`.
 public struct StructuralDefaultButtonStyle: PrimitiveButtonStyle {
-    public init() {}
+    private let mode: StructuralHapticDiagnosticMode
 
+    public init(mode: StructuralHapticDiagnosticMode = .normal) {
+        self.mode = mode
+    }
+
+    @ViewBuilder
     public func makeBody(configuration: Configuration) -> some View {
-        DefaultButtonStyle().makeBody(configuration: configuration)
-            .hapticTap()
+        if mode.tapPolicy.rootDefaultEnabled {
+            DefaultButtonStyle().makeBody(configuration: configuration)
+                .structuralHapticTap()
+        } else {
+            // B deliberately delegates to SwiftUI's stock default behavior;
+            // explicit action haptics and all feature behavior stay intact.
+            DefaultButtonStyle().makeBody(configuration: configuration)
+        }
     }
 }
 

@@ -336,6 +336,7 @@ public struct ErrorBanner: View {
         }
         .padding(12)
         .background(SendmeterStyle.alert.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -402,6 +403,7 @@ public struct AppToast: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.thickMaterial, in: Capsule())
+        .contentShape(Capsule())
         .shadow(radius: 12, y: 6)
     }
 }
