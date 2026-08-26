@@ -50,8 +50,10 @@ not a Dependabot manifest. The Xcode project's standalone
 `ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
 also has no `Package.swift` directory that Dependabot can own. Those generated
 or project-level pins remain reviewable in native CI and must not be replaced
-by a generic updater. The native package's GRDB dependency remains an exact
-`7.9.0` requirement and its resolved revision is preserved in this change.
+by a generic updater. Keep the native GRDB dependency coherent across
+`project.yml`, `Package.swift`, and `Package.resolved`: the first two must
+require the same exact version, and the lockfile must resolve that version to
+its corresponding revision.
 
 The four Capacitor plugin directories are included in the expensive
 `.github/workflows/ios-ci.yml` path filter. A change under
