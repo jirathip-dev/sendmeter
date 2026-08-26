@@ -54,7 +54,10 @@ struct WorkoutView: View {
             }
             .sheet(item: $runningRoutine) { presentation in
                 RoutineRunnerSheet(presentation: presentation)
-                    .sendmeterSheetPresentation(id: presentation.id.uuidString)
+                    .sendmeterSheetPresentation(
+                        id: presentation.id.uuidString,
+                        dragToDismiss: false
+                    )
             }
             .fullScreenCover(isPresented: $showManualWorkout, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 ManualWorkoutFullscreen(

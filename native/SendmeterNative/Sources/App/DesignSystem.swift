@@ -2,7 +2,7 @@ import SendmeterCore
 import SwiftUI
 
 public enum SendmeterStyle {
-    public static let radius: CGFloat = 18
+    public static let radius: CGFloat = CGFloat(SheetPresentationPolicy.cornerRadius)
     public static let spacing: CGFloat = 16
 
     /// Shared treatment for the app's glanceable metric values. The semantic
