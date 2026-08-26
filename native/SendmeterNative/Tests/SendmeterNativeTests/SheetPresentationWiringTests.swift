@@ -64,16 +64,16 @@ final class SheetPresentationWiringTests: XCTestCase {
         )
     }
 
-    func testRoutineRunnerOptOutPreservesTheClassifiedClosePath() {
+    func testRoutineRunnerFullscreenPreservesTheClassifiedClosePath() {
         let workoutPath = "Sources/Features/Workout/WorkoutView.swift"
         let workout = source(workoutPath)
-        let sheets = presentations(named: "sheet", in: [workoutPath: workout])
-        let routineSheet = sheets.first { $0.closureBody.contains("RoutineRunnerSheet(") }
+        let fullScreens = presentations(named: "fullScreenCover", in: [workoutPath: workout])
+        let routineSheet = fullScreens.first { $0.closureBody.contains("RoutineRunnerSheet(") }
 
-        XCTAssertNotNil(routineSheet, "the routine runner sheet must remain in the inventory")
+        XCTAssertNotNil(routineSheet, "the routine runner must remain an execution full screen")
         XCTAssertTrue(
-            routineSheet?.closureBody.contains("dragToDismiss: false") == true,
-            "the routine runner must hide the grabber instead of advertising a blocked swipe"
+            routineSheet?.invocation.contains(".fullScreenCover(item:") == true,
+            "the routine runner must use the execution full-screen presentation"
         )
         XCTAssertTrue(
             workout.contains(".interactiveDismissDisabled()"),

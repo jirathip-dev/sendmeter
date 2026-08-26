@@ -644,6 +644,11 @@ private struct RoutineRunnerSheet: View {
             reduceMotion ? nil : .easeInOut(duration: 0.22),
             value: snapshot.visualState
         )
+        // Keep the material surface compatible with the phase's intentional
+        // foreground: dark glass for the white-text states, light glass for
+        // the caution block's dark text. The phase field and its identity hue
+        // remain unchanged in either appearance.
+        .environment(\.colorScheme, snapshot.visualState == .rest ? .light : .dark)
     }
 
     private func topContext(snapshot: RoutineRunnerSnapshot) -> some View {
@@ -668,7 +673,7 @@ private struct RoutineRunnerSheet: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(5)
-        .background(.ultraThinMaterial, in: Capsule())
+        .routineRunnerGlassBackground(snapshot.visualState, in: Capsule())
         .routineRunnerTopSheen(in: Capsule())
         .overlay {
             Capsule().strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)
@@ -727,6 +732,9 @@ private struct RoutineRunnerSheet: View {
             Circle()
                 .fill(.ultraThinMaterial)
                 .overlay {
+                    Circle().fill(snapshot.visualState.materialShade)
+                }
+                .overlay {
                     Circle().fill(snapshot.visualState.backgroundColor.opacity(0.18))
                 }
                 .routineRunnerTopSheen(in: Circle())
@@ -740,11 +748,15 @@ private struct RoutineRunnerSheet: View {
                     AngularGradient(
                         gradient: Gradient(colors: snapshot.visualState.ringColors),
                         center: .center,
-                        startAngle: .degrees(-90),
-                        endAngle: .degrees(-90 + 360 * remainingFraction)
+                        startAngle: .degrees(0),
+                        endAngle: .degrees(360 * remainingFraction)
                     ),
                     style: StrokeStyle(lineWidth: 7, lineCap: .round)
                 )
+                // Circle.trim starts at 3 o'clock. Rotate the path and its
+                // local gradient together so the seam/cap starts at 12
+                // o'clock and the gradient's remaining endpoint stays on it.
+                .rotationEffect(.degrees(-90))
 
             VStack(spacing: 5) {
                 Text(snapshot.isComplete ? "DONE" : formatTime(snapshot.currentRemainingSeconds))
@@ -802,7 +814,10 @@ private struct RoutineRunnerSheet: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .routineRunnerGlassBackground(
+            snapshot.visualState,
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(snapshot.visualState.foregroundColor.opacity(0.16), lineWidth: 1)
@@ -846,7 +861,10 @@ private struct RoutineRunnerSheet: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .routineRunnerRegularGlassBackground(
+                snapshot.visualState,
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
             .routineRunnerTopSheen(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -1095,6 +1113,13 @@ private extension RoutineRunnerVisualState {
         self == .rest ? Color(hex: "#1A1A1A") : .white
     }
 
+    /// DONE's light identity field can lift a dark material enough to make
+    /// secondary white copy fall below body-text contrast. Keep the field
+    /// hue intact and add a restrained shade only to its glass surfaces.
+    var materialShade: Color {
+        self == .done ? .black.opacity(0.12) : .clear
+    }
+
     var ringColors: [Color] {
         self == .rest
             ? [Color.black.opacity(0.18), .black, Color.black.opacity(0.42)]
@@ -1126,6 +1151,28 @@ extension RoutineRunnerGlassButtonStyle: StructuralHapticStyle {
 }
 
 private extension View {
+    func routineRunnerGlassBackground<S: Shape>(
+        _ state: RoutineRunnerVisualState,
+        in shape: S
+    ) -> some View {
+        background {
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay { shape.fill(state.materialShade) }
+        }
+    }
+
+    func routineRunnerRegularGlassBackground<S: Shape>(
+        _ state: RoutineRunnerVisualState,
+        in shape: S
+    ) -> some View {
+        background {
+            shape
+                .fill(.regularMaterial)
+                .overlay { shape.fill(state.materialShade) }
+        }
+    }
+
     func routineRunnerTopSheen<S: Shape>(in shape: S) -> some View {
         overlay(alignment: .top) {
             shape.fill(
