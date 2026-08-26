@@ -52,17 +52,17 @@ struct SettingsView: View {
                 // count/rows are fresh without waiting for a manual refresh.
                 await model.loadPasskeys()
             }
-            .sheet(isPresented: $showingBlocks, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showingBlocks) {
                 PhasesView()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
-            .sheet(isPresented: $showingExercises, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showingExercises) {
                 TagManagerView()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
-            .sheet(isPresented: $showingDeleteAccount, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showingDeleteAccount) {
                 DeleteAccountSheet()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
             .confirmationDialog(
                 signOutRemainderTitle,

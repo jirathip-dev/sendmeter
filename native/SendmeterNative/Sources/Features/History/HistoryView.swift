@@ -213,17 +213,17 @@ struct HistoryView: View {
                 }
             }
             .refreshable { await model.refreshAll(showSpinner: false) }
-            .sheet(item: $editingSession, onDismiss: { Haptics.shared.sheetDismissed() }) { session in
+            .sheet(item: $editingSession) { session in
                 SessionEditorSheet(session: session)
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation(id: session.id.uuidString)
             }
-            .sheet(isPresented: $showingTrash, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showingTrash) {
                 TrashView()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
-            .sheet(isPresented: $assignOpen, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $assignOpen) {
                 SelectionAssignSheet(recordings: selectedRecordings)
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 selectionBar
@@ -1148,9 +1148,9 @@ struct ForceRecordingDetailView: View {
         .task {
             await loadSamples()
         }
-        .sheet(isPresented: $showingLinkSheet, onDismiss: { Haptics.shared.sheetDismissed() }) {
+        .sheet(isPresented: $showingLinkSheet) {
             LinkRecordingSheet(recordings: [recording])
-                .onAppear { Haptics.shared.sheetPresented() }
+                .sendmeterSheetPresentation()
         }
     }
 
