@@ -12,7 +12,12 @@ final class ReadinessWidgetTests: XCTestCase {
         zone: String? = "push",
         acute: Double? = 210,
         chronic: Double? = 180,
-        acwr: Double? = 1.17
+        acwr: Double? = 1.17,
+        phaseID: String? = "capacity",
+        phaseName: String? = "Capacity",
+        phaseColorHex: String? = "#2E96F0",
+        phaseWeek: Int? = 2,
+        phaseDay: Int? = 8
     ) -> ReadinessWidgetSnapshot {
         ReadinessWidgetSnapshot(
             accountUserID: userID,
@@ -25,12 +30,24 @@ final class ReadinessWidgetTests: XCTestCase {
             acute: acute,
             chronic: chronic,
             acwr: acwr,
-            phaseID: "capacity",
-            phaseName: "Capacity",
-            phaseColorHex: "#2E96F0",
-            phaseWeek: 2,
-            phaseDay: 8
+            phaseID: phaseID,
+            phaseName: phaseName,
+            phaseColorHex: phaseColorHex,
+            phaseWeek: phaseWeek,
+            phaseDay: phaseDay
         )
+    }
+
+    private func decodedSnapshot(
+        mutating: (inout [String: Any]) -> Void
+    ) throws -> ReadinessWidgetSnapshot {
+        let data = try JSONEncoder().encode(snapshot())
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        mutating(&object)
+        let mutatedData = try JSONSerialization.data(withJSONObject: object)
+        return try JSONDecoder().decode(ReadinessWidgetSnapshot.self, from: mutatedData)
     }
 
     func testRoundTripPreservesOwnerAndOptionalData() throws {
@@ -171,6 +188,119 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertNil(impossible.acwr)
     }
 
+    func testSnapshotInitializerNormalisesInvalidDisplayValues() {
+        let scoreWithoutKnownZone = snapshot(zone: "unknown")
+        XCTAssertEqual(scoreWithoutKnownZone.readiness, 82)
+        XCTAssertNil(scoreWithoutKnownZone.readinessZone)
+        XCTAssertNotNil(scoreWithoutKnownZone.readinessComputedAt)
+        XCTAssertTrue(scoreWithoutKnownZone.isValid)
+
+        for score in [-1, 101] {
+            let invalid = snapshot(readiness: score)
+            XCTAssertNil(invalid.readiness)
+            XCTAssertNil(invalid.readinessZone)
+            XCTAssertNil(invalid.readinessComputedAt)
+        }
+
+        let invalidPhase = snapshot(
+            phaseID: " \n",
+            phaseName: " ",
+            phaseColorHex: "",
+            phaseWeek: 0,
+            phaseDay: -1
+        )
+        XCTAssertNil(invalidPhase.phaseID)
+        XCTAssertNil(invalidPhase.phaseName)
+        XCTAssertNil(invalidPhase.phaseColorHex)
+        XCTAssertNil(invalidPhase.phaseWeek)
+        XCTAssertNil(invalidPhase.phaseDay)
+
+        let negativeLoad = snapshot(acute: -1, chronic: 180, acwr: 1.17)
+        XCTAssertNil(negativeLoad.acute)
+        XCTAssertNil(negativeLoad.chronic)
+        XCTAssertNil(negativeLoad.acwr)
+    }
+
+    func testSnapshotAllowsOptionalPhaseContext() {
+        let withoutPhase = snapshot(
+            phaseID: nil,
+            phaseName: nil,
+            phaseColorHex: nil,
+            phaseWeek: nil,
+            phaseDay: nil
+        )
+
+        XCTAssertTrue(withoutPhase.isValid)
+        XCTAssertNil(withoutPhase.phaseID)
+        XCTAssertNil(withoutPhase.phaseName)
+        XCTAssertNil(withoutPhase.phaseColorHex)
+        XCTAssertNil(withoutPhase.phaseWeek)
+        XCTAssertNil(withoutPhase.phaseDay)
+    }
+
+    func testDecodedValidationRejectsCorruptPayloads() throws {
+        let mutations: [(String, (inout [String: Any]) -> Void)] = [
+            ("old schema", { $0["schemaVersion"] = 0 }),
+            ("empty day", { $0["day"] = "" }),
+            ("out-of-range readiness", { $0["readiness"] = 101 }),
+            ("unknown readiness zone", { $0["readinessZone"] = "unknown" }),
+            ("zone without readiness", {
+                $0["readiness"] = NSNull()
+                $0["readinessZone"] = "push"
+            }),
+            ("blank phase id", { $0["phaseID"] = "\t" }),
+            ("blank phase name", { $0["phaseName"] = " \n" }),
+            ("blank phase color", { $0["phaseColorHex"] = "" }),
+            ("non-positive phase week", { $0["phaseWeek"] = 0 }),
+            ("non-positive phase day", { $0["phaseDay"] = 0 }),
+            ("partial load", { $0["chronic"] = NSNull() }),
+            ("negative load", { $0["acwr"] = -0.1 }),
+        ]
+
+        for (label, mutation) in mutations {
+            let decoded = try decodedSnapshot(mutating: mutation)
+            XCTAssertFalse(decoded.isValid, label)
+            XCTAssertEqual(
+                decoded.freshness(on: "2026-08-26"),
+                .invalid,
+                label
+            )
+        }
+
+        let invalid = try decodedSnapshot { $0["phaseName"] = " " }
+        XCTAssertNil(
+            ReadinessWidgetTimelinePolicy.boundarySnapshot(
+                from: invalid,
+                at: Date(timeIntervalSince1970: 1_756_000_000)
+            )
+        )
+    }
+
+    func testStoreRejectsMalformedAndInvalidSnapshots() throws {
+        let suiteName = "ReadinessWidgetInvalidStoreTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = ReadinessWidgetStore(defaults: defaults)
+
+        defaults.set(Data("not-json".utf8), forKey: ReadinessWidgetStore.snapshotKey)
+        XCTAssertNil(store.load())
+
+        let valid = snapshot()
+        store.save(valid)
+        let invalid = try decodedSnapshot { $0["day"] = "" }
+        store.save(invalid)
+        XCTAssertEqual(store.load(), valid)
+    }
+
+    func testAppGroupStoreFactoryUsesSharedSuite() {
+        XCTAssertNotNil(ReadinessWidgetStore.appGroupStore)
+        XCTAssertEqual(ReadinessWidgetStore.appGroup, "group.com.jirathip.sendlog")
+        XCTAssertEqual(
+            ReadinessWidgetStore.snapshotKey,
+            "sendmeter.readiness-widget.snapshot"
+        )
+    }
+
     func testPresentationThresholdsMatchDashboard() {
         XCTAssertEqual(ReadinessWidgetPresentation.readinessBand(39), .recover)
         XCTAssertEqual(ReadinessWidgetPresentation.readinessBand(40), .maintain)
@@ -184,6 +314,20 @@ final class ReadinessWidgetTests: XCTestCase {
                 fallbackScore: 99
             ),
             .maintain
+        )
+        XCTAssertEqual(
+            ReadinessWidgetPresentation.readinessBand(
+                zone: "recover",
+                fallbackScore: 99
+            ),
+            .recover
+        )
+        XCTAssertEqual(
+            ReadinessWidgetPresentation.readinessBand(
+                zone: "push",
+                fallbackScore: 1
+            ),
+            .push
         )
         XCTAssertEqual(
             ReadinessWidgetPresentation.readinessBand(
@@ -235,6 +379,21 @@ final class ReadinessWidgetTests: XCTestCase {
                 next: original
             )
         )
+    }
+
+    func testPublishedContentIdentityIncludesEveryRenderedPhaseField() {
+        let original = snapshot()
+        let changedSnapshots = [
+            snapshot(phaseID: "strength"),
+            snapshot(phaseName: "Strength"),
+            snapshot(phaseColorHex: "#E5743A"),
+            snapshot(phaseWeek: 3),
+            snapshot(phaseDay: 9),
+        ]
+
+        for changed in changedSnapshots {
+            XCTAssertFalse(original.matchesPublishedContent(of: changed))
+        }
     }
 
     func testBoundarySnapshotDropsReadinessButPreservesNonDailyContext() throws {
@@ -305,5 +464,61 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertEqual(ReadinessWidgetSemanticToken.health.darkHex, "#4FB0FF")
         XCTAssertEqual(ReadinessWidgetSemanticToken.caution.lightHex, "#DDB13A")
         XCTAssertEqual(ReadinessWidgetSemanticToken.alert.lightHex, "#E5743A")
+    }
+
+    func testEveryWidgetBandMapsToItsSemanticToken() {
+        let tokenColors: [
+            (ReadinessWidgetSemanticToken, light: String, dark: String)
+        ] = [
+            (.focus, "#5B5FC7", "#9296EE"),
+            (.health, "#2E96F0", "#4FB0FF"),
+            (.load, "#7B83EB", "#9296EE"),
+            (.optimal, "#2E96F0", "#4FB0FF"),
+            (.caution, "#DDB13A", "#E8C24E"),
+            (.alert, "#E5743A", "#F0864C"),
+            (.reference, "#8E8E93", "#A9A9B0"),
+        ]
+        for (token, light, dark) in tokenColors {
+            XCTAssertEqual(token.lightHex, light, token.rawValue)
+            XCTAssertEqual(token.darkHex, dark, token.rawValue)
+        }
+
+        let readinessMappings: [
+            (ReadinessWidgetReadinessBand, ReadinessWidgetSemanticToken)
+        ] = [
+            (.noData, .reference),
+            (.recover, .alert),
+            (.maintain, .caution),
+            (.push, .optimal),
+        ]
+        for (band, token) in readinessMappings {
+            XCTAssertEqual(band.semanticToken.rawValue, token.rawValue, band.rawValue)
+        }
+
+        let acwrMappings: [
+            (ReadinessWidgetACWRBand, ReadinessWidgetSemanticToken)
+        ] = [
+            (.noData, .reference),
+            (.underTraining, .focus),
+            (.low, .focus),
+            (.optimal, .optimal),
+            (.caution, .caution),
+            (.danger, .alert),
+        ]
+        for (band, token) in acwrMappings {
+            XCTAssertEqual(band.semanticToken.rawValue, token.rawValue, band.rawValue)
+        }
+    }
+
+    func testDefaultTimelineCalendarIsGregorianInTheCurrentTimeZone() {
+        let calendar = ReadinessWidgetTimelinePolicy.localGregorianCalendar
+        XCTAssertEqual(calendar.identifier, .gregorian)
+        XCTAssertEqual(calendar.timeZone, TimeZone.current)
+
+        let instant = Date(timeIntervalSince1970: 1_756_000_000)
+        XCTAssertEqual(
+            ReadinessWidgetTimelinePolicy.localDayString(for: instant),
+            instant.dateString(in: calendar)
+        )
     }
 }
