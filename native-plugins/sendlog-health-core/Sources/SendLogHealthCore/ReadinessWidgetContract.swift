@@ -113,6 +113,27 @@ public struct ReadinessWidgetSnapshot: Codable, Equatable, Sendable {
         guard isValid else { return .invalid }
         return day == localDay ? .current : .stale
     }
+
+    /// The WidgetKit reload budget is about visible changes, not capture
+    /// timestamps. Keep owner/day and every rendered field in the identity,
+    /// while allowing a repeated foreground publication to refresh the stored
+    /// capture time without spending another reload request.
+    public func matchesPublishedContent(of other: Self) -> Bool {
+        schemaVersion == other.schemaVersion
+            && accountUserID == other.accountUserID
+            && accountEpoch == other.accountEpoch
+            && day == other.day
+            && readiness == other.readiness
+            && readinessZone == other.readinessZone
+            && acute == other.acute
+            && chronic == other.chronic
+            && acwr == other.acwr
+            && phaseID == other.phaseID
+            && phaseName == other.phaseName
+            && phaseColorHex == other.phaseColorHex
+            && phaseWeek == other.phaseWeek
+            && phaseDay == other.phaseDay
+    }
 }
 
 public enum ReadinessWidgetFreshness: Equatable, Sendable {
@@ -159,6 +180,19 @@ public final class ReadinessWidgetStore {
 
     public func clear() {
         defaults.removeObject(forKey: Self.snapshotKey)
+    }
+}
+
+/// Publication-level dedupe for AppModel paths that converge during one
+/// foreground refresh. A changed display payload still requests a reload;
+/// only capture-time-only changes are suppressed.
+public enum ReadinessWidgetPublicationPolicy {
+    public static func shouldReload(
+        previous: ReadinessWidgetSnapshot?,
+        next: ReadinessWidgetSnapshot
+    ) -> Bool {
+        guard let previous else { return true }
+        return !previous.matchesPublishedContent(of: next)
     }
 }
 
@@ -255,6 +289,22 @@ public enum ReadinessWidgetACWRBand: String, Sendable {
 }
 
 public enum ReadinessWidgetPresentation {
+    /// Prefer the stored zone used by Dashboard for both the label and color.
+    /// The score fallback preserves display for older partial snapshots that
+    /// have a valid score but no zone.
+    public static func readinessBand(
+        zone: String?,
+        fallbackScore: Int?
+    ) -> ReadinessWidgetReadinessBand {
+        guard let zone else { return readinessBand(fallbackScore) }
+        switch zone {
+        case "recover": return .recover
+        case "maintain": return .maintain
+        case "push": return .push
+        default: return .noData
+        }
+    }
+
     /// The native Dashboard's recover/push thresholds are 40 and 70, with
     /// the boundary values remaining in the middle band.
     public static func readinessBand(_ score: Int?) -> ReadinessWidgetReadinessBand {
@@ -295,6 +345,33 @@ public enum ReadinessWidgetTimelinePolicy {
         var style = Date.ISO8601FormatStyle().year().month().day()
         style.timeZone = calendar.timeZone
         return style.format(date)
+    }
+
+    /// At local midnight, keep non-daily context visible while honestly
+    /// removing yesterday's readiness score until today's row is published.
+    public static func boundarySnapshot(
+        from snapshot: ReadinessWidgetSnapshot?,
+        at date: Date,
+        calendar: Calendar = localGregorianCalendar
+    ) -> ReadinessWidgetSnapshot? {
+        guard let snapshot, snapshot.isValid else { return nil }
+        return ReadinessWidgetSnapshot(
+            accountUserID: snapshot.accountUserID,
+            accountEpoch: snapshot.accountEpoch,
+            day: localDayString(for: date, calendar: calendar),
+            capturedAt: date,
+            readiness: nil,
+            readinessZone: nil,
+            readinessComputedAt: nil,
+            acute: snapshot.acute,
+            chronic: snapshot.chronic,
+            acwr: snapshot.acwr,
+            phaseID: snapshot.phaseID,
+            phaseName: snapshot.phaseName,
+            phaseColorHex: snapshot.phaseColorHex,
+            phaseWeek: snapshot.phaseWeek,
+            phaseDay: snapshot.phaseDay
+        )
     }
 
     /// A day-boundary reload keeps the score frozen for the current local day

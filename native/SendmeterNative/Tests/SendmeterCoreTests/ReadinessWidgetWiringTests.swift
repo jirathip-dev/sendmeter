@@ -87,6 +87,89 @@ final class ReadinessWidgetWiringTests: XCTestCase {
         XCTAssertFalse(widget.contains("URL(string: \"sendmeter://dashboard\")!"))
     }
 
+    func testPhonePrivacyManifestsMatchTheAppGroupCallPath() throws {
+        let appManifest = try propertyList("native/SendmeterNative/Resources/PrivacyInfo.xcprivacy")
+        let widgetManifest = try propertyList("native/SendmeterNative/Resources/Widgets/PrivacyInfo.xcprivacy")
+        XCTAssertEqual(
+            userDefaultsReasons(in: appManifest),
+            Set(["CA92.1", "1C8F.1"])
+        )
+        XCTAssertEqual(
+            userDefaultsReasons(in: widgetManifest),
+            Set(["1C8F.1"])
+        )
+
+        let contract = code(source(
+            "../../native-plugins/sendlog-health-core/Sources/SendLogHealthCore/ReadinessWidgetContract.swift"
+        ))
+        let bridge = code(source("Sources/App/ReadinessWidgetBridge.swift"))
+        let widget = code(source("Sources/Widgets/ReadinessWidget.swift"))
+        XCTAssertTrue(contract.contains("public static let appGroup ="))
+        XCTAssertTrue(contract.contains("UserDefaults(suiteName: appGroup)"))
+        XCTAssertTrue(widget.contains("ReadinessWidgetStore.appGroupStore"))
+        XCTAssertTrue(bridge.contains("store.save(snapshot)"))
+    }
+
+    func testWidgetPublicationReloadsAreDedupeAndCoalesced() {
+        let bridge = code(source("Sources/App/ReadinessWidgetBridge.swift"))
+
+        XCTAssertTrue(bridge.contains("ReadinessWidgetPublicationPolicy.shouldReload"))
+        XCTAssertTrue(bridge.contains("private static var reloadScheduled = false"))
+        XCTAssertTrue(bridge.contains("DispatchQueue.main.async"))
+        XCTAssertEqual(
+            countOccurrences("WidgetCenter.shared.reloadTimelines(ofKind: kind)", in: bridge),
+            1
+        )
+    }
+
+    func testWidgetPresentationAndBoundaryUseTruthfulSharedPolicies() {
+        let widget = code(source("Sources/Widgets/ReadinessWidget.swift"))
+
+        XCTAssertTrue(widget.contains("zone: snapshot.readinessZone"))
+        XCTAssertTrue(widget.contains(".number.precision(.fractionLength(places))"))
+        XCTAssertFalse(widget.contains("Locale(identifier: \"en_US_POSIX\")"))
+        XCTAssertTrue(widget.contains("ReadinessWidgetTimelinePolicy.boundarySnapshot"))
+        XCTAssertTrue(widget.contains("isDayBoundary"))
+        XCTAssertTrue(widget.contains("Waiting for today's score"))
+    }
+
+    private func propertyList(_ relativePath: String) throws -> [String: Any] {
+        let fileURL = repositoryRoot.appendingPathComponent(relativePath)
+        let data = try Data(contentsOf: fileURL)
+        let value = try PropertyListSerialization.propertyList(
+            from: data,
+            options: [],
+            format: nil
+        )
+        return try XCTUnwrap(value as? [String: Any])
+    }
+
+    private func userDefaultsReasons(in manifest: [String: Any]) -> Set<String> {
+        guard let types = manifest["NSPrivacyAccessedAPITypes"] as? [[String: Any]] else {
+            XCTFail("Privacy manifest is missing NSPrivacyAccessedAPITypes")
+            return []
+        }
+        return Set(
+            types.compactMap { type -> [String]? in
+                guard type["NSPrivacyAccessedAPIType"] as? String
+                    == "NSPrivacyAccessedAPICategoryUserDefaults"
+                else { return nil }
+                return type["NSPrivacyAccessedAPITypeReasons"] as? [String]
+            }
+            .flatMap { $0 }
+        )
+    }
+
+    private var repositoryRoot: URL {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return packageRoot
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
     private func source(_ relativePath: String) -> String {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

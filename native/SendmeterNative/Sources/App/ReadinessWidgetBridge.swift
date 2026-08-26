@@ -1,3 +1,4 @@
+import Foundation
 import SendLogHealthCore
 import WidgetKit
 
@@ -7,6 +8,8 @@ import WidgetKit
 /// account's glanceable data.
 enum ReadinessWidgetBridge {
     static let kind = "SendmeterReadiness"
+    private static var lastPublishedSnapshot: ReadinessWidgetSnapshot?
+    private static var reloadScheduled = false
 
     static func publish(
         _ snapshot: ReadinessWidgetSnapshot,
@@ -20,24 +23,50 @@ enum ReadinessWidgetBridge {
         let store = ReadinessWidgetStore.appGroupStore
         else { return }
 
+        let shouldReload = ReadinessWidgetPublicationPolicy.shouldReload(
+            previous: lastPublishedSnapshot,
+            next: snapshot
+        )
         store.save(snapshot)
-        WidgetCenter.shared.reloadTimelines(ofKind: kind)
+        lastPublishedSnapshot = snapshot
+        if shouldReload {
+            requestReload()
+        }
     }
 
     static func clear() {
-        ReadinessWidgetStore.appGroupStore?.clear()
-        WidgetCenter.shared.reloadTimelines(ofKind: kind)
+        let store = ReadinessWidgetStore.appGroupStore
+        let hadSnapshot = lastPublishedSnapshot != nil || store?.load() != nil
+        store?.clear()
+        lastPublishedSnapshot = nil
+        if hadSnapshot {
+            requestReload()
+        }
     }
 
     static func reset(for currentUserID: UUID?) {
         let store = ReadinessWidgetStore.appGroupStore
         let snapshotOwner = store?.load()?.accountUserID
-        if ReadinessWidgetOwnershipPolicy.shouldClearOnReset(
+        let shouldClear = ReadinessWidgetOwnershipPolicy.shouldClearOnReset(
             snapshotOwner: snapshotOwner,
             currentUserID: currentUserID
-        ) {
+        )
+        if shouldClear {
+            let hadSnapshot = lastPublishedSnapshot != nil || snapshotOwner != nil
             store?.clear()
+            lastPublishedSnapshot = nil
+            if hadSnapshot {
+                requestReload()
+            }
         }
-        WidgetCenter.shared.reloadTimelines(ofKind: kind)
+    }
+
+    private static func requestReload() {
+        guard !reloadScheduled else { return }
+        reloadScheduled = true
+        DispatchQueue.main.async { @MainActor in
+            reloadScheduled = false
+            WidgetCenter.shared.reloadTimelines(ofKind: kind)
+        }
     }
 }

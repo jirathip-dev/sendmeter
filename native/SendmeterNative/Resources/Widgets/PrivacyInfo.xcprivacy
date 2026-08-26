@@ -12,15 +12,21 @@
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array/>
 
-	<!-- No required-reason API here. This bundle has no App Group and no
-	     Button(intent:) (the guided protocol has no lock-screen actions;
-	     interactive intents are iOS 17+ and a follow-up if ever added). Not
-	     strictly required by Apple (a bundle that uses no required-reason
-	     API needs no manifest), but kept so every shipped bundle states its
-	     position explicitly. This file MUST be named PrivacyInfo.xcprivacy
-	     at the appex bundle root — Apple's manifest tooling reads exactly
-	     that name (#674 review F4). -->
+	<!-- 1C8F.1 — UserDefaults(suiteName: "group.com.jirathip.sendlog") in
+	     ReadinessWidgetStore, reading the account-stamped snapshot the app
+	     writes. App-group access, so CA92.1 does not apply. This file MUST be
+	     named PrivacyInfo.xcprivacy at the appex bundle root — Apple's manifest
+	     tooling reads exactly that name (#674 review F4). -->
 	<key>NSPrivacyAccessedAPITypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>1C8F.1</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

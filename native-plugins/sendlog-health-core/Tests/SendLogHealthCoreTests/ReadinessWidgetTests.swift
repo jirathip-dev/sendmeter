@@ -7,6 +7,7 @@ final class ReadinessWidgetTests: XCTestCase {
 
     private func snapshot(
         day: String = "2026-08-26",
+        capturedAt: Date = Date(timeIntervalSince1970: 1_756_000_000),
         readiness: Int? = 82,
         zone: String? = "push",
         acute: Double? = 210,
@@ -17,7 +18,7 @@ final class ReadinessWidgetTests: XCTestCase {
             accountUserID: userID,
             accountEpoch: 7,
             day: day,
-            capturedAt: Date(timeIntervalSince1970: 1_756_000_000),
+            capturedAt: capturedAt,
             readiness: readiness,
             readinessZone: zone,
             readinessComputedAt: readiness.map { _ in Date(timeIntervalSince1970: 1_755_999_000) },
@@ -177,6 +178,28 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertEqual(ReadinessWidgetPresentation.readinessBand(71), .push)
         XCTAssertEqual(ReadinessWidgetPresentation.readinessBand(nil), .noData)
 
+        XCTAssertEqual(
+            ReadinessWidgetPresentation.readinessBand(
+                zone: "maintain",
+                fallbackScore: 99
+            ),
+            .maintain
+        )
+        XCTAssertEqual(
+            ReadinessWidgetPresentation.readinessBand(
+                zone: nil,
+                fallbackScore: 71
+            ),
+            .push
+        )
+        XCTAssertEqual(
+            ReadinessWidgetPresentation.readinessBand(
+                zone: "unknown",
+                fallbackScore: 71
+            ),
+            .noData
+        )
+
         XCTAssertEqual(ReadinessWidgetPresentation.acwrBand(nil), .noData)
         XCTAssertEqual(ReadinessWidgetPresentation.acwrBand(0.69), .underTraining)
         XCTAssertEqual(ReadinessWidgetPresentation.acwrBand(0.70), .low)
@@ -186,6 +209,60 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertEqual(ReadinessWidgetPresentation.acwrBand(1.31), .caution)
         XCTAssertEqual(ReadinessWidgetPresentation.acwrBand(1.50), .caution)
         XCTAssertEqual(ReadinessWidgetPresentation.acwrBand(1.51), .danger)
+    }
+
+    func testPublicationPolicyIgnoresCaptureTimeButReloadsVisibleChanges() {
+        let original = snapshot()
+        let recaptured = snapshot(
+            capturedAt: original.capturedAt.addingTimeInterval(60)
+        )
+
+        XCTAssertFalse(
+            ReadinessWidgetPublicationPolicy.shouldReload(
+                previous: original,
+                next: recaptured
+            )
+        )
+        XCTAssertTrue(
+            ReadinessWidgetPublicationPolicy.shouldReload(
+                previous: original,
+                next: snapshot(acwr: 1.18)
+            )
+        )
+        XCTAssertTrue(
+            ReadinessWidgetPublicationPolicy.shouldReload(
+                previous: nil,
+                next: original
+            )
+        )
+    }
+
+    func testBoundarySnapshotDropsReadinessButPreservesNonDailyContext() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 7 * 3600)!
+        let next = calendar.date(from: DateComponents(
+            year: 2026, month: 8, day: 27
+        ))!
+
+        let boundary = try XCTUnwrap(
+            ReadinessWidgetTimelinePolicy.boundarySnapshot(
+                from: snapshot(),
+                at: next,
+                calendar: calendar
+            )
+        )
+
+        XCTAssertEqual(boundary.day, "2026-08-27")
+        XCTAssertNil(boundary.readiness)
+        XCTAssertNil(boundary.readinessZone)
+        XCTAssertNil(boundary.readinessComputedAt)
+        XCTAssertEqual(boundary.acute, 210)
+        XCTAssertEqual(boundary.chronic, 180)
+        XCTAssertEqual(boundary.acwr, 1.17)
+        XCTAssertEqual(boundary.phaseName, "Capacity")
+        XCTAssertEqual(boundary.phaseWeek, 2)
+        XCTAssertEqual(boundary.phaseDay, 8)
+        XCTAssertEqual(boundary.freshness(on: "2026-08-27"), .current)
     }
 
     func testTimelineReloadsAtTheNextGregorianLocalMidnight() {

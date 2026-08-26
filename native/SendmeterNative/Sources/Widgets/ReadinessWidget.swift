@@ -8,6 +8,17 @@ private let readinessWidgetURL = URL(string: "sendmeter://dashboard")
 struct ReadinessWidgetEntry: TimelineEntry {
     let date: Date
     let snapshot: ReadinessWidgetSnapshot?
+    let isDayBoundary: Bool
+
+    init(
+        date: Date,
+        snapshot: ReadinessWidgetSnapshot?,
+        isDayBoundary: Bool = false
+    ) {
+        self.date = date
+        self.snapshot = snapshot
+        self.isDayBoundary = isDayBoundary
+    }
 }
 
 struct ReadinessWidgetProvider: TimelineProvider {
@@ -36,7 +47,14 @@ struct ReadinessWidgetProvider: TimelineProvider {
             snapshot: currentSnapshot(at: now)
         )
         let next = ReadinessWidgetTimelinePolicy.nextReloadDate(after: now)
-        let boundary = ReadinessWidgetEntry(date: next, snapshot: nil)
+        let boundary = ReadinessWidgetEntry(
+            date: next,
+            snapshot: ReadinessWidgetTimelinePolicy.boundarySnapshot(
+                from: entry.snapshot,
+                at: next
+            ),
+            isDayBoundary: true
+        )
         completion(Timeline(entries: [entry, boundary], policy: .atEnd))
     }
 
@@ -79,9 +97,9 @@ private struct ReadinessWidgetView: View {
     var body: some View {
         if let snapshot = entry.snapshot {
             if snapshot.readiness == nil && snapshot.acwr == nil {
-                emptyData(snapshot)
+                emptyData(snapshot, waitingForToday: entry.isDayBoundary)
             } else {
-                data(snapshot)
+                data(snapshot, waitingForToday: entry.isDayBoundary)
             }
         } else {
             noSnapshot
@@ -104,11 +122,21 @@ private struct ReadinessWidgetView: View {
         .accessibilityLabel("No readiness data yet. Open Sendmeter to connect Apple Health and sync today's score.")
     }
 
-    private func emptyData(_ snapshot: ReadinessWidgetSnapshot) -> some View {
+    private func emptyData(
+        _ snapshot: ReadinessWidgetSnapshot,
+        waitingForToday: Bool
+    ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Label("No readiness yet", systemImage: "heart.text.square")
+            Label(
+                waitingForToday ? "Waiting for today's score" : "No readiness yet",
+                systemImage: "heart.text.square"
+            )
                 .font(.headline.weight(.semibold))
-            Text("Connect Apple Health or open Sendmeter to sync today's score.")
+            Text(
+                waitingForToday
+                    ? "Open Sendmeter to sync today's readiness."
+                    : "Connect Apple Health or open Sendmeter to sync today's score."
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -116,22 +144,32 @@ private struct ReadinessWidgetView: View {
             phaseSummary(snapshot)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("No readiness score yet. Open Sendmeter to connect Apple Health and sync today's score.")
+        .accessibilityLabel(
+            waitingForToday
+                ? "Today's readiness score is pending. Open Sendmeter to sync it."
+                : "No readiness score yet. Open Sendmeter to connect Apple Health and sync today's score."
+        )
     }
 
     @ViewBuilder
-    private func data(_ snapshot: ReadinessWidgetSnapshot) -> some View {
+    private func data(
+        _ snapshot: ReadinessWidgetSnapshot,
+        waitingForToday: Bool
+    ) -> some View {
         if widgetFamily == .systemLarge {
-            largeData(snapshot)
+            largeData(snapshot, waitingForToday: waitingForToday)
         } else {
-            mediumData(snapshot)
+            mediumData(snapshot, waitingForToday: waitingForToday)
         }
     }
 
-    private func mediumData(_ snapshot: ReadinessWidgetSnapshot) -> some View {
+    private func mediumData(
+        _ snapshot: ReadinessWidgetSnapshot,
+        waitingForToday: Bool
+    ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 14) {
-                readinessSummary(snapshot)
+                readinessSummary(snapshot, waitingForToday: waitingForToday)
                 Spacer(minLength: 4)
                 acwrSummary(snapshot, compact: true)
             }
@@ -139,10 +177,13 @@ private struct ReadinessWidgetView: View {
         }
     }
 
-    private func largeData(_ snapshot: ReadinessWidgetSnapshot) -> some View {
+    private func largeData(
+        _ snapshot: ReadinessWidgetSnapshot,
+        waitingForToday: Bool
+    ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 18) {
-                readinessSummary(snapshot)
+                readinessSummary(snapshot, waitingForToday: waitingForToday)
                 Spacer(minLength: 8)
                 acwrSummary(snapshot, compact: false)
             }
@@ -151,8 +192,14 @@ private struct ReadinessWidgetView: View {
         }
     }
 
-    private func readinessSummary(_ snapshot: ReadinessWidgetSnapshot) -> some View {
-        let band = ReadinessWidgetPresentation.readinessBand(snapshot.readiness)
+    private func readinessSummary(
+        _ snapshot: ReadinessWidgetSnapshot,
+        waitingForToday: Bool
+    ) -> some View {
+        let band = ReadinessWidgetPresentation.readinessBand(
+            zone: snapshot.readinessZone,
+            fallbackScore: snapshot.readiness
+        )
         return VStack(alignment: .leading, spacing: 2) {
             Text("READINESS")
                 .font(.caption2.weight(.bold))
@@ -171,10 +218,10 @@ private struct ReadinessWidgetView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(semanticColor(band.semanticToken))
             } else {
-                Text("No score yet")
+                Text(waitingForToday ? "Waiting for today's score" : "No score yet")
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Text("Connect Apple Health")
+                Text(waitingForToday ? "Open Sendmeter to sync" : "Connect Apple Health")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -182,7 +229,9 @@ private struct ReadinessWidgetView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(snapshot.readiness.map {
             "Readiness \($0) out of 100, \(snapshot.readinessZone ?? band.rawValue)"
-        } ?? "Readiness score unavailable. Connect Apple Health.")
+        } ?? (waitingForToday
+            ? "Today's readiness score is pending. Open Sendmeter to sync it."
+            : "Readiness score unavailable. Connect Apple Health."))
     }
 
     private func acwrSummary(
@@ -264,11 +313,7 @@ private struct ReadinessWidgetView: View {
     }
 
     private static func decimal(_ value: Double, places: Int) -> String {
-        String(
-            format: "%.*f",
-            locale: Locale(identifier: "en_US_POSIX"),
-            arguments: [places, value]
-        )
+        value.formatted(.number.precision(.fractionLength(places)))
     }
 }
 
