@@ -40,7 +40,7 @@ packages:
   # it through SendmeterCore's transitive product.
   GRDB:
     url: https://github.com/groue/GRDB.swift
-    exactVersion: 7.9.0
+    exactVersion: 7.11.1
 targets:
   SendmeterNative:
     type: application
