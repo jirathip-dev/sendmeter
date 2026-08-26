@@ -24,6 +24,7 @@ public enum SendmeterStyle {
     public static let primary = Color(hex: "#5B5FC7")
     public static let optimal = Color(hex: "#2E96F0")
     public static let caution = Color(hex: "#DDB13A")
+    public static let paused = Color(hex: "#565D6D")
     public static let alert = Color(hex: "#E5743A")
 
     public static func phaseColor(_ phase: PhaseID) -> Color {

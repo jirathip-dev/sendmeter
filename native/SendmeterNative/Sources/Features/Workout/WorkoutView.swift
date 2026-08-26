@@ -1,5 +1,10 @@
+import AudioToolbox
+import Foundation
 import SendmeterCore
 import SwiftUI
+#if canImport(AVFAudio)
+import AVFAudio
+#endif
 
 struct WorkoutView: View {
     @Environment(AppModel.self) private var model
@@ -517,6 +522,7 @@ private struct RoutineLibraryCard: View {
 private struct RoutineRunnerSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     let routine: RoutinePreset
     private let restored: PersistedRoutineRun?
     private let store = RoutineRunStore()
@@ -529,6 +535,9 @@ private struct RoutineRunnerSheet: View {
     /// clamping operate on.
     @State private var wallClock: PersistedRoutineRun
     @State private var exitGate = RoutineGate.ExitGate()
+    @State private var audioCues = RoutineAudioCueController()
+    @State private var audioMuted = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(presentation: WorkoutView.RoutineRunPresentation) {
         self.routine = presentation.preset
@@ -552,71 +561,415 @@ private struct RoutineRunnerSheet: View {
     var body: some View {
         NavigationStack {
             TimelineView(.periodic(from: .now, by: 0.25)) { context in
-                VStack(spacing: 24) {
-                    Spacer()
-                    Text(run.currentStage.label)
-                        .font(.largeTitle.bold())
-                        .multilineTextAlignment(.center)
-                    if let detail = run.currentStage.detail {
-                        Text(detail).foregroundStyle(.secondary)
-                    }
-                    Text("\(run.remainingSeconds(at: context.date))")
-                        .modifier(SendmeterStyle.countdownMetric(baseSize: 80))
-                    ProgressView(
-                        value: run.currentStage.durationSeconds == 0
-                            ? 1.0
-                            : min(1.0, Double(run.elapsedSeconds(at: context.date)) / Double(run.currentStage.durationSeconds))
+                GeometryReader { geometry in
+                    let snapshot = RoutineRunnerSnapshot(
+                        run: run,
+                        preset: routine,
+                        wallClock: wallClock,
+                        at: context.date
                     )
-                    .tint(run.currentStage.kind == .rest ? SendmeterStyle.optimal : SendmeterStyle.primary)
-
-                    if run.isComplete {
-                        Button("Log Routine & Close") {
-                            closeRoutine()
+                    runnerScreen(snapshot: snapshot, viewport: geometry.size, date: context.date)
+                        .task(id: Int(context.date.timeIntervalSince1970 * 4)) {
+                            processTimeline(at: context.date)
                         }
-                        .hapticButtonStyle(PrimaryActionButtonStyle())
-                    } else {
-                        HStack {
-                            Button(run.isPaused ? "Resume" : "Pause") {
-                                togglePause(at: context.date)
-                            }
-                            .hapticButtonStyle(.bordered)
-                            Button("Skip") { skip(at: context.date) }
-                                .hapticButtonStyle(.bordered)
-                        }
-                    }
-                    Spacer()
-                }
-                .padding()
-                .task(id: Int(context.date.timeIntervalSince1970 * 4)) {
-                    _ = run.advanceIfNeeded(at: context.date)
-                    stampHeartbeat(at: context.date)
                 }
             }
-            .navigationTitle(routine.name)
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
             // A routine must leave through the classified Close path. A
             // swipe-dismiss otherwise skips the >=60s partial/discard
             // decision and can clear a real run without telling the user.
             .interactiveDismissDisabled()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { closeRoutine() }
-                }
-            }
             .onAppear {
                 let now = Date()
                 if restored == nil { run.start(at: now) }
                 wallClock = wallClock.heartbeat(atMs: now.millisecondsSince1970)
                 store.save(wallClock)
+                audioCues.reanchor(
+                    stage: run.currentStage,
+                    remainingSeconds: run.remainingSeconds(at: now)
+                )
             }
             .onDisappear {
+                audioCues.suspend()
                 // An unclaimed system/parent disappearance must leave the
                 // durable run intact. The classified paths clear before
                 // dismissing; this is only a guarded backstop.
                 guard exitGate.shouldClearPersistenceOnDisappear else { return }
                 store.clear()
             }
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .active:
+                    audioCues.reanchor(
+                        stage: run.currentStage,
+                        remainingSeconds: run.remainingSeconds(at: Date())
+                    )
+                case .inactive, .background:
+                    audioCues.suspend()
+                @unknown default:
+                    audioCues.suspend()
+                }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func runnerScreen(
+        snapshot: RoutineRunnerSnapshot,
+        viewport: CGSize,
+        date: Date
+    ) -> some View {
+        ZStack {
+            snapshot.visualState.backgroundColor
+                .ignoresSafeArea()
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 14) {
+                    topContext(snapshot: snapshot)
+                    phaseHeader(snapshot: snapshot)
+                    countdownDisc(snapshot: snapshot, viewport: viewport)
+                    progressContext(snapshot: snapshot)
+                    nextPhase(snapshot: snapshot)
+                    audioControl
+                    controls(snapshot: snapshot, date: date)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, max(10, viewport.height * 0.025))
+                .padding(.bottom, max(18, viewport.height * 0.035))
+                .frame(minHeight: viewport.height, alignment: .top)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.22),
+            value: snapshot.visualState
+        )
+    }
+
+    private func topContext(snapshot: RoutineRunnerSnapshot) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                closeRoutine()
+            } label: {
+                Label("Close", systemImage: "xmark")
+            }
+            .hapticButtonStyle(RoutineRunnerGlassButtonStyle(tint: SendmeterStyle.alert))
+            .accessibilityHint("Close the routine and classify the run")
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(routine.name)
+                    .font(.subheadline.weight(.bold))
+                    .lineLimit(1)
+                Text("Elapsed \(formatTime(snapshot.actualElapsedSeconds))")
+                    .font(.caption.monospacedDigit())
+                    .opacity(0.78)
+            }
+            .foregroundStyle(snapshot.visualState.foregroundColor)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(5)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay {
+            Capsule().strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)
+        }
+    }
+
+    private func phaseHeader(snapshot: RoutineRunnerSnapshot) -> some View {
+        VStack(spacing: 4) {
+            Text(snapshot.visualState.title)
+                .font(.title2.weight(.black))
+                .tracking(2.2)
+                .foregroundStyle(snapshot.visualState.foregroundColor)
+
+            if !snapshot.isComplete {
+                Text(snapshot.current.stage.label)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.9))
+                    .lineLimit(1)
+                if let detail = snapshot.current.stage.detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.72))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                }
+            } else {
+                Text("Routine complete")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.9))
+            }
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            snapshot.visualState.title + ". "
+                + (snapshot.isComplete ? "Routine complete" : snapshot.current.stage.label)
+        )
+    }
+
+    private func countdownDisc(
+        snapshot: RoutineRunnerSnapshot,
+        viewport: CGSize
+    ) -> some View {
+        let widthBound = max(190, min(292, viewport.width - 48))
+        let heightBound = max(190, min(292, viewport.height * 0.38))
+        let diameter = min(widthBound, heightBound)
+        let remainingFraction = snapshot.isComplete ? 1 : snapshot.currentRemainingFraction
+
+        return ZStack {
+            Circle()
+                .fill(snapshot.visualState.backgroundColor.opacity(0.32))
+                .blur(radius: 24)
+                .frame(width: diameter * 0.88, height: diameter * 0.88)
+
+            Circle()
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    Circle().fill(snapshot.visualState.backgroundColor.opacity(0.18))
+                }
+
+            Circle()
+                .stroke(snapshot.visualState.foregroundColor.opacity(0.18), lineWidth: 7)
+
+            Circle()
+                .trim(from: 0, to: remainingFraction)
+                .stroke(
+                    AngularGradient(
+                        gradient: Gradient(colors: snapshot.visualState.ringColors),
+                        center: .center,
+                        startAngle: .degrees(-90),
+                        endAngle: .degrees(270)
+                    ),
+                    style: StrokeStyle(lineWidth: 7, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+
+            VStack(spacing: 5) {
+                Text(snapshot.isComplete ? "DONE" : formatTime(snapshot.currentRemainingSeconds))
+                    .modifier(SendmeterStyle.countdownMetric(baseSize: 80))
+                    .foregroundStyle(snapshot.visualState.foregroundColor)
+                    .accessibilityLabel(
+                        snapshot.isComplete
+                            ? "Routine complete"
+                            : "\(formatTime(snapshot.currentRemainingSeconds)) remaining"
+                    )
+                if !snapshot.isComplete {
+                    Text(snapshot.isPaused ? "Timer paused" : "Remaining")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.72))
+                }
+            }
+        }
+        .frame(width: diameter, height: diameter)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func progressContext(snapshot: RoutineRunnerSnapshot) -> some View {
+        VStack(spacing: 9) {
+            HStack(spacing: 8) {
+                contextMetric(
+                    "Step",
+                    snapshot.stageCount == 0 || snapshot.current.stepNumber == 0
+                        ? "—"
+                        : "\(snapshot.current.stepNumber)/\(snapshot.current.stepCount)",
+                    color: snapshot.visualState.foregroundColor
+                )
+                contextMetric(
+                    "Rep",
+                    snapshot.current.repetitionCount == 0
+                        ? "—"
+                        : "\(snapshot.current.repetitionNumber)/\(snapshot.current.repetitionCount)",
+                    color: snapshot.visualState.foregroundColor
+                )
+                contextMetric(
+                    "To go",
+                    snapshot.current.repetitionCount == 0 ? "—" : "\(snapshot.current.repetitionsRemaining)",
+                    color: snapshot.visualState.foregroundColor
+                )
+            }
+
+            HStack {
+                Text("Elapsed \(formatTime(snapshot.actualElapsedSeconds))")
+                Spacer(minLength: 8)
+                Text("\(formatTime(snapshot.timelineRemainingSeconds)) remaining")
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.78))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(snapshot.visualState.foregroundColor.opacity(0.16), lineWidth: 1)
+        }
+    }
+
+    private func contextMetric(_ label: String, _ value: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.subheadline.weight(.bold).monospacedDigit())
+            Text(label.uppercased())
+                .font(.caption2.weight(.semibold))
+                .tracking(0.8)
+                .opacity(0.68)
+        }
+        .foregroundStyle(color)
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func nextPhase(snapshot: RoutineRunnerSnapshot) -> some View {
+        if let next = snapshot.next {
+            let nextColor = next.stage.kind == .rest ? SendmeterStyle.caution : SendmeterStyle.primary
+            let nextText = next.stage.kind == .rest ? Color(hex: "#1A1A1A") : Color.white
+            HStack(spacing: 8) {
+                Text("NEXT")
+                    .font(.caption2.weight(.bold))
+                    .tracking(1)
+                    .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.68))
+                Text(next.stage.kind == .rest ? "Rest" : next.stage.label)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(nextText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(nextColor, in: Capsule())
+                Text(nextDetail(next))
+                    .font(.caption)
+                    .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.78))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(snapshot.visualState.foregroundColor.opacity(0.14), lineWidth: 1)
+            }
+        } else if !snapshot.isComplete {
+            Text("NEXT · Finish routine")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.66))
+        }
+    }
+
+    private func nextDetail(_ next: RoutineRunnerStageContext) -> String {
+        if next.stage.kind == .rest {
+            return next.stage.detail ?? "Recover before the next rep"
+        }
+        return "Rep \(next.repetitionNumber) of \(next.repetitionCount)"
+    }
+
+    private var audioControl: some View {
+        let status = audioStatus
+        return Button {
+            guard status != .unavailable else { return }
+            audioMuted.toggle()
+            audioCues.reanchor(
+                stage: run.currentStage,
+                remainingSeconds: run.remainingSeconds(at: Date())
+            )
+        } label: {
+            Label(status.label, systemImage: status.systemImage)
+        }
+        .hapticButtonStyle(RoutineRunnerGlassButtonStyle(tint: currentForeground))
+        .disabled(status == .unavailable)
+        .accessibilityLabel(status.label)
+        .accessibilityHint(status == .unavailable ? "Audio is not available right now" : "Toggle routine audio cues")
+    }
+
+    @ViewBuilder
+    private func controls(
+        snapshot: RoutineRunnerSnapshot,
+        date: Date
+    ) -> some View {
+        if snapshot.isComplete {
+            Button {
+                closeRoutine()
+            } label: {
+                Label("Log Routine", systemImage: "checkmark.circle.fill")
+            }
+            .hapticButtonStyle(RoutineRunnerGlassButtonStyle(tint: snapshot.visualState.foregroundColor))
+            .accessibilityHint("Log the completed routine and close")
+        } else {
+            HStack(spacing: 10) {
+                Button {
+                    togglePause(at: date)
+                } label: {
+                    Label(
+                        snapshot.isPaused ? "Resume" : "Pause",
+                        systemImage: snapshot.isPaused ? "play.fill" : "pause.fill"
+                    )
+                }
+                .hapticButtonStyle(RoutineRunnerGlassButtonStyle(tint: snapshot.visualState.foregroundColor))
+
+                Button {
+                    skip(at: date)
+                } label: {
+                    Label("Skip", systemImage: "forward.fill")
+                }
+                .hapticButtonStyle(RoutineRunnerGlassButtonStyle(tint: snapshot.visualState.foregroundColor))
+            }
+        }
+    }
+
+    private var currentForeground: Color {
+        if run.isComplete { return RoutineRunnerVisualState.done.foregroundColor }
+        if run.isPaused { return RoutineRunnerVisualState.paused.foregroundColor }
+        return run.currentStage.kind == .rest
+            ? RoutineRunnerVisualState.rest.foregroundColor
+            : RoutineRunnerVisualState.working.foregroundColor
+    }
+
+    private var audioStatus: RoutineAudioStatus {
+        #if canImport(AVFAudio)
+        let session = AVAudioSession.sharedInstance()
+        return RoutineAudioPolicy.status(
+            userMuted: audioMuted,
+            systemMuted: session.outputVolume <= 0.001,
+            systemAvailable: scenePhase == .active && !session.secondaryAudioShouldBeSilencedHint
+        )
+        #else
+        return .unavailable
+        #endif
+    }
+
+    private func processTimeline(at date: Date) {
+        if !run.isPaused, !run.isComplete, run.remainingSeconds(at: date) <= 0 {
+            playAudio(audioCues.phaseEnded(stageID: run.currentStage.id))
+        }
+
+        _ = run.advanceIfNeeded(at: date)
+        if run.isComplete {
+            audioCues.suspend()
+        } else {
+            playAudio(
+                audioCues.observe(
+                    stage: run.currentStage,
+                    remainingSeconds: run.remainingSeconds(at: date),
+                    isPaused: run.isPaused
+                )
+            )
+        }
+        stampHeartbeat(at: date)
+    }
+
+    private func playAudio(_ cue: RoutineAudioCue?) {
+        guard let cue, RoutineAudioPolicy.shouldPlay(cue, status: audioStatus) else { return }
+        let soundID: SystemSoundID
+        switch cue {
+        case .clockTick:
+            soundID = SystemSoundID(1104)
+        case .countdown:
+            soundID = SystemSoundID(1103)
+        case .phaseEnd:
+            soundID = SystemSoundID(1057)
+        }
+        // System sounds are intentionally best-effort. Silent mode, Focus,
+        // another audio session, or device settings may suppress them.
+        AudioServicesPlaySystemSound(soundID)
     }
 
     private func togglePause(at date: Date) {
@@ -624,7 +977,12 @@ private struct RoutineRunnerSheet: View {
         if run.isPaused {
             run.resume(at: date)
             wallClock = wallClock.resumed(atMs: nowMs)
+            audioCues.reanchor(
+                stage: run.currentStage,
+                remainingSeconds: run.remainingSeconds(at: date)
+            )
         } else {
+            audioCues.suspend()
             run.pause(at: date)
             wallClock = wallClock.paused(atMs: nowMs)
         }
@@ -633,9 +991,14 @@ private struct RoutineRunnerSheet: View {
 
     private func skip(at date: Date) {
         let remaining = run.remainingSeconds(at: date)
+        audioCues.skipped(stageID: run.currentStage.id)
         run.skip(at: date)
         wallClock = wallClock.skipped(remaining, atMs: date.millisecondsSince1970)
         store.save(wallClock)
+        audioCues.reanchor(
+            stage: run.currentStage,
+            remainingSeconds: run.remainingSeconds(at: date)
+        )
     }
 
     /// Heartbeat (#633): confirm the run is actually on-screen and ticking by
@@ -667,6 +1030,7 @@ private struct RoutineRunnerSheet: View {
             totalSeconds: totalS
         ) else { return }
 
+        audioCues.suspend()
         store.clear()
         switch decision {
         case .completed(let durationMin):
@@ -693,6 +1057,54 @@ private struct RoutineRunnerSheet: View {
         dismiss()
     }
 
+}
+
+private extension RoutineRunnerVisualState {
+    var backgroundColor: Color {
+        switch self {
+        case .working: return SendmeterStyle.primary
+        case .rest: return SendmeterStyle.caution
+        case .paused: return SendmeterStyle.paused
+        case .done: return SendmeterStyle.execution
+        }
+    }
+
+    var foregroundColor: Color {
+        self == .rest ? Color(hex: "#1A1A1A") : .white
+    }
+
+    var ringColors: [Color] {
+        self == .rest
+            ? [Color.black.opacity(0.18), .black, Color.black.opacity(0.42)]
+            : [Color.white.opacity(0.28), .white, Color.white.opacity(0.58)]
+    }
+}
+
+private struct RoutineRunnerGlassButtonStyle: ButtonStyle {
+    let tint: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .hapticTap(structuralHapticLevel)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(tint.opacity(configuration.isPressed ? 0.42 : 0.2), lineWidth: 1))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+extension RoutineRunnerGlassButtonStyle: StructuralHapticStyle {
+    var structuralHapticLevel: HapticTapLevel { .normal }
+}
+
+private func formatTime(_ seconds: Int) -> String {
+    let safeSeconds = max(0, seconds)
+    return String(format: "%02d:%02d", safeSeconds / 60, safeSeconds % 60)
 }
 
 private struct RoutineEditorSheet: View {
