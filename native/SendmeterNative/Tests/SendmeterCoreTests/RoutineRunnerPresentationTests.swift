@@ -136,4 +136,73 @@ final class RoutineRunnerPresentationTests: XCTestCase {
         XCTAssertEqual(done.visualState, .done)
         XCTAssertEqual(done.visualState.title, "DONE")
     }
+
+    func testLightRunnerBodyTreatmentsClearComputedContrastInEveryState() {
+        let states: [RoutineRunnerVisualState] = [.working, .rest, .paused, .done]
+
+        for state in states {
+            let field = RoutineRunnerContrastPalette.field(for: state)
+            let foreground = RoutineRunnerContrastPalette.foreground(for: state)
+            let glass = RoutineRunnerContrastPalette.treatedGlassSurface(for: state)
+
+            let glassCaption = RoutineRunnerContrastPalette.bodyText(on: glass, state: state)
+            XCTAssertGreaterThanOrEqual(
+                glassCaption.contrastRatio(to: glass),
+                RoutineRunnerContrastPalette.minimumBodyContrast,
+                "\(state) glass caption"
+            )
+            XCTAssertGreaterThanOrEqual(
+                foreground.contrastRatio(to: field),
+                RoutineRunnerContrastPalette.minimumLargeTextContrast,
+                "\(state) countdown"
+            )
+
+            if state != .done {
+                let bareCaption = foreground.over(
+                    field,
+                    opacity: RoutineRunnerContrastPalette.bodyTextOpacity
+                )
+                XCTAssertGreaterThanOrEqual(
+                    bareCaption.contrastRatio(to: field),
+                    RoutineRunnerContrastPalette.minimumBodyContrast,
+                    "\(state) bare phase detail"
+                )
+            }
+        }
+    }
+
+    func testDoneCompletionUsesDarkForegroundOnTheIdentityField() {
+        let field = RoutineRunnerContrastPalette.field(for: .done)
+        let completion = RoutineRunnerContrastPalette.doneCompletionForeground
+
+        XCTAssertGreaterThanOrEqual(
+            completion.contrastRatio(to: field),
+            RoutineRunnerContrastPalette.minimumBodyContrast
+        )
+        XCTAssertLessThan(
+            RoutineRunnerRGB.white.contrastRatio(to: field),
+            RoutineRunnerContrastPalette.minimumBodyContrast,
+            "white alone cannot clear body-text contrast on the DONE field"
+        )
+    }
+
+    func testPhaseForegroundClearsTheCloseChipCasesThatRawAlertFails() {
+        let rawAlert = RoutineRunnerRGB(hex: 0xE5743A)
+        let restGlass = RoutineRunnerContrastPalette.treatedGlassSurface(for: .rest)
+        XCTAssertLessThan(
+            rawAlert.contrastRatio(to: restGlass),
+            RoutineRunnerContrastPalette.minimumBodyContrast,
+            "the former raw alert-orange Close label must remain a failing regression vector"
+        )
+
+        for state in [RoutineRunnerVisualState.working, .rest, .paused, .done] {
+            let glass = RoutineRunnerContrastPalette.treatedGlassSurface(for: state)
+            let foreground = RoutineRunnerContrastPalette.foreground(for: state)
+            XCTAssertGreaterThanOrEqual(
+                foreground.contrastRatio(to: glass),
+                RoutineRunnerContrastPalette.minimumBodyContrast,
+                "\(state) Close label"
+            )
+        }
+    }
 }

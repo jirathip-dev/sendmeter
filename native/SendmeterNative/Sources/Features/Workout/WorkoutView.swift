@@ -656,9 +656,18 @@ private struct RoutineRunnerSheet: View {
             Button {
                 closeRoutine()
             } label: {
-                Label("Close", systemImage: "xmark")
+                HStack(spacing: 5) {
+                    Image(systemName: "xmark")
+                        .foregroundStyle(SendmeterStyle.alert)
+                    Text("Close")
+                }
             }
-            .hapticButtonStyle(RoutineRunnerGlassButtonStyle(tint: SendmeterStyle.alert))
+            .hapticButtonStyle(
+                RoutineRunnerGlassButtonStyle(
+                    state: snapshot.visualState,
+                    tint: SendmeterStyle.alert
+                )
+            )
             .accessibilityHint("Close the routine and classify the run")
 
             VStack(alignment: .trailing, spacing: 2) {
@@ -695,14 +704,18 @@ private struct RoutineRunnerSheet: View {
                 if let detail = snapshot.current.stage.detail {
                     Text(detail)
                         .font(.caption)
-                        .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.72))
+                        .foregroundStyle(
+                            snapshot.visualState.foregroundColor.opacity(
+                                RoutineRunnerContrastPalette.bodyTextOpacity
+                            )
+                        )
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
                 }
             } else {
                 Text("Routine complete")
                     .font(.headline.weight(.semibold))
-                    .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.9))
+                    .foregroundStyle(snapshot.visualState.completionForegroundColor)
             }
         }
         .multilineTextAlignment(.center)
@@ -770,7 +783,11 @@ private struct RoutineRunnerSheet: View {
                 if !snapshot.isComplete {
                     Text(snapshot.isPaused ? "Timer paused" : "Remaining")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.72))
+                        .foregroundStyle(
+                            snapshot.visualState.foregroundColor.opacity(
+                                RoutineRunnerContrastPalette.bodyTextOpacity
+                            )
+                        )
                 }
             }
         }
@@ -831,7 +848,7 @@ private struct RoutineRunnerSheet: View {
             Text(label.uppercased())
                 .font(.caption2.weight(.semibold))
                 .tracking(0.8)
-                .opacity(0.68)
+                .opacity(RoutineRunnerContrastPalette.bodyTextOpacity)
         }
         .foregroundStyle(color)
         .frame(maxWidth: .infinity)
@@ -846,7 +863,11 @@ private struct RoutineRunnerSheet: View {
                 Text("NEXT")
                     .font(.caption2.weight(.bold))
                     .tracking(1)
-                    .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.68))
+                    .foregroundStyle(
+                        snapshot.visualState.foregroundColor.opacity(
+                            RoutineRunnerContrastPalette.bodyTextOpacity
+                        )
+                    )
                 Text(next.stage.kind == .rest ? "Rest" : next.stage.label)
                     .font(.caption.weight(.bold))
                     .foregroundStyle(nextText)
@@ -873,7 +894,11 @@ private struct RoutineRunnerSheet: View {
         } else if !snapshot.isComplete {
             Text("NEXT · Finish routine")
                 .font(.caption.weight(.medium))
-                .foregroundStyle(snapshot.visualState.foregroundColor.opacity(0.66))
+                .foregroundStyle(
+                    snapshot.visualState.foregroundColor.opacity(
+                        RoutineRunnerContrastPalette.bodyTextOpacity
+                    )
+                )
         }
     }
 
@@ -896,7 +921,12 @@ private struct RoutineRunnerSheet: View {
         } label: {
             Label(status.label, systemImage: status.systemImage)
         }
-        .hapticButtonStyle(RoutineRunnerGlassButtonStyle(tint: currentForeground))
+        .hapticButtonStyle(
+            RoutineRunnerGlassButtonStyle(
+                state: currentVisualState,
+                tint: currentForeground
+            )
+        )
         .disabled(status == .unavailable)
         .accessibilityLabel(status.label)
         .accessibilityHint(status == .unavailable ? "Audio is not available right now" : "Toggle routine audio cues")
@@ -913,7 +943,12 @@ private struct RoutineRunnerSheet: View {
             } label: {
                 Label("Log Routine", systemImage: "checkmark.circle.fill")
             }
-            .hapticButtonStyle(RoutineRunnerGlassButtonStyle(tint: snapshot.visualState.foregroundColor))
+            .hapticButtonStyle(
+                RoutineRunnerGlassButtonStyle(
+                    state: snapshot.visualState,
+                    tint: snapshot.visualState.foregroundColor
+                )
+            )
             .accessibilityHint("Log the completed routine and close")
         } else {
             HStack(spacing: 10) {
@@ -925,14 +960,24 @@ private struct RoutineRunnerSheet: View {
                         systemImage: snapshot.isPaused ? "play.fill" : "pause.fill"
                     )
                 }
-                .hapticButtonStyle(RoutineRunnerGlassButtonStyle(tint: snapshot.visualState.foregroundColor))
+                .hapticButtonStyle(
+                    RoutineRunnerGlassButtonStyle(
+                        state: snapshot.visualState,
+                        tint: snapshot.visualState.foregroundColor
+                    )
+                )
 
                 Button {
                     skip(at: date)
                 } label: {
                     Label("Skip", systemImage: "forward.fill")
                 }
-                .hapticButtonStyle(RoutineRunnerGlassButtonStyle(tint: snapshot.visualState.foregroundColor))
+                .hapticButtonStyle(
+                    RoutineRunnerGlassButtonStyle(
+                        state: snapshot.visualState,
+                        tint: snapshot.visualState.foregroundColor
+                    )
+                )
             }
         }
     }
@@ -943,6 +988,12 @@ private struct RoutineRunnerSheet: View {
         return run.currentStage.kind == .rest
             ? RoutineRunnerVisualState.rest.foregroundColor
             : RoutineRunnerVisualState.working.foregroundColor
+    }
+
+    private var currentVisualState: RoutineRunnerVisualState {
+        if run.isComplete { return .done }
+        if run.isPaused { return .paused }
+        return run.currentStage.kind == .rest ? .rest : .working
     }
 
     private var audioStatus: RoutineAudioStatus {
@@ -1117,7 +1168,14 @@ private extension RoutineRunnerVisualState {
     /// secondary white copy fall below body-text contrast. Keep the field
     /// hue intact and add a restrained shade only to its glass surfaces.
     var materialShade: Color {
-        self == .done ? .black.opacity(0.12) : .clear
+        let opacity = RoutineRunnerContrastPalette.glassShadeOpacity(for: self)
+        return opacity > 0 ? .black.opacity(opacity) : .clear
+    }
+
+    var completionForegroundColor: Color {
+        self == .done
+            ? Color(hex: RoutineRunnerContrastPalette.doneCompletionForegroundHex)
+            : foregroundColor
     }
 
     var ringColors: [Color] {
@@ -1128,16 +1186,21 @@ private extension RoutineRunnerVisualState {
 }
 
 private struct RoutineRunnerGlassButtonStyle: ButtonStyle {
+    let state: RoutineRunnerVisualState
     let tint: Color
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .hapticTap(structuralHapticLevel)
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(tint)
+            .foregroundStyle(state.foregroundColor)
             .padding(.horizontal, 12)
             .frame(minHeight: 44)
-            .background(.ultraThinMaterial, in: Capsule())
+            .background {
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .overlay { Capsule().fill(state.materialShade) }
+            }
             .routineRunnerTopSheen(in: Capsule())
             .overlay(Capsule().stroke(tint.opacity(configuration.isPressed ? 0.42 : 0.2), lineWidth: 1))
             .opacity(configuration.isPressed ? 0.7 : 1)

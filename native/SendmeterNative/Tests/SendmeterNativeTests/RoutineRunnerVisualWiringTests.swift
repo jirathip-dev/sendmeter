@@ -1,10 +1,13 @@
 import Foundation
+import SendmeterCore
 import XCTest
 @testable import Sendmeter
 
 /// Source-level seams for the two reviewable visual contracts that cannot be
 /// proven by SendmeterCore's platform-neutral tests: the SwiftUI ring's local
-/// geometry and the material appearance used by the phase foregrounds.
+/// geometry and the material appearance used by the phase foregrounds. The
+/// contrast assertions also exercise the pure compositing contract so a
+/// readable-looking implementation string cannot stand in for AA evidence.
 final class RoutineRunnerVisualWiringTests: XCTestCase {
     func testRemainingRingRotatesItsLocalGradientSeamToTwelveOClock() {
         let source = workoutSource
@@ -43,8 +46,34 @@ final class RoutineRunnerVisualWiringTests: XCTestCase {
             endingAt: "private struct RoutineRunnerGlassButtonStyle"
         )
         XCTAssertTrue(
-            visualState.contains("self == .done ? .black.opacity(0.12) : .clear"),
+            visualState.contains("RoutineRunnerContrastPalette.glassShadeOpacity(for: self)"),
             "DONE's glass panels need a restrained shade so secondary white copy clears body-text contrast"
+        )
+
+        let buttonStyle = section(
+            workoutSource,
+            startingAt: "private struct RoutineRunnerGlassButtonStyle",
+            endingAt: "extension RoutineRunnerGlassButtonStyle"
+        )
+        XCTAssertTrue(buttonStyle.contains(".overlay { Capsule().fill(state.materialShade) }"))
+        XCTAssertTrue(buttonStyle.contains(".foregroundStyle(state.foregroundColor)"))
+
+        XCTAssertTrue(workoutSource.contains("RoutineRunnerContrastPalette.bodyTextOpacity"))
+        let topContext = section(
+            workoutSource,
+            startingAt: "private func topContext(",
+            endingAt: "private func phaseHeader("
+        )
+        let phaseHeader = section(
+            workoutSource,
+            startingAt: "private func phaseHeader(",
+            endingAt: "private func countdownDisc("
+        )
+        XCTAssertTrue(phaseHeader.contains("completionForegroundColor"))
+        XCTAssertTrue(
+            topContext.contains("Image(systemName: \"xmark\")")
+                && topContext.contains("foregroundStyle(SendmeterStyle.alert)"),
+            "Close keeps its alert meaning in the glyph while its label uses the phase foreground"
         )
 
         let designSystem = source("Sources/App/DesignSystem.swift")
@@ -54,6 +83,28 @@ final class RoutineRunnerVisualWiringTests: XCTestCase {
                 "approved identity hue \(identityHue) must remain in the design system"
             )
         }
+
+        for state in [RoutineRunnerVisualState.working, .rest, .paused, .done] {
+            let glass = RoutineRunnerContrastPalette.treatedGlassSurface(for: state)
+            let foreground = RoutineRunnerContrastPalette.foreground(for: state)
+            XCTAssertGreaterThanOrEqual(
+                RoutineRunnerContrastPalette.bodyText(on: glass, state: state)
+                    .contrastRatio(to: glass),
+                RoutineRunnerContrastPalette.minimumBodyContrast,
+                "\(state) computed glass body contrast"
+            )
+            XCTAssertGreaterThanOrEqual(
+                foreground.contrastRatio(to: RoutineRunnerContrastPalette.field(for: state)),
+                RoutineRunnerContrastPalette.minimumLargeTextContrast,
+                "\(state) computed countdown contrast"
+            )
+        }
+
+        XCTAssertGreaterThanOrEqual(
+            RoutineRunnerContrastPalette.doneCompletionForeground
+                .contrastRatio(to: RoutineRunnerContrastPalette.field(for: .done)),
+            RoutineRunnerContrastPalette.minimumBodyContrast
+        )
     }
 
     private var workoutSource: String {
