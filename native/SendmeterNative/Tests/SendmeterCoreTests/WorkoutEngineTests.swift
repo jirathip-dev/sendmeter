@@ -57,4 +57,46 @@ final class WorkoutEngineTests: XCTestCase {
         let stages = RoutineEngine.stages(for: preset)
         XCTAssertEqual(stages.map(\.kind), [.work, .rest, .work, .rest, .work, .complete])
     }
+
+    func testRoutineNaturalAdvanceCarriesWallClockOverflowAcrossMultipleStages() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let routine = RoutinePreset(
+            name: "Catch-up",
+            steps: [
+                RoutineStep(label: "First", seconds: 2),
+                RoutineStep(label: "Second", seconds: 2),
+                RoutineStep(label: "Settled", seconds: 10)
+            ]
+        )
+        var run = RoutineRun(preset: routine)
+        run.start(at: start)
+
+        XCTAssertTrue(run.advanceIfNeeded(at: start.addingTimeInterval(5)))
+        XCTAssertEqual(run.currentStage.label, "Second")
+        XCTAssertEqual(run.remainingSeconds(at: start.addingTimeInterval(5)), 0)
+        XCTAssertTrue(run.advanceIfNeeded(at: start.addingTimeInterval(5)))
+        XCTAssertEqual(run.currentStage.label, "Settled")
+        XCTAssertEqual(run.remainingSeconds(at: start.addingTimeInterval(5)), 9)
+    }
+
+    func testRoutineSkipWhilePausedKeepsTheNextStagePaused() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let routine = RoutinePreset(
+            name: "Paused skip",
+            steps: [
+                RoutineStep(label: "First", seconds: 10),
+                RoutineStep(label: "Second", seconds: 10)
+            ]
+        )
+        var run = RoutineRun(preset: routine)
+        run.start(at: start)
+        run.pause(at: start.addingTimeInterval(3))
+
+        run.skip(at: start.addingTimeInterval(4))
+
+        XCTAssertEqual(run.currentStage.label, "Second")
+        XCTAssertTrue(run.isPaused)
+        XCTAssertNil(run.stageStartedAt)
+        XCTAssertEqual(run.remainingSeconds(at: start.addingTimeInterval(100)), 10)
+    }
 }

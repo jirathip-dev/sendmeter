@@ -57,12 +57,9 @@ struct WorkoutView: View {
                 RoutineEditorSheet()
                     .sendmeterSheetPresentation()
             }
-            .sheet(item: $runningRoutine) { presentation in
+            .fullScreenCover(item: $runningRoutine, onDismiss: { Haptics.shared.sheetDismissed() }) { presentation in
                 RoutineRunnerSheet(presentation: presentation)
-                    .sendmeterSheetPresentation(
-                        id: presentation.id.uuidString,
-                        dragToDismiss: false
-                    )
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .fullScreenCover(isPresented: $showManualWorkout, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 ManualWorkoutFullscreen(
@@ -537,6 +534,7 @@ private struct RoutineRunnerSheet: View {
     @State private var exitGate = RoutineGate.ExitGate()
     @State private var audioCues = RoutineAudioCueController()
     @State private var audioMuted = false
+    @State private var audioNeedsCatchUp = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(presentation: WorkoutView.RoutineRunPresentation) {
@@ -600,10 +598,12 @@ private struct RoutineRunnerSheet: View {
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .active:
-                    audioCues.reanchor(
-                        stage: run.currentStage,
-                        remainingSeconds: run.remainingSeconds(at: Date())
-                    )
+                    // Keep cues suspended until the engine has walked through
+                    // every stage that elapsed while the process was away.
+                    // Re-anchoring here would make each stale stage look like
+                    // a newly completed phase and replay a burst of gongs.
+                    audioCues.suspend()
+                    audioNeedsCatchUp = true
                 case .inactive, .background:
                     audioCues.suspend()
                 @unknown default:
@@ -669,6 +669,7 @@ private struct RoutineRunnerSheet: View {
         }
         .padding(5)
         .background(.ultraThinMaterial, in: Capsule())
+        .routineRunnerTopSheen(in: Capsule())
         .overlay {
             Capsule().strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)
         }
@@ -728,6 +729,7 @@ private struct RoutineRunnerSheet: View {
                 .overlay {
                     Circle().fill(snapshot.visualState.backgroundColor.opacity(0.18))
                 }
+                .routineRunnerTopSheen(in: Circle())
 
             Circle()
                 .stroke(snapshot.visualState.foregroundColor.opacity(0.18), lineWidth: 7)
@@ -739,11 +741,10 @@ private struct RoutineRunnerSheet: View {
                         gradient: Gradient(colors: snapshot.visualState.ringColors),
                         center: .center,
                         startAngle: .degrees(-90),
-                        endAngle: .degrees(270)
+                        endAngle: .degrees(-90 + 360 * remainingFraction)
                     ),
                     style: StrokeStyle(lineWidth: 7, lineCap: .round)
                 )
-                .rotationEffect(.degrees(-90))
 
             VStack(spacing: 5) {
                 Text(snapshot.isComplete ? "DONE" : formatTime(snapshot.currentRemainingSeconds))
@@ -790,7 +791,9 @@ private struct RoutineRunnerSheet: View {
             }
 
             HStack {
-                Text("Elapsed \(formatTime(snapshot.actualElapsedSeconds))")
+                Text("Stage \(snapshot.stageNumber)/\(snapshot.stageCount)")
+                Spacer(minLength: 8)
+                Text("Routine \(formatTime(snapshot.timelineElapsedSeconds)) / \(formatTime(snapshot.totalRoutineSeconds))")
                 Spacer(minLength: 8)
                 Text("\(formatTime(snapshot.timelineRemainingSeconds)) remaining")
             }
@@ -844,6 +847,7 @@ private struct RoutineRunnerSheet: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .routineRunnerTopSheen(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(snapshot.visualState.foregroundColor.opacity(0.14), lineWidth: 1)
@@ -929,7 +933,10 @@ private struct RoutineRunnerSheet: View {
         return RoutineAudioPolicy.status(
             userMuted: audioMuted,
             systemMuted: session.outputVolume <= 0.001,
-            systemAvailable: scenePhase == .active && !session.secondaryAudioShouldBeSilencedHint
+            // Another app's non-mixable music/podcast is not an unavailable
+            // routine-audio route. System sounds remain best-effort and the
+            // OS decides how they coexist with the other audio.
+            systemAvailable: scenePhase == .active
         )
         #else
         return .unavailable
@@ -937,11 +944,30 @@ private struct RoutineRunnerSheet: View {
     }
 
     private func processTimeline(at date: Date) {
-        if !run.isPaused, !run.isComplete, run.remainingSeconds(at: date) <= 0 {
-            playAudio(audioCues.phaseEnded(stageID: run.currentStage.id))
+        if audioNeedsCatchUp {
+            while !run.isPaused, !run.isComplete, run.remainingSeconds(at: date) <= 0 {
+                guard run.advanceIfNeeded(at: date) else { break }
+            }
+            audioNeedsCatchUp = false
+
+            if run.isPaused || run.isComplete {
+                audioCues.suspend()
+            } else {
+                // This is the first stage genuinely observed after the
+                // foreground catch-up. It is an anchor, never a catch-up cue.
+                audioCues.resume(
+                    stage: run.currentStage,
+                    remainingSeconds: run.remainingSeconds(at: date)
+                )
+            }
+        } else {
+            if !run.isPaused, !run.isComplete, run.remainingSeconds(at: date) <= 0 {
+                playAudio(audioCues.phaseEnded(stageID: run.currentStage.id))
+            }
+
+            _ = run.advanceIfNeeded(at: date)
         }
 
-        _ = run.advanceIfNeeded(at: date)
         if run.isComplete {
             audioCues.suspend()
         } else {
@@ -977,7 +1003,7 @@ private struct RoutineRunnerSheet: View {
         if run.isPaused {
             run.resume(at: date)
             wallClock = wallClock.resumed(atMs: nowMs)
-            audioCues.reanchor(
+            audioCues.resume(
                 stage: run.currentStage,
                 remainingSeconds: run.remainingSeconds(at: date)
             )
@@ -995,10 +1021,6 @@ private struct RoutineRunnerSheet: View {
         run.skip(at: date)
         wallClock = wallClock.skipped(remaining, atMs: date.millisecondsSince1970)
         store.save(wallClock)
-        audioCues.reanchor(
-            stage: run.currentStage,
-            remainingSeconds: run.remainingSeconds(at: date)
-        )
     }
 
     /// Heartbeat (#633): confirm the run is actually on-screen and ticking by
@@ -1091,6 +1113,7 @@ private struct RoutineRunnerGlassButtonStyle: ButtonStyle {
             .padding(.horizontal, 12)
             .frame(minHeight: 44)
             .background(.ultraThinMaterial, in: Capsule())
+            .routineRunnerTopSheen(in: Capsule())
             .overlay(Capsule().stroke(tint.opacity(configuration.isPressed ? 0.42 : 0.2), lineWidth: 1))
             .opacity(configuration.isPressed ? 0.7 : 1)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
@@ -1100,6 +1123,20 @@ private struct RoutineRunnerGlassButtonStyle: ButtonStyle {
 
 extension RoutineRunnerGlassButtonStyle: StructuralHapticStyle {
     var structuralHapticLevel: HapticTapLevel { .normal }
+}
+
+private extension View {
+    func routineRunnerTopSheen<S: Shape>(in shape: S) -> some View {
+        overlay(alignment: .top) {
+            shape.fill(
+                LinearGradient(
+                    colors: [.white.opacity(0.055), .clear],
+                    startPoint: .top,
+                    endPoint: .center
+                )
+            )
+        }
+    }
 }
 
 private func formatTime(_ seconds: Int) -> String {

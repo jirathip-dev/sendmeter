@@ -126,11 +126,20 @@ public struct RoutineAudioCueController: Equatable, Sendable {
         suspended = true
     }
 
+    /// Re-anchor the observation cursor without changing whether playback is
+    /// suspended. This is safe for a paused/foregrounding run: the cursor can
+    /// move, but no cue can escape until the caller explicitly resumes it.
     public mutating func reanchor(stage: RoutineStage, remainingSeconds: Int) {
         observedStageID = stage.id
         lastRemainingSeconds = max(0, remainingSeconds)
         phaseEndStageID = nil
         suppressStageEnd = false
+    }
+
+    /// Resume playback from a settled stage. The first observation is an
+    /// anchor, so a foreground catch-up cannot emit a stale countdown or gong.
+    public mutating func resume(stage: RoutineStage, remainingSeconds: Int) {
+        reanchor(stage: stage, remainingSeconds: remainingSeconds)
         suspended = false
     }
 

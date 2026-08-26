@@ -44,8 +44,12 @@ final class RoutineRunnerPresentationTests: XCTestCase {
         XCTAssertEqual(snapshot.current.stepCount, 2)
         XCTAssertEqual(snapshot.current.repetitionNumber, 1)
         XCTAssertEqual(snapshot.current.repetitionCount, 2)
-        XCTAssertEqual(snapshot.current.repetitionsRemaining, 1)
+        XCTAssertEqual(snapshot.current.repetitionsRemaining, 2)
         XCTAssertEqual(snapshot.next?.stage.kind, .rest)
+        XCTAssertEqual(snapshot.stageNumber, 1)
+        XCTAssertEqual(snapshot.stageCount, 4)
+        XCTAssertEqual(snapshot.totalRoutineSeconds, 31)
+        XCTAssertEqual(snapshot.timelineElapsedSeconds, 2)
         XCTAssertEqual(snapshot.currentRemainingSeconds, 8)
         XCTAssertEqual(snapshot.actualElapsedSeconds, 2)
         XCTAssertEqual(snapshot.timelineRemainingSeconds, 29)
@@ -67,7 +71,7 @@ final class RoutineRunnerPresentationTests: XCTestCase {
         XCTAssertEqual(snapshot.visualState, .rest)
         XCTAssertEqual(snapshot.visualState.title, "REST")
         XCTAssertEqual(snapshot.current.repetitionNumber, 2)
-        XCTAssertEqual(snapshot.current.repetitionsRemaining, 0)
+        XCTAssertEqual(snapshot.current.repetitionsRemaining, 1)
         XCTAssertEqual(snapshot.next?.stage.label, "Front lever")
         XCTAssertEqual(snapshot.next?.stage.kind, .work)
         XCTAssertEqual(Set([
@@ -76,6 +80,27 @@ final class RoutineRunnerPresentationTests: XCTestCase {
             .paused,
             .done
         ]).count, 4)
+    }
+
+    func testToGoIncludesTheDisplayedRepForTheApprovedRepThreeOfEightCopy() {
+        let routine = RoutinePreset(
+            name: "Rep context",
+            steps: [RoutineStep(label: "Hang", seconds: 10, repetitions: 8)]
+        )
+        let stage = RoutineStage(
+            kind: .work,
+            label: "Hang",
+            detail: nil,
+            stepIndex: 0,
+            repetition: 3,
+            durationSeconds: 10
+        )
+
+        let context = RoutineRunnerStageContext(stage: stage, preset: routine)
+
+        XCTAssertEqual(context.repetitionNumber, 3)
+        XCTAssertEqual(context.repetitionCount, 8)
+        XCTAssertEqual(context.repetitionsRemaining, 6)
     }
 
     func testPausedAndDoneSnapshotsUseOnlyTheApprovedVisualStates() {

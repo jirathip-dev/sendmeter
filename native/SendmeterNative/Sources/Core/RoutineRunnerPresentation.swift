@@ -52,7 +52,9 @@ public struct RoutineRunnerStageContext: Equatable, Sendable {
         self.stepNumber = stage.stepIndex + 1
         self.repetitionNumber = displayedRepetition
         self.repetitionCount = repetitions
-        self.repetitionsRemaining = max(0, repetitions - displayedRepetition)
+        // "To go" includes the currently displayed rep: Rep 3 of 8 means
+        // six reps remain in this step, matching the approved runner copy.
+        self.repetitionsRemaining = max(0, repetitions - displayedRepetition + 1)
     }
 }
 
