@@ -86,11 +86,11 @@ public struct ReadinessWidgetSnapshot: Codable, Equatable, Sendable {
         guard schemaVersion == Self.currentSchemaVersion,
               !day.isEmpty,
               readiness.map({ (0...100).contains($0) }) ?? true,
-              readinessZone.map { Self.validReadinessZones.contains($0) } ?? true,
+              readinessZone.map({ Self.validReadinessZones.contains($0) }) ?? true,
               readiness == nil ? readinessZone == nil && readinessComputedAt == nil : true,
-              phaseID.map { Self.hasNonEmptyPhaseValue($0) } ?? true,
-              phaseName.map { Self.hasNonEmptyPhaseValue($0) } ?? true,
-              phaseColorHex.map { Self.hasNonEmptyPhaseValue($0) } ?? true,
+              phaseID.map({ Self.hasNonEmptyPhaseValue($0) }) ?? true,
+              phaseName.map({ Self.hasNonEmptyPhaseValue($0) }) ?? true,
+              phaseColorHex.map({ Self.hasNonEmptyPhaseValue($0) }) ?? true,
               phaseWeek.map({ $0 > 0 }) ?? true,
               phaseDay.map({ $0 > 0 }) ?? true
         else { return false }

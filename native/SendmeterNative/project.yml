@@ -109,7 +109,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: SendmeterNative.entitlements
         SWIFT_VERSION: 5.0
         IPHONEOS_DEPLOYMENT_TARGET: 17.0
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: SENDMETER_APP
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: 9244PWFYD7
         CODE_SIGN_STYLE: Automatic
@@ -121,7 +120,7 @@ targets:
         Debug:
           base:
             PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native
-            SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG SENDMETER_APP
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
         Release:
           base:
             PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog
