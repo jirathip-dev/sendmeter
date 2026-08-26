@@ -39,11 +39,13 @@ private extension StructuralHapticTapPolicy {
 
 /// The SwiftUI half of the structural haptics layer (#752).
 ///
-/// SwiftUI exposes no global `<button>` equivalent, so a button/card is given
-/// a `DragGesture(minimumDistance: 0)` as a *simultaneous* gesture. It starts
-/// a shared tick on touch-down, cancels after the web tap slop (a scroll that
-/// starts on a control stays silent), and settles on lift. The one-tick
-/// tracker is Core (`StructuralHapticTracker`); this modifier only feeds it.
+/// Production uses SwiftUI's native Button action/press path for implicit
+/// buttons and a simultaneous `TapGesture` for explicit button/card surfaces.
+/// Both let a scroll recognizer win before the tap is committed. The
+/// DEBUG-only A/B arms also expose the pre-fix zero-distance drag control so
+/// the original structural-gesture hypothesis can be compared on-device.
+/// The one-tick tracker is Core (`StructuralHapticTracker`); this modifier only
+/// feeds it.
 ///
 /// System `Menu` rows are rendered outside the SwiftUI view hierarchy, so a
 /// row cannot carry `.hapticTap` directly. Menu triggers opt in with it and
@@ -55,7 +57,9 @@ public struct HapticTapModifier: ViewModifier {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.hapticTapMuted) private var muted
     @Environment(\.structuralHapticTapPolicy) private var policy
+#if DEBUG
     @State private var tracking = false
+#endif
 
     private let level: HapticTapLevel
     private let source: HapticTapSource
@@ -70,37 +74,63 @@ public struct HapticTapModifier: ViewModifier {
         self.source = source
     }
 
+    @ViewBuilder
     public func body(content: Content) -> some View {
+        if policy.allows(source) {
+#if DEBUG
+            if policy.attachment == .legacyZeroDistance {
+                // Diagnostic A/B only. The legacy control preserves the
+                // pre-fix callback semantics; production never compiles this
+                // zero-distance recognizer into its normal path.
+                content.simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard isEnabled, !muted else { return }
+                            if !tracking {
+                                tracking = true
+                                Haptics.shared.beginTap(
+                                    cue: StructuralHaptics.cue(level: level)
+                                )
+                            }
+                            let overSlop = max(
+                                abs(value.translation.width),
+                                abs(value.translation.height)
+                            ) > StructuralHapticTracker.tapSlopPx
+                            if overSlop {
+                                tracking = false
+                                Haptics.shared.cancelTap()
+                            }
+                        }
+                        .onEnded { _ in
+                            // Keep A faithful to the pre-fix control,
+                            // including its mid-gesture enabled/muted guard.
+                            guard tracking, isEnabled, !muted else { return }
+                            tracking = false
+                            Haptics.shared.completeTap()
+                        }
+                )
+            } else {
+                scrollSafeBody(content: content)
+            }
+#else
+            scrollSafeBody(content: content)
+#endif
+        } else {
+            content
+        }
+    }
+
+    private func scrollSafeBody(content: Content) -> some View {
         content.simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    guard policy.allows(source), isEnabled, !muted else { return }
-                    if !tracking {
-                        tracking = true
-                        Haptics.shared.beginTap(
-                            cue: StructuralHaptics.cue(level: level)
-                        )
-                    }
-                    let overSlop = max(
-                        abs(value.translation.width),
-                        abs(value.translation.height)
-                    ) > StructuralHapticTracker.tapSlopPx
-                    if overSlop {
-                        tracking = false
-                        Haptics.shared.cancelTap()
-                    }
-                }
-                .onEnded { _ in
-                    guard tracking else { return }
-                    tracking = false
-                    guard policy.allows(source), isEnabled, !muted else {
-                        Haptics.shared.cancelTap()
-                        return
-                    }
-                    // The dispatcher holds the settled cue for a short
-                    // arbitration window, so a Button action that runs after
-                    // this callback can still promote the same gesture to its
-                    // explicit medium/warning cue instead of double-firing.
+            TapGesture()
+                .onEnded {
+                    guard isEnabled, !muted else { return }
+                    Haptics.shared.beginTap(
+                        cue: StructuralHaptics.cue(level: level)
+                    )
+                    // The action/press path settles after the native tap has
+                    // won over scrolling; the dispatcher keeps the cue open
+                    // briefly so an explicit action can upgrade it once.
                     Haptics.shared.completeTap()
                 }
         )
@@ -150,9 +180,10 @@ public extension View {
 }
 
 /// The structural default for buttons that don't opt into an explicit app
-/// style. It delegates the visual to SwiftUI's `DefaultButtonStyle` and adds
-/// the same one-tick tap gesture, so implicit list/toolbar controls are not
-/// silent just because they never called `.hapticButtonStyle`.
+/// style. Production wraps the action in a native Button and delegates the
+/// visual and scroll arbitration to SwiftUI's `DefaultButtonStyle`; there is
+/// no global zero-distance drag. DEBUG A/B arms retain the legacy body so the
+/// old root attachment can be compared on the same source revision.
 public struct StructuralDefaultButtonStyle: PrimitiveButtonStyle {
     private let mode: StructuralHapticDiagnosticMode
 
@@ -162,14 +193,41 @@ public struct StructuralDefaultButtonStyle: PrimitiveButtonStyle {
 
     @ViewBuilder
     public func makeBody(configuration: Configuration) -> some View {
-        if mode.tapPolicy.rootDefaultEnabled {
-            DefaultButtonStyle().makeBody(configuration: configuration)
-                .structuralHapticTap()
+#if DEBUG
+        if mode.usesLegacyStructuralGesture {
+            if mode.tapPolicy.rootDefaultEnabled {
+                DefaultButtonStyle().makeBody(configuration: configuration)
+                    .structuralHapticTap()
+            } else {
+                // B deliberately delegates to SwiftUI's stock default
+                // behavior; explicit action haptics and all feature behavior
+                // stay intact.
+                DefaultButtonStyle().makeBody(configuration: configuration)
+            }
         } else {
-            // B deliberately delegates to SwiftUI's stock default behavior;
-            // explicit action haptics and all feature behavior stay intact.
-            DefaultButtonStyle().makeBody(configuration: configuration)
+            ScrollSafeStructuralButton(configuration: configuration)
         }
+#else
+        ScrollSafeStructuralButton(configuration: configuration)
+#endif
+    }
+}
+
+/// A real Button owns press/scroll arbitration. Its action arms the same
+/// shared tracker that explicit tap surfaces use, then triggers the original
+/// primitive action exactly once.
+private struct ScrollSafeStructuralButton: View {
+    let configuration: PrimitiveButtonStyle.Configuration
+
+    var body: some View {
+        Button(role: configuration.role) {
+            Haptics.shared.beginTap(cue: StructuralHaptics.cue(level: .normal))
+            Haptics.shared.completeTap()
+            configuration.trigger()
+        } label: {
+            configuration.label
+        }
+        .buttonStyle(DefaultButtonStyle())
     }
 }
 

@@ -1,16 +1,27 @@
+/// How a structural tap is recognized. The production path deliberately uses
+/// SwiftUI's native tap/button recognition instead of a zero-distance drag,
+/// so a vertical scroll can win immediately. The legacy case exists only for
+/// the DEBUG-only #816 diagnostic arms.
+public enum StructuralHapticAttachment: Equatable, Sendable {
+    case scrollSafe
+    case legacyZeroDistance
+}
+
 /// Launch-selectable, DEBUG-only A/B policy for the native structural-haptics
 /// investigation (#816). The app is responsible for keeping the resolver
 /// behind `#if DEBUG`; the `debugBuild` argument makes that release boundary
 /// explicit and directly testable in this pure module.
 public enum StructuralHapticDiagnosticMode: String, CaseIterable, Equatable, Sendable {
-    /// No diagnostic argument was supplied. This is the shipped default.
+    /// No diagnostic argument was supplied. This is the scroll-safe shipped path.
     case normal
-    /// A: the current structural haptic behavior, with a visible diagnostic label.
+    /// A: a faithful legacy structural-gesture control, with a visible label.
     case control
-    /// B: disable only the root default-button structural gesture.
+    /// B: disable only the legacy root default-button structural gesture.
     case rootGestureDisabled
-    /// B′: keep the root gesture, but disable explicit HapticTapModifier paths.
+    /// B′: keep the legacy root gesture, but disable explicit HapticTapModifier paths.
     case explicitTapDisabled
+    /// B+B′: remove every legacy structural gesture attachment.
+    case allStructuralGesturesDisabled
 
     public static let launchArgument = "-sendmeter-structural-haptics"
 
@@ -29,6 +40,8 @@ public enum StructuralHapticDiagnosticMode: String, CaseIterable, Equatable, Sen
             return .rootGestureDisabled
         case "b-prime", "b′":
             return .explicitTapDisabled
+        case "b-plus-prime", "b+b-prime", "b+b′":
+            return .allStructuralGesturesDisabled
         default:
             return .normal
         }
@@ -36,23 +49,37 @@ public enum StructuralHapticDiagnosticMode: String, CaseIterable, Equatable, Sen
 
     public var tapPolicy: StructuralHapticTapPolicy {
         switch self {
-        case .normal, .control:
+        case .normal:
             return .allEnabled
+        case .control:
+            return StructuralHapticTapPolicy(
+                rootDefaultEnabled: true,
+                explicitEnabled: true,
+                attachment: .legacyZeroDistance
+            )
         case .rootGestureDisabled:
             return StructuralHapticTapPolicy(
                 rootDefaultEnabled: false,
-                explicitEnabled: true
+                explicitEnabled: true,
+                attachment: .legacyZeroDistance
             )
         case .explicitTapDisabled:
             return StructuralHapticTapPolicy(
                 rootDefaultEnabled: true,
-                explicitEnabled: false
+                explicitEnabled: false,
+                attachment: .legacyZeroDistance
+            )
+        case .allStructuralGesturesDisabled:
+            return StructuralHapticTapPolicy(
+                rootDefaultEnabled: false,
+                explicitEnabled: false,
+                attachment: .legacyZeroDistance
             )
         }
     }
 
-    public var isDeviceDiagnostic: Bool {
-        self != .normal
+    public var usesLegacyStructuralGesture: Bool {
+        tapPolicy.attachment == .legacyZeroDistance
     }
 
     public var displayLabel: String? {
@@ -60,11 +87,13 @@ public enum StructuralHapticDiagnosticMode: String, CaseIterable, Equatable, Sen
         case .normal:
             return nil
         case .control:
-            return "TOUCH A/B DIAGNOSTIC • A — structural haptics ON"
+            return "TOUCH A/B DIAGNOSTIC • A — legacy control"
         case .rootGestureDisabled:
-            return "TOUCH A/B DIAGNOSTIC • B — root structural gesture OFF"
+            return "TOUCH A/B DIAGNOSTIC • B — legacy root gesture OFF"
         case .explicitTapDisabled:
-            return "TOUCH A/B DIAGNOSTIC • B′ — explicit HapticTapModifier OFF"
+            return "TOUCH A/B DIAGNOSTIC • B′ — legacy explicit gesture OFF"
+        case .allStructuralGesturesDisabled:
+            return "TOUCH A/B DIAGNOSTIC • B+B′ — all legacy gestures OFF"
         }
     }
 }
@@ -72,14 +101,21 @@ public enum StructuralHapticDiagnosticMode: String, CaseIterable, Equatable, Sen
 public struct StructuralHapticTapPolicy: Equatable, Sendable {
     public let rootDefaultEnabled: Bool
     public let explicitEnabled: Bool
+    public let attachment: StructuralHapticAttachment
 
-    public init(rootDefaultEnabled: Bool, explicitEnabled: Bool) {
+    public init(
+        rootDefaultEnabled: Bool,
+        explicitEnabled: Bool,
+        attachment: StructuralHapticAttachment = .scrollSafe
+    ) {
         self.rootDefaultEnabled = rootDefaultEnabled
         self.explicitEnabled = explicitEnabled
+        self.attachment = attachment
     }
 
     public static let allEnabled = Self(
         rootDefaultEnabled: true,
-        explicitEnabled: true
+        explicitEnabled: true,
+        attachment: .scrollSafe
     )
 }

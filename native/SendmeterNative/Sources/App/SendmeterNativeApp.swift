@@ -85,20 +85,25 @@ struct RootView: View {
                 }
             }
 
-            if let message = model.errorMessage {
-                ErrorBanner(message: message) { model.errorMessage = nil }
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(10)
-            }
+        }
+        .overlay(alignment: .top) {
+            // Stack diagnostics below the error banner so the A/B label can
+            // never obscure its message or dismiss button.
+            VStack(spacing: 4) {
+                if let message = model.errorMessage {
+                    ErrorBanner(message: message) { model.errorMessage = nil }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(10)
+                }
 
-            if let label = structuralHapticMode.displayLabel {
-                StructuralHapticDiagnosticBanner(label: label)
-                    .padding(.top, 4)
-                    .zIndex(20)
-                    .allowsHitTesting(false)
+                if let label = structuralHapticMode.displayLabel {
+                    StructuralHapticDiagnosticBanner(label: label)
+                        .allowsHitTesting(false)
+                        .zIndex(20)
+                }
             }
+            .padding(.horizontal)
+            .padding(.top, 8)
         }
         .overlay(alignment: .bottom) {
             if let toast = model.toast {

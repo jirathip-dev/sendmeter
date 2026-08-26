@@ -2,7 +2,7 @@ import XCTest
 @testable import SendmeterCore
 
 final class StructuralHapticDiagnosticsTests: XCTestCase {
-    func testMissingOrReleaseArgumentsUseTheUnchangedDefault() {
+    func testMissingOrReleaseArgumentsUseTheNormalDefault() {
         XCTAssertEqual(
             StructuralHapticDiagnosticMode.resolve(
                 arguments: [],
@@ -48,6 +48,13 @@ final class StructuralHapticDiagnosticsTests: XCTestCase {
         )
         XCTAssertEqual(
             StructuralHapticDiagnosticMode.resolve(
+                arguments: [argument, "b-plus-prime"],
+                debugBuild: true
+            ),
+            .allStructuralGesturesDisabled
+        )
+        XCTAssertEqual(
+            StructuralHapticDiagnosticMode.resolve(
                 arguments: [argument, "unknown"],
                 debugBuild: true
             ),
@@ -57,22 +64,44 @@ final class StructuralHapticDiagnosticsTests: XCTestCase {
 
     func testBAndBPrimeDisableOnlyTheirNamedGestureSource() {
         XCTAssertEqual(
+            StructuralHapticDiagnosticMode.normal.tapPolicy,
+            StructuralHapticTapPolicy(
+                rootDefaultEnabled: true,
+                explicitEnabled: true,
+                attachment: .scrollSafe
+            )
+        )
+        XCTAssertEqual(
+            StructuralHapticDiagnosticMode.control.tapPolicy,
+            StructuralHapticTapPolicy(
+                rootDefaultEnabled: true,
+                explicitEnabled: true,
+                attachment: .legacyZeroDistance
+            )
+        )
+        XCTAssertEqual(
             StructuralHapticDiagnosticMode.rootGestureDisabled.tapPolicy,
             StructuralHapticTapPolicy(
                 rootDefaultEnabled: false,
-                explicitEnabled: true
+                explicitEnabled: true,
+                attachment: .legacyZeroDistance
             )
         )
         XCTAssertEqual(
             StructuralHapticDiagnosticMode.explicitTapDisabled.tapPolicy,
             StructuralHapticTapPolicy(
                 rootDefaultEnabled: true,
-                explicitEnabled: false
+                explicitEnabled: false,
+                attachment: .legacyZeroDistance
             )
         )
         XCTAssertEqual(
-            StructuralHapticDiagnosticMode.control.tapPolicy,
-            .allEnabled
+            StructuralHapticDiagnosticMode.allStructuralGesturesDisabled.tapPolicy,
+            StructuralHapticTapPolicy(
+                rootDefaultEnabled: false,
+                explicitEnabled: false,
+                attachment: .legacyZeroDistance
+            )
         )
     }
 
@@ -86,6 +115,9 @@ final class StructuralHapticDiagnosticsTests: XCTestCase {
         )
         XCTAssertTrue(
             StructuralHapticDiagnosticMode.explicitTapDisabled.displayLabel?.contains("B′") == true
+        )
+        XCTAssertTrue(
+            StructuralHapticDiagnosticMode.allStructuralGesturesDisabled.displayLabel?.contains("B+B′") == true
         )
     }
 }
