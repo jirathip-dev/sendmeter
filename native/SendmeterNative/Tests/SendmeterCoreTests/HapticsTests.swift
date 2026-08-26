@@ -269,4 +269,46 @@ final class HapticsTests: XCTestCase {
         gate.tap(nowMs: now + 2_000)
         XCTAssertTrue(gate.claim(nowMs: now + 2_010))
     }
+
+    // MARK: Sheet presentation lifecycle (#789)
+
+    func testSheetLifecycleDeduplicatesRepeatedAppearanceAndDismissal() {
+        var lifecycle = SheetPresentationLifecycle()
+
+        XCTAssertEqual(lifecycle.appeared(id: "training-load"), .presented)
+        XCTAssertEqual(lifecycle.appeared(id: "training-load"), .none)
+        XCTAssertEqual(lifecycle.disappeared(id: "training-load"), .dismissed)
+        XCTAssertEqual(lifecycle.disappeared(id: "training-load"), .none)
+    }
+
+    func testSheetLifecycleTreatsItemReplacementAsCloseThenOpen() {
+        var lifecycle = SheetPresentationLifecycle()
+
+        XCTAssertEqual(lifecycle.appeared(id: "static-capacity"), .presented)
+        XCTAssertEqual(lifecycle.appeared(id: "movement"), .replaced)
+        XCTAssertTrue(lifecycle.isPresented)
+        XCTAssertEqual(lifecycle.appeared(id: "movement"), .none)
+    }
+
+    func testSheetLifecycleIgnoresStaleDisappearanceAfterReplacement() {
+        var lifecycle = SheetPresentationLifecycle()
+
+        XCTAssertEqual(lifecycle.appeared(id: "old"), .presented)
+        XCTAssertEqual(lifecycle.appeared(id: "new"), .replaced)
+        XCTAssertEqual(lifecycle.disappeared(id: "old"), .none)
+        XCTAssertTrue(lifecycle.isPresented)
+        XCTAssertEqual(lifecycle.disappeared(id: "new"), .dismissed)
+    }
+
+    func testSheetLifecycleSupportsBooleanBackedSheets() {
+        var lifecycle = SheetPresentationLifecycle()
+
+        XCTAssertEqual(lifecycle.appeared(), .presented)
+        XCTAssertEqual(lifecycle.appeared(), .none)
+        XCTAssertEqual(lifecycle.disappeared(), .dismissed)
+    }
+
+    func testSheetPresentationPolicyUsesTheSharedRadius() {
+        XCTAssertEqual(SheetPresentationPolicy.cornerRadius, 18)
+    }
 }

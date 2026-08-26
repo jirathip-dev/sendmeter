@@ -2,7 +2,7 @@ import SendmeterCore
 import SwiftUI
 
 public enum SendmeterStyle {
-    public static let radius: CGFloat = 18
+    public static let radius: CGFloat = CGFloat(SheetPresentationPolicy.cornerRadius)
     public static let spacing: CGFloat = 16
 
     /// Shared treatment for the app's glanceable metric values. The semantic
@@ -24,6 +24,7 @@ public enum SendmeterStyle {
     public static let primary = Color(hex: "#5B5FC7")
     public static let optimal = Color(hex: "#2E96F0")
     public static let caution = Color(hex: "#DDB13A")
+    public static let paused = Color(hex: "#565D6D")
     public static let alert = Color(hex: "#E5743A")
 
     public static func phaseColor(_ phase: PhaseID) -> Color {
@@ -336,6 +337,7 @@ public struct ErrorBanner: View {
         }
         .padding(12)
         .background(SendmeterStyle.alert.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -402,6 +404,7 @@ public struct AppToast: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.thickMaterial, in: Capsule())
+        .contentShape(Capsule())
         .shadow(radius: 12, y: 6)
     }
 }

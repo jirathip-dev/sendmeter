@@ -147,6 +147,22 @@ jobs:
             -project SendmeterNative.xcodeproj \
             -scheme SendmeterNative \
             -resolvePackageDependencies
+      # The application-target tests need a concrete, booted simulator. Keep
+      # this separate from the generic build so a boot failure is explicit and
+      # the test target cannot be compiled and silently discarded.
+      - name: Boot an iOS simulator for native app tests
+        id: ios-sim
+        run: |
+          UDID=$(xcrun simctl list devices available --json \
+            | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[]] | first | .udid')
+          if [ -z "$UDID" ] || [ "$UDID" = "null" ]; then
+            echo "No available iOS simulator on this runner" >&2
+            xcrun simctl list devices >&2
+            exit 1
+          fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true # already-booted is fine
+          xcrun simctl bootstatus "$UDID" -b
       - name: Build native app
         working-directory: native/SendmeterNative
         run: |
@@ -157,3 +173,17 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             build
+      # These tests compile against the application module, not only the
+      # SwiftPM Core policy target. Running the whole target keeps the sheet
+      # wiring invariant and the existing auth/date/session checks enforced in
+      # CI rather than only in local simulator runs.
+      - name: Build and test native app target
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild test \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -configuration Debug \
+            -destination "id=${{ steps.ios-sim.outputs.udid }}" \
+            -only-testing:SendmeterNativeTests \
+            CODE_SIGNING_ALLOWED=NO

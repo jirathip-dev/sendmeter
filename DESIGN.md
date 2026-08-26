@@ -140,7 +140,7 @@ one place:
 
 - Spacing scale: 4 / 8 / 12 / 16 / 24 / 32 / 48. Cards pad 16; content-area
   pads 16 (mobile) / 24–32 (desktop).
-- Radius: 8 (inputs/buttons), 12 (cards), 16 (sheets).
+- Radius: 8 (inputs/buttons), 12 (cards), 18 (sheets).
 - Motion: 100–200ms, `cubic-bezier(0.4, 0, 0.2, 1)`; all transitions wrapped
   in `@media (prefers-reduced-motion: reduce)` suppression.
 
