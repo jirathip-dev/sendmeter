@@ -1842,13 +1842,13 @@ struct ForceView: View {
                 guard !guidedMinimizeRequested else { return }
                 teardownGuidedSessionIfNeeded()
             }
-            .sheet(item: $editingPreset, onDismiss: { Haptics.shared.sheetDismissed() }) { preset in
+            .sheet(item: $editingPreset) { preset in
                 ForcePresetEditor(preset: preset, isNew: false)
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation(id: preset.id.uuidString)
             }
-            .sheet(isPresented: $creatingPreset, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $creatingPreset) {
                 ForcePresetEditor(preset: Self.defaultPreset(), isNew: true)
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
             .fullScreenCover(isPresented: $guidedFullscreenPresented, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 if let guidedSession {

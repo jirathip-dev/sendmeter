@@ -48,13 +48,13 @@ struct AcwrStatusCard: View {
         .accessibilityHint("Opens training load details.")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { openTrainingLoad() }
-        .sheet(isPresented: $showTrainingLoad, onDismiss: { Haptics.shared.sheetDismissed() }) {
+        .sheet(isPresented: $showTrainingLoad) {
             TrainingLoadSheet()
-                .onAppear { Haptics.shared.sheetPresented() }
+                .sendmeterSheetPresentation()
         }
-        .sheet(isPresented: $showInfo, onDismiss: { Haptics.shared.sheetDismissed() }) {
+        .sheet(isPresented: $showInfo) {
             AcwrStatusCardInfoSheet()
-                .onAppear { Haptics.shared.sheetPresented() }
+                .sendmeterSheetPresentation()
         }
     }
 

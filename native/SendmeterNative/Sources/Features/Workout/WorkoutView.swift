@@ -48,13 +48,13 @@ struct WorkoutView: View {
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Workout")
-            .sheet(isPresented: $showRoutineEditor, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showRoutineEditor) {
                 RoutineEditorSheet()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
-            .sheet(item: $runningRoutine, onDismiss: { Haptics.shared.sheetDismissed() }) { presentation in
+            .sheet(item: $runningRoutine) { presentation in
                 RoutineRunnerSheet(presentation: presentation)
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation(id: presentation.id.uuidString)
             }
             .fullScreenCover(isPresented: $showManualWorkout, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 ManualWorkoutFullscreen(

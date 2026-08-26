@@ -101,7 +101,7 @@ struct ForceProgressCard: View {
                 }
             }
         }
-        .sheet(item: $detail, onDismiss: { Haptics.shared.sheetDismissed() }) { detail in
+        .sheet(item: $detail) { detail in
             Group {
                 switch detail {
                 case .staticCapacity:
@@ -114,7 +114,6 @@ struct ForceProgressCard: View {
                         targetBand: targetBand,
                         connectionPending: connectionPending
                     )
-                    .onAppear { Haptics.shared.sheetPresented() }
                 case .movement:
                     MovementDetailView(
                         recordings: recordings,
@@ -122,11 +121,10 @@ struct ForceProgressCard: View {
                         selectedSide: selectedSide,
                         hasLoadedRecordings: hasLoadedRecordings
                     )
-                    .onAppear { Haptics.shared.sheetPresented() }
                 }
             }
             .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .sendmeterSheetPresentation(id: detail.id)
         }
     }
 
