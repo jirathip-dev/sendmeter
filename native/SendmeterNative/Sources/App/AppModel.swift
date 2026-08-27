@@ -897,6 +897,73 @@ public final class AppModel {
     public var acwr: ACWRData { TrainingMetrics.computeACWR(sessions: sessions) }
     public var readiness: HealthMetric? { healthMetrics.first }
     public var weeklyLoads: [WeeklyLoad] { TrainingMetrics.weeklyLoads(sessions: sessions) }
+
+    /// Publishes the authoritative readiness, in-memory session load, and
+    /// phase state that Dashboard uses. The widget receives no HealthKit or
+    /// Supabase credentials; it gets an account/epoch-stamped snapshot only.
+    /// Dashboard keeps its historical list ordering, while the widget selects
+    /// today's row explicitly so a stale yesterday score cannot appear as
+    /// today's score.
+    private func publishReadinessWidgetSnapshot() {
+        guard let userID = currentUserID else {
+            ReadinessWidgetBridge.clear()
+            return
+        }
+
+        let now = Date()
+        let today = ReadinessWidgetTimelinePolicy.localDayString(for: now)
+        let todayMetric = healthMetrics.first { $0.date == today }
+        let computedACWR = TrainingMetrics.computeACWR(
+            sessions: sessions,
+            referenceDate: now
+        )
+        let loadValues: (acute: Double?, chronic: Double?, ratio: Double?)
+        if let ratio = computedACWR.ratio,
+           computedACWR.acute.isFinite,
+           computedACWR.acute >= 0,
+           computedACWR.chronic.isFinite,
+           computedACWR.chronic >= 0,
+           ratio.isFinite,
+           ratio >= 0 {
+            loadValues = (
+                computedACWR.acute,
+                computedACWR.chronic,
+                ratio
+            )
+        } else {
+            // `ACWRData` uses zeroes for the raw sums when there is no
+            // training history. That is useful to Dashboard's math, but a
+            // widget must not turn those sentinel values into a claim that a
+            // zero acute/chronic load was freshly measured.
+            loadValues = (nil, nil, nil)
+        }
+        let phase = currentPhase
+        let blockAge = TrainingMetrics.phaseBlockAge(
+            periods: phasePeriods,
+            currentPhase: settings.currentPhase,
+            fallbackStartDate: settings.phaseStartDate,
+            referenceDate: today
+        )
+        let snapshot = ReadinessWidgetSnapshot(
+            accountUserID: userID,
+            accountEpoch: accountEpoch,
+            day: today,
+            capturedAt: now,
+            readiness: todayMetric?.readiness,
+            readinessZone: todayMetric?.zone,
+            readinessComputedAt: todayMetric?.computedAt,
+            acute: loadValues.acute,
+            chronic: loadValues.chronic,
+            acwr: loadValues.ratio,
+            phaseID: settings.currentPhase.rawValue,
+            phaseName: phase.name,
+            phaseColorHex: phase.colorHex,
+            phaseWeek: blockAge?.week,
+            phaseDay: blockAge?.totalDays
+        )
+        ReadinessWidgetBridge.publish(snapshot, for: accountScope)
+    }
+
     public var recentSessions: [SendmeterCore.Session] { Array(sessions.prefix(8)) }
     public var latestQueuedWriteFailure: QueuedWriteDiagnostic? {
         queuedWriteDiagnostics
@@ -1587,6 +1654,10 @@ public final class AppModel {
             await health.ensureBackgroundObserversRegistered()
             await silentHealthRefresh(trigger: .foreground)
         }
+        // Foreground is also the normal widget freshness boundary. Publish
+        // even when the health coalescing gate kept the read; the score is
+        // intentionally frozen for the day, while ACWR/phase may have changed.
+        publishReadinessWidgetSnapshot()
         // Last on purpose: the drain's "Saved" toasts above must not clobber
         // the loss notice — the user hearing about the lost rep is the point.
         surfaceLostRecordingNoticeIfAny()
@@ -2557,6 +2628,11 @@ public final class AppModel {
             // intentionally leaves the non-watched tables untouched).
             lastListRefreshAt = ProcessInfo.processInfo.systemUptime
             warmTagCurvesIfMissing(capturedBy: accountFetch)
+            // This is deliberately inside the private refresh path so cold
+            // bootstrap, foreground refresh, and mutation follow-ups all
+            // have one guaranteed publication point after authoritative data
+            // has successfully crossed the account/epoch guard.
+            publishReadinessWidgetSnapshot()
         } catch {
             if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
                 // Some slices may have already been published before the
@@ -2802,6 +2878,7 @@ public final class AppModel {
                     confirmingLocalRevision: optimisticRevision
                 )
                 sessions.removeAll { $0.id == session.id }
+                publishReadinessWidgetSnapshot()
             }
             surface(error)
         }
@@ -2836,6 +2913,7 @@ public final class AppModel {
         let previous = sessions.first { $0.id == session.id }
         pendingSessions.removeValue(forKey: session.id)
         sessions.removeAll { $0.id == session.id }
+        publishReadinessWidgetSnapshot()
         let deleteRevision = cacheMarkDeletedLocal(
             accountUserID: userID,
             entityType: .sessions,
@@ -3116,6 +3194,7 @@ public final class AppModel {
         var settingsRevision: Int?
         phasePeriods = preview.periods
         settings = preview.settings
+        publishReadinessWidgetSnapshot()
         let previewIDs = Set(preview.periods.map(\.id))
         for period in previousPeriods where !previewIDs.contains(period.id) {
             if let revision = cacheMarkDeletedLocal(
@@ -3193,6 +3272,7 @@ public final class AppModel {
             )
             phasePeriods = result.periods
             settings = result.settings
+            publishReadinessWidgetSnapshot()
             toastMessage = "Training Block changed to \(PhaseCatalog.definition(for: phase).name)."
         } catch {
             guard accountFetch.canApply(
@@ -3226,6 +3306,7 @@ public final class AppModel {
             )
             phasePeriods = previousPeriods
             settings = previousSettings
+            publishReadinessWidgetSnapshot()
             surface(error)
         }
     }
@@ -6098,6 +6179,11 @@ public final class AppModel {
                     }
                     watch.publishReadiness(relayMetric)
                 }
+                // Health reconciliation can touch the complete 28-day
+                // candidate window. Publish once after the pass, rather than
+                // once per historical row, so a single refresh causes one
+                // App Group write and one WidgetKit reload.
+                publishReadinessWidgetSnapshot()
                 guard !Task.isCancelled else {
                     recomputeGate.cancel()
                     return nil
@@ -8288,6 +8374,7 @@ public final class AppModel {
                 removePendingRecording(for: id, accountUserID: userID)
                 removePendingCurveSamples(for: id)
                 sessions.removeAll { $0.id == id }
+                publishReadinessWidgetSnapshot()
                 let beforeRecordings = recordings
                 let beforeCount = recordings.count
                 recordings.removeAll { $0.id == id }
@@ -8852,6 +8939,7 @@ public final class AppModel {
                     accountEpoch: accountEpoch
                 ) {
                     healthMetrics = snapshot.healthMetrics
+                    publishReadinessWidgetSnapshot()
                 }
                 guard publishedHealth else { return }
             }
@@ -9365,6 +9453,7 @@ public final class AppModel {
             // (#652 F2).
             hasLoadedSessions = true
         }
+        publishReadinessWidgetSnapshot()
     }
 
     private func replaceSession(_ session: SendmeterCore.Session) {
@@ -9379,6 +9468,7 @@ public final class AppModel {
             return $0.id.uuidString > $1.id.uuidString
         }
         hasLoadedSessions = true
+        publishReadinessWidgetSnapshot()
     }
 
     private func replaceRecording(_ recording: TindeqRecording) {
@@ -9501,6 +9591,11 @@ public final class AppModel {
 
     private func resetAccountState() {
         accountEpoch &+= 1
+        // Remove a different account's snapshot at the same synchronous
+        // boundary as the visible model. A same-account bootstrap keeps its
+        // last valid glance visible until the successful refresh publishes a
+        // new epoch, avoiding an unnecessary blank window.
+        ReadinessWidgetBridge.reset(for: currentUserID)
         authClockAdvisoryMessage = nil
         // A HealthKit read can be suspended across sign-out/account switch.
         // Invalidate its owner before clearing the visible account snapshot;

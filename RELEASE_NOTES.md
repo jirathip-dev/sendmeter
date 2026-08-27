@@ -10,6 +10,10 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Native iPhone now has a medium/large home-screen and Smart Stack readiness
+  widget with today's readiness score and zone, ACWR with acute/chronic load,
+  and the current training block; missing data stays an honest Apple Health or
+  no-load prompt, and tapping it opens Dashboard.
 - Native Release packaging now targets the existing Apple Watch companion and
   its watch-widget extension; signed archive/device installation and the
   paired watch's direct live-workout mirror remain validation gates, so this

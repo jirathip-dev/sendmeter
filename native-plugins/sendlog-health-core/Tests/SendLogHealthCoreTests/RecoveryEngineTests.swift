@@ -169,6 +169,33 @@ final class RecoveryEngineTests: XCTestCase {
         XCTAssertEqual(r.score, 50)
     }
 
+    func testRestorativeSleepUsesEachAvailableStage() {
+        XCTAssertEqual(
+            inputs(deep: 1.5, rem: nil).restorativeSleepHours,
+            1.5
+        )
+        XCTAssertEqual(
+            inputs(deep: nil, rem: 1.25).restorativeSleepHours,
+            1.25
+        )
+        XCTAssertNil(inputs().restorativeSleepHours)
+    }
+
+    func testLowRestorativeSleepPenalisesReadiness() {
+        let r = RecoveryEngine.compute(
+            inputs: inputs(
+                rhr: 54, deep: 0.5, rem: 0.5,
+                rhrBase: base(mean: 54, sigma: 2),
+                restBase: base(mean: 2.5, sigma: 0.4)
+            ),
+            acwr: nil,
+            t: t
+        )
+
+        XCTAssertEqual(r.score, 40)
+        XCTAssertEqual(r.driver, "Low deep/REM sleep")
+    }
+
     // #111 end-to-end: a wearable-data gap (usable nights only right after
     // the gap and >2 months back) starves the fixed 30-night window → nil,
     // but the same nights run through BaselineBuilder's extended selection
