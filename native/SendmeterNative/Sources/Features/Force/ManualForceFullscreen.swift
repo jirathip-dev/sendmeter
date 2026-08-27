@@ -206,7 +206,12 @@ struct ManualForceFullscreen: View {
                     target: targetBand?.kilograms
                 )
                 .frame(height: height)
-                .accessibilityLabel("Live force trace")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    ForceTraceAccessibility.liveSummary(
+                        peakKilograms: device.peakKilograms
+                    )
+                )
             }
         }
     }

@@ -265,15 +265,39 @@ public struct MetricValue: View {
     }
 
     public var body: some View {
+        ViewThatFits(in: .horizontal) {
+            inlineValue
+            stackedValue
+        }
+        .layoutPriority(1)
+    }
+
+    private var inlineValue: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(value)
-                .modifier(SendmeterStyle.heroMetric)
-                .foregroundStyle(color)
-            if let unit {
-                Text(unit)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
+            valueText
+            unitText
+        }
+    }
+
+    private var stackedValue: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            valueText
+            unitText
+        }
+    }
+
+    private var valueText: some View {
+        Text(value)
+            .modifier(SendmeterStyle.heroMetric)
+            .foregroundStyle(color)
+    }
+
+    @ViewBuilder
+    private var unitText: some View {
+        if let unit {
+            Text(unit)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
         }
     }
 }

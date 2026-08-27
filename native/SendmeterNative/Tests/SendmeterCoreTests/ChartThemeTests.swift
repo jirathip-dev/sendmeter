@@ -137,6 +137,44 @@ final class ChartThemeTests: XCTestCase {
         }
     }
 
+    func testForceTraceDarkMarksMeetContrastAfterCompositing() {
+        let background = ChartContrastPolicy.traceBackground(isDark: true)
+        let force = ChartContrastRGB(hex: ChartToken.force.darkHex)
+        let optimal = ChartContrastRGB(hex: ChartToken.optimal.darkHex)
+        let grid = ChartContrastRGB(hex: ChartToken.forceTraceGridHex(.dark))
+        let bandOpacity = ChartToken.forceTraceBandOpacity(.dark)
+
+        let band = optimal.over(background, opacity: bandOpacity)
+        let targetLine = optimal.over(background, opacity: 0.8)
+
+        XCTAssertGreaterThanOrEqual(
+            force.contrastRatio(to: background),
+            ChartContrastPolicy.minimumNonTextContrast
+        )
+        XCTAssertGreaterThanOrEqual(
+            grid.contrastRatio(to: background),
+            ChartContrastPolicy.minimumNonTextContrast
+        )
+        XCTAssertGreaterThanOrEqual(
+            band.contrastRatio(to: background),
+            ChartContrastPolicy.minimumNonTextContrast
+        )
+        XCTAssertGreaterThanOrEqual(
+            targetLine.contrastRatio(to: background),
+            ChartContrastPolicy.minimumNonTextContrast
+        )
+        XCTAssertGreaterThan(
+            bandOpacity,
+            ChartToken.optimal.bandOpacity(.dark),
+            "the Force band must use the composited contrast recipe, not the CSS decoration opacity"
+        )
+        XCTAssertEqual(ChartToken.forceTraceGridHex(.dark), ChartToken.axis.darkHex)
+        XCTAssertEqual(
+            ChartToken.forceTraceBackgroundHex(.dark),
+            ChartContrastPolicy.darkTraceBackgroundHex
+        )
+    }
+
     func testAreaGradientBottomStopPerChartDefs() {
         for token in ChartToken.allCases {
             if token == .load || token == .force {
