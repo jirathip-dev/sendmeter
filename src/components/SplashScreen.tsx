@@ -1,3 +1,9 @@
+// Branded auth splash (#294). KEEP-IN-SYNC: the native SplashView
+// (native/SendmeterNative/Sources/App/SendmeterNativeApp.swift) mirrors this
+// layout and ports the `.splash-dyno` motion as SplashDynoTimeline
+// (native/SendmeterNative/Sources/Core/SplashDynoTimeline.swift) — if you
+// change the layout or the keyframes here, update those (and the
+// SplashDynoTimeline unit tests) alongside.
 export default function SplashScreen() {
   return (
     <div className="app-shell splash-screen" role="status" aria-label="Starting Sendmeter">
