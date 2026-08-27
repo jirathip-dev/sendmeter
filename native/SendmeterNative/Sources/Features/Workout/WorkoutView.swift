@@ -11,6 +11,14 @@ struct WorkoutView: View {
     @State private var engine: PhoneWorkoutEngine?
     @State private var showRoutineEditor = false
     @State private var runningRoutine: RoutineRunPresentation?
+    /// #834: read-only routine preview (stateful `RoutinePreset` so the
+    /// `Identifiable` sheet gets one presentation per routine).
+    @State private var previewRoutine: RoutinePreset?
+    /// #834: the preset the preview's explicit Start handed over; applied to
+    /// `runningRoutine` only after the preview sheet fully dismisses, so the
+    /// runner (the classified, non-dismissible execution surface) never starts
+    /// on top of the preview.
+    @State private var pendingRoutineStart: RoutinePreset?
     @State private var isSaving = false
     @State private var activeSaveID: UUID?
     @State private var showManualWorkout = false
@@ -28,14 +36,16 @@ struct WorkoutView: View {
                     if engine == nil {
                         StartWorkoutCard(start: startWorkout)
                         RoutineLibraryCard(
-                            run: { preset in
+                            preview: { preset in
                                 // #656: a tap opening a sheet arms the
-                                // presentation tick.
+                                // presentation tick. #834: the tap only
+                                // previews — starting is explicit from the
+                                // preview sheet.
                                 Haptics.shared.tap()
-                                runningRoutine = RoutineRunPresentation(preset: preset, restored: nil)
+                                previewRoutine = preset
                             },
                             edit: {
-                                // #656: see `run:` above.
+                                // #656: see `preview:` above.
                                 Haptics.shared.tap()
                                 showRoutineEditor = true
                             }
@@ -56,6 +66,21 @@ struct WorkoutView: View {
             .sheet(isPresented: $showRoutineEditor) {
                 RoutineEditorSheet()
                     .sendmeterSheetPresentation()
+            }
+            .sheet(item: $previewRoutine, onDismiss: {
+                // #834: the preview's explicit Start launches the original,
+                // unchanged runner — but only once the preview sheet has
+                // fully dismissed, so the routine never starts underneath a
+                // still-presented preview.
+                guard let pending = pendingRoutineStart else { return }
+                pendingRoutineStart = nil
+                runningRoutine = RoutineRunPresentation(preset: pending, restored: nil)
+            }) { routine in
+                RoutinePreviewSheet(routine: routine) { routine in
+                    pendingRoutineStart = routine
+                    previewRoutine = nil
+                }
+                .sendmeterSheetPresentation()
             }
             .fullScreenCover(item: $runningRoutine, onDismiss: { Haptics.shared.sheetDismissed() }) { presentation in
                 RoutineRunnerSheet(presentation: presentation)
@@ -475,7 +500,7 @@ private struct WatchWorkoutMirrorCard: View {
 
 private struct RoutineLibraryCard: View {
     @Environment(AppModel.self) private var model
-    let run: (RoutinePreset) -> Void
+    let preview: (RoutinePreset) -> Void
     let edit: () -> Void
 
     var body: some View {
@@ -494,7 +519,7 @@ private struct RoutineLibraryCard: View {
                         .hapticButtonStyle(.bordered)
                 } else {
                     ForEach(model.routines) { routine in
-                        Button { run(routine) } label: {
+                        Button { preview(routine) } label: {
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text(routine.name).font(.headline)
@@ -503,11 +528,13 @@ private struct RoutineLibraryCard: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Image(systemName: "play.circle.fill")
+                                Image(systemName: "eye.circle.fill")
                                     .font(.title2)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                         .hapticButtonStyle(.plain)
+                        .accessibilityHint("Opens a read-only preview of the routine")
                         if routine.id != model.routines.last?.id { Divider() }
                     }
                 }

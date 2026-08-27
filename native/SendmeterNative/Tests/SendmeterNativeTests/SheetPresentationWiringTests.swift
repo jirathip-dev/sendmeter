@@ -85,6 +85,33 @@ final class SheetPresentationWiringTests: XCTestCase {
         )
     }
 
+    func testRoutineTapPreviewsReadOnlyBeforeExecution() {
+        let workoutPath = "Sources/Features/Workout/WorkoutView.swift"
+        let workout = source(workoutPath)
+        let sheets = presentations(named: "sheet", in: [workoutPath: workout])
+
+        // #834: the routine library row must present a read-only preview
+        // sheet — never the execution runner directly.
+        let preview = sheets.first { $0.closureBody.contains("RoutinePreviewSheet(") }
+        XCTAssertNotNil(preview, "the routine library must present the read-only preview sheet")
+        XCTAssertFalse(
+            preview?.closureBody.contains("RoutineRunnerSheet(") ?? true,
+            "the preview must not launch the execution runner directly"
+        )
+        XCTAssertFalse(
+            preview?.closureBody.contains("RoutineRunPresentation(") ?? true,
+            "the preview must not start the routine by itself"
+        )
+        XCTAssertTrue(
+            workout.contains("RoutineLibraryCard(\n                            preview:"),
+            "routine rows must open the preview, not start immediately"
+        )
+        XCTAssertTrue(
+            workout.contains("runningRoutine = RoutineRunPresentation(preset: pending, restored: nil)"),
+            "the explicit Start must go through the unchanged routine-run presentation"
+        )
+    }
+
     func testExecutionFullScreensDoNotUseSheetTreatment() {
         let sources = swiftSources(in: "Sources")
         let fullScreens = presentations(named: "fullScreenCover", in: sources)
