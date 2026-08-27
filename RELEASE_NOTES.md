@@ -10,6 +10,10 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Native iPhone now has a medium/large home-screen and Smart Stack readiness
+  widget with today's readiness score and zone, ACWR with acute/chronic load,
+  and the current training block; missing data stays an honest Apple Health or
+  no-load prompt, and tapping it opens Dashboard.
 - Native Release packaging now targets the existing Apple Watch companion and
   its watch-widget extension; signed archive/device installation and the
   paired watch's direct live-workout mirror remain validation gates, so this
@@ -28,6 +32,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Manual workouts now open in an adaptive, phase-tinted full-page timer with BOULDER/DONE controls, persisted 1/2/3/5-minute rest targets, rest-over haptic/audio feedback (including a sound notification when backgrounded), and a minimize action that keeps the workout running.
 - Native Manual workouts now mirror to the lock screen as a Live Activity: CLIMBING counts up from the boulder start, RESTING counts down to your configured rest target, the boulder count is pinned alongside Stop/Boulder actions, and the card is cleaned up when the workout ends or the app is relaunched. (Lock-screen rendering is device-only to verify.)
 - Native guided Force protocols now use an immersive, phase-tinted fullscreen with OUT/RETURN cadence guidance, live force chart and target coaching, a large stop control, and minimize/reopen that keeps the same protocol running.
+- Native guided routines now use a full-screen WORKING OUT / REST / PAUSED / DONE timer with phase colors, a glass countdown ring, current/next rep context, and optional audio cues. Audio and timer behavior still need physical-device verification.
 - Native Force regular pulls now open a dedicated live fullscreen with phase, curve, controls, and the selected protocol target; the same target band appears on Force history/duration charts, and hands-free can hand off safely into a guided protocol.
 - Native Force now shows Static capacity and Resisted movement progress tiles; the Static detail sheet includes the recent peak trend, force-duration model, and side comparison, while movement metrics stay execution-only and never alter Static PR, Hill/CF, or asymmetry.
 - Native Training Load charts now support tap/scrub tooltips for weekly load and activity mix, with selection haptics and heatmap selection/dismissal feedback.
@@ -37,6 +42,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force now shows consistency as distinct training days across eight rolling seven-day windows, with optional exercise filters that respect hidden tags.
 - The native app now has tactile feedback that mirrors the web app: scrubbing the readiness trend chart ticks once per value change, sheets tick as they open, confirm and destructive actions (sign out, delete) give a heavier tick, a refused guided-protocol start on the Progressor buzzes a warning instead of feeling accepted, connecting the Progressor feels like success and a disconnect feels like an error, and guided protocols cue each segment transition in rhythm (a single buzz on each hold, a double-stutter on side switches and rests, a stutter on completion).
 - Native buttons, tappable cards, and sheet dismissal now give tactile feedback through one shared structural layer: a light tick for normal taps, a heavier tick for confirm/destructive actions, a warning for refused-but-tappable actions, silence for genuinely disabled controls, and one tick per gesture when a sheet opens or closes by backdrop, drag, or its close button. Runtime haptic strength and timing are device-only; simulator builds validate the wiring.
+- Native buttons and tappable cards now use scroll-safe native button/tap recognition for structural haptics, so starting a vertical scroll on a control no longer competes with a zero-distance drag. Action haptics and one-tick sheet/navigation behavior remain intact; physical-device and TestFlight verification are still pending.
 - Apple Watch resisted-movement runs now show the live force trace underneath the movement display — a compact sparkline strip while the gauge is measuring — so you can see your force rhythm while the cadence clock guides each rep. Between sets the strip steps aside and the countdown is the whole screen again; runs without a force sensor stay honestly trace-free. (The phone's Force fullscreen already showed the live trace during movement work, so nothing changes there.)
 - sendmeter-mcp: a local, per-user, read-only MCP server that exposes your Sendmeter data (training sessions, readiness, ACWR, Tindeq recordings) to MCP-capable agents as six read-only tools. It signs in as you, never holds a service-role key or a refresh token, and makes no write paths — see `mcp/README.md`.
 - Native iPhone app: a guided Force protocol now mirrors to the lock screen as a Live Activity — the current segment (Prepare / Hold / Switch side / Rest / Set rest) counts down natively with a matching progress bar (both animate from the segment window, so the card needs no per-tick updates), alongside the rep × set, the session peak and the target load; tapping the Dynamic Island returns you to the Force tab, and the card stays in sync when you Skip Stage, ends on finish/cancel/disconnect, and is cleaned up if the app is force-quit. (Lock-screen rendering itself is only verifiable on a physical device; the simulator has no Live Activity gallery.)
@@ -53,12 +59,14 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native sheets now share an 18-point corner radius and consistent open/close feedback across Home, Force, Training Load, History, Workout, and Settings; dismissible sheets also show a grabber and support drag-to-dismiss while the guided routine runner keeps its classified Close path.
 - Native empty states now use Sendmeter artwork, product-specific guidance, and one clear next action when you have no workouts, force history, or Progressor connection.
 - Native Force keeps saved progress, consistency, and curve insights available while the Progressor is disconnected, and ACWR history failures now offer a retry.
 - Native primary metrics now use shared rounded, tabular-number treatments across readiness, ACWR, live Force (with current load kept primary), saved Force peaks, workout timers, elapsed workout time, and Send Conditions; Dynamic Type scaling preserves each surface's hierarchy.
 - Native Force phase colors now settle with a short spring, and the BOULDER/DONE hero gives a subtle press pulse with a light haptic; Reduce Motion keeps the same actions and feedback without the animation.
 - Native pending manual workouts now retain their durable on-device queue entries across refresh and relaunch, show clearer upload status with a manual retry action, and preserve Trash behavior for already-uploaded sessions.
 - Native and Watch error messages now use plain language that says what went wrong and what to do next, instead of showing raw server, Bluetooth, or HealthKit errors.
+- Native auth now maps expired/JWT/future-`iat` failures to fixed recovery copy, retries exact poisoned-session removal without disturbing a replacement account, and preserves valid existing installs while rejecting carried-over stale sessions; a bounded trusted server-time check gives a Date & Time → Set Automatically nudge when the device clock is ahead.
 - Native Settings now shows a compact account-activity summary (last sign-in and any last problem) instead of the full internal auth event log; technical identifiers, raw server codes, and the complete event history stay behind “Show technical details”.
 - Native app: foreground refreshes now fetch and apply only the sessions, health metrics, workouts, presets, routines, phases, and tags changed since the last sync — including items deleted on another device — instead of replacing the whole local cache on every refresh, while the first sync after a fresh install or cache rebuild still loads everything.
 - Native Settings: Delete Account is now an explicit two-step danger flow — a detailed, irreversible-deletion warning first, then a separate type-DELETE confirmation — so a single tap can never reach the destructive action.
@@ -116,6 +124,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native History now converges permanent Trash deletions across signed-in devices, so a session or Force recording deleted forever no longer remains in another device's cached history after sync.
 - Native Force: a mid-pull Progressor disconnect now salvages the interrupted rep as its own recording — persisted with the exercise and side you had set when the pull started (never a fallback), reported as recovered in History, and reported through the durable lost-recording notice if the save itself fails — instead of only offering a manual Save Recovered Pull prompt that could be missed.
 - Native Training Load: the Daily Load heatmap no longer renders all-gray when a session is dated up to a week ahead — a future-dated session no longer inflates the color scale, which was washing real load days down to the faintest level.
 - Native Training Load: the Daily Load heatmap no longer renders training days nearly gray when one unusually large past day dominates the intensity scale — the scale stays anchored to the typical load, so real days keep their activity hue and visible shading.
@@ -123,8 +132,10 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Training Load: weekly bars and the delta chip no longer drop sessions whose stored date arrives as a timestamp or an old Buddhist-era date — session dates are normalized to the same local calendar day the load windows use.
 - Native Dashboard: the ACWR projection chart's `Now` marker no longer collides with an early crossing weekday label; the current ratio remains visible in the Dashboard's ACWR cards.
 - Native Dashboard: Send Conditions and Training Block cards now keep the same height while weather data loads or changes state, eliminating the row's layout jump.
+- iPhone: Apple Health sync now backfills every newly observed day in its read window, preserves existing historical rows and today's readiness freeze rules, and shows the last completed sync. Morning refreshes persist follow-up progress for delayed wearable data and pick up eligible passes on later lifecycle/background events; background timing remains device-only to verify.
 - Native: switching accounts during a refresh or Force save no longer lets data from the previous account appear in the new account.
 - Native guided routines now log completed runs when you close them (including sub-minute runs as one minute), save an honest partial when you close after at least a minute, protect the run from swipe-dismiss, and offer Undo for automatically logged interrupted routines.
+- Native guided routine labels and completion copy now remain readable across every phase color and translucent control surface.
 - Native Send Conditions now keeps the current score when climate history is temporarily unavailable, uses the same UTC history window as the web app, and avoids unnecessary weather requests for 30 minutes.
 - Native History now keeps recordings from hidden Force tags in the timeline while continuing to omit those tags from quick-filter chips.
 - iPhone: the readiness score now updates when the app opens and when you bring it back to the foreground, instead of only after a fresh install — newer Apple Health or Apple Watch data is picked up on open. The refresh is silent and shows a "Syncing" pill while in flight; if the sync fails, or Apple Health briefly returns no data (for example before the watch has written overnight values), your last score stays on screen instead of being blanked, and a pull-to-refresh still forces an update.

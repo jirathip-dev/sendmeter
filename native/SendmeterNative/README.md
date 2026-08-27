@@ -38,6 +38,13 @@ in `docs/native-swift-rewrite.md`.
   CLIMBING/RESTING timer ticks natively, the Dynamic Island tap deep-links to
   the Workout tab, Stop/Boulder actions route back into the engine, and the
   card ends on finish, cancel, or relaunch
+- iPhone home-screen/Smart Stack readiness widget (#807): medium and large
+  families show the current-day readiness score/zone, ACWR with acute/chronic
+  load, and the current training block. The WidgetKit process reads only an
+  account/epoch-stamped App Group snapshot written by `AppModel`; it never
+  accesses HealthKit, Supabase, or a refresh token. A missing or previous-day
+  snapshot renders an honest no-data state, and `sendmeter://dashboard` opens
+  the native Dashboard when the widget is tapped.
 
 ## Architecture
 
@@ -47,10 +54,28 @@ SwiftUI application
 ├── Sources/Data       Supabase auth and typed PostgREST repositories
 ├── Sources/Platform   CoreBluetooth, HealthKit, and WatchConnectivity
 ├── Sources/Features   Native product screens
-├── Sources/Shared     ActivityKit wire type shared verbatim with the widget appex (#674)
+├── Sources/Shared     ActivityKit wire types shared with the widget appex
 ├── Sources/Widgets    The WidgetKit app-extension target's rendering code (#674)
 └── Sources/App        App lifecycle, orchestration, design system, and optimistic reconciliation
 ```
+
+The phone WidgetKit extension is also part of the generated `SendmeterNative`
+scheme. Both the app and extension require the App Group
+`group.com.jirathip.sendlog`; the same group is already used by the companion's
+watch-widget bridge, but the phone widget has its own snapshot key. A successful
+foreground, HealthKit, session-load, realtime-health, or phase publication
+rewrites the snapshot and reloads the `SendmeterReadiness` timeline. Sign-out
+and an account change remove a different owner's snapshot synchronously; a
+same-account bootstrap keeps the last valid glance visible until its successful
+refresh publishes the new epoch. The snapshot's current-day check uses the
+shared Foundation-only `ReadinessWidgetTimelinePolicy` helper, so a stale
+prior-day readiness score is never displayed as today's score. The Codable
+contract, store, date boundary, ownership policy, and semantic tokens live in
+`sendlog-health-core` so the app and extension share one tested source without
+pulling HealthKit or Supabase into the widget process. App Group capability and
+profile availability are signing/portal/device concerns: if the suite is not
+available, publication is a no-op and the widget remains an honest no-data
+surface; unsigned local builds cannot prove that portal configuration.
 
 The generated project also has a `SendLogWatch Watch App` watchOS target. It
 reuses the existing companion sources from `ios/App/SendLogWatch Watch App`,
@@ -72,6 +97,22 @@ rows changed after its persisted `updated_at` cursor, apply active changes and
 soft-delete tombstones as a single batch, and advance the cursor only after the
 cache write succeeds; the first sync after install or cache rebuild still does
 a full hydration so a missing or reset cursor can never strand older rows.
+Permanent Trash deletion has no row left for that cursor to observe, so the
+server increments one bounded per-account purge generation when a session or
+Force recording is hard-deleted. Native compares that marker with both
+affected cache boundaries and forces an authoritative full reconcile of
+sessions and recordings together when it changes; the marker is written only
+after those durable writes complete. Cursor requests are strict
+`updated_at > cursor` with no client-side limit: equal-timestamp rows are
+assumed to arrive in the same batch as the maximum timestamp. This assumes the
+hosted PostgREST `max-rows` setting is unset (or above one account's dataset),
+which must be verified in each hosted project. Any future pagination or hosted
+row cap must use a composite `(updated_at, entity_id)` cursor instead. The
+generation read is an optional rollout dependency; a failed read is surfaced,
+but the foreground/background pass continues and conservatively
+full-reconciles sessions and recordings. The purge RPC's false return means
+the row was already gone or restored, and is intentionally treated as a
+successful idempotent retry.
 Realtime slices continue through the same reconcile path before the published
 state changes, so a watch/other-device edit survives a relaunch without waiting
 for the next foreground pull. When the app backgrounds, a `BGAppRefreshTask`
@@ -125,6 +166,26 @@ older async result is rejected even after the same user signs back in. Account
 deletion is different: its epoch barrier is installed before the first await,
 and the exact account's queue/cache is purged only after the server deletion
 has succeeded. Auth or network failure parks data instead of destroying it.
+
+Native auth restoration is guarded by a durable, non-secret install/session
+marker beside the Supabase SDK session. On the first rollout, an already-readable
+SDK session is accepted once; if a locked/background launch cannot read an
+identity, marker creation is deferred until the first auth identity arrives.
+Later unaccepted restored sessions are dropped locally before they reach the UI
+or the watch. The marker and accepted identity are container-local, so this is
+one-time rollout grandfathering, not reinstall detection: a reinstall or local
+container reset that leaves the SDK Keychain session available cannot be
+distinguished from a first install. JWT verification, expired-session,
+refresh-reuse, and future-`iat` failures retry exact local credential removal
+(bounded per event and again on later events/relaunch) before returning to fresh
+sign-in with fixed friendly copy. Successful PostgREST responses provide the last
+known-good HTTP `Date` evidence for a defense-in-depth clock check. The check
+uses a sleep-counting continuous clock, rejects evidence older than 15 minutes,
+and remains inconclusive when there is no trustworthy server sample, so a
+device wall clock is never treated as authoritative. A device lead is advisory
+and directs the user to Settings → General → Date & Time → Set Automatically;
+only an actual server rejection or future-`iat` diagnosis clears the exact
+rejected session.
 
 Watch completion summaries, live beats, and account-owned queue telemetry
 require an owner stamp. Pre-stamp/unstamped legacy payloads remain in a
@@ -190,6 +251,13 @@ xcodebuild \
   -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO \
   build
+
+# Compiled application-target auth/date/session wiring coverage (simulator):
+hermes-sim-task --shell 'xcodebuild test -project SendmeterNative.xcodeproj \
+  -scheme SendmeterNative -configuration Debug \
+  -destination "id=$SIMULATOR_UDID" \
+  -only-testing:SendmeterNativeTests/AuthRecoveryWiringTests \
+  CODE_SIGNING_ALLOWED=NO'
 ```
 
 For a physical device, open `SendmeterNative.xcodeproj`, select the existing
@@ -265,11 +333,13 @@ separately runs:
 
 `swift test` does not typecheck the SwiftUI application target: the package
 target intentionally contains only `Sources/Core` plus `ChartTheme.swift`.
-The static gate therefore proves parsing and generated-project inclusion, not
-app-target type correctness. A clean Xcode project compile remains required
-when the serialized Xcode lane is available; the regular Force fullscreen,
-hands-free trigger/re-arm loop, disconnect salvage, and protocol handoff also
-remain device-only with a real Progressor.
+The focused `SendmeterNativeTests/AuthRecoveryWiringTests` target covers the
+application-target PostgREST/date/session recovery seams on an iOS Simulator;
+the static gate still proves parsing and generated-project inclusion. A clean
+Xcode project compile remains required when the serialized Xcode lane is
+available; the regular Force fullscreen, hands-free trigger/re-arm loop,
+disconnect salvage, and protocol handoff also remain device-only with a real
+Progressor.
 
 Automated checks do not replace the physical-device gates for real Bluetooth,
 HealthKit, WatchConnectivity, passkeys, background/suspension behavior, or a

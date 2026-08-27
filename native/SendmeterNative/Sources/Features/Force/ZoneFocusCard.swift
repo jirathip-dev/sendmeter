@@ -94,7 +94,7 @@ struct ZoneFocusCard: View {
                     arm: { onPick(recommendation.zone) }
                 )
             }
-            .sheet(isPresented: $detailOpen, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $detailOpen) {
                 TrainingBalanceDetailView(
                     recordings: recordings,
                     exercise: exercise,
@@ -104,7 +104,7 @@ struct ZoneFocusCard: View {
                     recommendation: recommendation,
                     curveInput: curveInput
                 )
-                .onAppear { Haptics.shared.sheetPresented() }
+                .sendmeterSheetPresentation()
             }
         }
     }

@@ -24,7 +24,7 @@ let package = Package(
         .package(path: "../../native-plugins/sendlog-health-core"),
         // #747: remote GRDB pin — the package identity is GRDB.swift (derived
         // from the URL), so target dependencies must use `package: "GRDB.swift"`.
-        .package(url: "https://github.com/groue/GRDB.swift", exact: "7.9.0")
+        .package(url: "https://github.com/groue/GRDB.swift", exact: "7.11.1")
     ],
     targets: [
         .target(

@@ -1,0 +1,47 @@
+# Disposable local-database regression gates for migration-backed behavior.
+# This workflow never links to, resets, or queries either hosted project.
+name: Supabase SQL
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/tests/**"
+      - "package.json"
+      - ".github/workflows/supabase-tests.yml"
+  pull_request:
+    branches: [main, staging]
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/tests/**"
+      - "package.json"
+      - ".github/workflows/supabase-tests.yml"
+
+jobs:
+  purge-sql:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start disposable local Supabase
+        run: npx supabase start --exclude vector --ignore-health-check
+
+      - name: Apply current migrations to local database
+        run: npx supabase db reset --local --no-seed
+
+      - name: Run purge/account-deletion SQL regression
+        run: npm run test:db:purge
+
+      - name: Stop disposable local Supabase
+        if: always()
+        run: npx supabase stop --no-backup

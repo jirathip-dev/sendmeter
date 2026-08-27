@@ -263,19 +263,24 @@ public struct RoutineRun: Codable, Equatable, Sendable {
 
     @discardableResult
     public mutating func advanceIfNeeded(at date: Date = Date()) -> Bool {
-        guard !isComplete, elapsedSeconds(at: date) >= currentStage.durationSeconds else {
+        guard !isPaused, !isComplete, elapsedSeconds(at: date) >= currentStage.durationSeconds else {
             return false
         }
-        advance(at: date)
+        // Preserve any wall-clock overflow when a suspended app crosses more
+        // than one stage. Explicit Skip still starts the next stage at the
+        // tap time; natural expiry starts it at the actual stage boundary.
+        let overflowSeconds = max(0, elapsedSeconds(at: date) - currentStage.durationSeconds)
+        advance(at: date.addingTimeInterval(-Double(overflowSeconds)))
         return true
     }
 
     public mutating func advance(at date: Date = Date()) {
         guard currentIndex < stages.count - 1 else { return }
+        let wasPaused = isPaused
         currentIndex += 1
         pausedElapsedSeconds = 0
-        isPaused = false
-        stageStartedAt = isComplete ? nil : date
+        isPaused = wasPaused
+        stageStartedAt = isComplete || wasPaused ? nil : date
     }
 
     public mutating func skip(at date: Date = Date()) {

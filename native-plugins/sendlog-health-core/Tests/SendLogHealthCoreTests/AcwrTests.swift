@@ -6,6 +6,10 @@ final class AcwrTests: XCTestCase {
         XCTAssertNil(Acwr.ratio(dailyLoads: Array(repeating: 0, count: 90)))
     }
 
+    func testNonPositiveChronicLoadReturnsNil() {
+        XCTAssertNil(Acwr.ratio(dailyLoads: [-1]))
+    }
+
     func testSteadyLoadTendsToOne() {
         // Constant daily load: acute and chronic EWMAs converge, ratio ≈ 1.
         let r = Acwr.ratio(dailyLoads: Array(repeating: 100, count: 90))

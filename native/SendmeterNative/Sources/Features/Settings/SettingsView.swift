@@ -52,17 +52,17 @@ struct SettingsView: View {
                 // count/rows are fresh without waiting for a manual refresh.
                 await model.loadPasskeys()
             }
-            .sheet(isPresented: $showingBlocks, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showingBlocks) {
                 PhasesView()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
-            .sheet(isPresented: $showingExercises, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showingExercises) {
                 TagManagerView()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
-            .sheet(isPresented: $showingDeleteAccount, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showingDeleteAccount) {
                 DeleteAccountSheet()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
             .confirmationDialog(
                 signOutRemainderTitle,
@@ -278,6 +278,30 @@ struct SettingsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            if let syncedAt = model.lastHealthSyncedAt {
+                LabeledContent(
+                    "Last synced",
+                    value: syncedAt.formatted(date: .abbreviated, time: .shortened)
+                )
+                .font(.caption)
+            } else {
+                Text("Apple Health has not synced yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if model.lastHealthSyncObservation == .failed {
+                Text("The last Apple Health refresh failed; the previous reading is kept.")
+                    .font(.caption)
+                    .foregroundStyle(SendmeterStyle.caution)
+            } else if model.lastHealthSyncObservation == .noSourceData {
+                Text("The last check found no Apple Health source data.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if model.lastHealthSyncObservation == .noNewData {
+                Text("The last check found no new health days.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Button {
                 syncingHealth = true
                 Task {
@@ -372,6 +396,16 @@ struct SettingsView: View {
     private var accountSecuritySection: some View {
         Section("Account & Security") {
             LabeledContent("Email", value: model.currentUserEmail ?? "Signed in")
+            if let advisory = model.authClockAdvisoryMessage {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Date & Time", systemImage: "clock.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Text(advisory)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("auth-clock-advisory")
+            }
             Button {
                 // #656: a tap arming a password reset ticks once.
                 Haptics.shared.tap()
@@ -716,12 +750,19 @@ struct SettingsView: View {
             Text("\(item.kind) · \(item.rejection.at.formatted(date: .abbreviated, time: .shortened))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if let code = item.rejection.code {
+            if item.rejection.kind != .auth, let code = item.rejection.code {
                 LabeledContent("Server code", value: code)
                     .font(.caption)
             }
             if !item.rejection.detail.isEmpty {
-                Text(item.rejection.detail)
+                Text(
+                    item.rejection.kind == .auth
+                        ? UserFacingError.message(
+                            forAuthDiagnosticCode: item.rejection.code,
+                            detail: item.rejection.detail
+                        )
+                        : item.rejection.detail
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -749,7 +790,14 @@ struct SettingsView: View {
             )
             .font(.caption)
             if let lastError = item.lastError {
-                Text(lastError)
+                Text(
+                    item.rejectionClass == .auth
+                        ? UserFacingError.message(
+                            forAuthDiagnosticCode: item.lastFailureCode,
+                            detail: lastError
+                        )
+                        : lastError
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

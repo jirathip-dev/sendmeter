@@ -164,6 +164,11 @@ private struct SoftDeletePayload: Encodable {
     enum CodingKeys: String, CodingKey { case deletedAt = "deleted_at" }
 }
 
+private struct PurgeIDPayload: Encodable {
+    let id: UUID
+    enum CodingKeys: String, CodingKey { case id = "p_id" }
+}
+
 private struct RestorePayload: Encodable {
     enum CodingKeys: String, CodingKey { case deletedAt = "deleted_at" }
     func encode(to encoder: Encoder) throws {
@@ -323,6 +328,10 @@ private struct HealthMetricUpsert: Encodable {
         case bodyMassKg = "body_mass_kg"
         case respiratoryRate = "resp_rate_bpm"
     }
+}
+
+private struct HealthMetricInsertReceipt: Decodable {
+    let date: String
 }
 
 private struct CadenceMarkerRow: Codable {
@@ -981,8 +990,10 @@ public final class SendmeterRepository: @unchecked Sendable {
     /// `sessions` (which can be empty on a cold launch, fabricating a score up
     /// to 20 points high). Same shape/soft-delete exclusion as the shipped
     /// plugin's `computeAcwr`. Filtered to the EWMA lookback window.
-    public func fetchSessionLoads() async throws -> [SessionLoad] {
-        let cutoff = LocalDateSupport.daysAgo(90)
+    public func fetchSessionLoads(
+        days: Int = TrainingMetrics.ewmaLookbackDays
+    ) async throws -> [SessionLoad] {
+        let cutoff = LocalDateSupport.daysAgo(max(1, days))
         let rows: [SessionLoadRow] = try await transport.request(
             path: "rest/v1/sessions",
             method: .get,
@@ -1139,10 +1150,11 @@ public final class SendmeterRepository: @unchecked Sendable {
     }
 
     public func purgeSession(id: UUID) async throws {
+        let body = try await transport.encode(PurgeIDPayload(id: id))
         try await transport.requestVoid(
-            path: "rest/v1/sessions",
-            method: .delete,
-            queryItems: [URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())")]
+            path: "rest/v1/rpc/purge_session",
+            method: .post,
+            body: body
         )
     }
 
@@ -1273,6 +1285,9 @@ public final class SendmeterRepository: @unchecked Sendable {
         return rows.map(\.model)
     }
 
+    /// Merge today's row only. Historical rows use
+    /// `insertHealthMetricIfMissing`, whose PostgREST conflict-ignore request
+    /// is atomic against the `(user_id, date)` unique key.
     public func upsertHealthMetric(_ metric: HealthMetric, userID: UUID) async throws {
         let payload = HealthMetricUpsert(
             userID: userID,
@@ -1294,8 +1309,40 @@ public final class SendmeterRepository: @unchecked Sendable {
             method: .post,
             queryItems: [URLQueryItem(name: "on_conflict", value: "user_id,date")],
             body: body,
-            prefer: "resolution=merge-duplicates,return=minimal"
+            prefer: HealthMetricWriteOperation.todayMerge.preferHeader
         )
+    }
+
+    /// Atomically insert a historical metric if its `(user_id, date)` row is
+    /// still absent. A concurrent writer returns an empty representation and
+    /// leaves the immutable server row untouched.
+    public func insertHealthMetricIfMissing(
+        _ metric: HealthMetric,
+        userID: UUID
+    ) async throws -> Bool {
+        let payload = HealthMetricUpsert(
+            userID: userID,
+            date: metric.date,
+            readiness: metric.readiness,
+            zone: metric.zone,
+            computedAt: metric.computedAt,
+            hrvSDNN: metric.hrvSDNNMilliseconds,
+            restingHR: metric.restingHeartRate,
+            sleepHours: metric.sleepHours,
+            sleepDeepHours: metric.sleepDeepHours,
+            sleepREMHours: metric.sleepREMHours,
+            bodyMassKg: metric.bodyMassKilograms,
+            respiratoryRate: metric.respiratoryRate
+        )
+        let body = try await transport.encode(payload)
+        let receipts: [HealthMetricInsertReceipt] = try await transport.request(
+            path: "rest/v1/health_metrics",
+            method: .post,
+            queryItems: [URLQueryItem(name: "on_conflict", value: "user_id,date")],
+            body: body,
+            prefer: HealthMetricWriteOperation.historicalInsert.preferHeader
+        )
+        return !receipts.isEmpty
     }
 
     // MARK: Recordings
@@ -1480,10 +1527,11 @@ public final class SendmeterRepository: @unchecked Sendable {
     }
 
     public func purgeRecording(id: UUID) async throws {
+        let body = try await transport.encode(PurgeIDPayload(id: id))
         try await transport.requestVoid(
-            path: "rest/v1/tindeq_recordings",
-            method: .delete,
-            queryItems: [URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())")]
+            path: "rest/v1/rpc/purge_recording",
+            method: .post,
+            body: body
         )
     }
 
@@ -1776,6 +1824,22 @@ public final class SendmeterRepository: @unchecked Sendable {
 
     // MARK: Incremental deltas (#747 slice 3)
 
+    /// The one-row server signal for hard purges (#778). It is deliberately
+    /// separate from the per-entity row cursors: a hard-deleted session or
+    /// recording has no row left for `updated_at > cursor` to return.
+    /// Missing state means no purge has happened for this account yet.
+    public func fetchPurgeSyncGeneration() async throws -> Int64 {
+        let response: PurgeGenerationResponse = try await transport.request(
+            path: "rest/v1/sync_purge_generations",
+            method: .get,
+            queryItems: [
+                URLQueryItem(name: "select", value: "generation"),
+                URLQueryItem(name: "limit", value: "1")
+            ]
+        )
+        return response.generation
+    }
+
     public func fetchSessionDelta(
         since cursor: String?,
         accountUserID: UUID? = nil
@@ -2011,6 +2075,10 @@ public final class SendmeterRepository: @unchecked Sendable {
         select: String,
         order: String = "updated_at.asc"
     ) -> [URLQueryItem] {
+        // The strict `gt` cursor is safe because these requests are currently
+        // unpaged: every row sharing the response's maximum updated_at is
+        // returned before that timestamp is persisted. If pagination is ever
+        // added, this must become a composite (updated_at, entity id) cursor.
         var queryItems = [
             URLQueryItem(name: "select", value: select),
             URLQueryItem(name: "order", value: order)

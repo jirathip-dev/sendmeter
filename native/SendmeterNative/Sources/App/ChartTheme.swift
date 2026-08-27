@@ -1,4 +1,5 @@
 import SwiftUI
+import SendLogHealthCore
 
 /// Semantic chart palette — web parity (#649). Every hex below mirrors
 /// `src/index.css` (light `:root` ~L157-177, dark `.dark` ~L356-377) and the
@@ -148,20 +149,26 @@ public enum ChartToken: String, CaseIterable, Sendable {
 
     private var hexPair: (light: String, dark: String) {
         switch self {
-        case .focus: return ("#5B5FC7", "#9296EE")
-        case .health: return ("#2E96F0", "#4FB0FF")
-        case .load: return ("#7B83EB", "#9296EE")
-        case .force: return ("#5B5FC7", "#9296EE")
-        case .forceSecondary: return ("#2E96F0", "#4FB0FF")
-        case .optimal: return ("#2E96F0", "#4FB0FF")
-        case .caution: return ("#DDB13A", "#E8C24E")
-        case .alert: return ("#E5743A", "#F0864C")
+        case .focus: return semanticPair(.focus)
+        case .health: return semanticPair(.health)
+        case .load: return semanticPair(.load)
+        case .force: return semanticPair(.focus)
+        case .forceSecondary: return semanticPair(.health)
+        case .optimal: return semanticPair(.optimal)
+        case .caution: return semanticPair(.caution)
+        case .alert: return semanticPair(.alert)
         case .reference: return ("#8E8E93", "#A9A9B0")
         case .grid: return ("#E2E2E6", "#3E3E44")
         case .axis: return ("#6E6E73", "#A9A9B0")
         case .tooltip: return ("#FFFFFF", "#2C2C31")
         case .tooltipBorder: return ("#D8D8DC", "#4A4A50")
         }
+    }
+
+    private func semanticPair(
+        _ token: ReadinessWidgetSemanticToken
+    ) -> (light: String, dark: String) {
+        (token.lightHex, token.darkHex)
     }
 }
 

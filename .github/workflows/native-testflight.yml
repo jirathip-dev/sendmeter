@@ -46,7 +46,7 @@ jobs:
     outputs:
       build: ${{ steps.decision.outputs.build }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: decision
         run: |
           if [ ! -f native/SendmeterNative/project.yml ]; then
@@ -63,18 +63,34 @@ jobs:
     environment: testflight
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Matches the .mise.toml pin and testflight.yml. bundler-cache runs
       # bundle install against the committed Gemfile.lock.
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
         with:
           ruby-version: "4.0.5"
           bundler-cache: true
 
       # The native target is pure Swift — no node, no npm ci, no cap sync.
+      # Download a release asset at an exact version and verify its checksum;
+      # the runner's moving Homebrew formula is not an acceptable CI pin.
       - name: Install XcodeGen
-        run: brew install xcodegen
+        env:
+          XCODEGEN_VERSION: "2.46.0"
+          XCODEGEN_SHA256: "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806"
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen.zip"
+          curl --fail --location --silent --show-error \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" \
+            --output "$archive"
+          echo "${XCODEGEN_SHA256}  ${archive}" | shasum --algorithm 256 --check --strict
+          unzip -q "$archive" -d "$RUNNER_TEMP/xcodegen"
+          xcodegen_bin="$RUNNER_TEMP/xcodegen/xcodegen/bin"
+          echo "$xcodegen_bin" >> "$GITHUB_PATH"
+          export PATH="$xcodegen_bin:$PATH"
+          xcodegen --version
 
       - name: Write ASC API key
         run: printf '%s' "$ASC_KEY_P8" | base64 -d > fastlane/asc_api_key.p8

@@ -63,17 +63,17 @@ struct DashboardView: View {
                 // blank, never fabricated.
                 await model.silentHealthRefresh(trigger: .appear)
             }
-            .sheet(isPresented: $showLog, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showLog) {
                 LogSessionSheet()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
-            .sheet(isPresented: $showPhases, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showPhases) {
                 PhasesView()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
-            .sheet(isPresented: $showRecovery, onDismiss: { Haptics.shared.sheetDismissed() }) {
+            .sheet(isPresented: $showRecovery) {
                 RecoveryInputsSheet()
-                    .onAppear { Haptics.shared.sheetPresented() }
+                    .sendmeterSheetPresentation()
             }
         }
     }
@@ -224,6 +224,20 @@ private struct TodayDecisionCard: View {
                                 Text("Load ratio \(ratio, format: .number.precision(.fractionLength(2))) · \(TrainingMetrics.acwrStatus(ratio).rawValue)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                            }
+                            if let syncedAt = model.lastHealthSyncedAt {
+                                Text("Last synced \(syncedAt, format: .dateTime.month(.abbreviated).day().hour().minute())")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Apple Health not synced yet")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if model.lastHealthSyncObservation == .failed {
+                                Text("Apple Health refresh failed; previous reading kept")
+                                    .font(.caption)
+                                    .foregroundStyle(SendmeterStyle.caution)
                             }
                         }
                     }
@@ -576,9 +590,9 @@ private struct SendConditionsCard: View {
                 .accessibilityHidden(true)
             }
         }
-        .sheet(isPresented: $showSendConditions, onDismiss: { Haptics.shared.sheetDismissed() }) {
+        .sheet(isPresented: $showSendConditions) {
             SendConditionsDetailSheet()
-                .onAppear { Haptics.shared.sheetPresented() }
+                .sendmeterSheetPresentation()
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Send Conditions")

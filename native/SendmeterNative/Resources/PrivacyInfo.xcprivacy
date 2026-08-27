@@ -61,7 +61,12 @@
             <key>NSPrivacyAccessedAPIType</key>
             <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
             <key>NSPrivacyAccessedAPITypeReasons</key>
-            <array><string>CA92.1</string></array>
+            <array>
+                <string>CA92.1</string>
+                <!-- App Group write readable by the phone widget appex; CA92.1
+                     covers only defaults private to this bundle. -->
+                <string>1C8F.1</string>
+            </array>
         </dict>
         <!-- ProcessInfo.processInfo.systemUptime (AppModel health-refresh
              coalescing window, TindeqBluetooth flush timing) — elapsed-time

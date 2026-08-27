@@ -13,7 +13,7 @@ jobs:
       pull-requests: write
       actions: read
       checks: read
-    uses: jirathip-k/agent-ops/.github/workflows/review-release.yml@v1
+    uses: jirathip-k/agent-ops/.github/workflows/review-release.yml@6a1a962989cd61cfa592332ea5f2da46354cf132 # v1
     with:
       model: opus
     secrets:

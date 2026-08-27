@@ -110,7 +110,7 @@ struct LoginView: View {
                                           let token = credential.identityToken,
                                           let tokenString = String(data: token, encoding: .utf8)
                                     else {
-                                        model.errorMessage = "Sign in with Apple didn't return an identity token."
+                                        model.errorMessage = UserFacingError.message(for: .authFailed)
                                         return
                                     }
                                     Task {

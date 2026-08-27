@@ -40,7 +40,7 @@ packages:
   # it through SendmeterCore's transitive product.
   GRDB:
     url: https://github.com/groue/GRDB.swift
-    exactVersion: 7.9.0
+    exactVersion: 7.11.1
 targets:
   SendmeterNative:
     type: application
@@ -131,6 +131,25 @@ targets:
             # still a #768 shipping blocker.
             SWIFT_COMPILATION_MODE: wholemodule
             SWIFT_OPTIMIZATION_LEVEL: -O
+  # #808: these tests compile against the application module, not only the
+  # SwiftPM Core policy target. They exercise the PostgREST/date/session
+  # context wiring that swift test intentionally cannot see.
+  SendmeterNativeTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/SendmeterNativeTests
+    dependencies:
+      - target: SendmeterNative
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native.tests
+        SWIFT_VERSION: 5.0
+        IPHONEOS_DEPLOYMENT_TARGET: 17.0
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Sendmeter.app/Sendmeter"
+        BUNDLE_LOADER: "$(TEST_HOST)"
   # #768: Reuse the existing Capacitor companion sources rather than creating
   # a second watch implementation. The native-only plist supplies the
   # per-configuration companion ID and version variables. XcodeGen's watchOS
@@ -246,7 +265,15 @@ targets:
     sources:
       - path: Sources/Widgets
       - path: Sources/Shared
-      # XcodeGen ignores the top-level `resources:` block for this spec shape
+      # Xcode 26's explicit-module build currently fails to make a local
+      # Swift package product visible to an app extension (the existing watch
+      # widget shows the same failure). Compile the Foundation-only wire, store,
+      # date, ownership, and presentation contract from its canonical package
+      # source instead. The
+      # app still links SendLogHealthCore normally; the extension gets no
+      # HealthKit, Supabase, or native app module dependency.
+      - path: ../../native-plugins/sendlog-health-core/Sources/SendLogHealthCore/ReadinessWidgetContract.swift
+    # XcodeGen ignores the top-level `resources:` block for this spec shape
       # (same quirk as the app above), so the widget's Info.plist + privacy
       # manifest are declared as sources with an explicit buildPhase. The
       # Info.plist lives OUTSIDE the synced Sources/Widgets dir (repo
@@ -263,6 +290,7 @@ targets:
       base:
         PRODUCT_NAME: "$(TARGET_NAME)"
         INFOPLIST_FILE: Resources/WidgetsInfo.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Widgets/SendmeterNativeWidgets.entitlements
         # GENERATE_INFOPLIST_FILE: YES lets Xcode synthesize the CFBundle*
         # keys (identifier, version, package type) on top of the NSExtension
         # dict in WidgetsInfo.plist — the same convention as the Capacitor
@@ -295,6 +323,12 @@ schemes:
       targets:
         SendmeterNative: all
         SendmeterNativeWidgets: all
+    test:
+      config: Debug
+      targets:
+        - name: SendmeterNativeTests
+          parallelizable: false
+          randomExecutionOrder: false
     run:
       config: Debug
     archive:
