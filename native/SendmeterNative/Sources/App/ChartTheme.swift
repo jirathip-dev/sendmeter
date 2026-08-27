@@ -40,6 +40,48 @@ public enum ChartToken: String, CaseIterable, Sendable {
         Color(chartHex: hex(for: scheme))
     }
 
+    /// The Force trace uses an opaque neutral surface so its contrast test and
+    /// rendered canvas share the same background instead of depending on a
+    /// surrounding material's resolved colour.
+    public static func forceTraceBackgroundHex(_ scheme: ColorScheme) -> String {
+        ChartContrastPolicy.traceBackgroundHex(isDark: scheme == .dark)
+    }
+
+    public static func forceTraceBackground(_ scheme: ColorScheme) -> Color {
+        Color(chartHex: forceTraceBackgroundHex(scheme))
+    }
+
+    /// The regular CSS band opacity remains unchanged for other charts. The
+    /// Force trace's band conveys the target region, so dark mode raises it to
+    /// the least composited opacity that meets the non-text contrast floor.
+    public static func forceTraceBandOpacity(_ scheme: ColorScheme) -> Double {
+        let defaultOpacity = ChartToken.optimal.bandOpacity(scheme)
+        guard scheme == .dark else { return defaultOpacity }
+
+        let foreground = ChartContrastRGB(hex: ChartToken.optimal.darkHex)
+        let background = ChartContrastPolicy.traceBackground(isDark: true)
+        return max(
+            defaultOpacity,
+            ChartContrastPolicy.minimumOpacity(
+                foreground: foreground,
+                background: background,
+                minimumRatio: ChartContrastPolicy.minimumNonTextContrast
+            )
+        )
+    }
+
+    /// The subdued dark grid token is below the non-text contrast floor on an
+    /// iOS grouped dark surface. Axis is the existing chart token with the
+    /// same dark value as the reference token and is safe for visible grid
+    /// cues without introducing another palette.
+    public static func forceTraceGridHex(_ scheme: ColorScheme) -> String {
+        ChartToken.axis.hex(for: scheme)
+    }
+
+    public static func forceTraceGridColor(_ scheme: ColorScheme) -> Color {
+        Color(chartHex: forceTraceGridHex(scheme))
+    }
+
     /// `--chart-area-opacity` (index.css): 0.16 light / 0.20 dark. The top
     /// stop of every area fill.
     public func areaOpacity(_ scheme: ColorScheme) -> Double {

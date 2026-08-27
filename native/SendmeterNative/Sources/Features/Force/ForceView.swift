@@ -1015,7 +1015,12 @@ private struct GuidedForceProtocolView: View {
                 )
                 .frame(height: chartHeight)
                 .layoutPriority(1)
-                .accessibilityLabel("Live force trace")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    ForceTraceAccessibility.liveSummary(
+                        peakKilograms: session.model.tindeq.peakKilograms
+                    )
+                )
             }
         }
         .frame(maxWidth: .infinity)
@@ -2605,7 +2610,12 @@ private struct ForceDeviceCard: View {
                         target: targetBand?.kilograms
                     )
                     .frame(height: 190)
-                    .accessibilityLabel("Live force trace")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        ForceTraceAccessibility.liveSummary(
+                            peakKilograms: device.peakKilograms
+                        )
+                    )
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "waveform.path.ecg")
@@ -3551,7 +3561,7 @@ struct ForceTraceChart: View {
             let lastSample = sampleRange.last.map(self.sample(at:))
             let firstTime = firstSample?.milliseconds ?? 0
             let lastTime = max(firstTime + 1, lastSample?.milliseconds ?? firstTime + 1)
-            let gridColor = ChartToken.grid.color(scheme)
+            let gridColor = ChartToken.forceTraceGridColor(scheme)
             let optimalColor = ChartToken.optimal.color(scheme)
 
             func y(_ kilograms: Double) -> CGFloat {
@@ -3574,7 +3584,7 @@ struct ForceTraceChart: View {
                 let lowerY = y(targetRange.lowerBound)
                 context.fill(
                     Path(CGRect(x: 0, y: upperY, width: size.width, height: max(1, lowerY - upperY))),
-                    with: .color(optimalColor.opacity(ChartToken.optimal.bandOpacity(scheme)))
+                    with: .color(optimalColor.opacity(ChartToken.forceTraceBandOpacity(scheme)))
                 )
             }
             if let target {
@@ -3603,7 +3613,7 @@ struct ForceTraceChart: View {
                 style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
             )
         }
-        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+        .background(ChartToken.forceTraceBackground(scheme), in: RoundedRectangle(cornerRadius: 12))
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
@@ -3637,6 +3647,12 @@ private struct WatchForceMirrorCard: View {
                 if !force.spark.isEmpty {
                     ForceTraceChart(samples: force.spark, targetRange: nil, target: nil)
                         .frame(height: 100)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(
+                            ForceTraceAccessibility.liveSummary(
+                                peakKilograms: force.peakKilograms
+                            )
+                        )
                 }
                 Text("Direct WatchConnectivity · updated \(force.updatedAt, style: .relative) ago")
                     .font(.caption)
