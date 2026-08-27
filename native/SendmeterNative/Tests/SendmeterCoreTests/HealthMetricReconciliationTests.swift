@@ -544,8 +544,8 @@ final class HealthMetricReconciliationTests: XCTestCase {
 
         XCTAssertEqual(progress.finalObservation, .reconciled(1))
         XCTAssertEqual(
-            progress.finalObservation?.automaticConfirmationMessage,
-            "Apple Health updated · 1 day"
+            progress.finalObservation?.manualMessage,
+            "Apple Health synced · 1 day"
         )
     }
 
@@ -570,8 +570,8 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertEqual(progress.reconciledDateKeys, Set([today]))
         XCTAssertEqual(progress.finalObservation, .reconciled(1))
         XCTAssertEqual(
-            progress.finalObservation?.automaticConfirmationMessage,
-            "Apple Health updated · 1 day"
+            progress.finalObservation?.manualMessage,
+            "Apple Health synced · 1 day"
         )
 
         progress.add(
@@ -584,8 +584,8 @@ final class HealthMetricReconciliationTests: XCTestCase {
         )
         XCTAssertEqual(progress.finalObservation, .reconciled(2))
         XCTAssertEqual(
-            progress.finalObservation?.automaticConfirmationMessage,
-            "Apple Health updated · 2 days"
+            progress.finalObservation?.manualMessage,
+            "Apple Health synced · 2 days"
         )
 
         let encoded = try JSONEncoder().encode(progress)
@@ -661,8 +661,8 @@ final class HealthMetricReconciliationTests: XCTestCase {
             .reconciledWithoutDayCount
         )
         XCTAssertEqual(
-            upgraded.finalObservation?.automaticConfirmationMessage,
-            "Apple Health updated"
+            upgraded.finalObservation?.manualMessage,
+            "Apple Health synced"
         )
 
         let roundTrip = try JSONDecoder().decode(
@@ -674,8 +674,8 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertEqual(roundTrip.reconciledCount, 1)
         XCTAssertEqual(roundTrip.finalObservation, .reconciledWithoutDayCount)
         XCTAssertEqual(
-            roundTrip.finalObservation?.automaticConfirmationMessage,
-            "Apple Health updated"
+            roundTrip.finalObservation?.manualMessage,
+            "Apple Health synced"
         )
     }
 
@@ -757,27 +757,27 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertEqual(gate.request(), .start)
     }
 
-    func testObservableSuccessOnlyAnnouncesARealReconciliation() {
+    func testManualConfirmationCopyPinsUserFacingSyncMessages() {
         let changed = HealthSyncObservation.successful(
             reconciledCount: 2,
             sourceDataCount: 3
         )
         XCTAssertEqual(changed, .reconciled(2))
-        XCTAssertEqual(changed.automaticConfirmationMessage, "Apple Health updated · 2 days")
+        XCTAssertEqual(changed.manualMessage, "Apple Health synced · 2 days")
 
         let noChange = HealthSyncObservation.successful(
             reconciledCount: 0,
             sourceDataCount: 3
         )
         XCTAssertEqual(noChange, .noNewData)
-        XCTAssertNil(noChange.automaticConfirmationMessage)
+        XCTAssertEqual(noChange.manualMessage, "Apple Health checked — no new data")
 
         let noSource = HealthSyncObservation.successful(
             reconciledCount: 0,
             sourceDataCount: 0
         )
         XCTAssertEqual(noSource, .noSourceData)
-        XCTAssertNil(noSource.automaticConfirmationMessage)
-        XCTAssertNil(HealthSyncObservation.failed.automaticConfirmationMessage)
+        XCTAssertEqual(noSource.manualMessage, "No Apple Health data found")
+        XCTAssertNil(HealthSyncObservation.failed.manualMessage)
     }
 }

@@ -23,6 +23,18 @@ public enum HealthRefreshTrigger: Equatable, Sendable {
         case .appear, .foreground, .background: return .automatic
         }
     }
+
+    /// #844: whether this trigger may surface a sync confirmation toast.
+    /// Only a genuinely user-initiated sync (a manual pull or action) may
+    /// confirm with a toast; automatic appear/foreground/background
+    /// refreshes must stay silent — their progress remains visible in the
+    /// card/settings state only.
+    public var isUserInitiated: Bool {
+        switch self {
+        case .manual: return true
+        case .appear, .foreground, .background: return false
+        }
+    }
 }
 
 /// The silence/coalescing policy for health refreshes (#661).
