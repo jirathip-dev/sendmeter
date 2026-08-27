@@ -44,4 +44,14 @@ final class HealthRefreshPolicyTests: XCTestCase {
         let last = started(-policy.coalescingWindow, from: base)
         XCTAssertTrue(policy.shouldRefresh(trigger: .foreground, lastStartedAt: last, now: base))
     }
+
+    /// #844 trigger→toast decision matrix: only a genuinely user-initiated
+    /// sync may confirm with a toast. Automatic appear/foreground/background
+    /// refreshes must stay silent (sync progress lives in state only).
+    func testOnlyUserInitiatedTriggerMayShowSyncConfirmationToast() {
+        XCTAssertTrue(HealthRefreshTrigger.manual.isUserInitiated)
+        XCTAssertFalse(HealthRefreshTrigger.appear.isUserInitiated)
+        XCTAssertFalse(HealthRefreshTrigger.foreground.isUserInitiated)
+        XCTAssertFalse(HealthRefreshTrigger.background.isUserInitiated)
+    }
 }

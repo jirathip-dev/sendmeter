@@ -5495,8 +5495,7 @@ public final class AppModel {
             ) else { return }
             recordHealthSync(
                 observation,
-                capturedBy: accountFetch,
-                showAutomaticConfirmation: false
+                capturedBy: accountFetch
             )
             if !Task.isCancelled, let message = observation.manualMessage {
                 self.toastMessage = message
@@ -5649,9 +5648,14 @@ public final class AppModel {
             guard !Task.isCancelled else { return }
             recordHealthSync(
                 observation,
-                capturedBy: accountFetch,
-                showAutomaticConfirmation: trigger != .manual
+                capturedBy: accountFetch
             )
+            // #844: only a user-initiated sync confirms with a toast;
+            // automatic appear/foreground/background refreshes update
+            // state only.
+            if trigger.isUserInitiated, let message = observation.manualMessage {
+                self.toastMessage = message
+            }
         } catch is CancellationError {
             return
         } catch let error as URLError where error.code == .cancelled {
@@ -5757,8 +5761,7 @@ public final class AppModel {
             }
             recordHealthSync(
                 result.observation,
-                capturedBy: owner.fetch,
-                showAutomaticConfirmation: false
+                capturedBy: owner.fetch
             )
         } catch is CancellationError {
             finishMorningHealthRefresh(owner: owner)
@@ -5873,8 +5876,7 @@ public final class AppModel {
             } else {
                 recordHealthSync(
                     observation,
-                    capturedBy: owner.fetch,
-                    showAutomaticConfirmation: true
+                    capturedBy: owner.fetch
                 )
             }
         }
@@ -6337,10 +6339,12 @@ public final class AppModel {
         lastHealthSyncObservation = nil
     }
 
+    /// Records a completed sync in state (lastHealthSyncedAt, persisted
+    /// marker, lastHealthSyncObservation) without touching the toast: the
+    /// trigger→toast decision belongs to the caller (#844).
     private func recordHealthSync(
         _ observation: HealthSyncObservation,
-        capturedBy accountFetch: AccountScopedFetch,
-        showAutomaticConfirmation: Bool
+        capturedBy accountFetch: AccountScopedFetch
     ) {
         guard accountFetch.canApply(
             to: currentUserID,
@@ -6353,10 +6357,6 @@ public final class AppModel {
             forKey: healthLastSyncedDefaultsKey(for: accountFetch.accountUserID)
         )
         lastHealthSyncObservation = observation
-        if showAutomaticConfirmation,
-           let message = observation.automaticConfirmationMessage {
-            toastMessage = message
-        }
     }
 
     private func recordHealthSyncFailure(
