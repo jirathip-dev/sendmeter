@@ -244,20 +244,6 @@ public enum HealthSyncObservation: Equatable, Sendable {
         }
     }
 
-    /// Automatic refreshes use this only for a real reconciliation. In
-    /// particular, no-source and no-op reads intentionally return nil.
-    public var automaticConfirmationMessage: String? {
-        switch self {
-        case let .reconciled(count) where count > 0:
-            let suffix = count == 1 ? "day" : "days"
-            return "Apple Health updated · \(count) \(suffix)"
-        case .reconciledWithoutDayCount:
-            return "Apple Health updated"
-        default:
-            return nil
-        }
-    }
-
     public var manualMessage: String? {
         switch self {
         case let .reconciled(count):
@@ -393,7 +379,7 @@ public struct HealthMorningRefreshPolicy: Equatable, Sendable {
 /// Persisted state for the account-scoped morning refresh window. `nextPass`
 /// is written before the first await, so termination during a HealthKit read
 /// leaves an explicit pass to retry on a later supported event. The aggregate
-/// is persisted with it so only the final pass owns the completion toast.
+/// is persisted with it so only the final pass owns the completion observation.
 public struct HealthMorningRefreshProgress: Codable, Equatable, Sendable {
     public let accountUserID: UUID
     public let startedAt: Date
