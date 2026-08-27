@@ -176,13 +176,16 @@ struct MainTabView: View {
 
 struct SplashView: View {
     @Environment(\.colorScheme) private var systemScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         // #662: the shipped Capacitor app's splash — cave backdrop filled to
         // the screen with the separated kangaroo centered on top. Mirrors the
         // web SplashScreen component (src/components/SplashScreen.tsx +
         // src/index.css .splash-*). KEEP-IN-SYNC: if you change either side,
-        // update the other (assets live in Resources/Assets.xcassets).
+        // update the other (assets live in Resources/Assets.xcassets, motion
+        // values in SplashDynoTimeline; the web side carries the twin
+        // KEEP-IN-SYNC comment in SplashScreen.tsx).
         ZStack {
             // Cave backdrop: web `object-fit: cover; object-position: center
             // 57%` (center 64% on ≥720px-wide screens). The image is wider
@@ -212,13 +215,27 @@ struct SplashView: View {
             // Kangaroo stage: `width: clamp(290px, 80vw, 410px)` (src/index.css
             // .splash-stage). Sized from the full viewport, not the safe area.
             GeometryReader { proxy in
-                Image("SplashKangaroo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: max(290, min(proxy.size.width * 0.8, 410)))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .shadow(color: Color.black.opacity(0.35), radius: 18, y: 16)
-                    .accessibilityHidden(true)
+                // Web: `.splash-kangaroo` runs `splash-dyno 4.2s
+                // cubic-bezier(0.35, 0, 0.2, 1) infinite` (src/index.css
+                // @keyframes splash-dyno), transform-origin 50% 52%. The phase
+                // math lives in SplashDynoTimeline (Sources/Core, pinned by
+                // SplashDynoTimelineTests); here it is sampled per frame and
+                // applied as translation/rotation/scale — transform-only, so
+                // the compositor handles it.
+                if reduceMotion {
+                    // Web reduce-motion sets `animation: none`, which leaves
+                    // the element at its base transform — the rest pose.
+                    kangaroo(in: proxy, pose: .rest)
+                } else {
+                    TimelineView(.animation) { context in
+                        kangaroo(
+                            in: proxy,
+                            pose: SplashDynoTimeline.pose(
+                                at: context.date.timeIntervalSinceReferenceDate
+                            )
+                        )
+                    }
+                }
             }
             .ignoresSafeArea()
             VStack {
@@ -234,6 +251,28 @@ struct SplashView: View {
             }
             .ignoresSafeArea()
         }
+    }
+
+    /// The kangaroo at `pose`: scale about the image's (50%, 52%) origin,
+    /// rotate about the same origin, then translate by the pose's fractions of
+    /// the stage size — the CSS `translate3d() rotate() scale()` chain from
+    /// `@keyframes splash-dyno` with `transform-origin: 50% 52%`.
+    /// Transform-only: no layout-affecting reads, compositor-friendly.
+    private func kangaroo(in proxy: GeometryProxy, pose: SplashDynoPose) -> some View {
+        let stage = max(290, min(proxy.size.width * 0.8, 410))
+        return Image("SplashKangaroo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: stage)
+            .shadow(color: Color.black.opacity(0.35), radius: 18, y: 16)
+            .scaleEffect(
+                CGSize(width: pose.scaleX, height: pose.scaleY),
+                anchor: .init(x: 0.5, y: 0.52)
+            )
+            .rotationEffect(.degrees(pose.rotationDegrees), anchor: .init(x: 0.5, y: 0.52))
+            .offset(x: pose.txFraction * stage, y: pose.tyFraction * stage)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityHidden(true)
     }
 
     private var overlayStops: [Gradient.Stop] {

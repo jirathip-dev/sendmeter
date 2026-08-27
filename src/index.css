@@ -2490,7 +2490,11 @@ textarea.field { resize: none; }
 
 /* Branded auth splash (#294). The cave fills the viewport and remains still;
    only the separated kangaroo moves: crouch, dyno, drop back-first onto the
-   pad, recover. The animation stays compositor-friendly (transform only). */
+   pad, recover. The animation stays compositor-friendly (transform only).
+   KEEP-IN-SYNC: the native SplashView port replays this exact cycle/stop
+   table via SplashDynoTimeline (native/SendmeterNative/Sources/Core), so
+   changing a stop here also changes the unit tests pinned in
+   SplashDynoTimelineTests. */
 @keyframes splash-dyno {
   0%, 4%, 86%, 100% { transform: translate3d(0, 0, 0) rotate(0) scale(1); }
   5% { transform: translate3d(-1%, 2%, 0) rotate(-1deg) scale(1.035, 0.965); }

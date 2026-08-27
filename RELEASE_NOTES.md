@@ -59,6 +59,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native splash: the kangaroo now plays the same looping dyno as the web/Capacitor app — crouch, jump, drop back-first onto the pad, recover — with the matching 4.2s cycle and easing; Reduce Motion keeps a static frame instead.
 - Native sheets now share an 18-point corner radius and consistent open/close feedback across Home, Force, Training Load, History, Workout, and Settings; dismissible sheets also show a grabber and support drag-to-dismiss while the guided routine runner keeps its classified Close path.
 - Native empty states now use Sendmeter artwork, product-specific guidance, and one clear next action when you have no workouts, force history, or Progressor connection.
 - Native Force keeps saved progress, consistency, and curve insights available while the Progressor is disconnected, and ACWR history failures now offer a retry.
