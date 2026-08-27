@@ -100,6 +100,7 @@ struct ForceProtocolChooserView: View {
     let tagsLoading: Bool
     let onRetryTags: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
     init(
         catalog: ForceProtocolCatalog,
@@ -128,18 +129,24 @@ struct ForceProtocolChooserView: View {
                 catalogStatus
 
                 sectionHeader("Suggested")
-                ForEach(catalog.suggested) { protocolValue in
-                    protocolRow(protocolValue)
+                WatchChipFlow {
+                    ForEach(catalog.suggested) { protocolValue in
+                        protocolRow(protocolValue)
+                    }
                 }
 
                 sectionHeader("My protocols")
                 if catalog.myProtocols.isEmpty {
                     emptyProtocols
                 } else {
-                    ForEach(catalog.myProtocols) { protocolValue in
-                        protocolRow(protocolValue)
+                    WatchChipFlow {
+                        ForEach(catalog.myProtocols) { protocolValue in
+                            protocolRow(protocolValue)
+                        }
                     }
                 }
+
+                selectedProtocolSummary
 
                 Text("Exercises and protocols are managed on your iPhone.")
                     .font(.caption2)
@@ -185,34 +192,49 @@ struct ForceProtocolChooserView: View {
             }
             .accessibilityIdentifier("force-exercise-empty")
         } else {
-            ForEach(recentTags, id: \.self) { option in
-                exerciseRow(option)
+            // #791 W2: the phone's #750 compact chip picker, on watch — one
+            // wrapping row of chips instead of full-height card rows. Hit
+            // targets stay at the design minimum; the selected chip is the
+            // solid one.
+            WatchChipFlow {
+                ForEach(recentTags, id: \.self) { option in
+                    exerciseChip(option)
+                }
             }
         }
     }
 
-    private func exerciseRow(_ option: String) -> some View {
+    /// One compact exercise chip — the watch analogue of the phone's
+    /// #750 selector chip. Selected = solid accent fill, unselected = tinted
+    /// surface; the row of chips replaces the old full-width card rows so
+    /// the picker fits the small screen without scrolling a tall list.
+    private func exerciseChip(_ option: String) -> some View {
         let selected = option == tag
+        let accent = WatchPalette.accent(WatchDesignTokens.primary, reducedLuminance: isLuminanceReduced)
         return Button {
             tag = option
         } label: {
-            WatchCard(accent: selected ? WatchPalette.primary : nil) {
-                HStack(spacing: 8) {
-                    Text(option)
-                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                        .foregroundStyle(WatchPalette.textPrimary)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                    Spacer(minLength: 0)
-                    if selected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(
-                                WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary, accent: WatchDesignTokens.primary)
+            Text(option)
+                .font(.system(size: 12, weight: selected ? .heavy : .semibold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .foregroundStyle(
+                    selected ? WatchPalette.textPrimary : WatchPalette.foreground(WatchDesignTokens.primary)
+                )
+                .padding(.horizontal, 9)
+                .frame(height: 32)
+                .background {
+                    Capsule()
+                        .fill(accent.opacity(selected ? 0.42 : 0.12))
+                        .overlay {
+                            Capsule().stroke(
+                                accent.opacity(selected ? 0.9 : 0.32),
+                                lineWidth: selected ? 1.2 : 0.8
                             )
-                    }
+                        }
                 }
-                .frame(minHeight: 44)
-            }
+                .frame(minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(option)
@@ -288,54 +310,32 @@ struct ForceProtocolChooserView: View {
 
     private func protocolRow(_ protocolValue: WatchForceProtocol) -> some View {
         let selected = catalog.selectedId == protocolValue.id
+        let accent = WatchPalette.accent(WatchDesignTokens.primary, reducedLuminance: isLuminanceReduced)
         return Button {
             catalog.select(protocolValue)
             dismiss()
         } label: {
-            WatchCard(accent: selected ? WatchPalette.primary : nil) {
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 6) {
-                                categoryLabel(for: protocolValue)
-                                Spacer(minLength: 0)
-                                if selected { selectedMark }
-                            }
-                            VStack(alignment: .leading, spacing: 4) {
-                                categoryLabel(for: protocolValue)
-                                if selected { selectedMark }
-                            }
+            Text(protocolValue.name)
+                .font(.system(size: 12, weight: selected ? .heavy : .semibold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .foregroundStyle(
+                    selected ? WatchPalette.textPrimary : WatchPalette.foreground(WatchDesignTokens.primary)
+                )
+                .padding(.horizontal, 9)
+                .frame(height: 32)
+                .background {
+                    Capsule()
+                        .fill(accent.opacity(selected ? 0.42 : 0.12))
+                        .overlay {
+                            Capsule().stroke(
+                                accent.opacity(selected ? 0.9 : 0.32),
+                                lineWidth: selected ? 1.2 : 0.8
+                            )
                         }
-
-                        Text(protocolValue.name)
-                            .font(.system(.footnote, design: .rounded).weight(.bold))
-                            .foregroundStyle(WatchPalette.textPrimary)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.8)
-
-                        Text(ForceProtocolPresentation.modeDescription(for: protocolValue))
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-                            .lineLimit(1)
-
-                        Text(ForceProtocolPresentation.detail(for: protocolValue))
-                            .font(.caption2)
-                            .foregroundStyle(WatchPalette.textSecondary)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.78)
-
-                        if let availability = ForceProtocolPresentation.watchAvailability(for: protocolValue) {
-                            Text(availability)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
-                                .lineLimit(2)
-                                .minimumScaleFactor(0.68)
-                        }
-                    }
-                    Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            }
+                .frame(minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
@@ -354,21 +354,133 @@ struct ForceProtocolChooserView: View {
         .accessibilityIdentifier("force-protocol-\(protocolValue.id)")
     }
 
-    private func categoryLabel(for protocolValue: WatchForceProtocol) -> some View {
-        Text(ForceProtocolPresentation.category(for: protocolValue))
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .tracking(0.7)
-            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-    }
-
-    private var selectedMark: some View {
-        Label("Selected", systemImage: "checkmark.circle.fill")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-            .lineLimit(1)
+    /// The compact chip picker loses the detail rows, so the selected
+    /// protocol's summary stays visible at hand's reach below the sections.
+    @ViewBuilder
+    private var selectedProtocolSummary: some View {
+        let selected = catalog.suggested.first { $0.id == catalog.selectedId }
+            ?? catalog.myProtocols.first { $0.id == catalog.selectedId }
+        if let selected {
+            let detail = [
+                ForceProtocolPresentation.detail(for: selected),
+                ForceProtocolPresentation.watchAvailability(for: selected),
+            ]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+            WatchCard {
+                Text(selected.name)
+                    .font(.system(.footnote, design: .rounded).weight(.bold))
+                    .foregroundStyle(WatchPalette.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(WatchPalette.textSecondary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.75)
+                    .accessibilityIdentifier("force-selected-protocol-detail")
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("force-selected-protocol-summary")
+        }
     }
 
     private func retry() {
         Task { await catalog.refresh() }
+    }
+}
+
+/// Wrapping row of chips for the #791 W2 compact pickers. A chip that does
+/// not fit on the current line wraps onto the next instead of overflowing
+/// the narrow watch width.
+private struct WatchChipFlow<Content: View>: View {
+    let spacing: CGFloat
+    private let content: () -> Content
+
+    init(spacing: CGFloat = 7, @ViewBuilder content: @escaping () -> Content) {
+        self.spacing = spacing
+        self.content = content
+    }
+
+    var body: some View {
+        WatchFlowLayout(spacing: spacing) { content() }
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Minimal horizontal flow layout — the watch analogue of the phone's
+/// private `FlowLayout` (#710) in ForceView.swift. Both are per-target;
+/// sharing would require an app target the watch could import.
+private struct WatchFlowLayout: Layout {
+    var spacing: CGFloat = 7
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let rows = makeRows(proposal: proposal, subviews: subviews)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.map(\.height).reduce(0, +)
+            + spacing * CGFloat(max(0, rows.count - 1))
+        return CGSize(width: proposal.width ?? width, height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let rows = makeRows(proposal: proposal, subviews: subviews)
+        var y = bounds.minY
+        for row in rows {
+            var x = bounds.minX
+            for (itemOffset, subviewIndex) in row.items.enumerated() {
+                let size = row.sizes[itemOffset]
+                subviews[subviewIndex].place(
+                    at: CGPoint(x: x, y: y),
+                    proposal: ProposedViewSize(size)
+                )
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private func makeRows(
+        proposal: ProposedViewSize,
+        subviews: Subviews
+    ) -> [FlowRow] {
+        let width = proposal.width ?? .infinity
+        var rows: [FlowRow] = []
+        var current = FlowRow()
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            let nextWidth = current.items.isEmpty
+                ? size.width
+                : current.width + spacing + size.width
+            if nextWidth > width, !current.items.isEmpty {
+                rows.append(current)
+                current = FlowRow()
+            }
+            current.items.append(index)
+            current.sizes.append(size)
+            current.width = current.items.count == 1
+                ? current.sizes[0].width
+                : current.width + spacing + size.width
+        }
+        if !current.items.isEmpty { rows.append(current) }
+        for rowIndex in rows.indices {
+            rows[rowIndex].height = rows[rowIndex].sizes.map(\.height).max() ?? 0
+        }
+        return rows
+    }
+
+    private struct FlowRow {
+        var items: [Int] = []
+        var sizes: [CGSize] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
     }
 }

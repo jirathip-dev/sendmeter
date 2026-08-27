@@ -63,7 +63,7 @@ struct GuidedProtocolLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                Image(systemName: "scalemass")
+                Image(systemName: SendmeterIconSymbol.force.rawValue)
                     .foregroundStyle(segColor(context.state))
             } compactTrailing: {
                 segTimer(context.state)
@@ -71,7 +71,7 @@ struct GuidedProtocolLiveActivity: Widget {
                     .frame(maxWidth: 44)
                     .foregroundStyle(segColor(context.state))
             } minimal: {
-                Image(systemName: "scalemass")
+                Image(systemName: SendmeterIconSymbol.force.rawValue)
                     .foregroundStyle(segColor(context.state))
             }
             .widgetURL(URL(string: "sendmeter://force"))

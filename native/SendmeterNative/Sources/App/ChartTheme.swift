@@ -1,5 +1,6 @@
 import SwiftUI
 import SendLogHealthCore
+import SendLogWatchCore
 
 /// Semantic chart palette — web parity (#649). Every hex below mirrors
 /// `src/index.css` (light `:root` ~L157-177, dark `.dark` ~L356-377) and the
@@ -191,14 +192,18 @@ public enum ChartToken: String, CaseIterable, Sendable {
 
     private var hexPair: (light: String, dark: String) {
         switch self {
-        case .focus: return semanticPair(.focus)
-        case .health: return semanticPair(.health)
-        case .load: return semanticPair(.load)
-        case .force: return semanticPair(.focus)
-        case .forceSecondary: return semanticPair(.health)
-        case .optimal: return semanticPair(.optimal)
-        case .caution: return semanticPair(.caution)
-        case .alert: return semanticPair(.alert)
+        // #791 W1: semantic light values resolve from the one canonical hue
+        // source shared with the watch (`SendmeterSemanticHue`); the dark
+        // values stay the per-surface dark-mode adaptation (index.css
+        // `.dark`).
+        case .focus: return (SendmeterSemanticHue.primary.hex, semanticPair(.focus).1)
+        case .health: return (SendmeterSemanticHue.optimal.hex, semanticPair(.health).1)
+        case .load: return (SendmeterSemanticHue.execution.hex, semanticPair(.load).1)
+        case .force: return (SendmeterSemanticHue.primary.hex, semanticPair(.focus).1)
+        case .forceSecondary: return (SendmeterSemanticHue.optimal.hex, semanticPair(.health).1)
+        case .optimal: return (SendmeterSemanticHue.optimal.hex, semanticPair(.optimal).1)
+        case .caution: return (SendmeterSemanticHue.caution.hex, semanticPair(.caution).1)
+        case .alert: return (SendmeterSemanticHue.danger.hex, semanticPair(.alert).1)
         case .reference: return ("#8E8E93", "#A9A9B0")
         case .grid: return ("#E2E2E6", "#3E3E44")
         case .axis: return ("#6E6E73", "#A9A9B0")

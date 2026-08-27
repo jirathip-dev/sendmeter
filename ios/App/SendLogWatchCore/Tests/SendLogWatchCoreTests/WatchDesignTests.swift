@@ -122,4 +122,50 @@ final class WatchDesignTests: XCTestCase {
             WatchDesignTokens.minimumForegroundContrast
         )
     }
+
+    // MARK: #791 W1 — one canonical semantic hue shared by phone, watch, widget.
+
+    func testCanonicalHuesMatchPhoneSemanticPalette() {
+        // The phone canonical values (SendmeterStyle / ChartToken light mode).
+        XCTAssertEqual(SendmeterSemanticHue.primary.hex, "#5B5FC7")
+        XCTAssertEqual(SendmeterSemanticHue.optimal.hex, "#2E96F0")
+        XCTAssertEqual(SendmeterSemanticHue.caution.hex, "#DDB13A")
+        XCTAssertEqual(SendmeterSemanticHue.danger.hex, "#E5743A")
+        XCTAssertEqual(SendmeterSemanticHue.execution.hex, "#7B83EB")
+    }
+
+    func testWatchTokensAreDerivedFromCanonicalHues() {
+        XCTAssertEqual(
+            WatchDesignTokens.primary,
+            PhaseRGB(hex: SendmeterSemanticHue.primary.hex)
+        )
+        XCTAssertEqual(
+            WatchDesignTokens.secondary,
+            PhaseRGB(hex: SendmeterSemanticHue.optimal.hex)
+        )
+        XCTAssertEqual(
+            WatchDesignTokens.warning,
+            PhaseRGB(hex: SendmeterSemanticHue.caution.hex)
+        )
+        XCTAssertEqual(
+            WatchDesignTokens.danger,
+            PhaseRGB(hex: SendmeterSemanticHue.danger.hex)
+        )
+    }
+
+    func testWatchDangerHueStaysOrangeLikeThePhone() {
+        // The #791 defect: watch danger was red-pink (#FF6175) while the
+        // phone shows orange (#E5743A) for the same high/recover semantic.
+        let danger = WatchDesignTokens.danger
+        XCTAssertGreaterThan(danger.red, danger.green, "danger must stay red-dominant")
+        XCTAssertGreaterThan(danger.green, danger.blue, "orange, not pink: green must beat blue")
+    }
+
+    // MARK: #791 W4 — one glyph mapping per concept across watch, phone, widget.
+
+    func testCanonicalIconSymbolsMapConceptsIdentically() {
+        XCTAssertEqual(SendmeterIconSymbol.force.rawValue, "scalemass")
+        XCTAssertEqual(SendmeterIconSymbol.workout.rawValue, "figure.climbing")
+        XCTAssertEqual(SendmeterIconSymbol.status.rawValue, "chart.bar.fill")
+    }
 }

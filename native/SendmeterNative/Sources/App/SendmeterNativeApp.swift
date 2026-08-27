@@ -1,4 +1,5 @@
 import SendmeterCore
+import SendLogWatchCore
 import SwiftUI
 
 @main
@@ -155,13 +156,13 @@ struct MainTabView: View {
         @Bindable var model = model
         TabView(selection: $model.selectedTab) {
             DashboardView()
-                .tabItem { Label("Dashboard", systemImage: "gauge.with.dots.needle.67percent") }
+                .tabItem { Label("Dashboard", systemImage: SendmeterIconSymbol.status.rawValue) }
                 .tag(AppTab.dashboard)
             WorkoutView()
-                .tabItem { Label("Workout", systemImage: "figure.climbing") }
+                .tabItem { Label("Workout", systemImage: SendmeterIconSymbol.workout.rawValue) }
                 .tag(AppTab.workout)
             ForceView()
-                .tabItem { Label("Force", systemImage: "waveform.path.ecg") }
+                .tabItem { Label("Force", systemImage: SendmeterIconSymbol.force.rawValue) }
                 .tag(AppTab.force)
             HistoryView()
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }

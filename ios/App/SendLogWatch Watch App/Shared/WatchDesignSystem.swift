@@ -306,11 +306,13 @@ struct WatchSecondaryButtonStyle: ButtonStyle {
 /// can't drift between HomeView's switcher, #537's Force setup, and future
 /// `WatchIconButton` consumers. Entries commented "not yet wired" exist so a
 /// future call site has one place to look rather than guessing a new glyph.
+/// The three product-level concepts (#791 W4) resolve from
+/// `SendmeterIconSymbol` so the watch, phone and widget share ONE mapping.
 enum WatchIconSymbol {
-    static let status = "chart.bar.fill"
+    static let status = SendmeterIconSymbol.status.rawValue
     static let actions = "bolt.fill"
-    static let force = "scalemass" // matches ActionsView's Force Gauge row
-    static let workout = "figure.climbing" // matches ActionsView's Climb Workout row
+    static let force = SendmeterIconSymbol.force.rawValue // matches ActionsView's Force Gauge row
+    static let workout = SendmeterIconSymbol.workout.rawValue // matches ActionsView's Climb Workout row
     static let forceContext = "slider.horizontal.3" // Force exercise/protocol chooser
     static let disconnect = "xmark" // Progressor disconnect action
     static let refresh = "arrow.triangle.2.circlepath" // matches WatchVisualState.syncing
