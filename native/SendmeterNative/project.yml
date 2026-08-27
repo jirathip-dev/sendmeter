@@ -273,6 +273,10 @@ targets:
       # app still links SendLogHealthCore normally; the extension gets no
       # HealthKit, Supabase, or native app module dependency.
       - path: ../../native-plugins/sendlog-health-core/Sources/SendLogHealthCore/ReadinessWidgetContract.swift
+      # #791 W4: same pattern as above — the canonical SF Symbol mapping is
+      # Foundation-only, so the widget compiles it by path and shares ONE
+      # glyph per concept (force/workout/status) with the watch and the phone.
+      - path: ../../ios/App/SendLogWatchCore/Sources/SendLogWatchCore/SendmeterIconSymbol.swift
     # XcodeGen ignores the top-level `resources:` block for this spec shape
       # (same quirk as the app above), so the widget's Info.plist + privacy
       # manifest are declared as sources with an explicit buildPhase. The

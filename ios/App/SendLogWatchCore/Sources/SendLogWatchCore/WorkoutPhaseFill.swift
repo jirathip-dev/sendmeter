@@ -37,6 +37,21 @@ public struct PhaseRGB: Sendable, Equatable, Hashable {
     public static let white = PhaseRGB(1, 1, 1)
     public static let black = PhaseRGB(0, 0, 0)
 
+    /// Parses `#RRGGBB` (leading `#` optional, case-insensitive). The single
+    /// cross-surface hex source (`SendmeterSemanticHue`) stays Foundation-only
+    /// so the phone, watch and widget palettes can all resolve it without
+    /// importing SwiftUI.
+    public init(hex: String) {
+        let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var value: UInt64 = 0
+        Scanner(string: cleaned).scanHexInt64(&value)
+        self.init(
+            Double((value >> 16) & 0xFF) / 255,
+            Double((value >> 8) & 0xFF) / 255,
+            Double(value & 0xFF) / 255
+        )
+    }
+
     /// WCAG relative luminance (sRGB → linear, Rec.709 weights).
     public var relativeLuminance: Double {
         func linear(_ c: Double) -> Double {

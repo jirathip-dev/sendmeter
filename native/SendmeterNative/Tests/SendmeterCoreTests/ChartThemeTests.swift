@@ -1,5 +1,6 @@
 import SwiftUI
 import XCTest
+import SendLogWatchCore
 @testable import SendmeterCore
 
 /// Pins ChartTheme.swift's hex table to `src/index.css` so CSS drift is
@@ -50,6 +51,31 @@ final class ChartThemeTests: XCTestCase {
         for (token, expected) in expectedTokenHexes {
             XCTAssertEqual(token.lightHex, expected.light, "\(token.rawValue) light hex")
             XCTAssertEqual(token.darkHex, expected.dark, "\(token.rawValue) dark hex")
+        }
+    }
+
+    /// #791 W1: the phone, watch and widget read the same semantic hue. The
+    /// single canonical source is `SendmeterSemanticHue` (SendLogWatchCore);
+    /// ChartToken's light values are the phone's canonical hues, so a
+    /// standalone drift on either side is caught here. Dark values stay
+    /// per-surface adaptations (index.css `.dark`) and are outside this pin.
+    func testLightSemanticHexesStayAtCanonicalHues() {
+        let pairs: [(ChartToken, SendmeterSemanticHue)] = [
+            (.focus, .primary),
+            (.health, .optimal),
+            (.load, .execution),
+            (.force, .primary),
+            (.forceSecondary, .optimal),
+            (.optimal, .optimal),
+            (.caution, .caution),
+            (.alert, .danger),
+        ]
+        for (token, hue) in pairs {
+            XCTAssertEqual(
+                token.lightHex,
+                hue.hex,
+                "\(token.rawValue) light hex must resolve from \(hue.rawValue)"
+            )
         }
     }
 

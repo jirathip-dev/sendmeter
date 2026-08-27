@@ -26,6 +26,10 @@ struct ForceGaugeView: View {
     @State private var autoConnectSuppressed = false
     @State private var connectAttempt = 0
     @State private var connectAttemptStale = false
+    // #791 W3: per-rep hold-peak milestone cue. Reset whenever measuring
+    // ends so the next rep can cue its own peak; the tracker itself ensures
+    // one subtle click per rep (never a storm).
+    @State private var peakHapticTracker = ForcePeakHapticTracker()
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @Environment(ForceRuntimeCoordinator.self) private var forceRuntimeCoordinator
 
@@ -174,6 +178,10 @@ struct ForceGaugeView: View {
                     }
                 }
                 .onChange(of: tindeq.status) { _, status in
+                // #791 W3: the hold-peak tracker is per-rep. When measuring
+                // ends (save/disconnect), re-arm so the next pull cues its
+                // own peak milestone.
+                if status != .measuring { peakHapticTracker.reset() }
                 // Controls show/hide on start/stop, shifting layout — snap back to
                 // the top so the live gauge stays in view instead of a blank scroll.
                 // Guarded to the scrolling branch: the "gaugeTop" anchor doesn't
@@ -226,6 +234,16 @@ struct ForceGaugeView: View {
                 // became invalid under the resolver's mode is corrected.
                 .onChange(of: activeSideMode) { _, _ in
                     normalizeSideForMode()
+                }
+                // #791 W3: a subtle click when a hold's peak is established
+                // (the force settles below the rep peak). The tracker
+                // dedupes to one cue per rep; the coordinator routes it as a
+                // `.click` so the sensor settings the user chose are the
+                // only thing that silences it.
+                .onChange(of: tindeq.currentKg) { _, kg in
+                    if peakHapticTracker.shouldCue(forceKg: kg) {
+                        forceRuntimeCoordinator.acknowledge(.holdPeak)
+                    }
                 }
             }
             // The watch's accessibility-large title can consume the same
