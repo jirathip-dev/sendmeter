@@ -101,18 +101,16 @@ bundles inside the `.ipa`, so each needs its own file.
 
 | Bundle | File | Required-reason APIs declared |
 |---|---|---|
-| iOS app | `ios/App/App/PrivacyInfo.xcprivacy` | UserDefaults → `CA92.1` |
+| iOS app | `native/SendmeterNative/Resources/PrivacyInfo.xcprivacy` | UserDefaults → `CA92.1` |
 | Watch app | `ios/App/SendLogWatch Watch App/PrivacyInfo.xcprivacy` | UserDefaults → `CA92.1` + `1C8F.1`; FileTimestamp → `C617.1` |
 | Watch complications extension | `ios/App/SendLogWatchWidgets/PrivacyInfo.xcprivacy` | UserDefaults → `1C8F.1` |
-| Phone Live Activity extension | `ios/App/SendmeterWidgets/PrivacyInfo.xcprivacy` | none (uses no required-reason API) |
+| Phone Live Activity extension | `native/SendmeterNative/Resources/Widgets/PrivacyInfo.xcprivacy` | none (uses no required-reason API) |
 
 Reason codes, and why they differ per bundle:
 
 - **`CA92.1`** — user defaults "only accessible to the app itself". Covers every
-  `UserDefaults.standard` caller: `LiveActivityManager`'s pending-action queue
-  (linked into the App from `native-plugins/sendlog-live-activity`),
-  `@capacitor/preferences`, and on the watch `WorkoutManager`, `ForceGaugeView`
-  and `SendLogWatchCore`'s `RPEModel`.
+  `UserDefaults.standard` caller: `LiveActivityManager`'s pending-action queue and the watch
+ `WorkoutManager`, `ForceGaugeView` and `SendLogWatchCore`'s `RPEModel`.
 - **`1C8F.1`** — the App Group variant. `WidgetShared.swift` (both copies) uses
   `UserDefaults(suiteName: "group.com.jirathip.sendlog")`, which is readable by
   another bundle. CA92.1 explicitly does *not* permit "writing information that
@@ -124,9 +122,8 @@ Reason codes, and why they differ per bundle:
   `CategoryFileTimestamp` is a required-reason API too, so it would have
   triggered the same ITMS-91053 mail.
 
-Nothing upstream covers any of this: `@capacitor/ios` ships a manifest with an
-**empty** `NSPrivacyAccessedAPITypes` array, and `@capacitor/preferences` 8.0.1
-ships no manifest at all.
+The retained native targets carry their own manifests under the generated
+native project inputs listed above.
 
 **Sentry adds no manifest** (issue #227). `@sentry/react` is the *web* SDK — it
 is bundled into the WebView JavaScript in `ios/App/App/public`, not linked as a

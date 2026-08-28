@@ -1,9 +1,10 @@
 version: 2
 
-# The repository's default branch is `staging`. Deliberately do not set
-# target-branch: GitHub documents that version-update options then stop applying
-# to security updates, which must continue to use the default branch and these
-# security groups.
+# Dependabot monitors the retained MCP, GitHub Actions, SwiftPM, and Bundler
+# manifests. The retired root web/Capacitor package and deleted plugin
+# manifests are intentionally absent.
+# The repository's default branch is `staging`; no target-branch is set so
+# security updates continue to use the default branch and security groups.
 updates:
 
   - package-ecosystem: "npm"
@@ -143,6 +144,27 @@ updates:
         patterns: ["*"]
         update-types: ["patch", "minor"]
       swift-tool-major:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["major"]
+
+  - package-ecosystem: "bundler"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:45"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 1
+    groups:
+      bundler-security:
+        applies-to: "security-updates"
+        patterns: ["*"]
+      bundler-updates:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      bundler-major:
         applies-to: "version-updates"
         patterns: ["*"]
         update-types: ["major"]

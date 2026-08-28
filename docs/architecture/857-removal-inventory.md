@@ -72,8 +72,10 @@ MCP gates run from `mcp/` with its package-local lockfile: `npm ci`, audit,
 typecheck, test, and build. Native logic remains `swift test` in
 `native/SendmeterNative` and `ios/App/SendLogWatchCore`; XcodeGen generates the
 native phone/Watch project from `project.yml`. Migration deployment uses
-Node's built-in fetch without npm installation. Secret scanning and native
-TestFlight remain independent of Node.
+Node's built-in fetch without npm installation. Secret scanning, Bundler/Fastlane,
+and native TestFlight remain independent of the retired root npm package.
+The retained Dependabot surface is 7 manifests: MCP npm, GitHub Actions, four
+SwiftPM manifests, and the root Bundler manifest for Fastlane.
 
 The Vercel project/domain is retained untouched; future public site requires
 separate approved design/content issue.
