@@ -28,7 +28,7 @@ let package = Package(
         ),
         .testTarget(
             name: "SendLogWatchCoreTests",
-            dependencies: ["SendLogWatchCore"],
+            dependencies: ["SendLogWatchCore", .product(name: "SendLogHealthCore", package: "sendlog-health-core")],
             path: "Tests/SendLogWatchCoreTests",
             resources: [
                 .copy("Fixtures/rpe-depletion-parity.json"),

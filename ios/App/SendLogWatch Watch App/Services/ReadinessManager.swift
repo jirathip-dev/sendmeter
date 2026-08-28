@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SendLogHealthCore
 import SendLogWatchCore
 import enum SendLogWatchCore.ReadinessTransportPath
 import WatchConnectivity

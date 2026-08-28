@@ -1,4 +1,5 @@
 import Foundation
+import SendLogHealthCore
 
 // KEEP-IN-SYNC: mirrors `ewmaAcwr` in src/lib/metrics.ts:157 — same
 // mean-seeded EWMA recurrence, same 7/28-day spans, same nil rules (empty or
