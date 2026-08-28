@@ -55,7 +55,18 @@ declare
   v_existing public.health_metrics%rowtype;
   v_has_source boolean;
   v_writer text;
+  v_rows integer;
 begin
+  -- Serialize concurrent writers for the same (user_id, date) BEFORE any
+  -- read (review blocker): SELECT ... FOR UPDATE locks NOTHING when the row
+  -- is absent, so two racing RPCs for a missing date would both proceed —
+  -- the loser's INSERT then overwrites the winner without re-evaluating
+  -- precedence. An ADVERSARY xact lock on the key covers the absent-key
+  -- case by construction; it releases at commit/rollback.
+  perform pg_advisory_xact_lock(
+    hashtextextended(p_user_id::text || ':' || p_date::text, 0)
+  );
+
   -- The RETURNS TABLE output columns (date/readiness/zone/computed_at) are
   -- in scope like vars, so every table column must be QUALIFIED below.
   v_has_source := p_hrv_sdnn_ms is not null
@@ -79,9 +90,7 @@ begin
     into v_existing
     from public.health_metrics h
    where h.user_id = p_user_id and h.date = p_date
-   for update;
-
-  v_writer := lower(coalesce(p_writer, ''));
+   for update;  v_writer := lower(coalesce(p_writer, ''));
 
   if v_writer = 'watch'
      and found
@@ -131,7 +140,41 @@ begin
     readiness = coalesce(excluded.readiness, public.health_metrics.readiness),
     zone = coalesce(excluded.zone, public.health_metrics.zone),
     computed_at = coalesce(excluded.computed_at, public.health_metrics.computed_at),
-    updated_at = now();
+    updated_at = now()
+  -- Compare-and-swap backstop (defense in depth; the advisory lock above
+  -- serializes RPC writers, this covers any out-of-band writer): re-evaluate
+  -- the retain rule against the row ACTUALLY present at update time — an
+  -- existing fresh non-empty row wins over a delayed watch write.
+  where not (
+    v_writer = 'watch'
+    -- A keep-score candidate with no computed timestamp (nil) is not a
+    -- fresh watch write: it only merges biometrics (#109), so the CAS
+    -- fresh-row guard must not retain on it.
+    and p_computed_at is not null
+    and (
+      public.health_metrics.hrv_sdnn_ms is not null
+      or public.health_metrics.resting_hr is not null
+      or public.health_metrics.sleep_hours is not null
+      or public.health_metrics.sleep_deep_hours is not null
+      or public.health_metrics.sleep_rem_hours is not null
+      or public.health_metrics.body_mass_kg is not null
+      or public.health_metrics.resp_rate_bpm is not null
+    )
+    and public.health_metrics.computed_at is not null
+    and ((public.health_metrics.computed_at at time zone p_timezone)::date
+         = (p_computed_at at time zone p_timezone)::date)
+  );
+
+  get diagnostics v_rows = row_count;
+  if v_rows = 0 then
+    -- The CAS filtered the update: the date is owned by a fresh, non-empty
+    -- row that appeared during this call. Report the honest winner.
+    return query
+      select 'retained'::text, h.date, h.readiness, h.zone, h.computed_at
+      from public.health_metrics h
+      where h.user_id = p_user_id and h.date = p_date;
+    return;
+  end if;
 
   return query
     select 'written'::text, h.date, h.readiness, h.zone, h.computed_at

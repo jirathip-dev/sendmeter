@@ -22,6 +22,7 @@
     "db:reset": "supabase db reset",
     "test:db:purge": "supabase test db --local supabase/tests/purge_sync_generation.sql",
     "test:db:health-precedence": "supabase test db --local supabase/tests/health_metrics_precedence.sql",
+    "test:db:health-precedence-race": "bash scripts/test-health-precedence-race.sh",
     "db:status": "supabase status",
     "postinstall": "patch-package",
     "migration:status": "node scripts/migration-status.mjs",

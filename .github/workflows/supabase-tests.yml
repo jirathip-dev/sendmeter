@@ -45,6 +45,9 @@ jobs:
       - name: Run health-metrics precedence SQL regression
         run: npm run test:db:health-precedence
 
+      - name: Run health-metrics precedence race SQL regression
+        run: npm run test:db:health-precedence-race
+
       - name: Stop disposable local Supabase
         if: always()
         run: npx supabase stop --no-backup
