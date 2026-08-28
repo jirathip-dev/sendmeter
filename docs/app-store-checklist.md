@@ -101,10 +101,10 @@ bundles inside the `.ipa`, so each needs its own file.
 
 | Bundle | File | Required-reason APIs declared |
 |---|---|---|
-| iOS app | `native/SendmeterNative/Resources/PrivacyInfo.xcprivacy` | UserDefaults → `CA92.1` |
+| iOS app | `native/SendmeterNative/Resources/PrivacyInfo.xcprivacy` | UserDefaults → `CA92.1`, `1C8F.1`; SystemBootTime → `35F9.1` |
 | Watch app | `ios/App/SendLogWatch Watch App/PrivacyInfo.xcprivacy` | UserDefaults → `CA92.1` + `1C8F.1`; FileTimestamp → `C617.1` |
 | Watch complications extension | `ios/App/SendLogWatchWidgets/PrivacyInfo.xcprivacy` | UserDefaults → `1C8F.1` |
-| Phone Live Activity extension | `native/SendmeterNative/Resources/Widgets/PrivacyInfo.xcprivacy` | none (uses no required-reason API) |
+| Phone Live Activity extension | `native/SendmeterNative/Resources/Widgets/PrivacyInfo.xcprivacy` | UserDefaults → `1C8F.1` |
 
 Reason codes, and why they differ per bundle:
 

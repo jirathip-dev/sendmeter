@@ -42,10 +42,10 @@ GitHub-billable minutes were recorded as **0**.
 
 After policy — **expected maximum, measured values to be recorded after the
 first policy cycle (next scheduled 2026-08-31)** — is one open routine
-version-update PR per manifest:
+version-update PR per retained manifest, including Bundler for Fastlane:
 
 ```
-mcp npm 1 + GitHub Actions 1 + 4 surviving SwiftPM manifests = 6 PRs
+mcp npm 1 + GitHub Actions 1 + 4 surviving SwiftPM manifests + Bundler 1 = 7 PRs
 maximum routine version-update fan-out per weekly cycle
 ```
 
@@ -61,8 +61,7 @@ first policy cycle; the before baseline recorded 0 GitHub-billable minutes.
 Because major groups also consume the one version-update slot, operators must
 close stale major PRs promptly when they are not being actively upgraded.
 Otherwise a stale major can starve routine patch/minor updates for that
-manifest. Root npm major PR #827 is the current instance requiring this
-manual treatment; #829 was merged and is no longer a stale-major example.
+manifest. Operators should apply this treatment to any retained manifest.
 
 ## Fixture evidence
 
