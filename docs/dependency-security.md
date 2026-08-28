@@ -34,10 +34,10 @@ lists npm, GitHub Actions, and Swift (v5 and v6) as supported ecosystems.
   `native/SendmeterNative`, and `tools/anti-slop-swift` each week.
 
 Production and development npm patch/minor updates are grouped separately;
-major updates are grouped separately for deliberate review. Security updates
-are grouped per ecosystem. Swift updates use the same patch/minor versus major
-split. The open version-update limits are five for the root npm project and
-Actions, and three for `mcp/` and each Swift manifest.
+major updates are grouped separately for deliberate manual triage. Security
+updates are grouped per ecosystem and retain their own unthrottled path. Swift
+updates use the same patch/minor versus major split. Each manifest has one open
+version-update slot, while security updates are not subject to that limit.
 
 The repository default branch is `staging`, so Dependabot targets `staging`.
 The config intentionally leaves out `target-branch`: GitHub documents that a
@@ -132,3 +132,8 @@ convenience.
 6. If the only available upstream fix is incompatible, document the exact
    advisory and temporary exception in this file with an owner and expiry, add
    the regression coverage, and schedule removal before merging.
+7. Close stale major Dependabot PRs promptly when they are not being actively
+   upgraded, because a major is still a version update and consumes the
+   manifest's one-slot queue. Root npm #827 is the current open example;
+   #829 was merged and is no longer stale. Leaving #827 stale can starve
+   routine patch/minor updates.

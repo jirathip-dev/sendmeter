@@ -24,6 +24,12 @@ on:
       - "native-plugins/sendlog-health/**"
       - "native-plugins/sendlog-live-activity/**"
       - "native-plugins/sendlog-passkey/**"
+      # Root manifests are admitted to the cheap classifier below. Only
+      # native-facing dependency changes promote the macOS job.
+      - "package.json"
+      - "package-lock.json"
+      - "patches/**"
+      - "capacitor.config.ts"
       - ".github/workflows/ios-ci.yml"
   # Manual escape hatch for verifying the lane itself without a native change.
   workflow_dispatch:
@@ -34,6 +40,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify:
+    name: Classify native dependency changes
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      native_changed: ${{ steps.classify.outputs.native_changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Detect native-facing dependency changes
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            echo 'native_changed=true' >> "$GITHUB_OUTPUT"
+            echo 'workflow_dispatch: native gate requested'
+            exit 0
+          fi
+
+          result="$(node .github/scripts/classify-native-deps.js "$BASE_SHA" "$HEAD_SHA")"
+          printf '%s\n' "$result"
+          printf '%s\n' "${result%%$'\n'*}" >> "$GITHUB_OUTPUT"
+
   # The pure-logic watch tests live in the SendLogWatchCore SwiftPM package
   # (#191), so they need no simulator and no Xcode — run them on Ubuntu,
   # which bills at a fraction of the macOS rate (#199). The macOS job below
@@ -65,6 +99,7 @@ jobs:
         run: swift test --package-path ios/App/SendLogWatchCore
 
   swift:
+    needs: classify
     # Drafts skip the macOS compile; `package-tests` above still runs, so a
     # draft keeps its Swift feedback at the Ubuntu rate. A draft that gets
     # force-pushed repeatedly before it is ready was paying the macOS rate for
@@ -73,7 +108,7 @@ jobs:
     # expressible as a workflow-level filter like `paths` is, so this one does
     # allocate the runner before evaluating; the waste is seconds of idle
     # runner against minutes of Xcode.
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    if: needs.classify.outputs.native_changed == 'true' && (github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false)
     runs-on: blacksmith-6vcpu-macos-26
     # 15, not 45: the p50 of this job was ~2 minutes build-only; #500's
     # simulator boot + test run adds well under a minute (~42s measured
