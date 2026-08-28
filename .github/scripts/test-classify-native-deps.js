@@ -49,5 +49,6 @@ assert.equal(scenario('lockfile-wrapper-resolved', () => {
   write('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
 }), true);
 assert.equal(scenario('workflow-path', () => write('.github/workflows/ios-ci.yml', 'name: changed\n')), true);
-console.log('classifier tests: 9 passed (unrelated, native, safe-area, alias, URL, capacitor-community URL, non-native URL, lockfile-only, workflow path)');
+assert.equal(scenario('patch-path', () => write('patches/@capacitor-community+apple-sign-in+7.1.0.patch', 'native patch changed\n')), true);
+console.log('classifier tests: 10 passed (unrelated, native, safe-area, alias, URL, capacitor-community URL, non-native URL, lockfile-only, workflow path, patch path)');
 fs.rmSync(repo, { recursive: true, force: true });

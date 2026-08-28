@@ -28,6 +28,7 @@ on:
       # native-facing dependency changes promote the macOS job.
       - "package.json"
       - "package-lock.json"
+      - "patches/**"
       - ".github/workflows/ios-ci.yml"
   # Manual escape hatch for verifying the lane itself without a native change.
   workflow_dispatch:
