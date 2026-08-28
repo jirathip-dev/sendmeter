@@ -94,13 +94,89 @@ private final class HealthKitQueryCancellation<Value>: @unchecked Sendable {
 /// All computation is deferred to the pure `WatchHealthCompute` layer; this
 /// type only performs queries and builds the per-day maps.
 final class WatchHealthKitService {
+    /// The types whose background delivery wakes the watch app so the
+    /// morning refresh can compute without the user opening it (#802 AC3).
+    /// Mirrors the phone's `HealthObserverTypes.observedIdentifiers` +
+    /// `requiredReadTypes`.
+    static let observedIdentifiers: [String] = [
+        "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
+        "HKQuantityTypeIdentifierRestingHeartRate",
+        "HKQuantityTypeIdentifierRespiratoryRate",
+        "HKCategoryTypeIdentifierSleepAnalysis",
+        "HKQuantityTypeIdentifierBodyMass",
+    ]
+
     private let store: HKHealthStore
+    private var observersRegistered = false
+    private var backgroundSetupRegistered = false
+
+    /// Fired on the main actor when a background observer query detects new
+    /// data for one of the observed types. Wired by `HealthSyncManager` to
+    /// the same single-flight trigger as foreground sync — the overnight
+    /// HealthKit write is the morning refresh's wake-up point.
+    var onBackgroundUpdate: (@MainActor () async -> Void)?
 
     init(store: HKHealthStore = HKHealthStore()) {
         self.store = store
     }
 
     var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
+
+    /// Idempotent per-process registration of background delivery + observer
+    /// queries. The observer queries live only for this process, so a cold
+    /// HealthKit wake (which relaunches the app) must re-register; call from
+    /// launch/foreground triggers. Runtime delivery is device-only.
+    func ensureBackgroundObserversRegistered() async {
+        guard isAvailable, !backgroundSetupRegistered, !Task.isCancelled else {
+            return
+        }
+        backgroundSetupRegistered = true
+        await enableBackgroundDelivery()
+        guard !Task.isCancelled else {
+            backgroundSetupRegistered = false
+            return
+        }
+        registerBackgroundObservers()
+    }
+
+    private func registerBackgroundObservers() {
+        guard !observersRegistered, isAvailable else { return }
+        observersRegistered = true
+        for identifier in Self.observedIdentifiers {
+            guard let type = Self.objectType(for: identifier) else { continue }
+            let query = HKObserverQuery(sampleType: type, predicate: nil) { [weak self] _, completion, _ in
+                Task { @MainActor in
+                    defer { completion() }
+                    guard !Task.isCancelled else { return }
+                    await self?.onBackgroundUpdate?()
+                }
+            }
+            store.execute(query)
+        }
+    }
+
+    private func enableBackgroundDelivery() async {
+        for identifier in Self.observedIdentifiers {
+            guard !Task.isCancelled else { return }
+            guard let type = Self.objectType(for: identifier) else { continue }
+            await withCheckedContinuation { continuation in
+                store.enableBackgroundDelivery(for: type, frequency: .daily) { _, _ in
+                    continuation.resume()
+                }
+            }
+            guard !Task.isCancelled else { return }
+        }
+    }
+
+    private static func objectType(for identifier: String) -> HKSampleType? {
+        if let type = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: identifier)) {
+            return type
+        }
+        if let type = HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: identifier)) {
+            return type
+        }
+        return nil
+    }
 
     func requestAuthorization() async throws {
         guard isAvailable else { return }

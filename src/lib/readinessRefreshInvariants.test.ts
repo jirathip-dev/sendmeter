@@ -57,13 +57,14 @@ describe("watch-triggered readiness architecture (#520)", () => {
 
     // #802: the watch now WRITES health_metrics directly (watch-only user,
     // no phone in the loop), but every write must go through the single
-    // HealthRepository surface with the (user_id, date) idempotent upsert —
-    // no duplicate rows, no per-site PostgREST shapes elsewhere.
+    // HealthRepository surface → the server-side precedence RPC (atomic
+    // decide against the live row; idempotent on (user_id, date)) — no
+    // duplicate rows, no raw PostgREST upserts elsewhere.
     const writeSurface = source(join(WATCH_APP, "Services", "HealthRepository.swift"));
-    expect(writeSurface).toMatch(/upsert\(insert, onConflict: "user_id,date"/);
-    expect(writeSurface).toMatch(
-      /upsert\(insert, onConflict: "user_id,date", ignoreDuplicates: true\)/,
-    );
+    expect(writeSurface).toMatch(/rpc\("upsert_health_metrics_with_precedence", params: params\)/);
+    expect(writeSurface).toMatch(/writer: HealthMetricWriter,/);
+    expect(writeSurface).toMatch(/writer\.rawValue/);
+    expect(writeSurface).not.toMatch(/\.upsert\(/);
     const otherWatchSources = swiftFiles(WATCH_APP)
       .filter((file) => !file.endsWith("HealthRepository.swift"))
       .map(source)
@@ -75,7 +76,13 @@ describe("watch-triggered readiness architecture (#520)", () => {
     const healthSources = swiftFiles(HEALTH_PLUGIN).map(source).join("\n");
     expect(healthSources).toMatch(/HealthKitReader/);
     expect(healthSources).toMatch(/\.from\("health_metrics", accessToken: binding\.accessToken\)/);
-    expect(healthSources).toMatch(/\.upsert\(/);
+    // #802 AC4: the plugin writes through the server-side precedence RPC —
+    // no raw health_metrics upsert remains in any production writer.
+    expect(healthSources).toMatch(/upsert_health_metrics_with_precedence/);
+    expect(healthSources).toMatch(/\.rpc\("upsert_health_metrics_with_precedence"/);
+    expect(healthSources).not.toMatch(
+      /\.from\(["']health_metrics["'], accessToken: binding\.accessToken\)[\s\S]{0,120}\.upsert\(/,
+    );
   });
 
   it("stamps every watch request and routes execution through the generic bridge", () => {

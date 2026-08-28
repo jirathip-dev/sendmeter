@@ -4,6 +4,7 @@ import OSLog
 import SendLogHealthCore
 import SendLogWatchCore
 import UserNotifications
+import WatchKit
 
 /// Issue #802 — watch-only readiness: the watch reads its OWN HealthKit,
 /// computes readiness on the wrist with the same `RecoveryEngine` the phone
@@ -31,17 +32,29 @@ final class HealthSyncManager {
     private var lastHealthRefreshStartedAt: TimeInterval?
     private var hasRequestedNotifications = false
     private var authorizationAcknowledged = false
+    private var hasScheduledAmbientRefresh = false
 
     init() {
         Self.current = self
+        // #802 AC3: an overnight HealthKit write is the wake-up trigger for
+        // the morning refresh — when the watch's store delivers new data,
+        // run a pass without the user opening the app (background delivery
+        // + observer queries; runtime delivery is device-only to verify).
+        healthKit.onBackgroundUpdate = { @MainActor in
+            HealthSyncManager.current?.trigger(reason: .foreground)
+        }
     }
 
     // MARK: Public surface
 
-    /// Fired on launch and foreground (and could be a future complication
-    /// deep link). Coalesced: a second trigger during a pass queues at most
-    /// one follow-up.
+    /// Fired on launch and foreground (and by the HealthKit observer /
+    /// WKApplicationRefreshBackgroundTask wake-up). Coalesced: a second
+    /// trigger during a pass queues at most one follow-up.
     func trigger(reason: ReadinessRefreshReason) {
+        Task { @MainActor in
+            await healthKit.ensureBackgroundObserversRegistered()
+            scheduleAmbientRefreshIfNeeded()
+        }
         switch coalescer.request(reason: reason) {
         case .start:
             startPass(reason: reason)
@@ -238,24 +251,48 @@ final class HealthSyncManager {
                 allowReadinessOverwrite: overwrite
             )
 
-            // 4. Direct watch→Supabase writes (no phone round-trip).
+            // 4. Direct watch→Supabase writes (no phone round-trip). The
+            //    SERVER owns the precedence decision now (#802 AC4): one
+            //    transaction decides against the live row and returns the
+            //    canonical winner. A `retained` decision means the date is
+            //    owned by a fresh non-empty row — nothing was written.
+            var canonicalToday: HealthPrecedenceRpcResult?
             for upsert in plan.upserts {
-                try await Repo.upsertHealthMetric(
+                let outcome = try await Repo.upsertHealthMetricWithPrecedence(
                     upsert,
                     userID: userID,
-                    merge: upsert.date == today
+                    writer: .watch,
+                    timeZone: timeZone
                 )
+                guard !Task.isCancelled,
+                      WatchSessionStore.shared.userId == userID else { return nil }
+                if outcome.decision == "retained" {
+                    Self.log.info(
+                        "health precedence: retained existing row for \(outcome.date ?? upsert.date)"
+                    )
+                }
+                if upsert.date == today {
+                    canonicalToday = outcome
+                }
             }
-            guard !Task.isCancelled,
-                  WatchSessionStore.shared.userId == userID else { return nil }
 
             // 5. Surface: complications/widget + the watch readiness display.
             if let metric = plan.todayMetric {
-                ReadinessManager.current?.applyOnWatchResult(
-                    readiness: metric.readiness,
-                    zone: metric.zone,
-                    date: metric.date
-                )
+                // When the RPC retained the row, the canonical row is the
+                // honest display (its score is the winner's).
+                if let canonical = canonicalToday, canonical.decision == "retained" {
+                    ReadinessManager.current?.applyOnWatchResult(
+                        readiness: canonical.readiness,
+                        zone: canonical.zone,
+                        date: canonical.date ?? metric.date
+                    )
+                } else {
+                    ReadinessManager.current?.applyOnWatchResult(
+                        readiness: metric.readiness,
+                        zone: metric.zone,
+                        date: metric.date
+                    )
+                }
             }
             let observation = WatchHealthSyncObservation.successful(
                 reconciledCount: plan.reconciledCount,
@@ -274,7 +311,10 @@ final class HealthSyncManager {
     // MARK: Morning notification (non-silent wake-up surface)
 
     /// One local notification per account per day when the morning refresh
-    /// produced a scored readiness reading (never re-notifies).
+    /// produced a scored readiness reading (never re-notifies). The marker
+    /// is persisted ONLY after the notification is actually added: a denied
+    /// or failed authorization leaves the day unmarked so the next trigger
+    /// retries.
     private func maybeNotifyMorningScore(
         observation: WatchHealthSyncObservation,
         metric: WatchHealthMetric?,
@@ -287,7 +327,6 @@ final class HealthSyncManager {
         else { return }
         let notifiedKey = "sendmeter.watch.health-morning-notified.\(userID.uuidString).\(today)"
         guard UserDefaults.standard.object(forKey: notifiedKey) == nil else { return }
-        UserDefaults.standard.set(true, forKey: notifiedKey)
 
         if !hasRequestedNotifications {
             hasRequestedNotifications = true
@@ -295,6 +334,8 @@ final class HealthSyncManager {
                 .requestAuthorization(options: [.alert, .sound])) ?? false
             authorizationAcknowledged = granted
         }
+        // Not authorized: NO marker — the next supported trigger retries
+        // (the score still surfaces through the complication/widget).
         guard authorizationAcknowledged else { return }
 
         let content = UNMutableNotificationContent()
@@ -306,7 +347,43 @@ final class HealthSyncManager {
             content: content,
             trigger: nil // deliver immediately
         )
-        try? await UNUserNotificationCenter.current().add(request)
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+            // Persist ONLY after the add succeeded — a failure leaves the
+            // day retriable.
+            UserDefaults.standard.set(true, forKey: notifiedKey)
+        } catch {
+            Self.log.error("morning notification delivery failed: \(String(describing: error))")
+        }
+    }
+
+    /// Best-effort WKApplicationRefreshBackgroundTask into the morning
+    /// window (#802 AC3): the system wakes the app around 05:00 local even
+    /// if no HealthKit observer fired, so an on-wrist overnight dataset is
+    /// picked up without the user opening the app. watchOS picks the exact
+    /// delivery time; this only states the preferred window start.
+    private func scheduleAmbientRefreshIfNeeded() {
+        guard WatchSessionStore.shared.userId != nil else { return }
+        // Never re-schedule more than once a process: the OS's latest
+        // schedule replaces any previous one, and re-requesting on every
+        // foreground would just churn.
+        guard !hasScheduledAmbientRefresh else { return }
+        hasScheduledAmbientRefresh = true
+        let calendar = Calendar.gregorianLocal
+        let now = Date()
+        let todayFive = calendar.date(bySettingHour: 5, minute: 0, second: 0, of: now)
+        let preferred: Date
+        if let todayFive, todayFive > now {
+            preferred = todayFive
+        } else {
+            // Past this morning's 05:00 → next morning.
+            let nextDay = calendar.date(byAdding: .day, value: 1, to: now) ?? now
+            preferred = calendar.date(bySettingHour: 5, minute: 0, second: 0, of: nextDay) ?? now
+        }
+        WKApplication.shared().scheduleBackgroundRefresh(
+            withPreferredDate: preferred,
+            userInfo: nil
+        ) { _ in }
     }
 
     // MARK: Morning progress persistence

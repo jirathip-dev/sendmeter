@@ -1,4 +1,5 @@
 import Foundation
+import SendLogHealthCore
 import SendLogWatchCore
 import Supabase
 
@@ -50,57 +51,86 @@ nonisolated struct HealthWindowRow: Codable {
     }
 }
 
-/// The write payload — mirrors the phone's `HealthMetricUpsert` (snake_case
-/// keys; synthesized `encodeIfPresent` omits the nil readiness/zone/
-/// computed_at when a #109 keep-score pass must not stamp the row).
-nonisolated struct HealthMetricInsert: Codable {
-    let userId: UUID
-    let date: String
-    let readiness: Int?
-    let zone: String?
-    let computedAt: Date?
-    let hrvSDNN: Double?
-    let restingHR: Double?
-    let sleepHours: Double?
-    let sleepDeepHours: Double?
-    let sleepREMHours: Double?
-    let bodyMassKg: Double?
-    let respiratoryRate: Double?
+/// PostgREST RPC argument body for
+/// `upsert_health_metrics_with_precedence` (#802). Keys are the function's
+/// `p_*` parameter names. `p_*` optionals encode as null (Postgres NULL)
+/// — a nil readiness/zone/computed_at is exactly the #109 keep-score merge.
+nonisolated struct HealthPrecedenceRpcParams: Encodable {
+    let pUserId: UUID
+    let pDate: String
+    let pHrvSDNNMs: Double?
+    let pRestingHR: Double?
+    let pSleepHours: Double?
+    let pSleepDeepHours: Double?
+    let pSleepREMHours: Double?
+    let pBodyMassKg: Double?
+    let pRespRateBpm: Double?
+    let pReadiness: Int?
+    let pZone: String?
+    let pComputedAt: Date?
+    let pWriter: String
+    let pTimezone: String
 
-    init(metric: WatchHealthMetric, userID: UUID) {
-        self.userId = userID
-        self.date = metric.date
-        self.readiness = metric.readiness
-        self.zone = metric.zone
-        self.computedAt = metric.computedAt
-        self.hrvSDNN = metric.hrvSDNNMilliseconds
-        self.restingHR = metric.restingHeartRate
-        self.sleepHours = metric.sleepHours
-        self.sleepDeepHours = metric.sleepDeepHours
-        self.sleepREMHours = metric.sleepREMHours
-        self.bodyMassKg = metric.bodyMassKilograms
-        self.respiratoryRate = metric.respiratoryRate
+    init(metric: WatchHealthMetric, userID: UUID, writer: String, timeZone: TimeZone) {
+        self.pUserId = userID
+        self.pDate = metric.date
+        self.pHrvSDNNMs = metric.hrvSDNNMilliseconds
+        self.pRestingHR = metric.restingHeartRate
+        self.pSleepHours = metric.sleepHours
+        self.pSleepDeepHours = metric.sleepDeepHours
+        self.pSleepREMHours = metric.sleepREMHours
+        self.pBodyMassKg = metric.bodyMassKilograms
+        self.pRespRateBpm = metric.respiratoryRate
+        self.pReadiness = metric.readiness
+        self.pZone = metric.zone
+        self.pComputedAt = metric.computedAt
+        self.pWriter = writer
+        self.pTimezone = timeZone.identifier
     }
 
     enum CodingKeys: String, CodingKey {
-        case date, readiness, zone
-        case userId = "user_id"
-        case computedAt = "computed_at"
-        case hrvSDNN = "hrv_sdnn_ms"
-        case restingHR = "resting_hr"
-        case sleepHours = "sleep_hours"
-        case sleepDeepHours = "sleep_deep_hours"
-        case sleepREMHours = "sleep_rem_hours"
-        case bodyMassKg = "body_mass_kg"
-        case respiratoryRate = "resp_rate_bpm"
+        case pUserId = "p_user_id"
+        case pDate = "p_date"
+        case pHrvSDNNMs = "p_hrv_sdnn_ms"
+        case pRestingHR = "p_resting_hr"
+        case pSleepHours = "p_sleep_hours"
+        case pSleepDeepHours = "p_sleep_deep_hours"
+        case pSleepREMHours = "p_sleep_rem_hours"
+        case pBodyMassKg = "p_body_mass_kg"
+        case pRespRateBpm = "p_resp_rate_bpm"
+        case pReadiness = "p_readiness"
+        case pZone = "p_zone"
+        case pComputedAt = "p_computed_at"
+        case pWriter = "p_writer"
+        case pTimezone = "p_timezone"
     }
+}
+
+/// One returned row of the precedence RPC (#802): the decision plus the
+/// canonical row that now owns the date (the retained server row when the
+/// decision is `retained`, the just-written row when `written`).
+nonisolated struct HealthPrecedenceRpcResult: Codable, Equatable, Sendable {
+    var decision: String
+    var date: String?
+    var readiness: Int?
+    var zone: String?
+    var computedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case decision, date, readiness, zone
+        case computedAt = "computed_at"
+    }
+}
+
+enum HealthRepositoryError: Error {
+    case emptyRpcResult
 }
 
 extension Repo {
     static let healthWindowColumns = "date,readiness,zone,computed_at,hrv_sdnn_ms,resting_hr,sleep_hours,sleep_deep_hours,sleep_rem_hours,body_mass_kg,resp_rate_bpm"
 
     /// The whole candidate window for reconciliation (execute before any
-    /// write so the precedence/insert-if-missing decisions see all rows).
+    /// write so the #801 insert-if-missing selection sees all rows).
     static func fetchHealthMetrics(limit: Int = WatchHealthReadWindow.candidateDays) async throws -> [HealthWindowRow] {
         try await SupabaseService
             .from("health_metrics")
@@ -111,24 +141,29 @@ extension Repo {
             .value
     }
 
-    /// Idempotent upsert keyed on `(user_id, date)`. `merge` = today's row
-    /// (merge-duplicates resolution — biometrics/readiness may change);
-    /// `false` = historical insert-if-missing (conflict-ignore, atomic
-    /// against the key — a concurrent phone write leaves the row untouched).
-    static func upsertHealthMetric(
+    /// The ONE write path (Atomic #802): the Postgres function decides the
+    /// dual-source winner inside a single transaction against the live row
+    /// (`written` / `retained` / `discarded`) and returns the canonical row.
+    /// No client-side fetch-then-upsert can clobber a rival write.
+    static func upsertHealthMetricWithPrecedence(
         _ metric: WatchHealthMetric,
         userID: UUID,
-        merge: Bool
-    ) async throws {
-        let insert = HealthMetricInsert(metric: metric, userID: userID)
-        if merge {
-            try await SupabaseService.from("health_metrics")
-                .upsert(insert, onConflict: "user_id,date")
-                .execute()
-        } else {
-            try await SupabaseService.from("health_metrics")
-                .upsert(insert, onConflict: "user_id,date", ignoreDuplicates: true)
-                .execute()
+        writer: HealthMetricWriter,
+        timeZone: TimeZone
+    ) async throws -> HealthPrecedenceRpcResult {
+        let params = HealthPrecedenceRpcParams(
+            metric: metric,
+            userID: userID,
+            writer: writer.rawValue,
+            timeZone: timeZone
+        )
+        let rows: [HealthPrecedenceRpcResult] = try await SupabaseService
+            .rpc("upsert_health_metrics_with_precedence", params: params)
+            .execute()
+            .value
+        guard let row = rows.first else {
+            throw HealthRepositoryError.emptyRpcResult
         }
+        return row
     }
 }

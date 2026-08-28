@@ -3,6 +3,9 @@ import SendLogWatchCore
 
 @main
 struct SendLogWatchApp: App {
+    // #802 AC3: WKApplicationRefreshBackgroundTask into the morning window
+    // is delivered here and routed into the on-watch health pass.
+    @WKApplicationDelegateAdaptor(WatchAppDelegate.self) private var appDelegate
     @State private var auth = AuthManager()
     @State private var readiness = ReadinessManager()
     // Owned here (not in ForceGaugeView) so the Progressor stays connected and
