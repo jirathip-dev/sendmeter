@@ -107,8 +107,7 @@ final class HealthSyncManager {
                     startKey: startKey,
                     progress: progress,
                     pass: pass,
-                    observation: observation,
-                    userID: userID
+                    observation: observation
                 )
             }
             if !progressIsValid {
@@ -137,8 +136,7 @@ final class HealthSyncManager {
                 startKey: startKey,
                 progress: progress,
                 pass: 0,
-                observation: observation,
-                userID: userID
+                observation: observation
             )
         }
         _ = await computeAndUpsert(
@@ -154,8 +152,7 @@ final class HealthSyncManager {
         startKey: String,
         progress: WatchHealthMorningProgress,
         pass: Int,
-        observation: WatchHealthSyncObservation,
-        userID: UUID
+        observation: WatchHealthSyncObservation
     ) -> Bool {
         var progress = progress
         progress.add(observation: observation)
@@ -198,9 +195,11 @@ final class HealthSyncManager {
             let existingToday = rows.first(where: { $0.date == today })?.metric
 
             // 2. HealthKit read + same RecoveryEngine compute, plus the
-            //    server-authoritative per-date ACWR (#661 F2).
+            //    server-authoritative per-date ACWR (#661 F2 — an ACWR fetch
+            //    failure fails the whole pass rather than scoring with a
+            //    missing load penalty).
             let maps = try await healthKit.readDailyMaps(now: now, timeZone: timeZone)
-            let sessionRows = (try? await Repo.fetchSessionLoads(sinceDays: 90)) ?? []
+            let sessionRows = try await Repo.fetchSessionLoads(sinceDays: 90)
             let acwrByDate = WatchHealthCompute.acwrByDate(
                 rows: sessionRows,
                 now: now,
