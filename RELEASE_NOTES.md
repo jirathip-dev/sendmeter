@@ -56,6 +56,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: the native app now shows a training-balance card for the selected exercise — four bars (Power / Strength / Pow End / Endurance) with how many duration-normalised sets you've done over the last 4 weeks, plus a "FOCUS NEXT" recommendation for the least-trained zone that arms its guided protocol with one tap. Tapping the card opens a detail sheet that explains exactly what the numbers count (one exercise, one window, both sides, sets-not-sessions) and traces each bar to the holds behind it, matching the web's Training balance card.
 
 - Apple Watch Force now keeps measurement running through wrist-down / inactive transitions, holds a supported extended-runtime session only while real measured work is active, renders a legible reduced-luminance frame (current/peak force, countdown, side, terse state) in Always On, and confirms start/save/finish with haptics so a dim pull can be trusted.
+- Native Workout: tapping a routine now opens a read-only preview of its steps — name and detail, work seconds, repetitions, rest, plus the total duration to expect — and starting a routine is explicit from that preview's Start button. Nothing starts on tap anymore.
 
 ### Improved
 

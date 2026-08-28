@@ -85,6 +85,58 @@ final class SheetPresentationWiringTests: XCTestCase {
         )
     }
 
+    func testRoutineTapPreviewsReadOnlyBeforeExecution() {
+        let workoutPath = "Sources/Features/Workout/WorkoutView.swift"
+        let workout = source(workoutPath)
+        let sheets = presentations(named: "sheet", in: [workoutPath: workout])
+
+        // #834: the routine library must present a read-only preview sheet.
+        let preview = sheets.first { $0.closureBody.contains("RoutinePreviewSheet(") }
+        XCTAssertNotNil(preview, "the routine library must present the read-only preview sheet")
+        // Secondary: the preview's own closure must not start the routine.
+        XCTAssertFalse(
+            preview?.closureBody.contains("RoutineRunnerSheet(") ?? true,
+            "the preview must not launch the execution runner directly"
+        )
+        XCTAssertFalse(
+            preview?.closureBody.contains("RoutineRunPresentation(") ?? true,
+            "the preview must not start the routine by itself"
+        )
+
+        // The behavior lives in the row-tap closure passed to the card (the
+        // `preview: { preset in … }` block at the call site): a tap may only
+        // hand the preset to the preview state, and it must never start the
+        // routine — not directly, and not by launching the runner.
+        let rowTap = section(
+            workout,
+            startingAt: "RoutineLibraryCard(",
+            endingAt: "showRoutineEditor = true"
+        )
+        XCTAssertTrue(
+            rowTap.contains("preview: { preset in"),
+            "routine rows must open the preview, not start immediately"
+        )
+        XCTAssertTrue(
+            rowTap.contains("previewRoutine = preset"),
+            "the row tap must hand the preset to the preview sheet"
+        )
+        XCTAssertFalse(
+            rowTap.contains("RoutineRunPresentation("),
+            "the row tap must not start the routine"
+        )
+        XCTAssertFalse(
+            rowTap.contains("RoutineRunnerSheet("),
+            "the row tap must not launch the execution runner directly"
+        )
+
+        // The explicit Start must keep going through the unchanged
+        // routine-run presentation.
+        XCTAssertTrue(
+            workout.contains("runningRoutine = RoutineRunPresentation(preset: pending, restored: nil)"),
+            "the explicit Start must go through the unchanged routine-run presentation"
+        )
+    }
+
     func testExecutionFullScreensDoNotUseSheetTreatment() {
         let sources = swiftSources(in: "Sources")
         let fullScreens = presentations(named: "fullScreenCover", in: sources)
@@ -326,6 +378,16 @@ final class SheetPresentationWiringTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+
+    private func section(_ source: String, startingAt start: String, endingAt end: String) -> String {
+        guard let startRange = source.range(of: start),
+              let endRange = source.range(of: end, range: startRange.upperBound..<source.endIndex)
+        else {
+            XCTFail("Could not locate source section \(start) … \(end)")
+            return ""
+        }
+        return String(source[startRange.lowerBound..<endRange.lowerBound])
     }
 
     private func count(_ pattern: String, in source: String) -> Int {
