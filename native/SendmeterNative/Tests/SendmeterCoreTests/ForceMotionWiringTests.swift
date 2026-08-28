@@ -53,15 +53,31 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertTrue(force.contains("refuseAction: { message in refuseAction(message) }"))
     }
 
-    func testForceFullscreensKeepProtocolAndHonestTargetContextVisible() {
+    func testForceFullscreensRenderProtocolAndHonestTargetContext() {
         let force = code(source("Sources/Features/Force/ForceView.swift"))
         let manual = code(source("Sources/Features/Force/ManualForceFullscreen.swift"))
+        let forceView = exactType(force, startingWith: "struct ForceView: View")
+        let forceBody = exactFunction(forceView, startingWith: "var body: some View {")
+        let guidedSections = exactFunction(force, startingWith: "private func protocolSections(")
+        let guidedTargetCoach = exactBlock(force, startingWith: "private var targetCoach: some View", missingMessage: "property")
+        let manualBody = exactFunction(manual, startingWith: "var body: some View {")
+        let manualDetails = exactBlock(manual, startingWith: "private var protocolDetails: some View", missingMessage: "property")
 
-        XCTAssertTrue(force.contains("protocolIdentityHeader"))
-        XCTAssertTrue(force.contains("No target configured for this protocol"))
-        XCTAssertTrue(manual.contains("No target configured for this protocol"))
-        XCTAssertTrue(manual.contains("protocolSummary"))
-        XCTAssertTrue(force.contains("safeAreaInset(edge: .bottom"))
+        XCTAssertTrue(guidedSections.contains("protocolIdentityHeader"))
+        XCTAssertTrue(guidedSections.contains("targetCoach"))
+        XCTAssertTrue(guidedTargetCoach.contains("No target configured for this protocol"))
+        XCTAssertTrue(guidedTargetCoach.contains("else"))
+        XCTAssertTrue(forceBody.contains("ForceContextSummaryCard("))
+        XCTAssertTrue(forceBody.contains("DisclosureGroup(\"Protocol details\""))
+        XCTAssertTrue(forceBody.contains(".safeAreaInset(edge: .bottom"))
+        XCTAssertTrue(manualBody.contains("protocolDetails"))
+        XCTAssertTrue(manualBody.contains("targetCoach"))
+        XCTAssertTrue(manualDetails.contains("No target configured for this protocol"))
+        XCTAssertTrue(manualDetails.contains("else"))
+        XCTAssertGreaterThanOrEqual(force.components(separatedBy: "restBetweenRepetitionsSeconds").count, 3)
+        XCTAssertGreaterThanOrEqual(force.components(separatedBy: "restBetweenSetsSeconds").count, 3)
+        XCTAssertTrue(manual.contains("restBetweenRepetitionsSeconds"))
+        XCTAssertTrue(manual.contains("restBetweenSetsSeconds"))
     }
 
     private func source(_ relativePath: String) -> String {
