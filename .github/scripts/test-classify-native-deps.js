@@ -49,5 +49,5 @@ assert.equal(scenario('lockfile-wrapper-resolved', () => {
   write('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
 }), true);
 assert.equal(scenario('workflow-path', () => write('.github/workflows/ios-ci.yml', 'name: changed\n')), true);
-console.log('classifier tests: 7 passed (unrelated, native, safe-area, alias, URL, lockfile-only, workflow path)');
+console.log('classifier tests: 9 passed (unrelated, native, safe-area, alias, URL, capacitor-community URL, non-native URL, lockfile-only, workflow path)');
 fs.rmSync(repo, { recursive: true, force: true });
