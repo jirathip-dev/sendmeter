@@ -94,6 +94,64 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertNil(plan.relayMetric)
     }
 
+    /// #802 AC4: the phone write site consults the shared precedence rule —
+    /// the phone wins when it has a fresh, non-empty row, so a phone pass
+    /// overwrites a fresh watch-written row (Guy's locked decision). An
+    /// empty phone candidate must never clobber the watch's row; policy
+    /// discards it (the source-filter makes it defensive at this site).
+    func testTodayPhonePassWinsOverFreshWatchRowViaSharedPrecedence() {
+        let watchRow = metric(
+            date: today,
+            readiness: 88,
+            computedAt: Date(timeIntervalSince1970: 5_000),
+            hrv: 60
+        )
+        let phoneFresh = metric(
+            date: today,
+            readiness: 76,
+            computedAt: Date(timeIntervalSince1970: 6_000),
+            hrv: 55
+        )
+        let plan = HealthMetricReconciliationPolicy.plan(
+            freshMetrics: [phoneFresh],
+            existingMetrics: [watchRow],
+            today: today,
+            allowTodayReadinessOverwrite: true,
+            timeZone: timeZone,
+            now: Date(timeIntervalSince1970: 6_000)
+        )
+        XCTAssertEqual(plan.upserts.map(\.date), [today])
+        XCTAssertEqual(plan.relayMetric?.readiness, 76)
+    }
+
+    func testTodayPhonePassWithEmptyCandidateDoesNotClobberFreshWatchRow() {
+        let watchRow = metric(
+            date: today,
+            readiness: 88,
+            computedAt: Date(timeIntervalSince1970: 5_000),
+            hrv: 60
+        )
+        let emptyPhoneCandidate = metric(
+            date: today,
+            readiness: nil,
+            hrv: nil,
+            rhr: nil,
+            sleep: nil,
+            bodyMass: nil,
+            respiratoryRate: nil
+        )
+        let plan = HealthMetricReconciliationPolicy.plan(
+            freshMetrics: [emptyPhoneCandidate],
+            existingMetrics: [watchRow],
+            today: today,
+            allowTodayReadinessOverwrite: true,
+            timeZone: timeZone,
+            now: Date(timeIntervalSince1970: 6_000)
+        )
+        XCTAssertTrue(plan.upserts.isEmpty)
+        XCTAssertNil(plan.relayMetric)
+    }
+
     func testPersistedHistoricalDayIsUntouched() {
         let existing = metric(date: yesterday, readiness: 72, hrv: 35)
         let newerHealthKitRead = metric(
