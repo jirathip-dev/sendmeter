@@ -32,6 +32,10 @@ export function classify({ base, head, cwd = process.cwd() }) {
   let lockPackage = '';
   let lockNative = false;
   for (const line of lockDiff.split('\n')) {
+    if (line.startsWith('@@')) {
+      lockPackage = '';
+      continue;
+    }
     const key = line.match(/node_modules\/(?:@capacitor(?:\/|-)|sendlog-)[^" ]*/);
     if (key) lockPackage = key[0];
     if ((line.startsWith('+') || line.startsWith('-')) && NATIVE_LOCK.test(lockPackage)) lockNative = true;
