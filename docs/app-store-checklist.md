@@ -19,11 +19,11 @@ is in-repo.
   for side-by-side development; it cannot pair with the watch companion.
 - **Privacy manifests** (`PrivacyInfo.xcprivacy`, one per shipped bundle):
   app `native/SendmeterNative/Resources/PrivacyInfo.xcprivacy` (required-reason
-  UserDefaults `CA92.1` + SystemBootTime `35F9.1`), the embedded Watch app
+  UserDefaults `CA92.1` + `1C8F.1` and SystemBootTime `35F9.1`), the embedded Watch app
   `ios/App/SendLogWatch Watch App/PrivacyInfo.xcprivacy` (UserDefaults and
   FileTimestamp reasons), and the Live Activity appex
-  `native/SendmeterNative/Resources/Widgets/PrivacyInfo.xcprivacy` (no
-  required-reason API). All declare `NSPrivacyTracking = false`, no
+  `native/SendmeterNative/Resources/Widgets/PrivacyInfo.xcprivacy` (UserDefaults
+  `1C8F.1`). All declare `NSPrivacyTracking = false`, no
   `NSPrivacyTrackingDomains`.
 - **App Privacy answers** ("nutrition label"): Email Address, Health, Fitness,
   Other User Content and Coarse Location, all **Used for Tracking: No** and
@@ -35,8 +35,8 @@ is in-repo.
   advertising/analytics/attribution SDK, no IDFA).
 - **No-tracking verification**: `rg -i
   'ATTrackingManager|AppTrackingTransparency|AdSupport|IDFA|asIdentifierManager|GoogleAnalytics|Mixpanel|Amplitude|AppsFlyer'
-  native/SendmeterNative` should return nothing. The only required-reason APIs
-  are `UserDefaults` (`CA92.1`, plain `.standard` — no App Group) and
+  native/SendmeterNative` should return nothing. The required-reason APIs
+  are `UserDefaults` (`CA92.1`, `1C8F.1`) and
   `SystemBootTime` (`35F9.1`, `ProcessInfo.systemUptime` for elapsed-time
   measurement); there is no file-metadata or disk-space API.
 
@@ -57,9 +57,8 @@ is in-repo.
 > Watch companion under `com.jirathip.sendlog.watchkitapp` and its existing
 > watch-widget extension under `com.jirathip.sendlog.watchkitapp.widgets`; it
 > uses the native privacy manifests (`native/SendmeterNative/Resources/…`) and
-> declares no
-> Diagnostics data type, and its phone required-reason APIs are only
-> `UserDefaults` (`CA92.1`) + `SystemBootTime` (`35F9.1`).
+> does not declare a Diagnostics data type, and its phone required-reason APIs are
+> `UserDefaults` (`CA92.1`, `1C8F.1`) + SystemBootTime (`35F9.1`).
 
 ## Already handled in the repo ✅
 
@@ -115,7 +114,8 @@ Reason codes, and why they differ per bundle:
   `UserDefaults(suiteName: "group.com.jirathip.sendlog")`, which is readable by
   another bundle. CA92.1 explicitly does *not* permit "writing information that
   can be accessed by other apps", so the App Group sites need 1C8F.1 instead.
-  The iOS App target has no App Group entitlement and so declares only CA92.1.
+  The iOS app manifest declares both UserDefaults reasons (`CA92.1`, `1C8F.1`)
+  and the SystemBootTime reason (`35F9.1`), as shown in the table above.
 - **`C617.1`** — file metadata "inside the app container". `OfflineQueue` and
   `PendingSessionQueue` read `.creationDateKey` to drain
   `Documents/pending{,-sessions}/*.json` oldest-first. `NSPrivacyAccessedAPI`
@@ -282,8 +282,10 @@ Put that email/password in the review notes.
 8. **Generate the privacy report** — Xcode → Product → Archive → right-click the
    archive in the Organizer → **Generate Privacy Report**. Diff the PDF against
    the App Privacy table above: the aggregated data types must match row for row,
-   and the required-reason section must list UserDefaults (`CA92.1`, `1C8F.1`)
-   and FileTimestamp (`C617.1`) and nothing else. This can only be done from
+   and the required-reason section must match the per-bundle manifests: the iOS
+   app lists UserDefaults (`CA92.1`, `1C8F.1`) and SystemBootTime (`35F9.1`),
+   while the Watch app lists UserDefaults (`CA92.1`, `1C8F.1`) and FileTimestamp
+   (`C617.1`). This can only be done from
    Xcode on a real archive — it is not reproducible in CI.
 9. Promote `staging` to `main`, wait for the Production migration workflow,
    then dispatch the TestFlight workflow from `main`. The archive uses the

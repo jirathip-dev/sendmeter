@@ -5,9 +5,9 @@ secret scanning, or native correctness gates.
 
 ## Policy
 
-`.github/dependabot.yml` sets `open-pull-requests-limit: 1` for each retained
-version-update manifest: `mcp/`, GitHub Actions, and the retained SwiftPM
-manifests. The retired root web/Capacitor manifest is gone. The weekly schedules are unchanged. Dependabot's
+`.github/dependabot.yml` sets `open-pull-requests-limit: 1` for each of the 7
+retained version-update manifests: `mcp/`, GitHub Actions, four retained SwiftPM
+manifests, and Bundler. The retired root web/Capacitor manifest is gone. The weekly schedules are unchanged. Dependabot's
 `security-updates` groups remain separate; the open-pull-requests limit applies
 to version updates, so security updates retain their own path. Major updates
 remain in separate groups and require manual triage rather than routine
@@ -20,7 +20,8 @@ dependency classifier, which prevents a macOS runner from being allocated for
 unrelated changes:
 
 - `ios-ci.yml` is scoped to the generated native project, retained Watch
-  sources, health core, and native gate scripts; it has no root npm classifier.
+  sources, health core, and native gate scripts; path classification prevents
+  unrelated changes from allocating a macOS runner.
 - `native-swift.yml` runs for the native Swift/watch trees, native health core,
   Swift tooling and its gate scripts, or its own workflow file.
 - `mcp.yml` is scoped to the retained MCP package and its package-local npm gates.
@@ -70,8 +71,7 @@ The policy's trigger matrix is:
 | Fixture change | Expected relevant gates | Local proof | Hosted proof |
 | --- | --- | --- | --- |
 | Security/audit-style dependency change | `CI` audit and `Secret scan` | Workflow trigger inspection proves both are unfiltered; the gate result is not simulated locally | Hosted audit fixture failed quality at [run 33158879834](https://github.com/jirathip-dev/sendmeter/actions/runs/33158879834), proving the high-severity audit gate bites |
-| Swift/iOS-affecting root dependency change | `Native Swift`/`iOS CI`, plus `CI` and `Secret scan` | Classifier tests cover Capacitor scopes, safe-area, and lockfile-only changes | Hosted `@capacitor-community/safe-area` fixture classified and ran Swift successfully at [run 33160303844](https://github.com/jirathip-dev/sendmeter/actions/runs/33160303844) |
-| Unrelated root dependency-only change | `CI` and `Secret scan`; macOS native/iOS job skipped | Classifier tests cover unrelated packages | Hosted `@types/node` fixture classified false and skipped Swift at [run 33160110906](https://github.com/jirathip-dev/sendmeter/actions/runs/33160110906) |
+
 
 The three hosted fixtures above were appended as temporary commits and then
 reverted without force-pushing: unrelated fixture `19990be` → revert `1a77b08`,
