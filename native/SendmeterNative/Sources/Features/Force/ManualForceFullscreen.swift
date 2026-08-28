@@ -105,7 +105,7 @@ struct ManualForceFullscreen: View {
         if preset.protocolMode == .reverseAction {
             return "MOVEMENT · \(preset.cadenceOutSeconds.formatted())s out / \(preset.cadenceReturnSeconds.formatted())s return · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenSetsSeconds)s set rest"
         }
-        return "STATIC · \(preset.holdSeconds)s hold · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenRepetitionsSeconds)s rep rest · \(preset.restBetweenSetsSeconds)s set rest"
+        return "STATIC · \(preset.holdScheduleSummary) · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenRepetitionsSeconds)s rep rest · \(preset.restBetweenSetsSeconds)s set rest"
     }
 
     private var topBar: some View {

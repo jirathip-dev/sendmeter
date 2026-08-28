@@ -851,7 +851,7 @@ private struct GuidedForceProtocolView: View {
         if preset.protocolMode == .reverseAction {
             return "\(preset.cadenceOutSeconds.formatted())s out · \(preset.cadenceReturnSeconds.formatted())s return · \(repsAndSets) · \(preset.restBetweenSetsSeconds)s set rest"
         }
-        return "\(preset.holdSeconds)s hold · \(repsAndSets) · \(preset.restBetweenRepetitionsSeconds)s rep rest · \(preset.restBetweenSetsSeconds)s set rest"
+        return "\(preset.holdScheduleSummary) · \(repsAndSets) · \(preset.restBetweenRepetitionsSeconds)s rep rest · \(preset.restBetweenSetsSeconds)s set rest"
     }
 
     @ViewBuilder
@@ -2568,7 +2568,7 @@ private struct ForceContextSummaryCard: View {
         if preset.protocolMode == .reverseAction {
             return "MOVEMENT · \(preset.cadenceOutSeconds.formatted())s out / \(preset.cadenceReturnSeconds.formatted())s return · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenSetsSeconds)s set rest"
         }
-        return "STATIC · \(preset.holdSeconds)s hold · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenRepetitionsSeconds)s rep rest · \(preset.restBetweenSetsSeconds)s set rest"
+        return "STATIC · \(preset.holdScheduleSummary) · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenRepetitionsSeconds)s rep rest · \(preset.restBetweenSetsSeconds)s set rest"
     }
 }
 

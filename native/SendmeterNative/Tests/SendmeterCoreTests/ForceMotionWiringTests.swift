@@ -1,5 +1,5 @@
-import Foundation
 import XCTest
+@testable import SendmeterCore
 
 /// The SwiftUI App target is intentionally not part of the host SwiftPM
 /// package. These source invariants keep the user-visible motion policy wired
@@ -82,7 +82,7 @@ final class ForceMotionWiringTests: XCTestCase {
 
         for summary in [guidedSummary, outsideSummary, manualSummary] {
             let branches = protocolSummaryBranches(summary)
-            XCTAssertTrue(branches.staticBranch.contains("preset.holdSeconds"))
+            XCTAssertTrue(branches.staticBranch.contains("preset.holdScheduleSummary"))
             XCTAssertTrue(branches.staticBranch.contains("preset.restBetweenRepetitionsSeconds"))
             XCTAssertTrue(branches.staticBranch.contains("preset.restBetweenSetsSeconds"))
             XCTAssertTrue(branches.movementBranch.contains("preset.cadenceOutSeconds"))
@@ -90,6 +90,17 @@ final class ForceMotionWiringTests: XCTestCase {
             XCTAssertTrue(branches.movementBranch.contains("preset.restBetweenSetsSeconds"))
             XCTAssertFalse(branches.movementBranch.contains("preset.restBetweenRepetitionsSeconds"))
         }
+
+        let varied = TindeqPreset(
+            name: "Varied holds",
+            holdSeconds: 10,
+            holdSecondsBySet: [7, 10, 12],
+            repetitions: 1,
+            sets: 3,
+            restBetweenRepetitionsSeconds: 0,
+            restBetweenSetsSeconds: 0
+        )
+        XCTAssertEqual(varied.holdScheduleSummary, "7/10/12s holds")
     }
 
     private func protocolSummaryBranches(_ source: String) -> (staticBranch: String, movementBranch: String) {

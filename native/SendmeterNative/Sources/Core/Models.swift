@@ -950,6 +950,12 @@ public struct TindeqPreset: Codable, Equatable, Sendable, Identifiable {
         }
         return max(1, overrides[set - 1])
     }
+
+    public var holdScheduleSummary: String {
+        let holds = (1...max(1, sets)).map { holdSeconds(forSet: $0) }
+        guard Set(holds).count > 1 else { return "\(holds[0])s hold" }
+        return "\(holds.map(String.init).joined(separator: "/"))s holds"
+    }
 }
 
 // MARK: - Workout and routines
