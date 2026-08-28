@@ -110,3 +110,15 @@ jobs:
           ASC_KEY_PATH: fastlane/asc_api_key.p8
           IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
           IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+
+      # gym keeps the unmodified xcodebuild transcript separately from its
+      # formatted output. Retain it only on failure so archive diagnostics are
+      # actionable without changing the successful release path.
+      - name: Upload raw native archive log
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-archive-raw-log
+          path: ~/Library/Logs/gym/**/*.log
+          if-no-files-found: warn
+          retention-days: 7

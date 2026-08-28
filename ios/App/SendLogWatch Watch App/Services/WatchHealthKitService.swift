@@ -19,6 +19,13 @@ private final class HealthKitQueryCancellation<Value>: @unchecked Sendable {
         self.store = store
     }
 
+    deinit {
+        // Keep destruction explicit: Swift 6.3.3's Release SIL optimizer can
+        // mis-handle the synthesized generic deinit for this ownership mix.
+        continuation = nil
+        query = nil
+    }
+
     func install(_ continuation: CheckedContinuation<Value, Error>) -> Bool {
         lock.lock()
         guard !finished else {
