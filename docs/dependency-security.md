@@ -45,34 +45,27 @@ non-default target makes the normal Dependabot options stop applying to
 security updates, while security fixes must continue to use the default branch
 and the security grouping rules.
 
-The generated `ios/App/CapApp-SPM/Package.swift` is owned by Capacitor and is
-not a Dependabot manifest. The Xcode project's standalone
-`ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
-also has no `Package.swift` directory that Dependabot can own. Those generated
-or project-level pins remain reviewable in native CI and must not be replaced
-by a generic updater. Keep the native GRDB dependency coherent across
+The generated native project is owned by `native/SendmeterNative/project.yml`.
+Its generated Xcode project is not a Dependabot manifest. Keep the native GRDB
+dependency coherent across
 `project.yml`, `Package.swift`, and `Package.resolved`: the first two must
 require the same exact version, and the lockfile must resolve that version to
 its corresponding revision.
 
-The four Capacitor plugin directories are included in the expensive
-`.github/workflows/ios-ci.yml` path filter. A change under
-`native-plugins/sendlog-auth-bridge`, `native-plugins/sendlog-health`,
-`native-plugins/sendlog-live-activity`, or `native-plugins/sendlog-passkey`
-therefore runs the macOS lane, which performs `npm ci`, `npx cap sync ios`, and
-a phone `xcodebuild` compile that resolves and builds the generated
-`CapApp-SPM` dependency graph; it is not covered by web CI alone.
+The retained native paths are included in `.github/workflows/ios-ci.yml`, which
+generates `native/SendmeterNative/SendmeterNative.xcodeproj` and builds the
+native phone and Watch graph. The retired Capacitor plugin directories and
+CapApp-SPM graph are no longer part of the repository.
 
 ## npm audit gate
 
-The root and `mcp/` projects both expose the same explicit gate:
+The retained `mcp/` project exposes the explicit gate:
 
 ```sh
-npm run audit
-# equivalent to: npm audit --audit-level=high
+cd mcp && npm audit --audit-level=high
 ```
 
-CI runs that command immediately after each project's `npm ci`. A high or
+CI runs that command immediately after MCP's package-local `npm ci`. A high or
 critical advisory fails the job; informational, low, and moderate findings do
 not silently change the threshold. There are no advisory exceptions in this
 branch. If an upstream-only exception ever becomes unavoidable, it must name

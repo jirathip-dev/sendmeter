@@ -26,7 +26,7 @@ jobs:
   package-tests:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
-    container: "swift:6.3@sha256:4e0fc24f0f93a5cf9a91bfcf182534bbc0571d70d757389c04ff1f616c1c460d"
+    container: "swift:6.3@sha256:4e0fc24f0f93a5cf9a91bfcf182534bbc0571d70d757389c04ff1f616c1c460f"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run SendLogWatchCore tests

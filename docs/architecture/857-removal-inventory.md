@@ -77,3 +77,41 @@ TestFlight remain independent of Node.
 
 The Vercel project/domain is retained untouched; future public site requires
 separate approved design/content issue.
+
+## After-state and measurable CI boundary
+
+After deletion, `git ls-files '*.ts' '*.tsx'` reports 23 tracked files: 23 in
+`mcp/` and zero in the retired root web tree. The five shared inputs listed
+above are included in that MCP total. The measured TypeScript reduction is
+therefore 406 → 23 files (373 root web files removed, with the five shared
+inputs relocated rather than lost).
+
+The baseline workflows contained 8 `npm ci` invocations across 6
+npm-installing jobs: root quality, root MCP, Capacitor iOS, Supabase SQL,
+legacy web TestFlight, and native TestFlight. The after-state contains 1
+npm-installing job:
+MCP's package-local job in `mcp.yml`; native Swift/TestFlight, secret scanning,
+Supabase CLI SQL verification, and migration deployment do not install the
+retired root package. Workflow job count is reduced from 15 named workflow
+jobs in the full baseline workflow set (`ci.yml`, `ios-ci.yml`,
+`supabase-tests.yml`, `deploy-web.yml`, `testflight.yml`,
+`native-swift.yml`, `native-testflight.yml`, `secret-scan.yml`, and
+`deploy-migrations.yml`) to 10 named jobs in
+the retained set (`mcp.yml`, `ios-ci.yml`, `supabase-tests.yml`,
+`native-swift.yml`, `native-testflight.yml`, `secret-scan.yml`, and
+`deploy-migrations.yml`). The old CI runtimes were not stable hosted metrics;
+the recorded baseline fan-out was 29 workflow runs / 48.37 wall-clock minutes
+from `docs/ci/dependabot-fanout.md`, while the after-state is path-filtered and
+its hosted runtime is measured by GitHub on each exact PR SHA.
+
+The concrete removed dependency inventory is the root `package.json` and
+`package-lock.json` dependency graph, including React/Vite/PWA packages,
+`@capacitor/core`, `@capacitor/cli`, `@capacitor/ios`,
+`@capacitor-community/apple-sign-in`, `@capacitor-community/bluetooth-le`,
+`@capacitor-community/keep-awake`, `@capacitor/app`,
+`@capacitor/geolocation`, `@capacitor/haptics`, and
+`@capacitor/preferences`, plus the local `file:` packages
+`sendlog-auth-bridge`, `sendlog-health`, `sendlog-live-activity`, and
+`sendlog-passkey`. The MCP package retains its own `package.json`, lockfile,
+and dependency graph; native Swift packages retain their explicit SwiftPM
+dependencies.
