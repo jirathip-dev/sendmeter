@@ -19,6 +19,7 @@ final class WatchHealthMorningRefreshTests: XCTestCase {
     }
 
     func testWindowGates() {
+        XCTAssertEqual(policy.passCount, 3)
         XCTAssertFalse(policy.isMorning(at: date(day: 28, hour: 4), calendar: calendar))
         XCTAssertTrue(policy.isMorning(at: date(day: 28, hour: 5), calendar: calendar))
         XCTAssertTrue(policy.isMorning(at: date(day: 28, hour: 12), calendar: calendar))

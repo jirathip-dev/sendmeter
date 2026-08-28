@@ -56,7 +56,25 @@ final class WatchHealthReconcileTests: XCTestCase {
         // Today written (no existing), Aug 27 missing → filled, Aug 26 present → skipped.
         XCTAssertEqual(plan.upserts.map(\.date).sorted(), ["2026-08-27", "2026-08-28"])
         XCTAssertEqual(plan.reconciledDates.sorted(), ["2026-08-27", "2026-08-28"])
+        XCTAssertEqual(plan.reconciledCount, 2)
         XCTAssertEqual(plan.todayMetric?.date, "2026-08-28")
+    }
+
+    /// Two computed metrics for the SAME date: the newest `computedAt` wins
+    /// the per-date dedupe (mirrors the phone's #801 latest-wins rule).
+    func testDuplicateDateMetricsKeepTheNewestComputedTimestamp() {
+        let older = metric(date: "2026-08-27", readiness: 60, computedAt: date(day: 27, hour: 6))
+        let newer = metric(date: "2026-08-27", readiness: 90, computedAt: date(day: 27, hour: 9))
+        let plan = WatchHealthReconcile.plan(
+            freshMetrics: [older, newer],
+            existingToday: nil,
+            existingDates: [],
+            today: today,
+            now: date(day: 28),
+            timeZone: timeZone
+        )
+        XCTAssertEqual(plan.upserts.map(\.date), ["2026-08-27"])
+        XCTAssertEqual(plan.upserts.first?.readiness, 90)
     }
 
     func testTodayRetainedWhenFreshScoredRowExists() {

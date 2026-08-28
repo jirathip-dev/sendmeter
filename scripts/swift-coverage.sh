@@ -157,7 +157,7 @@ run_package \
   "SendLogWatchCorePackageTests" \
   94 \
   91 \
-  '(^|/)(Tests|\.build)/|resource_bundle_accessor\.swift'
+  '(^|/)(Tests|\.build)/|resource_bundle_accessor\.swift|native-plugins/sendlog-health-core/'
 
 run_package \
   "SendLogHealthCore" \

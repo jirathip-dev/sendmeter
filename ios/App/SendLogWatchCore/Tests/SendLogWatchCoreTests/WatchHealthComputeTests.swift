@@ -101,8 +101,19 @@ final class WatchHealthComputeTests: XCTestCase {
     func testSleepRestorativeAndRespFoldIntoInputs() throws {
         var sleep: [String: WatchSleepHours] = [:]
         sleep[key(day: 28)] = WatchSleepHours(totalHours: 8, deepHours: 2, remHours: 1.5)
+        // Baseline-day sleep feeds the trailing sleep/restorative baselines.
+        for offset in 1...27 {
+            sleep[key(day: 28 - offset)] = WatchSleepHours(
+                totalHours: 7,
+                deepHours: 1.5,
+                remHours: 1
+            )
+        }
         var resp: [String: Double] = [:]
         resp[key(day: 28)] = 14
+        for offset in 1...27 {
+            resp[key(day: 28 - offset)] = 13
+        }
         let metrics = try WatchHealthCompute.metrics(
             hrv: hrvMap(),
             restingHR: [:],
@@ -115,6 +126,7 @@ final class WatchHealthComputeTests: XCTestCase {
         guard let today = metrics.first(where: { $0.date == key(day: 28) }) else {
             return XCTFail("missing today metric")
         }
+        XCTAssertEqual(today.id, key(day: 28))
         XCTAssertEqual(today.sleepHours, 8)
         XCTAssertEqual(today.sleepDeepHours, 2)
         XCTAssertEqual(today.sleepREMHours, 1.5)
