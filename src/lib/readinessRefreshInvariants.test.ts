@@ -46,17 +46,30 @@ function source(path: string): string {
 }
 
 describe("watch-triggered readiness architecture (#520)", () => {
-  it("keeps HealthKit and health_metrics writes phone-only", () => {
-    const watchSources = swiftFiles(WATCH_APP).map(source).join("\n");
-    // WorkoutManager legitimately owns the watch workout/heart-rate session;
-    // the invariant is specifically that readiness never gains a second
-    // HealthKit reader or computation path.
+  it("keeps the phone relay display layer free of HealthKit while pinning the on-watch write surface (#802)", () => {
+    // ReadinessManager remains the phone-relay display layer. The #802
+    // on-watch HealthKit read/compute path lives in HealthSyncManager +
+    // WatchHealthKitService — it must never be added to ReadinessManager.
     const readinessManager = source(READINESS_MANAGER);
     expect(readinessManager).not.toMatch(/\bimport\s+HealthKit\b/);
     expect(readinessManager).not.toMatch(/\bHK(?:HealthStore|QuantityType|CategoryType)\b/);
     expect(readinessManager).not.toMatch(/RecoveryEngine|HealthKitReader/);
-    expect(watchSources).not.toMatch(
-      /\.from\(["']health_metrics["']\)[\s\S]{0,120}\.(?:upsert|insert|delete)\s*\(/,
+
+    // #802: the watch now WRITES health_metrics directly (watch-only user,
+    // no phone in the loop), but every write must go through the single
+    // HealthRepository surface with the (user_id, date) idempotent upsert —
+    // no duplicate rows, no per-site PostgREST shapes elsewhere.
+    const writeSurface = source(join(WATCH_APP, "Services", "HealthRepository.swift"));
+    expect(writeSurface).toMatch(/upsert\(insert, onConflict: "user_id,date"/);
+    expect(writeSurface).toMatch(
+      /upsert\(insert, onConflict: "user_id,date", ignoreDuplicates: true\)/,
+    );
+    const otherWatchSources = swiftFiles(WATCH_APP)
+      .filter((file) => !file.endsWith("HealthRepository.swift"))
+      .map(source)
+      .join("\n");
+    expect(otherWatchSources).not.toMatch(
+      /\.from\(["']health_metrics["']\)[\s\S]{0,160}\.(?:upsert|insert|delete)\s*\(/,
     );
 
     const healthSources = swiftFiles(HEALTH_PLUGIN).map(source).join("\n");
