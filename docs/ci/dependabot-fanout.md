@@ -71,7 +71,8 @@ The policy's trigger matrix is:
 | Fixture change | Expected relevant gates | Local proof | Hosted proof |
 | --- | --- | --- | --- |
 | Security/audit-style dependency change | `CI` audit and `Secret scan` | Workflow trigger inspection proves both are unfiltered; the gate result is not simulated locally | Hosted audit fixture failed quality at [run 33158879834](https://github.com/jirathip-dev/sendmeter/actions/runs/33158879834), proving the high-severity audit gate bites |
-
+| Swift/iOS-affecting root dependency change | Native Swift/iOS CI, plus CI and Secret scan | Classifier tests cover Capacitor scopes, safe-area, and lockfile-only changes | Hosted @capacitor-community/safe-area fixture classified and ran Swift successfully at [run 33160303844](https://github.com/jirathip-dev/sendmeter/actions/runs/33160303844) |
+| Unrelated root dependency-only change | CI and Secret scan; macOS native/iOS job skipped | Classifier tests cover unrelated packages | Hosted @types/node fixture classified false and skipped Swift at [run 33160110906](https://github.com/jirathip-dev/sendmeter/actions/runs/33160110906) |
 
 The three hosted fixtures above were appended as temporary commits and then
 reverted without force-pushing: unrelated fixture `19990be` → revert `1a77b08`,
