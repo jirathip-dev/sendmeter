@@ -1,4 +1,5 @@
 import Foundation
+import SendLogHealthCore
 
 // KEEP-IN-SYNC: mirrors `ewmaAcwr` in src/lib/metrics.ts:157 — same
 // mean-seeded EWMA recurrence, same 7/28-day spans, same nil rules (empty or
@@ -41,15 +42,23 @@ public func ewmaAcwr(dailyLoads: [Double]) -> Double? {
 /// missing days = 0 load) from raw session-load rows — extracted from
 /// `WidgetBridge`'s old inline loop so it's testable without a live
 /// Repo/Supabase call. `now` is injectable for tests; defaults to the real
-/// clock.
-public func dailyLoadSeries(rows: [SessionLoadRow], days: Int, now: Date = Date()) -> [Double] {
-    let cal = Calendar.gregorianLocal
+/// clock. `timeZone` is the zone the day keys are computed in — callers on a
+/// parameterized path (e.g. per-date ACWR projection for a specific user
+/// timezone) MUST pass it; the default `.current` is the host/device zone.
+public func dailyLoadSeries(
+    rows: [SessionLoadRow],
+    days: Int,
+    now: Date = Date(),
+    timeZone: TimeZone = .current
+) -> [Double] {
+    var cal = Calendar.gregorianLocal
+    cal.timeZone = timeZone
     var byDate: [String: Double] = [:]
     for r in rows { byDate[r.date, default: 0] += Double(r.load ?? 0) }
     var series: [Double] = []
     for i in stride(from: days - 1, through: 0, by: -1) {
         let d = cal.date(byAdding: .day, value: -i, to: now)!
-        series.append(byDate[d.localDateString] ?? 0)
+        series.append(byDate[d.dateString(in: cal)] ?? 0)
     }
     return series
 }

@@ -181,6 +181,10 @@ targets:
         product: Supabase
       - package: SendLogWatchCore
         product: SendLogWatchCore
+      # #802: the watch app links the shared readiness core for the
+      # on-watch RecoveryEngine compute (same product the phone links).
+      - package: SendLogHealthCore
+        product: SendLogHealthCore
     settings:
       base:
         PRODUCT_NAME: "$(TARGET_NAME)"

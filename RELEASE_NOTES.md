@@ -18,6 +18,17 @@ CI, dependency updates, and refactors unless users experience a change.
   its watch-widget extension; signed archive/device installation and the
   paired watch's direct live-workout mirror remain validation gates, so this
   wiring is not yet a verified release outcome.
+- Apple Watch now reads its own Apple Health data (HRV, resting HR, sleep,
+  respiratory rate, body mass) and computes the readiness score on the wrist:
+  a watch-only user's score and history sync to Sendmeter directly from the
+  watch with no iPhone in the loop, the morning refresh backfills missed days
+  and shows a local notification with today's score plus a complication
+  update, and if the iPhone has already scored today its fresh reading wins —
+  the watch only fills stale or missing days. The phone/watch winner is now
+  decided inside one database transaction, and an Apple Health wake-up or
+  background refresh can trigger the morning compute without opening the
+  watch app. (HealthKit runtime delivery and sync remain device-only to
+  verify.)
 - Native Dashboard: tap the Send Conditions card to open a detail sheet with the same 30-day same-time-of-day comparison, median line, absolute-friction gauge, how-it's-scored breakdown, and scrub tooltips as the web.
 - Native Dashboard now opens a Recovery Inputs sheet from today's decision card: the seven raw HealthKit inputs behind your readiness score appear as simple shared 14-day bar charts with one 7-day trend and tap/scrub tooltips.
 - Native app now opens with your latest history, readiness, presets, routines, and settings already on screen from the local cache, and new/edited/deleted items render immediately while the server syncs.

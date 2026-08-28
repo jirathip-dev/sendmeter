@@ -1,4 +1,5 @@
 import Foundation
+import SendLogHealthCore
 import SendLogWatchCore
 import Supabase
 

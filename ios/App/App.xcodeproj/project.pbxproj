@@ -67,6 +67,8 @@
 		CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CA278E81C6E14A40B4C9C69 /* Foundation.framework */; };
 		D1C2B3A4F5E6708192A3B4C5 /* ACWRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */; };
 		D40300000000000000000001 /* SendLogWatchCore in Frameworks */ = {isa = PBXBuildFile; productRef = D40300000000000000000002 /* SendLogWatchCore */; };
+		B80200000000000000000001 /* SendLogHealthCore in Frameworks */ = {isa = PBXBuildFile; productRef = B80200000000000000000002 /* SendLogHealthCore */; };
+		B80200000000000000000005 /* SendLogHealthCore in Frameworks */ = {isa = PBXBuildFile; productRef = B80200000000000000000004 /* SendLogHealthCore */; };
 		DC8AEC462E50018489C83C36 /* GuidedForcePersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2603B66689B80B4680D137B4 /* GuidedForcePersistenceTests.swift */; };
 		DFB64FDAEB1AB019AD0AA7AE /* GuidedForcePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31A1EB3CD36C29EFEE9ED771 /* GuidedForcePolicyTests.swift */; };
 		E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */; };
@@ -278,6 +280,7 @@
 			files = (
 				498D2C0A73BE410711C4CD53 /* Supabase in Frameworks */,
 				5EC0A003B003C003D003E003 /* SendLogWatchCore in Frameworks */,
+				B80200000000000000000001 /* SendLogHealthCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -313,6 +316,7 @@
 				CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */,
 				5EC0A005B005C005D005E005 /* SendLogWatchCore in Frameworks */,
 				AE0CF1ABF3486B235A340F07 /* Supabase in Frameworks */,
+				B80200000000000000000005 /* SendLogHealthCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -507,6 +511,7 @@
 			packageProductDependencies = (
 				665354DA3AF13BA04D7AADA0 /* Supabase */,
 				5EC0A002B002C002D002E002 /* SendLogWatchCore */,
+				B80200000000000000000002 /* SendLogHealthCore */,
 			);
 			productName = "SendLogWatch Watch App";
 			productReference = 328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */;
@@ -555,6 +560,7 @@
 			packageProductDependencies = (
 				5EC0A004B004C004D004E004 /* SendLogWatchCore */,
 				4E2077BFF2DA0642AEEEC447 /* Supabase */,
+				B80200000000000000000004 /* SendLogHealthCore */,
 			);
 			productName = SendLogWatchTests;
 			productReference = 9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */;
@@ -1439,6 +1445,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = SendLogWatchCore;
 		};
+		B80200000000000000000003 /* XCLocalSwiftPackageReference "sendlog-health-core" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../../../native-plugins/sendlog-health-core";
+		};
 		D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "CapApp-SPM";
@@ -1476,6 +1486,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
 			productName = SendLogWatchCore;
+		};
+		B80200000000000000000002 /* SendLogHealthCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B80200000000000000000003 /* XCLocalSwiftPackageReference "sendlog-health-core" */;
+			productName = SendLogHealthCore;
+		};
+		B80200000000000000000004 /* SendLogHealthCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B80200000000000000000003 /* XCLocalSwiftPackageReference "sendlog-health-core" */;
+			productName = SendLogHealthCore;
 		};
 		665354DA3AF13BA04D7AADA0 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;

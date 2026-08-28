@@ -210,6 +210,9 @@ const FACADES = [
     allowedLines: new Set([
       "enum SupabaseService {",
       "static func from(_ table: String) -> PostgrestQueryBuilder {",
+      // #802: narrow RPC accessor for the server-side precedence write —
+      // no auth accessor, no member path back to the client.
+      "static func rpc(_ function: String, params: some Encodable) throws -> PostgrestFilterBuilder {",
     ]),
   },
   {
@@ -218,6 +221,9 @@ const FACADES = [
     allowedLines: new Set([
       "enum HealthConfig {",
       "static func from(_ table: String, accessToken: String) -> PostgrestQueryBuilder {",
+      // #802: narrow RPC accessor for the server-side precedence write —
+      // no auth accessor, no member path back to the client.
+      "static func rpc(_ function: String, params: some Encodable, accessToken: String) throws -> PostgrestFilterBuilder {",
     ]),
   },
 ];

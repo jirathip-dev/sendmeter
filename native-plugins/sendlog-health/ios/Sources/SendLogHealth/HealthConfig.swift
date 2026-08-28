@@ -61,10 +61,16 @@ enum HealthConfig {
     }
 
     /// The façade's entire data surface: a PostgREST query builder for one
-    /// table and one captured bearer. Deliberately the ONLY non-private member
-    /// — anything new this plugin needs from the SDK gets its own narrow
-    /// accessor here, never the client itself.
+    /// table and one captured bearer. Deliberately the ONLY non-private
+    /// members — anything new this plugin needs from the SDK gets its own
+    /// narrow accessor here, never the client itself.
     static func from(_ table: String, accessToken: String) -> PostgrestQueryBuilder {
         client(accessToken: accessToken).from(table)
+    }
+
+    /// Narrow RPC accessor (#802): one Postgres function, same shape as
+    /// `from(_:)` — no member path back to the client or any auth accessor.
+    static func rpc(_ function: String, params: some Encodable, accessToken: String) throws -> PostgrestFilterBuilder {
+        try client(accessToken: accessToken).rpc(function, params: params)
     }
 }
