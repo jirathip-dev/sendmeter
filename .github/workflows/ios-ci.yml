@@ -75,27 +75,9 @@ jobs:
             exit 0
           fi
 
-          node <<'NODE'
-          const { execFileSync } = require('node:child_process');
-          const fs = require('node:fs');
-          const base = process.env.BASE_SHA;
-          const native = /^(?:@capacitor(?:\/|$)|@capacitor-community\/(?:bluetooth-le|keep-awake|apple-sign-in)$|sendlog-(?:auth-bridge|health|live-activity|passkey)$)/;
-          const read = (file) => JSON.parse(file === 'package.json'
-            ? execFileSync('git', ['show', `${base}:${file}`], { encoding: 'utf8' })
-            : fs.readFileSync(file, 'utf8'));
-          const before = read('package.json');
-          const after = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const sections = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
-          const changed = sections.flatMap((section) => Object.keys({
-            ...(before[section] || {}), ...(after[section] || {}),
-          }).filter((name) => native.test(name) && before[section]?.[name] !== after[section]?.[name]));
-          const lockDiff = execFileSync('git', ['diff', '--unified=0', base, process.env.HEAD_SHA, '--', 'package-lock.json'], { encoding: 'utf8' });
-          const lockNative = lockDiff.split('\n').some((line) => (line.startsWith('+') || line.startsWith('-')) &&
-            /@capacitor(?:\/|$)|@capacitor-community\/(?:bluetooth-le|keep-awake|apple-sign-in)|sendlog-(?:auth-bridge|health|live-activity|passkey)/.test(line));
-          const nativeChanged = changed.length > 0 || lockNative;
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `native_changed=${nativeChanged}\n`);
-          console.log(nativeChanged ? `native-facing packages changed: ${[...new Set(changed)].join(', ') || 'lockfile'}` : 'root dependency change is unrelated to native-facing packages');
-          NODE
+          result="$(node .github/scripts/classify-native-deps.js "$BASE_SHA" "$HEAD_SHA")"
+          printf '%s\n' "$result"
+          printf '%s\n' "${result%%$'\n'*}" >> "$GITHUB_OUTPUT"
 
   # The pure-logic watch tests live in the SendLogWatchCore SwiftPM package
   # (#191), so they need no simulator and no Xcode — run them on Ubuntu,

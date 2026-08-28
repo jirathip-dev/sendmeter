@@ -68,8 +68,8 @@ zero GitHub-billable-minute result must be confirmed from that hosted run.
 Because major groups also consume the one version-update slot, operators must
 close stale major PRs promptly when they are not being actively upgraded.
 Otherwise a stale major can starve routine patch/minor updates for that
-manifest. Root npm major PR #827 and native GRDB major PR #829 are the current
-instances requiring this manual treatment.
+manifest. Root npm major PR #827 is the current instance requiring this
+manual treatment; #829 was merged and is no longer a stale-major example.
 
 ## Fixture evidence
 
