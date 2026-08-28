@@ -29,6 +29,9 @@ struct SendLogWatchApp: App {
     // extended-runtime session is keyed to the Force activity state and survives
     // view refreshes and navigation.
     @State private var forceRuntimeCoordinator = ForceRuntimeCoordinator()
+    // #802: watch-only readiness — the watch reads its own HealthKit,
+    // computes and syncs directly; no iPhone in the loop.
+    @State private var healthSync = HealthSyncManager()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -41,8 +44,10 @@ struct SendLogWatchApp: App {
                 .environment(forceProtocolCatalog)
                 .environment(guidedForceRunner)
                 .environment(forceRuntimeCoordinator)
+                .environment(healthSync)
                 .task { @MainActor in
                     readiness.request(reason: .launch)
+                    healthSync.trigger(reason: .launch)
                 }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -63,6 +68,9 @@ struct SendLogWatchApp: App {
                 // health_metrics fetch from the app scene.
                 Task { @MainActor in
                     readiness.request(reason: .foreground)
+                    // #802: the on-watch HealthKit path runs its own pass on
+                    // foreground too — a watch-only user has no phone relay.
+                    healthSync.trigger(reason: .foreground)
                 }
                 guidedForceRunner.refresh()
                 // #540: a state change that landed while inactive (e.g. a hands-free
@@ -83,6 +91,15 @@ struct SendLogWatchApp: App {
             // already ran this same event; tindeq.handleAccountTransition
             // no-ops while a guided run still owns the manager either way.
             tindeq.handleAccountTransition(to: auth.state.userId)
+            // #802: fence the on-watch health sync behind the account relay.
+            switch auth.state {
+            case .signedOut:
+                healthSync.signedOut()
+            case .signedIn(_, _):
+                // A fresh relay also means a fresh bearer token — retry any
+                // health sync the stale token may have held back.
+                healthSync.trigger(reason: .foreground)
+            }
         }
     }
 }
