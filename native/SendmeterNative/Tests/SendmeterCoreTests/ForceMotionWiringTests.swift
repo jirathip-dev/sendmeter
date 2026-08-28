@@ -53,6 +53,17 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertTrue(force.contains("refuseAction: { message in refuseAction(message) }"))
     }
 
+    func testForceFullscreensKeepProtocolAndHonestTargetContextVisible() {
+        let force = code(source("Sources/Features/Force/ForceView.swift"))
+        let manual = code(source("Sources/Features/Force/ManualForceFullscreen.swift"))
+
+        XCTAssertTrue(force.contains("protocolIdentityHeader"))
+        XCTAssertTrue(force.contains("No target configured for this protocol"))
+        XCTAssertTrue(manual.contains("No target configured for this protocol"))
+        XCTAssertTrue(manual.contains("protocolSummary"))
+        XCTAssertTrue(force.contains("safeAreaInset(edge: .bottom"))
+    }
+
     private func source(_ relativePath: String) -> String {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
