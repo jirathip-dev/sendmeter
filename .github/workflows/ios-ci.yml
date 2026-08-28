@@ -29,6 +29,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "patches/**"
+      - "capacitor.config.ts"
       - ".github/workflows/ios-ci.yml"
   # Manual escape hatch for verifying the lane itself without a native change.
   workflow_dispatch:

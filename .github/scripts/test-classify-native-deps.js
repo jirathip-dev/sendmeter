@@ -50,5 +50,6 @@ assert.equal(scenario('lockfile-wrapper-resolved', () => {
 }), true);
 assert.equal(scenario('workflow-path', () => write('.github/workflows/ios-ci.yml', 'name: changed\n')), true);
 assert.equal(scenario('patch-path', () => write('patches/@capacitor-community+apple-sign-in+7.1.0.patch', 'native patch changed\n')), true);
-console.log('classifier tests: 10 passed (unrelated, native, safe-area, alias, URL, capacitor-community URL, non-native URL, lockfile-only, workflow path, patch path)');
+assert.equal(scenario('capacitor-config-path', () => write('capacitor.config.ts', 'export default { ios: { scrollEnabled: false } };\n')), true);
+console.log('classifier tests: 11 passed (unrelated, native, safe-area, alias, URL, capacitor-community URL, non-native URL, lockfile-only, workflow path, patch path, capacitor config path)');
 fs.rmSync(repo, { recursive: true, force: true });
