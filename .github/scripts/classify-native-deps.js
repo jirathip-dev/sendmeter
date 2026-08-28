@@ -10,7 +10,8 @@ function git(args, cwd) {
 }
 
 function packageIsNative(name, value) {
-  return NATIVE_REFERENCE.test(name) || NATIVE_REFERENCE.test(String(value));
+  const serialized = typeof value === 'string' ? value : JSON.stringify(value ?? '');
+  return NATIVE_REFERENCE.test(name) || NATIVE_REFERENCE.test(serialized);
 }
 
 function readPackageLock(ref, cwd) {
