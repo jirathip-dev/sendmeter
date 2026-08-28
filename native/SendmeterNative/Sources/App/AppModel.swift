@@ -6108,7 +6108,12 @@ public final class AppModel {
                             recomputeGate.cancel()
                             return nil
                         }
-                        try await repository.upsertHealthMetric(upsert, userID: userID)
+                        // #802 AC4: today's write goes through the server-side
+                        // precedence RPC (atomic decide against the live row).
+                        _ = try await repository.upsertHealthMetricWithPrecedence(
+                            upsert,
+                            userID: userID
+                        )
                         guard !Task.isCancelled else {
                             recomputeGate.cancel()
                             return nil

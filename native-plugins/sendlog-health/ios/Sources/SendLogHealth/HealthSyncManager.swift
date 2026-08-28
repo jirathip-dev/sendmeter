@@ -51,6 +51,75 @@ private struct HealthMetricsUpsert: Codable {
     }
 }
 
+/// #802: PostgREST parameter body for `upsert_health_metrics_with_precedence`
+/// (keys are the function's `p_*` names; optional nulls are the #109
+/// keep-score merge).
+private struct HealthPrecedenceRpcParams: Encodable {
+    let pUserId: UUID
+    let pDate: String
+    let pHrvSDNNMs: Double?
+    let pRestingHR: Double?
+    let pSleepHours: Double?
+    let pSleepDeepHours: Double?
+    let pSleepREMHours: Double?
+    let pBodyMassKg: Double?
+    let pRespRateBpm: Double?
+    let pReadiness: Int?
+    let pZone: String?
+    let pComputedAt: Date?
+    let pWriter: String
+    let pTimezone: String
+
+    init(row: HealthMetricsUpsert, userID: UUID, timeZone: TimeZone = .current) {
+        self.pUserId = userID
+        self.pDate = row.date
+        self.pHrvSDNNMs = row.hrvSdnnMs
+        self.pRestingHR = row.restingHr
+        self.pSleepHours = row.sleepHours
+        self.pSleepDeepHours = row.sleepDeepHours
+        self.pSleepREMHours = row.sleepRemHours
+        self.pBodyMassKg = row.bodyMassKg
+        self.pRespRateBpm = row.respRateBpm
+        self.pReadiness = row.readiness
+        self.pZone = row.zone
+        self.pComputedAt = row.computedAt
+        self.pWriter = "phone"
+        self.pTimezone = timeZone.identifier
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case pUserId = "p_user_id"
+        case pDate = "p_date"
+        case pHrvSDNNMs = "p_hrv_sdnn_ms"
+        case pRestingHR = "p_resting_hr"
+        case pSleepHours = "p_sleep_hours"
+        case pSleepDeepHours = "p_sleep_deep_hours"
+        case pSleepREMHours = "p_sleep_rem_hours"
+        case pBodyMassKg = "p_body_mass_kg"
+        case pRespRateBpm = "p_resp_rate_bpm"
+        case pReadiness = "p_readiness"
+        case pZone = "p_zone"
+        case pComputedAt = "p_computed_at"
+        case pWriter = "p_writer"
+        case pTimezone = "p_timezone"
+    }
+}
+
+/// One returned row of the precedence RPC (#802): decision plus the
+/// canonical winner (the retained server row when the date was retained).
+private struct HealthPrecedenceRpcRow: Decodable {
+    let decision: String
+    let date: String?
+    let readiness: Int?
+    let zone: String?
+    let computedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case decision, date, readiness, zone
+        case computedAt = "computed_at"
+    }
+}
+
 private struct SessionLoadRow: Codable {
     var date: String
     var load: Int?
@@ -585,23 +654,49 @@ final class HealthSyncManager {
 
         guard isCurrentAccount(binding) else { throw CancellationError() }
 
-        try await HealthConfig
-            .from("health_metrics", accessToken: binding.accessToken)
-            .upsert(row, onConflict: "user_id,date")
-            .execute()
-
+        // #802 AC4: the server's precedence RPC decides the dual-source
+        // winner atomically (phone wins when it carries a fresh non-empty
+        // row; an empty candidate is discarded; the #109 keep-score merge
+        // still leaves an existing score untouched when readiness is nil).
+        let outcome = try await upsertThroughPrecedenceRpc(
+            row: row,
+            binding: binding
+        )
         guard isCurrentAccount(binding) else { throw CancellationError() }
 
         let snapshot = ReadinessSnapshot(
             date: today,
-            readiness: row.readiness ?? existing?.readiness,
-            zone: row.zone ?? existing?.zone,
-            computedAt: row.computedAt?.timeIntervalSince1970
+            readiness: outcome.readiness ?? row.readiness ?? existing?.readiness,
+            zone: outcome.zone ?? row.zone ?? existing?.zone,
+            computedAt: outcome.computedAt?.timeIntervalSince1970
+                ?? row.computedAt?.timeIntervalSince1970
         )
         return HealthSyncOutcome(
             snapshot: snapshot,
             freshness: allowReadinessOverwrite ? .fresh : .cached
         )
+    }
+
+    /// The one production write path (#802): the PostgREST RPC
+    /// `upsert_health_metrics_with_precedence` performs the precedence
+    /// decide inside one transaction against the live row and returns the
+    /// canonical winner — writer = 'phone'.
+    private func upsertThroughPrecedenceRpc(
+        row: HealthMetricsUpsert,
+        binding: HealthSessionBinding
+    ) async throws -> HealthPrecedenceRpcRow {
+        guard let userID = binding.identity.userId else {
+            throw HealthAuthRequiredError()
+        }
+        let params = HealthPrecedenceRpcParams(row: row, userID: userID)
+        let rows: [HealthPrecedenceRpcRow] = try await HealthConfig
+            .rpc("upsert_health_metrics_with_precedence", params: params, accessToken: binding.accessToken)
+            .execute()
+            .value
+        guard let row = rows.first else {
+            throw HealthSyncUnavailableError()
+        }
+        return row
     }
 
     private func waitForFreshAccessToken(previous: HealthSessionBinding) async throws {
@@ -945,11 +1040,21 @@ final class HealthSyncManager {
         // HealthResyncFoundNoDataError's doc comment for why this can't be
         // narrowed further (denied vs. genuinely empty) via public API.
         guard !rows.isEmpty else { throw HealthResyncFoundNoDataError() }
-        guard isCurrentAccount(binding) else { throw CancellationError() }
-        try await HealthConfig
-            .from("health_metrics", accessToken: binding.accessToken)
-            .upsert(rows, onConflict: "user_id,date")
-            .execute()
+        // #802 AC4: every production write goes through the server-side
+        // precedence RPC — even after the hard delete, each rebuilt day is
+        // routed writer='phone' so a concurrent watch write for the same
+        // date cannot be silently clobbered by a client-side upsert.
+        guard let userID = binding.identity.userId else {
+            throw HealthAuthRequiredError()
+        }
+        for row in rows {
+            guard isCurrentAccount(binding) else { throw CancellationError() }
+            let params = HealthPrecedenceRpcParams(row: row, userID: userID)
+            let _: [HealthPrecedenceRpcRow] = try await HealthConfig
+                .rpc("upsert_health_metrics_with_precedence", params: params, accessToken: binding.accessToken)
+                .execute()
+                .value
+        }
         guard isCurrentAccount(binding) else { throw CancellationError() }
     }
 
