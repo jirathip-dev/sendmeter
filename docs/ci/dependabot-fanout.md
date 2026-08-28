@@ -48,22 +48,23 @@ The issue recorded the before baseline as **10 update PRs**, **29 workflow
 runs**, and **48.37 minutes wall-clock**. The runners were Blacksmith runners;
 GitHub-billable minutes were recorded as **0**.
 
-After the policy, routine version updates have at most one open PR per
-manifest per weekly cycle:
+After policy — **expected maximum, measured values to be recorded after the
+first policy cycle (next scheduled 2026-08-31)** — is one open routine
+version-update PR per manifest:
 
 ```
-2 npm manifests + 1 GitHub Actions manifest + 8 SwiftPM manifests = 11
-routine update PR slots
+root npm 1 + mcp npm 1 + GitHub Actions 1 + 8 SwiftPM manifests = 11 PRs
+maximum routine version-update fan-out per weekly cycle
 ```
 
 This is a queue bound, not a promise that every manifest receives an update.
-Security updates are intentionally excluded from the routine bound. Native
-runner allocation is further reduced by the classifier: unrelated dependency
+Security updates are intentionally excluded from the routine bound. The
+classifier further limits expensive native allocation: unrelated dependency
 changes use the Blacksmith 4-vCPU Ubuntu classifier plus quality/audit and
-secret-scan jobs, while only Swift/iOS-affecting paths allocate the Blacksmith
-6-vCPU macOS native jobs. The exact after wall-clock and hosted workflow-run
-count require the next Dependabot weekly cycle; Blacksmith accounting and the
-zero GitHub-billable-minute result must be confirmed from that hosted run.
+secret-scan jobs, while native-facing changes can allocate the Blacksmith
+6-vCPU macOS native job. The measured after workflow-run count, wall-clock,
+Blacksmith accounting, and GitHub-billable minutes remain pending until that
+first policy cycle; the before baseline recorded 0 GitHub-billable minutes.
 
 Because major groups also consume the one version-update slot, operators must
 close stale major PRs promptly when they are not being actively upgraded.

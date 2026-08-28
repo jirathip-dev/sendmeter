@@ -7,12 +7,17 @@ import { classify } from './classify-native-deps.js';
 
 const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'sendmeter-native-deps-'));
 const run = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
-const write = (file, value) => fs.writeFileSync(path.join(repo, file), value);
+const write = (file, value) => {
+  const target = path.join(repo, file);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, value);
+};
 run(['init', '-q']);
 run(['config', 'user.email', 'test@example.com']);
 run(['config', 'user.name', 'test']);
 write('package.json', JSON.stringify({ devDependencies: { '@capacitor/cli': '^8.0.0', typescript: '^6.0.0' } }, null, 2) + '\n');
-write('package-lock.json', JSON.stringify({ packages: { '': {}, 'node_modules/@capacitor-community/safe-area': { version: '1.0.0', integrity: 'old' } } }, null, 2) + '\n');
+write('package-lock.json', JSON.stringify({ packages: { '': {}, 'node_modules/@capacitor-community/safe-area': { version: '1.0.0', integrity: 'old' }, 'node_modules/wrapper': { resolved: 'https://registry.test/wrapper.tgz' } } }, null, 2) + '\n');
+write('.github/workflows/ios-ci.yml', 'name: iOS CI\n');
 run(['add', '.']);
 run(['commit', '-qm', 'base']);
 const base = run(['rev-parse', 'HEAD']);
@@ -28,6 +33,9 @@ function scenario(name, mutate) {
 assert.equal(scenario('unrelated', () => write('package.json', JSON.stringify({ devDependencies: { '@capacitor/cli': '^8.0.0', typescript: '^7.0.0' } }, null, 2) + '\n')), false);
 assert.equal(scenario('native', () => write('package.json', JSON.stringify({ devDependencies: { '@capacitor/cli': '^8.1.0', typescript: '^6.0.0' } }, null, 2) + '\n')), true);
 assert.equal(scenario('safe-area', () => write('package.json', JSON.stringify({ devDependencies: { '@capacitor/cli': '^8.0.0', '@capacitor-community/safe-area': '^1.1.0', typescript: '^6.0.0' } }, null, 2) + '\n')), true);
-assert.equal(scenario('lockfile-only', () => write('package-lock.json', JSON.stringify({ packages: { '': {}, 'node_modules/@capacitor-community/safe-area': { version: '1.0.1', integrity: 'new' } } }, null, 2) + '\n')), true);
-console.log('classifier tests: 4 passed (unrelated, native, safe-area, lockfile-only)');
+assert.equal(scenario('alias', () => write('package.json', JSON.stringify({ devDependencies: { bridge: 'npm:@capacitor/core@8.0.0', typescript: '^6.0.0' } }, null, 2) + '\n')), true);
+assert.equal(scenario('url', () => write('package.json', JSON.stringify({ devDependencies: { bridge: 'github:ionic-team/capacitor#v8.0.0', typescript: '^6.0.0' } }, null, 2) + '\n')), true);
+assert.equal(scenario('lockfile-only-context-free', () => write('package-lock.json', JSON.stringify({ packages: { '': {}, 'node_modules/@capacitor-community/safe-area': { version: '1.0.1', integrity: 'new' }, 'node_modules/wrapper': { resolved: 'https://registry.test/wrapper.tgz' } } }, null, 2) + '\n')), true);
+assert.equal(scenario('workflow-path', () => write('.github/workflows/ios-ci.yml', 'name: changed\n')), true);
+console.log('classifier tests: 7 passed (unrelated, native, safe-area, alias, URL, lockfile-only, workflow path)');
 fs.rmSync(repo, { recursive: true, force: true });
