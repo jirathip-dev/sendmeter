@@ -1,0 +1,433 @@
+// Type-only, and therefore erased at build time — force-curve.ts imports
+// TindeqSample back from here, so a value import would be a real cycle.
+import type { RecordedZone } from "./force-curve.js";
+
+export type PhaseId = "capacity" | "strength" | "power" | "execution";
+export type ViewId = "dashboard" | "workout" | "history" | "tindeq";
+
+export interface Phase {
+  id: PhaseId;
+  name: string;
+  color: string;
+  /// AA-legible text variant of `color` (issue #557) — a CSS custom-property
+  /// reference (`var(--phase-text-<id>)`), resolved per theme in index.css.
+  /// Light mode: darkened to clear WCAG AA 4.5:1 on light mode's near-white
+  /// surfaces. Dark mode: NOT simply `color` unchanged — round-2 review found
+  /// three of four identity hues (all but strength) fall short of 4.5:1 on
+  /// the real ~12%-tinted dark card/tag fill, so those get their own
+  /// lightened dark variant too. Use this for every consumer that renders
+  /// the phase identity as text; `color` stays the decorative/chart/chip
+  /// value (identity hex, unchanged in both themes).
+  textColor: string;
+  bg: string;
+  border: string;
+  acwr: string; // display band, e.g. "0.9–1.1"
+  acwrLow: number; // structured target band bounds (match `acwr`)
+  acwrHigh: number;
+  weeks: string;
+  desc: string;
+  tools: string[];
+  intensity: string;
+}
+
+export interface SessionType {
+  id: string;
+  label: string;
+  defaultRpe: number;
+  defaultDuration: number;
+}
+
+export interface NavItem {
+  id: ViewId;
+  icon: string;
+  label: string;
+}
+
+export type WorkoutSource = "watch" | "phone";
+
+export interface Session {
+  id: string;
+  date: string; // YYYY-MM-DD
+  type: string;
+  typeLabel: string;
+  duration: number; // minutes
+  rpe: number; // 1-10
+  // Whether a human has reviewed/confirmed this RPE — false for a phone
+  // auto-save still sitting at the hardcoded DEFAULT_RPE until edited
+  // (issue #114). Manual entries and edits are always true.
+  rpeConfirmed: boolean;
+  load: number; // duration * rpe
+  note: string;
+  phase: PhaseId;
+  groupId: string | null; // Tindeq gauge session this was logged from
+  // Immutable provenance: set when a device workout created this session
+  // (drives the AUTO/PHONE badge + workout-detail expansion). The edit UI
+  // never touches it, so editing `type` can't erase the auto-tracked marker.
+  workoutSource: WorkoutSource | null;
+  /// #615: local-only optimistic row — the completed workout was saved to
+  /// the device (or the phone heard about a watch save), but the server row
+  /// hasn't reconciled yet. Never returned by fetchSessions (server rows
+  /// have no such marker); only set on rows minted by pendingWorkouts.ts.
+  /// Render as a "syncing" state; delete/edit treat it as not-yet-durable.
+  pending?: boolean;
+  /// #615: the account that owns a `pending` row (stamped at registration).
+  /// A fetch/notification for a different account must never merge or keep
+  /// this row in view. Absent on server rows.
+  accountUserId?: string;
+}
+
+/// Editable subset of a session (SL-43). Date and phase stay fixed — moving
+/// an auto-tracked session's date would desync it from its workout's
+/// started_at.
+export interface SessionPatch {
+  type: string;
+  typeLabel: string;
+  duration: number;
+  rpe: number;
+  note: string;
+}
+
+export interface DeletedSession extends Session {
+  deletedAt: string;
+}
+
+export interface LogFormState {
+  date: string;
+  type: string;
+  duration: number;
+  rpe: number;
+  note: string;
+  phase: PhaseId;
+}
+
+export interface HealthMetric {
+  date: string; // YYYY-MM-DD
+  readiness: number | null;
+  zone: string | null;
+  computedAt: string; // timestamptz — when readiness was (re)computed, NOT last sync (#112: score freezes at noon)
+  hrvSdnnMs: number | null;
+  restingHr: number | null;
+  sleepHours: number | null;
+  sleepDeepHours: number | null;
+  sleepRemHours: number | null;
+  bodyMassKg: number | null;
+  respRateBpm: number | null;
+}
+
+export interface PhasePeriod {
+  id: string;
+  phase: PhaseId;
+  startedOn: string; // YYYY-MM-DD
+  endedOn: string | null; // null = current open period
+}
+
+export interface AcwrData {
+  acute: number;
+  chronic: number;
+  acwr: number | null;
+}
+
+export interface WeeklyLoad {
+  label: string;
+  total: number;
+}
+
+export interface AcwrStatus {
+  label: string;
+  color: string;
+}
+
+export interface TindeqSample {
+  t: number; // ms since measurement start
+  kg: number;
+}
+
+export type TindeqSide = "" | "left" | "right" | "both";
+
+export type TindeqProtocolMode = "hold" | "reverse_action";
+export type ForceCapacityModality = "static" | "reverse_action";
+export type ForceExecutionMethod = "sensor" | "cadence_only";
+export type ReverseActionDirection = "out" | "return";
+export type ReverseActionToleranceMode = "percent" | "kg";
+
+/// Expected cadence boundary inside one Reverse Action set. These are clock
+/// markers, not observed joint-position measurements: v1 deliberately does
+/// not infer motion repetitions from a deliberately flat force trace.
+export interface CadenceMarker {
+  tMs: number;
+  rep: number;
+  direction: ReverseActionDirection;
+}
+
+/// Time-weighted quality summary for one continuous Reverse Action set.
+export interface ReverseActionSetMetrics {
+  meanKg: number | null;
+  coefficientVariationPct: number | null;
+  inTargetPct: number | null;
+  timeUnderTensionMs: number;
+  driftPct: number | null;
+  /// Portion of the prescribed cadence clock completed. This does not claim
+  /// that motion was observed; it is 100% for a full clock-driven set.
+  cadenceAdherencePct: number;
+}
+
+export interface TindeqRecordingMeta {
+  id: string;
+  recordedAt: string; // ISO timestamp
+  durationMs: number;
+  peakKg: number | null;
+  avgKg: number | null;
+  sampleCount: number;
+  note: string;
+  tag: string; // exercise, e.g. "FDP" — trends group by this
+  side: TindeqSide;
+  groupId: string | null; // gauge session this recording belongs to
+  /// Guided-protocol provenance (SL-79) — reps of one run share a run id and
+  /// carry their set number; null for free holds / older rows.
+  protocolRunId: string | null;
+  setNo: number | null;
+  /// The zone this hold was actually PERFORMED under (#259), stamped from the
+  /// armed zone/preset at save time — the LOAD-AWARE classification, which a
+  /// duration-only re-derivation can't recover. `RecordedZone` admits the
+  /// Warm-up and Prehab maintenance zones alongside the four training
+  /// qualities; those holds MUST carry their zone or duration inference would
+  /// incorrectly credit them to training balance.
+  /// Null when there is nothing to record (freehand hold, watch recording) or
+  /// the row predates the column; readers then infer it from `durationMs`
+  /// (see lib/zoneHistory.ts `recordingZone`). Deliberately not backfilled.
+  zone: RecordedZone | null;
+  source: "dynamometer" | "manual";
+  externalLoadKg?: number | null;
+  outcome?: "too_easy" | "good" | "failed" | null;
+  plannedDurationMs?: number | null;
+  actualDurationMs?: number | null;
+  repNo?: number | null;
+  protocolMode?: TindeqProtocolMode;
+  targetKg?: number | null;
+  targetLowKg?: number | null;
+  targetHighKg?: number | null;
+  cadenceOutS?: number | null;
+  cadenceReturnS?: number | null;
+  cadenceMarkers?: CadenceMarker[] | null;
+  setMetrics?: ReverseActionSetMetrics | null;
+  setupNote?: string;
+  /// Null/undefined preserves pre-#422 Reverse Action rows as capacity
+  /// evidence. New prescribed Reverse Action sets stamp an explicit value.
+  capacityEvidence?: boolean | null;
+  /// Cadence-only progress is prescribed-clock progress, never motion
+  /// detection. Null for measured rows and historical/manual holds.
+  completedReps?: number | null;
+  completionStatus?: "complete" | "partial" | null;
+}
+
+/// A saved hang protocol (hold / reps / sets / rests) — drives the guided
+/// timer in the fullscreen gauge.
+export interface TindeqPreset {
+  id: string;
+  name: string;
+  holdS: number;
+  /// Per-set hold override (#332) — index 0 is set 1, etc. `holdS` is the
+  /// base/fallback: used verbatim when this is null OR shorter than `sets`
+  /// (so a preset saved before this field, or with `sets` since raised past
+  /// the list's length, keeps behaving exactly as before). Use
+  /// `holdForSet`/`holdsForSets` in `lib/protocol.ts` rather than indexing
+  /// this directly.
+  holdsS: number[] | null;
+  reps: number;
+  sets: number;
+  restRepsS: number;
+  restSetsS: number;
+  /// Optional target load — drawn as the target band on the live chart.
+  targetKg: number | null;
+  /// Optional target as % of a reference (see pctBasis). Overrides targetKg.
+  targetPct: number | null;
+  /// What targetPct is a percentage of: "pr" = best recorded peak (max
+  /// strength), "cf" = critical force (sustainable / endurance).
+  pctBasis: "pr" | "cf";
+  /// Per-set ramp: set N targets (targetPct + (N-1)·pctStep)% of the basis.
+  pctStep: number;
+  /// Auto curve target (SL-62): derive the load from the exercise's force-duration
+  /// Hill capability curve at holdS — the force sustainable for that hold.
+  /// Overrides targetKg/targetPct when true.
+  targetCurve: boolean;
+  /// Run both hands in every logical rep (left hold, switch, right hold).
+  alternateSides: boolean;
+  /// Ordinary guided hangs retain the existing timeline and per-hold saves.
+  /// Reverse Action runs a cadence clock and saves one continuous row per set.
+  protocolMode?: TindeqProtocolMode;
+  cadenceOutS?: number;
+  cadenceReturnS?: number;
+  toleranceMode?: ReverseActionToleranceMode;
+  toleranceValue?: number;
+  prepareS?: number;
+  /// Optional data seam only. Issue #401 owns instructional setup guidance.
+  setupNote?: string;
+  /// Reverse Action only: explicitly author this as a maximal/capacity test.
+  /// Defaults false so ordinary prescribed work cannot feed its own model.
+  capacityEvidence?: boolean;
+}
+
+/// One timed step of a guided routine. (A type alias, not an interface, so it
+/// stays assignable to the Supabase Json column type.)
+export type RoutineStep = {
+  label: string;
+  /// Optional coaching hint shown under the step name.
+  detail?: string;
+  /// Duration in seconds (per repetition).
+  s: number;
+  /// Repeat the step this many times (SL-83). Default/absent = 1.
+  reps?: number;
+  /// Rest between repetitions of this step, in seconds. Default/absent = 0.
+  restS?: number;
+};
+
+/// User-defined guided routine (Workout tab) — an ordered list of timed steps
+/// (warm-up, conditioning circuit, mobility flow, …). Mirrors TindeqPreset.
+export interface RoutinePreset {
+  id: string;
+  name: string;
+  steps: RoutineStep[];
+}
+
+export interface DeletedTindeqRecording extends TindeqRecordingMeta {
+  deletedAt: string;
+}
+
+export interface NewTindeqRecording {
+  /// Optional client-generated id (#106): when a save might need to be
+  /// retried from the offline queue (see lib/recordingQueue.ts), the caller
+  /// mints this up front and reuses it across every retry — insertRecording
+  /// passes it straight through as the row's primary key, so a retry of an
+  /// insert that actually landed server-side (but whose response the client
+  /// never saw) collides on the unique constraint instead of duplicating the
+  /// row. Omitted for normal (non-retried) saves — the DB default applies.
+  id?: string;
+  /// ISO timestamp of when this was actually recorded (#487, F2), so a
+  /// recording queued offline and drained hours/days later lands on the day
+  /// it was captured, not the day it happened to finally upload — otherwise
+  /// it lands in the wrong ACWR bucket (the watch already solved this shape
+  /// for sessions, #144). Optional on the TYPE only because `insertRecording`
+  /// itself has no way to enforce it — every REAL construction site stamps
+  /// it at build time (not just the offline-queue retry path: a live save
+  /// needs it too, since ForceView's #264 in-memory Retry banner can re-call
+  /// `insertRecording` on the same object hours later). `recordedAtInvariant
+  /// .test.ts` pins this structurally across all of `src`, so an insert
+  /// literal that omits it is a bug, not a valid "normal save" case — don't
+  /// reintroduce a comment (or a call site) that treats omission as fine.
+  recordedAt?: string;
+  durationMs: number;
+  peakKg: number | null;
+  avgKg: number | null;
+  note: string;
+  tag: string;
+  side: TindeqSide;
+  groupId: string | null;
+  /// Guided-protocol provenance (SL-79): reps of one run share a run id and
+  /// carry their set number. Null for free holds.
+  protocolRunId: string | null;
+  setNo: number | null;
+  /// The quality this hold was performed under (#259) — the armed zone's own
+  /// quality, or a custom preset's LOAD-AWARE badge. Null for a freehand hold:
+  /// with no protocol armed there is no intent to record, and storing a
+  /// duration guess here would make it indistinguishable from a real one.
+  /// Required (not optional) so every save path has to make that call
+  /// deliberately; queue entries written before #259 simply carry `undefined`
+  /// and insert as null.
+  zone: RecordedZone | null;
+  samples: TindeqSample[];
+  source?: "dynamometer" | "manual";
+  externalLoadKg?: number | null;
+  outcome?: "too_easy" | "good" | "failed" | null;
+  plannedDurationMs?: number | null;
+  actualDurationMs?: number | null;
+  repNo?: number | null;
+  protocolMode?: TindeqProtocolMode;
+  targetKg?: number | null;
+  targetLowKg?: number | null;
+  targetHighKg?: number | null;
+  cadenceOutS?: number | null;
+  cadenceReturnS?: number | null;
+  cadenceMarkers?: CadenceMarker[] | null;
+  setMetrics?: ReverseActionSetMetrics | null;
+  setupNote?: string;
+  capacityEvidence?: boolean | null;
+  completedReps?: number | null;
+  completionStatus?: "complete" | "partial" | null;
+}
+
+export interface WorkoutAttempt {
+  startedAt: string;
+  durationS: number;
+  elevationGainM: number;
+  avgHr: number | null;
+  peakHr: number | null;
+  effortScore: number | null;
+  source: "auto" | "manual";
+}
+
+export interface WorkoutDetail {
+  id: string;
+  startedAt: string;
+  endedAt: string;
+  source: WorkoutSource;
+  avgHr: number | null;
+  maxHr: number | null;
+  activeKcal: number | null;
+  elevationGainM: number;
+  attemptsDetected: number;
+  attemptsConfirmed: number;
+  rpePredicted: number | null;
+  rpeConfirmed: number | null;
+  attempts: WorkoutAttempt[];
+}
+
+/// One point of the workout-level 1Hz HR trace (sliced from
+/// climb_workouts.raw). t is seconds from workout start; hr may be null
+/// where the sensor lagged.
+export interface WorkoutHrSample {
+  t: number;
+  hr: number | null;
+}
+
+/// Row of the Workout tab's recent-workouts list (metadata only — the
+/// expanded detail lazy-loads via fetchWorkoutById).
+export interface WorkoutListItem {
+  id: string;
+  sessionId: string | null;
+  startedAt: string;
+  endedAt: string;
+  avgHr: number | null;
+  attemptsConfirmed: number;
+  attemptsDetected: number;
+  rpeConfirmed: number | null;
+  source: WorkoutSource;
+}
+
+/// The single live_workouts heartbeat row the watch upserts every ~5s
+/// while a workout is running (SL-41 live mirror).
+export interface LiveWorkout {
+  workoutId: string;
+  /// Stable run identity carried by both the WC and Supabase paths. Current
+  /// watch builds use the workout UUID; the mirror keeps it separate so a
+  /// future transport can reuse the same contract without relying on a row's
+  /// primary-key shape.
+  runId: string;
+  /// Strictly increasing within runId. Null only for rows written by a
+  /// pre-#521 watch/build; those rows fall back to updatedAt ordering.
+  sequence: number | null;
+  event: "start" | "telemetry" | "phase" | "count" | "end";
+  terminal: boolean;
+  status: "live" | "ended";
+  startedAt: string;
+  hr: number | null;
+  attemptCount: number;
+  activeKcal: number | null;
+  elevationGainM: number | null;
+  climbing: boolean;
+  /// Phase timestamps (absolute, so the mirror renders exact timers even
+  /// though heartbeats are ~5s apart). Null on rows from old watch builds.
+  climbingSince: string | null;
+  restStartedAt: string | null;
+  restTargetS: number | null;
+  updatedAt: string;
+}

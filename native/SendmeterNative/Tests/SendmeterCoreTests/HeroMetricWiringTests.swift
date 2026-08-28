@@ -63,6 +63,18 @@ final class HeroMetricWiringTests: XCTestCase {
         XCTAssertFalse(metric.contains(".system(size: 42"))
     }
 
+    func testMetricValueAdaptsItsUnitAtConstrainedDynamicTypeWidths() {
+        let design = code(source("Sources/App/DesignSystem.swift"))
+        let metric = exactBlock(design, startingWith: "public struct MetricValue: View")
+        let normalized = normalizeWhitespace(metric)
+
+        XCTAssertTrue(normalized.contains("ViewThatFits(in: .horizontal)"))
+        XCTAssertTrue(normalized.contains("private var inlineValue: some View"))
+        XCTAssertTrue(normalized.contains("private var stackedValue: some View"))
+        XCTAssertTrue(normalized.contains("VStack(alignment: .leading, spacing: 2)"))
+        XCTAssertTrue(normalized.contains(".layoutPriority(1)"))
+    }
+
     func testReadinessTrendScoreOwnerUsesTheSharedHeroTreatment() {
         let dashboard = code(source("Sources/Features/Dashboard/DashboardView.swift"))
         let trend = code(source("Sources/Features/Dashboard/ReadinessTrendCard.swift"))

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SendLogHealthCore
 import SendLogWatchCore
 import enum SendLogWatchCore.ReadinessTransportPath
 import WatchConnectivity
@@ -276,6 +277,32 @@ final class ReadinessManager {
             return snapshot.readiness == nil ? "Refresh failed" : "Refresh failed · showing cached"
         case .unsupported:
             return "iPhone readiness unavailable"
+        }
+    }
+
+    /// Applies a readiness computed ON the watch (#802): no phone round
+    /// trip, same display contract as a fresh phone result. Used by
+    /// `HealthSyncManager` after an on-watch pass; a later phone result is
+    /// still applied through the normal result gate.
+    func applyOnWatchResult(readiness: Int?, zone: String?, date: String) {
+        guard acceptsResults else { return }
+        snapshot.readiness = readiness
+        snapshot.readinessZone = readiness == nil ? nil : zone
+        snapshot.updatedAt = Date().timeIntervalSince1970
+        self.result = ReadinessDisplay(
+            score: readiness,
+            zone: zone.flatMap(ReadinessZone.init(rawValue:)),
+            driver: readiness == nil ? "On watch" : "On watch (\(date))"
+        )
+        syncState = readiness == nil ? .offline : .fresh
+        errorMsg = nil
+        lastResultAt = Date()
+        WidgetStore.save(snapshot)
+        Task {
+            await WidgetBridge.refreshStatus(
+                readiness: ReadinessSnapshot(date: date, readiness: readiness, zone: zone)
+            )
+            snapshot = WidgetStore.load()
         }
     }
 

@@ -1,5 +1,30 @@
 import Foundation
 
+/// One canonical semantic hue per semantic — primary / optimal / caution /
+/// danger plus the execution zone hue — shared by the phone
+/// (`SendmeterStyle`, `ChartToken`), the watch (`WatchDesignTokens`) and the
+/// widget so the same risk/zone/semantic can never drift to another hue on a
+/// different surface (#791 W1). Values are the phone/web light palette; each
+/// surface keeps its own luminance adaptation (watch
+/// `WatchPalette.accent(_:reducedLuminance:)`, phone `ChartToken` dark pairs).
+public enum SendmeterSemanticHue: String, CaseIterable, Sendable {
+    case primary
+    case optimal
+    case caution
+    case danger
+    case execution
+
+    public var hex: String {
+        switch self {
+        case .primary: return "#5B5FC7"
+        case .optimal: return "#2E96F0"
+        case .caution: return "#DDB13A"
+        case .danger: return "#E5743A"
+        case .execution: return "#7B83EB"
+        }
+    }
+}
+
 /// Presentation-only contracts shared by the native watch app's visual
 /// surfaces. SwiftUI owns the actual `Color`/`Gradient` values; this package
 /// keeps the decisions that must remain stable under tests (hit targets,
@@ -33,12 +58,15 @@ public enum WatchDesignTokens {
     public static let cardStrong = PhaseRGB(0.12, 0.12, 0.25)
 
     // Semantic accents. Hue is the differentiator; every important state is
-    // also named/iconed in the UI so colour is never the only signal.
-    public static let primary = PhaseRGB(0.48, 0.40, 1.0)
-    public static let secondary = PhaseRGB(0.18, 0.84, 0.96)
+    // also named/iconed in the UI so colour is never the only signal. The
+    // four semantic hues resolve from the canonical shared palette (#791 W1)
+    // so phone, watch and widget read the same hue for the same semantic;
+    // each surface applies its own luminance adaptation.
+    public static let primary = PhaseRGB(hex: SendmeterSemanticHue.primary.hex)
+    public static let secondary = PhaseRGB(hex: SendmeterSemanticHue.optimal.hex)
     public static let success = PhaseRGB(0.30, 0.93, 0.68)
-    public static let warning = PhaseRGB(1.0, 0.76, 0.32)
-    public static let danger = PhaseRGB(1.0, 0.38, 0.46)
+    public static let warning = PhaseRGB(hex: SendmeterSemanticHue.caution.hex)
+    public static let danger = PhaseRGB(hex: SendmeterSemanticHue.danger.hex)
     /// Reserved for the Home screen's Force-module nav-card identity only
     /// (`HomeView`'s "Force Gauge" card, matching Climb Workout's `secondary`
     /// treatment). Generic Force controls/cards (ForceGaugeView,

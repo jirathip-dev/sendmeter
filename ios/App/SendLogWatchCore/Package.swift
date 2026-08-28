@@ -12,11 +12,23 @@ let package = Package(
     products: [
         .library(name: "SendLogWatchCore", targets: ["SendLogWatchCore"])
     ],
+    dependencies: [
+        // #802: the watch reads its own HealthKit and computes readiness
+        // with the SAME RecoveryEngine the phone uses — the readiness math
+        // and the #109 write policy live in the shared health-core package.
+        .package(path: "../../../native-plugins/sendlog-health-core")
+    ],
     targets: [
-        .target(name: "SendLogWatchCore", path: "Sources/SendLogWatchCore"),
+        .target(
+            name: "SendLogWatchCore",
+            dependencies: [
+                .product(name: "SendLogHealthCore", package: "sendlog-health-core")
+            ],
+            path: "Sources/SendLogWatchCore"
+        ),
         .testTarget(
             name: "SendLogWatchCoreTests",
-            dependencies: ["SendLogWatchCore"],
+            dependencies: ["SendLogWatchCore", .product(name: "SendLogHealthCore", package: "sendlog-health-core")],
             path: "Tests/SendLogWatchCoreTests",
             resources: [
                 .copy("Fixtures/rpe-depletion-parity.json"),

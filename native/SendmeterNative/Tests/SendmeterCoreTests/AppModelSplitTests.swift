@@ -452,17 +452,23 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertFalse(appModel.contains("pass != 0 || healthMorningRefreshPolicy.shouldStart"))
     }
 
-    func testHealthRepositoryUsesAtomicHistoricalInsertAndTodayMerge() {
+    func testHealthRepositoryUsesAtomicHistoricalInsertAndTodayPrecedenceRpc() {
         let repository = code(source("Sources/Data/Repositories.swift"))
         XCTAssertTrue(repository.contains("insertHealthMetricIfMissing"))
         XCTAssertTrue(repository.contains("HealthMetricWriteOperation.historicalInsert.preferHeader"))
-        XCTAssertTrue(repository.contains("HealthMetricWriteOperation.todayMerge.preferHeader"))
         XCTAssertTrue(repository.contains("return !receipts.isEmpty"))
+        // #802 AC4: today's write is the server-side precedence RPC — one
+        // transaction decides the dual-source winner against the live row;
+        // clients never raw-upsert today's row anymore.
+        XCTAssertTrue(repository.contains("upsertHealthMetricWithPrecedence"))
+        XCTAssertTrue(repository.contains("rest/v1/rpc/upsert_health_metrics_with_precedence"))
+        XCTAssertFalse(repository.contains("HealthMetricWriteOperation.todayMerge.preferHeader"))
 
         let appModel = code(source("Sources/App/AppModel.swift"))
         XCTAssertTrue(appModel.contains("HealthMetricWritePolicy.operation"))
         XCTAssertTrue(appModel.contains("insertHealthMetricIfMissing("))
-        XCTAssertTrue(appModel.contains("repository.upsertHealthMetric"))
+        XCTAssertTrue(appModel.contains("repository.upsertHealthMetricWithPrecedence"))
+        XCTAssertFalse(appModel.contains("repository.upsertHealthMetric("))
     }
 
     func testHealthBackfillCancellationAndTimezoneOwnershipStayInProductionSeams() {

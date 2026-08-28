@@ -76,11 +76,27 @@ final class RoutineRunnerVisualWiringTests: XCTestCase {
             "Close keeps its alert meaning in the glyph while its label uses the phase foreground"
         )
 
+        // #791 W1: the canonical identity hues moved to `SendmeterSemanticHue`
+        // (WatchDesign.swift, shared by phone/watch/widget) and the design
+        // system now derives from that seam. Pin each hue against its real
+        // home: four live in the canonical source, #565D6D (paused) is
+        // deliberately kept as the design system's own literal.
         let designSystem = source("Sources/App/DesignSystem.swift")
-        for identityHue in ["#5B5FC7", "#2E96F0", "#DDB13A", "#565D6D", "#7B83EB"] {
+        let canonicalHues = source("../../ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WatchDesign.swift")
+        for identityHue in ["#5B5FC7", "#2E96F0", "#DDB13A", "#7B83EB"] {
             XCTAssertTrue(
-                designSystem.contains(identityHue),
-                "approved identity hue \(identityHue) must remain in the design system"
+                canonicalHues.contains(identityHue),
+                "approved identity hue \(identityHue) must remain in the canonical semantic hue source"
+            )
+        }
+        XCTAssertTrue(
+            designSystem.contains("#565D6D"),
+            "approved identity hue #565D6D must remain in the design system"
+        )
+        for semanticCase in ["primary", "optimal", "caution", "execution"] {
+            XCTAssertTrue(
+                designSystem.contains("SendmeterSemanticHue.\(semanticCase).hex"),
+                "design system must derive its \(semanticCase) identity hue from SendmeterSemanticHue"
             )
         }
 

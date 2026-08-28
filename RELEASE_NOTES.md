@@ -18,6 +18,17 @@ CI, dependency updates, and refactors unless users experience a change.
   its watch-widget extension; signed archive/device installation and the
   paired watch's direct live-workout mirror remain validation gates, so this
   wiring is not yet a verified release outcome.
+- Apple Watch now reads its own Apple Health data (HRV, resting HR, sleep,
+  respiratory rate, body mass) and computes the readiness score on the wrist:
+  a watch-only user's score and history sync to Sendmeter directly from the
+  watch with no iPhone in the loop, the morning refresh backfills missed days
+  and shows a local notification with today's score plus a complication
+  update, and if the iPhone has already scored today its fresh reading wins —
+  the watch only fills stale or missing days. The phone/watch winner is now
+  decided inside one database transaction, and an Apple Health wake-up or
+  background refresh can trigger the morning compute without opening the
+  watch app. (HealthKit runtime delivery and sync remain device-only to
+  verify.)
 - Native Dashboard: tap the Send Conditions card to open a detail sheet with the same 30-day same-time-of-day comparison, median line, absolute-friction gauge, how-it's-scored breakdown, and scrub tooltips as the web.
 - Native Dashboard now opens a Recovery Inputs sheet from today's decision card: the seven raw HealthKit inputs behind your readiness score appear as simple shared 14-day bar charts with one 7-day trend and tap/scrub tooltips.
 - Native app now opens with your latest history, readiness, presets, routines, and settings already on screen from the local cache, and new/edited/deleted items render immediately while the server syncs.
@@ -31,6 +42,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Settings → Troubleshooting now lists recent on-device auth events (sign-in, refresh, sign-out, and failure reasons), and token-bearing requests refresh an expired session before use instead of trusting a stale bearer token.
 - Native Manual workouts now open in an adaptive, phase-tinted full-page timer with BOULDER/DONE controls, persisted 1/2/3/5-minute rest targets, rest-over haptic/audio feedback (including a sound notification when backgrounded), and a minimize action that keeps the workout running.
 - Native Manual workouts now mirror to the lock screen as a Live Activity: CLIMBING counts up from the boulder start, RESTING counts down to your configured rest target, the boulder count is pinned alongside Stop/Boulder actions, and the card is cleaned up when the workout ends or the app is relaunched. (Lock-screen rendering is device-only to verify.)
+- Native Force now keeps the selected protocol identity, STATIC/MOVEMENT details, resolved target band, or an explicit no-target state visible in guided and manual fullscreens; the outside recording context foregrounds the next hands-free/manual action and reserves bottom scroll clearance from the tab bar.
 - Native guided Force protocols now use an immersive, phase-tinted fullscreen with OUT/RETURN cadence guidance, live force chart and target coaching, a large stop control, and minimize/reopen that keeps the same protocol running.
 - Native guided routines now use a full-screen WORKING OUT / REST / PAUSED / DONE timer with phase colors, a glass countdown ring, current/next rep context, and optional audio cues. Audio and timer behavior still need physical-device verification.
 - Native Force regular pulls now open a dedicated live fullscreen with phase, curve, controls, and the selected protocol target; the same target band appears on Force history/duration charts, and hands-free can hand off safely into a guided protocol.
@@ -56,13 +68,19 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: the native app now shows a training-balance card for the selected exercise — four bars (Power / Strength / Pow End / Endurance) with how many duration-normalised sets you've done over the last 4 weeks, plus a "FOCUS NEXT" recommendation for the least-trained zone that arms its guided protocol with one tap. Tapping the card opens a detail sheet that explains exactly what the numbers count (one exercise, one window, both sides, sets-not-sessions) and traces each bar to the holds behind it, matching the web's Training balance card.
 
 - Apple Watch Force now keeps measurement running through wrist-down / inactive transitions, holds a supported extended-runtime session only while real measured work is active, renders a legible reduced-luminance frame (current/peak force, countdown, side, terse state) in Always On, and confirms start/save/finish with haptics so a dim pull can be trusted.
+- Native Workout: tapping a routine now opens a read-only preview of its steps — name and detail, work seconds, repetitions, rest, plus the total duration to expect — and starting a routine is explicit from that preview's Start button. Nothing starts on tap anymore.
 
 ### Improved
 
+- Apple Watch now reads the same semantic hues as the iPhone and widgets — primary/optimal/caution/danger (a high/recover ACWR day is orange on both, not orange-phone vs pink-watch), with the watch's own Always-On dimming preserved. Force, Workout, and Status now share one glyph mapping (scalemass / figure.climbing / chart.bar.fill) across watch, phone, and widgets.
+- Apple Watch Force setup now uses compact chip pickers for exercise and protocol selection, matching the phone's chip treatment, with the selected protocol's summary kept one glance below the picker.
+- Apple Watch Force now gives a subtle click when a hold's peak is established — the force settling below the rep's peak — once per rep, on top of the existing start/save/finish confirmations.
+- Native splash: the kangaroo now plays the same looping dyno as the web/Capacitor app — crouch, jump, drop back-first onto the pad, recover — with the matching 4.2s cycle and easing; Reduce Motion keeps a static frame instead.
 - Native sheets now share an 18-point corner radius and consistent open/close feedback across Home, Force, Training Load, History, Workout, and Settings; dismissible sheets also show a grabber and support drag-to-dismiss while the guided routine runner keeps its classified Close path.
 - Native empty states now use Sendmeter artwork, product-specific guidance, and one clear next action when you have no workouts, force history, or Progressor connection.
 - Native Force keeps saved progress, consistency, and curve insights available while the Progressor is disconnected, and ACWR history failures now offer a retry.
 - Native primary metrics now use shared rounded, tabular-number treatments across readiness, ACWR, live Force (with current load kept primary), saved Force peaks, workout timers, elapsed workout time, and Send Conditions; Dynamic Type scaling preserves each surface's hierarchy.
+- Native accessibility now reflows metric units at large Dynamic Type widths, keeps dark-mode Force trace cues readable, and gives VoiceOver the live peak force in kilograms.
 - Native Force phase colors now settle with a short spring, and the BOULDER/DONE hero gives a subtle press pulse with a light haptic; Reduce Motion keeps the same actions and feedback without the animation.
 - Native pending manual workouts now retain their durable on-device queue entries across refresh and relaunch, show clearer upload status with a manual retry action, and preserve Trash behavior for already-uploaded sessions.
 - Native and Watch error messages now use plain language that says what went wrong and what to do next, instead of showing raw server, Bluetooth, or HealthKit errors.
@@ -124,6 +142,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native History: tapping any session row — Tindeq grouped, workout, manual/plain, pending or rejected — now always opens the existing read-only detail (records, zone mix, workout summary/HR trace, or the honest plain-session summary) instead of sometimes landing in the editor. Edit stays on the explicit swipe action.
+- Native History: as part of the same tap fix, a plain/manual session no longer jumps straight into the session editor on tap; it opens the same read-only detail surface as every other row, with its real date, duration, RPE and load — nothing fabricated.
 - Native History now converges permanent Trash deletions across signed-in devices, so a session or Force recording deleted forever no longer remains in another device's cached history after sync.
 - Native Force: a mid-pull Progressor disconnect now salvages the interrupted rep as its own recording — persisted with the exercise and side you had set when the pull started (never a fallback), reported as recovered in History, and reported through the durable lost-recording notice if the save itself fails — instead of only offering a manual Save Recovered Pull prompt that could be missed.
 - Native Training Load: the Daily Load heatmap no longer renders all-gray when a session is dated up to a week ahead — a future-dated session no longer inflates the color scale, which was washing real load days down to the faintest level.
@@ -145,6 +165,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - iPhone: reopening the app now reacts to both foreground signals — the WebView's visibility change and the native app's own active transition — before re-sharing the current sign-in with the paired Apple Watch and the Health sync, and each reopen triggers a single re-share and a single health sync. When the Apple Watch asks the phone for a fresh sign-in while the iPhone's session is already gone, the reason is now recorded separately in Settings → Sign-in diagnostics under its own entry.
 - Watch: if a Climb Workout fails to start partway through, the watch now ends and discards the partially-started session instead of leaving it running in the background.
 - iPhone: reopening the app no longer shows readiness as "Synced just now" for an older watch-triggered result that actually completed hours earlier; the synced-time marker is also now kept separate per signed-in account.
+- iPhone: automatic Health syncs (opening the app, foreground, background, morning) no longer show an "Apple Health updated" confirmation toast — only a manual sync from Settings (or a Dashboard pull-to-refresh) confirms with the "Apple Health synced · N days" copy, and the synced-time/card state updates are unchanged.
 - iPhone: an outright-failed registration for watch-triggered readiness refreshes (for example, on an app version missing the needed native support) no longer disables that notification for the rest of the app session; a registration that fails silently without an error is a separate, still-open gap.
 - Routine actions now stay inside the Workout card on narrow phones; sheet headers are more compact without a redundant drag handle; and the Watch home switcher keeps full-size touch targets with slimmer visual pills.
 - Watch: the Status / Actions switcher now stays above the home content instead of covering the readiness or session cards, with the redundant home title removed to give 40mm watches more usable space.

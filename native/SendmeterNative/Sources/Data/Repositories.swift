@@ -334,6 +334,75 @@ private struct HealthMetricInsertReceipt: Decodable {
     let date: String
 }
 
+/// #802 AC4: PostgREST parameter body for
+/// `upsert_health_metrics_with_precedence` (keys are the function's `p_*`
+/// names; optional nulls carry the #109 keep-score merge).
+private struct HealthPrecedenceRpcParams: Encodable {
+    let pUserID: UUID
+    let pDate: String
+    let pHrvSDNNMs: Double?
+    let pRestingHR: Double?
+    let pSleepHours: Double?
+    let pSleepDeepHours: Double?
+    let pSleepREMHours: Double?
+    let pBodyMassKg: Double?
+    let pRespRateBpm: Double?
+    let pReadiness: Int?
+    let pZone: String?
+    let pComputedAt: Date?
+    let pWriter: String
+    let pTimezone: String
+
+    init(metric: HealthMetric, userID: UUID, timeZone: TimeZone = .current) {
+        self.pUserID = userID
+        self.pDate = metric.date
+        self.pHrvSDNNMs = metric.hrvSDNNMilliseconds
+        self.pRestingHR = metric.restingHeartRate
+        self.pSleepHours = metric.sleepHours
+        self.pSleepDeepHours = metric.sleepDeepHours
+        self.pSleepREMHours = metric.sleepREMHours
+        self.pBodyMassKg = metric.bodyMassKilograms
+        self.pRespRateBpm = metric.respiratoryRate
+        self.pReadiness = metric.readiness
+        self.pZone = metric.zone
+        self.pComputedAt = metric.computedAt
+        self.pWriter = "phone"
+        self.pTimezone = timeZone.identifier
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case pZone = "p_zone"
+        case pDate = "p_date"
+        case pWriter = "p_writer"
+        case pReadiness = "p_readiness"
+        case pTimezone = "p_timezone"
+        case pUserID = "p_user_id"
+        case pComputedAt = "p_computed_at"
+        case pHrvSDNNMs = "p_hrv_sdnn_ms"
+        case pRestingHR = "p_resting_hr"
+        case pSleepHours = "p_sleep_hours"
+        case pBodyMassKg = "p_body_mass_kg"
+        case pRespRateBpm = "p_resp_rate_bpm"
+        case pSleepDeepHours = "p_sleep_deep_hours"
+        case pSleepREMHours = "p_sleep_rem_hours"
+    }
+}
+
+/// One returned row of the precedence RPC (#802): decision plus the
+/// canonical winner (the retained server row when the date was retained).
+struct HealthPrecedenceRpcRow: Decodable {
+    let decision: String
+    let date: String?
+    let readiness: Int?
+    let zone: String?
+    let computedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case decision, date, readiness, zone
+        case computedAt = "computed_at"
+    }
+}
+
 private struct CadenceMarkerRow: Codable {
     let milliseconds: Int
     let repetition: Int
@@ -1285,32 +1354,25 @@ public final class SendmeterRepository: @unchecked Sendable {
         return rows.map(\.model)
     }
 
-    /// Merge today's row only. Historical rows use
-    /// `insertHealthMetricIfMissing`, whose PostgREST conflict-ignore request
-    /// is atomic against the `(user_id, date)` unique key.
-    public func upsertHealthMetric(_ metric: HealthMetric, userID: UUID) async throws {
-        let payload = HealthMetricUpsert(
-            userID: userID,
-            date: metric.date,
-            readiness: metric.readiness,
-            zone: metric.zone,
-            computedAt: metric.computedAt,
-            hrvSDNN: metric.hrvSDNNMilliseconds,
-            restingHR: metric.restingHeartRate,
-            sleepHours: metric.sleepHours,
-            sleepDeepHours: metric.sleepDeepHours,
-            sleepREMHours: metric.sleepREMHours,
-            bodyMassKg: metric.bodyMassKilograms,
-            respiratoryRate: metric.respiratoryRate
-        )
+    /// #802 AC4: the dual-source precedence RPC — one transaction decides
+    /// the winner against the LIVE row (phone wins when it carries a fresh
+    /// non-empty row; an empty candidate is discarded) and returns the
+    /// canonical row. This is the ONLY production write path for today.
+    func upsertHealthMetricWithPrecedence(
+        _ metric: HealthMetric,
+        userID: UUID
+    ) async throws -> HealthPrecedenceRpcRow {
+        let payload = HealthPrecedenceRpcParams(metric: metric, userID: userID)
         let body = try await transport.encode(payload)
-        try await transport.requestVoid(
-            path: "rest/v1/health_metrics",
+        let result: OneOrMany<HealthPrecedenceRpcRow> = try await transport.request(
+            path: "rest/v1/rpc/upsert_health_metrics_with_precedence",
             method: .post,
-            queryItems: [URLQueryItem(name: "on_conflict", value: "user_id,date")],
-            body: body,
-            prefer: HealthMetricWriteOperation.todayMerge.preferHeader
+            body: body
         )
+        guard let row = result.first else {
+            throw URLError(.cannotParseResponse)
+        }
+        return row
     }
 
     /// Atomically insert a historical metric if its `(user_id, date)` row is

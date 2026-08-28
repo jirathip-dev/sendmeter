@@ -172,11 +172,40 @@ final class ForceRuntimePolicyTests: XCTestCase {
     }
 
     func testAcknowledgeHapticForBoundaryEvents() {
-        for event in [ForceHapticEvent.start, .stop, .save, .salvage, .failure, .finish] {
+        for event in [ForceHapticEvent.start, .stop, .save, .salvage, .failure, .finish, .holdPeak] {
             XCTAssertTrue(
                 ForceRuntimePolicy.shouldAcknowledgeHaptic(for: event),
                 "\(event) should be acknowledged"
             )
         }
+    }
+
+    // MARK: #791 W3 — one subtle hold-peak milestone cue per rep.
+
+    func testHoldPeakCuesExactlyOnceWhenForceSettlesBelowTheRepPeak() {
+        var tracker = ForcePeakHapticTracker()
+        XCTAssertFalse(tracker.shouldCue(forceKg: 80), "rising into the pull")
+        XCTAssertFalse(tracker.shouldCue(forceKg: 90))
+        XCTAssertFalse(tracker.shouldCue(forceKg: 92), "the rep peak so far")
+        XCTAssertTrue(tracker.shouldCue(forceKg: 89.5), "2.5 kg below the peak — the milestone")
+        XCTAssertFalse(tracker.shouldCue(forceKg: 85), "once cued, the rest of the rep stays silent")
+        XCTAssertFalse(tracker.shouldCue(forceKg: 60))
+        XCTAssertFalse(tracker.shouldCue(forceKg: 92.1), "a late re-hang above the peak is not a cue")
+    }
+
+    func testHoldPeakTrackerResetsBetweenReps() {
+        var tracker = ForcePeakHapticTracker()
+        XCTAssertFalse(tracker.shouldCue(forceKg: 90))
+        XCTAssertTrue(tracker.shouldCue(forceKg: 87.5))
+        tracker.reset()
+        XCTAssertFalse(tracker.shouldCue(forceKg: 50), "a fresh rep must be able to cue its own peak")
+        XCTAssertFalse(tracker.shouldCue(forceKg: 55))
+        XCTAssertTrue(tracker.shouldCue(forceKg: 52.8))
+    }
+
+    func testHoldPeakTrackerNeverCuesWithoutAMeasuredPeak() {
+        var tracker = ForcePeakHapticTracker()
+        XCTAssertFalse(tracker.shouldCue(forceKg: 0), "no measurement, no cue")
+        XCTAssertFalse(tracker.shouldCue(forceKg: .nan), "non-finite samples are ignored")
     }
 }

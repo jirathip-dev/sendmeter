@@ -13,7 +13,6 @@ targetRules = ["generic-api-key"]
 condition = "AND"
 paths = [
   '''^ios/App/SendLogWatch Watch App/Services/SupabaseService\.swift$''',
-  '''^native-plugins/sendlog-health/ios/Sources/SendLogHealth/HealthConfig\.swift$''',
 ]
 # Match only the currently committed native publishable values. Hex escapes
 # keep raw key material out of this configuration while remaining exact.

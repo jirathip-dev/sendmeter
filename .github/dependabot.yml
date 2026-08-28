@@ -1,41 +1,11 @@
 version: 2
 
-# The repository's default branch is `staging`. Deliberately do not set
-# target-branch: GitHub documents that version-update options then stop applying
-# to security updates, which must continue to use the default branch and these
-# security groups.
+# Dependabot monitors the retained MCP, GitHub Actions, SwiftPM, and Bundler
+# manifests. The retired root web/Capacitor package and deleted plugin
+# manifests are intentionally absent.
+# The repository's default branch is `staging`; no target-branch is set so
+# security updates continue to use the default branch and security groups.
 updates:
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "03:00"
-      timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 5
-    groups:
-      npm-security:
-        applies-to: "security-updates"
-        patterns:
-          - "*"
-      npm-production:
-        applies-to: "version-updates"
-        dependency-type: "production"
-        update-types:
-          - "patch"
-          - "minor"
-      npm-development:
-        applies-to: "version-updates"
-        dependency-type: "development"
-        update-types:
-          - "patch"
-          - "minor"
-      npm-major:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
-        update-types:
-          - "major"
 
   - package-ecosystem: "npm"
     directory: "/mcp"
@@ -44,7 +14,7 @@ updates:
       day: "monday"
       time: "03:20"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       mcp-npm-security:
         applies-to: "security-updates"
@@ -76,7 +46,7 @@ updates:
       day: "monday"
       time: "03:40"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
     groups:
       github-actions-security:
         applies-to: "security-updates"
@@ -88,9 +58,8 @@ updates:
           - "*"
 
   # SwiftPM is a supported Dependabot ecosystem (Swift v5/v6 in GitHub's
-  # current options reference). Keep one entry per manifest so generated
-  # Capacitor files and the Xcode project's standalone Package.resolved are
-  # not rewritten by a tool that cannot own them.
+  # current options reference). Keep one entry per retained manifest; generated
+  # Xcode projects and package pins remain reviewable in native CI.
   - package-ecosystem: "swift"
     directory: "/ios/App/SendLogWatchCore"
     schedule:
@@ -98,7 +67,7 @@ updates:
       day: "tuesday"
       time: "03:00"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-core-security:
         applies-to: "security-updates"
@@ -112,26 +81,6 @@ updates:
         patterns: ["*"]
         update-types: ["major"]
 
-  - package-ecosystem: "swift"
-    directory: "/native-plugins/sendlog-auth-bridge"
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "03:05"
-      timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
-    groups:
-      swift-auth-security:
-        applies-to: "security-updates"
-        patterns: ["*"]
-      swift-auth-updates:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["patch", "minor"]
-      swift-auth-major:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["major"]
 
   - package-ecosystem: "swift"
     directory: "/native-plugins/sendlog-health-core"
@@ -140,7 +89,7 @@ updates:
       day: "tuesday"
       time: "03:10"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-health-core-security:
         applies-to: "security-updates"
@@ -154,68 +103,8 @@ updates:
         patterns: ["*"]
         update-types: ["major"]
 
-  - package-ecosystem: "swift"
-    directory: "/native-plugins/sendlog-health"
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "03:15"
-      timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
-    groups:
-      swift-health-security:
-        applies-to: "security-updates"
-        patterns: ["*"]
-      swift-health-updates:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["patch", "minor"]
-      swift-health-major:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["major"]
 
-  - package-ecosystem: "swift"
-    directory: "/native-plugins/sendlog-live-activity"
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "03:20"
-      timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
-    groups:
-      swift-live-activity-security:
-        applies-to: "security-updates"
-        patterns: ["*"]
-      swift-live-activity-updates:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["patch", "minor"]
-      swift-live-activity-major:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["major"]
 
-  - package-ecosystem: "swift"
-    directory: "/native-plugins/sendlog-passkey"
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "03:25"
-      timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
-    groups:
-      swift-passkey-security:
-        applies-to: "security-updates"
-        patterns: ["*"]
-      swift-passkey-updates:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["patch", "minor"]
-      swift-passkey-major:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["major"]
 
   - package-ecosystem: "swift"
     directory: "/native/SendmeterNative"
@@ -224,7 +113,7 @@ updates:
       day: "tuesday"
       time: "03:30"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-native-security:
         applies-to: "security-updates"
@@ -245,7 +134,7 @@ updates:
       day: "tuesday"
       time: "03:35"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-tool-security:
         applies-to: "security-updates"
@@ -255,6 +144,27 @@ updates:
         patterns: ["*"]
         update-types: ["patch", "minor"]
       swift-tool-major:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["major"]
+
+  - package-ecosystem: "bundler"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:45"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 1
+    groups:
+      bundler-security:
+        applies-to: "security-updates"
+        patterns: ["*"]
+      bundler-updates:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      bundler-major:
         applies-to: "version-updates"
         patterns: ["*"]
         update-types: ["major"]

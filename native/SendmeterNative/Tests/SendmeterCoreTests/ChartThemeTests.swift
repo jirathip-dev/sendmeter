@@ -1,5 +1,6 @@
 import SwiftUI
 import XCTest
+import SendLogWatchCore
 @testable import SendmeterCore
 
 /// Pins ChartTheme.swift's hex table to `src/index.css` so CSS drift is
@@ -50,6 +51,31 @@ final class ChartThemeTests: XCTestCase {
         for (token, expected) in expectedTokenHexes {
             XCTAssertEqual(token.lightHex, expected.light, "\(token.rawValue) light hex")
             XCTAssertEqual(token.darkHex, expected.dark, "\(token.rawValue) dark hex")
+        }
+    }
+
+    /// #791 W1: the phone, watch and widget read the same semantic hue. The
+    /// single canonical source is `SendmeterSemanticHue` (SendLogWatchCore);
+    /// ChartToken's light values are the phone's canonical hues, so a
+    /// standalone drift on either side is caught here. Dark values stay
+    /// per-surface adaptations (index.css `.dark`) and are outside this pin.
+    func testLightSemanticHexesStayAtCanonicalHues() {
+        let pairs: [(ChartToken, SendmeterSemanticHue)] = [
+            (.focus, .primary),
+            (.health, .optimal),
+            (.load, .execution),
+            (.force, .primary),
+            (.forceSecondary, .optimal),
+            (.optimal, .optimal),
+            (.caution, .caution),
+            (.alert, .danger),
+        ]
+        for (token, hue) in pairs {
+            XCTAssertEqual(
+                token.lightHex,
+                hue.hex,
+                "\(token.rawValue) light hex must resolve from \(hue.rawValue)"
+            )
         }
     }
 
@@ -135,6 +161,44 @@ final class ChartThemeTests: XCTestCase {
             XCTAssertEqual(token.bandOpacity(.light), 0.12, "\(token.rawValue) light band opacity")
             XCTAssertEqual(token.bandOpacity(.dark), 0.16, "\(token.rawValue) dark band opacity")
         }
+    }
+
+    func testForceTraceDarkMarksMeetContrastAfterCompositing() {
+        let background = ChartContrastPolicy.traceBackground(isDark: true)
+        let force = ChartContrastRGB(hex: ChartToken.force.darkHex)
+        let optimal = ChartContrastRGB(hex: ChartToken.optimal.darkHex)
+        let grid = ChartContrastRGB(hex: ChartToken.forceTraceGridHex(.dark))
+        let bandOpacity = ChartToken.forceTraceBandOpacity(.dark)
+
+        let band = optimal.over(background, opacity: bandOpacity)
+        let targetLine = optimal.over(background, opacity: 0.8)
+
+        XCTAssertGreaterThanOrEqual(
+            force.contrastRatio(to: background),
+            ChartContrastPolicy.minimumNonTextContrast
+        )
+        XCTAssertGreaterThanOrEqual(
+            grid.contrastRatio(to: background),
+            ChartContrastPolicy.minimumNonTextContrast
+        )
+        XCTAssertGreaterThanOrEqual(
+            band.contrastRatio(to: background),
+            ChartContrastPolicy.minimumNonTextContrast
+        )
+        XCTAssertGreaterThanOrEqual(
+            targetLine.contrastRatio(to: background),
+            ChartContrastPolicy.minimumNonTextContrast
+        )
+        XCTAssertGreaterThan(
+            bandOpacity,
+            ChartToken.optimal.bandOpacity(.dark),
+            "the Force band must use the composited contrast recipe, not the CSS decoration opacity"
+        )
+        XCTAssertEqual(ChartToken.forceTraceGridHex(.dark), ChartToken.axis.darkHex)
+        XCTAssertEqual(
+            ChartToken.forceTraceBackgroundHex(.dark),
+            ChartContrastPolicy.darkTraceBackgroundHex
+        )
     }
 
     func testAreaGradientBottomStopPerChartDefs() {

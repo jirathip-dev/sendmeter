@@ -172,6 +172,7 @@ private enum Haptic {
         case .save, .salvage: return .notification
         case .failure: return .failure
         case .finish: return .success
+        case .holdPeak: return .click
         }
     }
 }

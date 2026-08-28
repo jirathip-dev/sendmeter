@@ -538,6 +538,12 @@ public final class AppModel {
     /// clock change cannot make the delta negative and suppress every refresh.
     private let foregroundRefreshPolicy = ForegroundRefreshPolicy(staleAfter: 60)
     private var lastListRefreshAt: TimeInterval?
+    /// #842: decides whether a refresh failure may escalate to the global
+    /// error banner. Pure Core (`ErrorSurfacePolicy`, unit-tested); the
+    /// refresh call sites pass the source (user-initiated vs background) and
+    /// the account's last-good state (`hasLoadedSessions` /
+    /// `hasLoadedRecordings`).
+    private let errorSurfacePolicy = ErrorSurfacePolicy()
     /// #656: the previously observed transport status, so the connect
     /// success / drop error haptics fire once per transition (never when
     /// `stopMeasuring()` re-sets `.connected` after a rep).
@@ -2377,7 +2383,8 @@ public final class AppModel {
     private func refreshAll(
         showSpinner: Bool,
         dataRefreshOwner: UUID?,
-        purgeGenerationContext: PurgeGenerationRefreshContext = .silent
+        purgeGenerationContext: PurgeGenerationRefreshContext = .silent,
+        errorSurfaceSource: ErrorSurfaceSource = .userInitiated
     ) async {
         let dataRefreshOwner = dataRefreshOwner ?? beginDataRefresh()
         defer { endDataRefresh(dataRefreshOwner) }
@@ -2639,7 +2646,19 @@ public final class AppModel {
                 // failure. Put the last-known cache snapshot back so a partial
                 // fetch cannot hide a pending local write.
                 applyCachedNonOverlayLists(accountUserID: userID)
-                surface(error)
+                // #842: a background/partial refresh failure must not claim
+                // total offline while the last-good dataset is already on
+                // screen (History rendered, banner claiming a blackout). The
+                // suppressed failure still heals a rejected bearer — auth
+                // account state is not banner copy.
+                if errorSurfacePolicy.shouldSurface(
+                    source: errorSurfaceSource,
+                    hasLastGoodData: hasLoadedSessions && forceModel.hasLoadedRecordings
+                ) {
+                    surface(error)
+                } else if let postgRESTError = error as? PostgRESTError {
+                    recoverAuthFrom(postgRESTError)
+                }
             }
         }
     }
@@ -2652,7 +2671,8 @@ public final class AppModel {
         await refreshAll(
             showSpinner: false,
             dataRefreshOwner: nil,
-            purgeGenerationContext: .silent
+            purgeGenerationContext: .silent,
+            errorSurfaceSource: .background
         )
     }
 
@@ -5495,8 +5515,7 @@ public final class AppModel {
             ) else { return }
             recordHealthSync(
                 observation,
-                capturedBy: accountFetch,
-                showAutomaticConfirmation: false
+                capturedBy: accountFetch
             )
             if !Task.isCancelled, let message = observation.manualMessage {
                 self.toastMessage = message
@@ -5649,9 +5668,14 @@ public final class AppModel {
             guard !Task.isCancelled else { return }
             recordHealthSync(
                 observation,
-                capturedBy: accountFetch,
-                showAutomaticConfirmation: trigger != .manual
+                capturedBy: accountFetch
             )
+            // #844: only a user-initiated sync confirms with a toast;
+            // automatic appear/foreground/background refreshes update
+            // state only.
+            if trigger.isUserInitiated, let message = observation.manualMessage {
+                self.toastMessage = message
+            }
         } catch is CancellationError {
             return
         } catch let error as URLError where error.code == .cancelled {
@@ -5757,8 +5781,7 @@ public final class AppModel {
             }
             recordHealthSync(
                 result.observation,
-                capturedBy: owner.fetch,
-                showAutomaticConfirmation: false
+                capturedBy: owner.fetch
             )
         } catch is CancellationError {
             finishMorningHealthRefresh(owner: owner)
@@ -5873,8 +5896,7 @@ public final class AppModel {
             } else {
                 recordHealthSync(
                     observation,
-                    capturedBy: owner.fetch,
-                    showAutomaticConfirmation: true
+                    capturedBy: owner.fetch
                 )
             }
         }
@@ -6086,7 +6108,12 @@ public final class AppModel {
                             recomputeGate.cancel()
                             return nil
                         }
-                        try await repository.upsertHealthMetric(upsert, userID: userID)
+                        // #802 AC4: today's write goes through the server-side
+                        // precedence RPC (atomic decide against the live row).
+                        _ = try await repository.upsertHealthMetricWithPrecedence(
+                            upsert,
+                            userID: userID
+                        )
                         guard !Task.isCancelled else {
                             recomputeGate.cancel()
                             return nil
@@ -6337,10 +6364,12 @@ public final class AppModel {
         lastHealthSyncObservation = nil
     }
 
+    /// Records a completed sync in state (lastHealthSyncedAt, persisted
+    /// marker, lastHealthSyncObservation) without touching the toast: the
+    /// trigger→toast decision belongs to the caller (#844).
     private func recordHealthSync(
         _ observation: HealthSyncObservation,
-        capturedBy accountFetch: AccountScopedFetch,
-        showAutomaticConfirmation: Bool
+        capturedBy accountFetch: AccountScopedFetch
     ) {
         guard accountFetch.canApply(
             to: currentUserID,
@@ -6353,10 +6382,6 @@ public final class AppModel {
             forKey: healthLastSyncedDefaultsKey(for: accountFetch.accountUserID)
         )
         lastHealthSyncObservation = observation
-        if showAutomaticConfirmation,
-           let message = observation.automaticConfirmationMessage {
-            toastMessage = message
-        }
     }
 
     private func recordHealthSyncFailure(
@@ -9733,11 +9758,18 @@ public final class AppModel {
 
     private func surface(_ error: Error) {
         errorMessage = UserFacingError.message(for: error)
+        recoverAuthFrom(error)
+    }
+
+    /// The exact-session recovery side effect of `surface(_:)`, kept separate
+    /// so a suppressed banner (#842 background refresh with last-good data)
+    /// still heals a rejected bearer instead of leaving the session poisoned.
+    private func recoverAuthFrom(_ error: Error) {
         // A rejected bearer can surface as a PostgREST 401 before GoTrue's
         // refresh path gets a chance to report it. Start the same exact-
-        // session recovery asynchronously; the visible copy is already fixed
-        // above, and the current-session check inside AuthService prevents an
-        // old request from signing out a newer account.
+        // session recovery asynchronously; the current-session check inside
+        // AuthService prevents an old request from signing out a newer
+        // account.
         guard let postgRESTError = error as? PostgRESTError else { return }
         Task { @MainActor [weak self] in
             await self?.auth.recoverFromAuthFailure(postgRESTError)

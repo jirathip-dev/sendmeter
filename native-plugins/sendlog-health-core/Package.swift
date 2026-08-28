@@ -7,7 +7,10 @@ import PackageDescription
 // is verifiable without a device or simulator.
 let package = Package(
     name: "SendLogHealthCore",
-    platforms: [.iOS(.v15), .macOS(.v12)],
+    // #802: the watch app now links this package too (on-watch readiness
+    // compute); the code is pure Foundation so watchOS is a platform
+    // addition only, nothing in Sources/ touches HealthKit.
+    platforms: [.iOS(.v15), .macOS(.v12), .watchOS(.v10)],
     products: [
         .library(name: "SendLogHealthCore", targets: ["SendLogHealthCore"])
     ],

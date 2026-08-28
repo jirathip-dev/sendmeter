@@ -50,11 +50,18 @@ enum SupabaseService {
 
     /// The façade's entire data surface: a PostgREST query builder for one
     /// table. Every `Repo`/queue/live-sync call site goes through this.
-    /// Deliberately the ONLY non-private member — anything new the watch
+    /// Deliberately the ONLY non-private members — anything new the watch
     /// needs from the SDK gets its own narrow accessor here, never the
     /// client itself.
     static func from(_ table: String) -> PostgrestQueryBuilder {
         client.from(table)
+    }
+
+    /// Narrow RPC accessor (#802): one Postgres function, the same
+    /// builder shape as `from(_:)` — no member path back to the client or
+    /// any auth accessor.
+    static func rpc(_ function: String, params: some Encodable) throws -> PostgrestFilterBuilder {
+        try client.rpc(function, params: params)
     }
 
     private static func makeClient() -> SupabaseClient {

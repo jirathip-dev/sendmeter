@@ -117,7 +117,7 @@ private func phaseLabel(_ state: ManualWorkoutActivityAttributes.ContentState) -
 }
 
 private func iconName(_ state: ManualWorkoutActivityAttributes.ContentState) -> String {
-    state.phase == "climbing" ? "figure.climbing" : "timer"
+    state.phase == "climbing" ? SendmeterIconSymbol.workout.rawValue : "timer"
 }
 
 private func phaseColor(_ state: ManualWorkoutActivityAttributes.ContentState) -> Color {

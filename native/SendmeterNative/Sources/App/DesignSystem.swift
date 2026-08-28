@@ -1,3 +1,4 @@
+import SendLogWatchCore
 import SendmeterCore
 import SwiftUI
 
@@ -17,15 +18,19 @@ public enum SendmeterStyle {
         CountdownMetricModifier(baseSize: baseSize)
     }
 
-    public static let capacity = Color(hex: "#2E96F0")
-    public static let strength = Color(hex: "#DDB13A")
-    public static let power = Color(hex: "#E5743A")
-    public static let execution = Color(hex: "#7B83EB")
-    public static let primary = Color(hex: "#5B5FC7")
-    public static let optimal = Color(hex: "#2E96F0")
-    public static let caution = Color(hex: "#DDB13A")
+    // #791 W1: the single canonical semantic hue source shared by phone,
+    // watch and widget. The watch applies its own luminance adaptation on
+    // top of these exact hues (always-on / reduced-luminance), and the dark
+    // chart pairs in ChartToken are the phone's dark-mode adaptation.
+    public static let capacity = Color(hex: SendmeterSemanticHue.optimal.hex)
+    public static let strength = Color(hex: SendmeterSemanticHue.caution.hex)
+    public static let power = Color(hex: SendmeterSemanticHue.danger.hex)
+    public static let execution = Color(hex: SendmeterSemanticHue.execution.hex)
+    public static let primary = Color(hex: SendmeterSemanticHue.primary.hex)
+    public static let optimal = Color(hex: SendmeterSemanticHue.optimal.hex)
+    public static let caution = Color(hex: SendmeterSemanticHue.caution.hex)
     public static let paused = Color(hex: "#565D6D")
-    public static let alert = Color(hex: "#E5743A")
+    public static let alert = Color(hex: SendmeterSemanticHue.danger.hex)
 
     public static func phaseColor(_ phase: PhaseID) -> Color {
         switch phase {
@@ -265,15 +270,39 @@ public struct MetricValue: View {
     }
 
     public var body: some View {
+        ViewThatFits(in: .horizontal) {
+            inlineValue
+            stackedValue
+        }
+        .layoutPriority(1)
+    }
+
+    private var inlineValue: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(value)
-                .modifier(SendmeterStyle.heroMetric)
-                .foregroundStyle(color)
-            if let unit {
-                Text(unit)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
+            valueText
+            unitText
+        }
+    }
+
+    private var stackedValue: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            valueText
+            unitText
+        }
+    }
+
+    private var valueText: some View {
+        Text(value)
+            .modifier(SendmeterStyle.heroMetric)
+            .foregroundStyle(color)
+    }
+
+    @ViewBuilder
+    private var unitText: some View {
+        if let unit {
+            Text(unit)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
         }
     }
 }

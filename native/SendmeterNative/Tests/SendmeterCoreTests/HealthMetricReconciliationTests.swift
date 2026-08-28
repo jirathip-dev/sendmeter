@@ -94,6 +94,64 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertNil(plan.relayMetric)
     }
 
+    /// #802 AC4: the phone write site consults the shared precedence rule —
+    /// the phone wins when it has a fresh, non-empty row, so a phone pass
+    /// overwrites a fresh watch-written row (Guy's locked decision). An
+    /// empty phone candidate must never clobber the watch's row; policy
+    /// discards it (the source-filter makes it defensive at this site).
+    func testTodayPhonePassWinsOverFreshWatchRowViaSharedPrecedence() {
+        let watchRow = metric(
+            date: today,
+            readiness: 88,
+            computedAt: Date(timeIntervalSince1970: 5_000),
+            hrv: 60
+        )
+        let phoneFresh = metric(
+            date: today,
+            readiness: 76,
+            computedAt: Date(timeIntervalSince1970: 6_000),
+            hrv: 55
+        )
+        let plan = HealthMetricReconciliationPolicy.plan(
+            freshMetrics: [phoneFresh],
+            existingMetrics: [watchRow],
+            today: today,
+            allowTodayReadinessOverwrite: true,
+            timeZone: timeZone,
+            now: Date(timeIntervalSince1970: 6_000)
+        )
+        XCTAssertEqual(plan.upserts.map(\.date), [today])
+        XCTAssertEqual(plan.relayMetric?.readiness, 76)
+    }
+
+    func testTodayPhonePassWithEmptyCandidateDoesNotClobberFreshWatchRow() {
+        let watchRow = metric(
+            date: today,
+            readiness: 88,
+            computedAt: Date(timeIntervalSince1970: 5_000),
+            hrv: 60
+        )
+        let emptyPhoneCandidate = metric(
+            date: today,
+            readiness: nil,
+            hrv: nil,
+            rhr: nil,
+            sleep: nil,
+            bodyMass: nil,
+            respiratoryRate: nil
+        )
+        let plan = HealthMetricReconciliationPolicy.plan(
+            freshMetrics: [emptyPhoneCandidate],
+            existingMetrics: [watchRow],
+            today: today,
+            allowTodayReadinessOverwrite: true,
+            timeZone: timeZone,
+            now: Date(timeIntervalSince1970: 6_000)
+        )
+        XCTAssertTrue(plan.upserts.isEmpty)
+        XCTAssertNil(plan.relayMetric)
+    }
+
     func testPersistedHistoricalDayIsUntouched() {
         let existing = metric(date: yesterday, readiness: 72, hrv: 35)
         let newerHealthKitRead = metric(
@@ -544,8 +602,8 @@ final class HealthMetricReconciliationTests: XCTestCase {
 
         XCTAssertEqual(progress.finalObservation, .reconciled(1))
         XCTAssertEqual(
-            progress.finalObservation?.automaticConfirmationMessage,
-            "Apple Health updated · 1 day"
+            progress.finalObservation?.manualMessage,
+            "Apple Health synced · 1 day"
         )
     }
 
@@ -570,8 +628,8 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertEqual(progress.reconciledDateKeys, Set([today]))
         XCTAssertEqual(progress.finalObservation, .reconciled(1))
         XCTAssertEqual(
-            progress.finalObservation?.automaticConfirmationMessage,
-            "Apple Health updated · 1 day"
+            progress.finalObservation?.manualMessage,
+            "Apple Health synced · 1 day"
         )
 
         progress.add(
@@ -584,8 +642,8 @@ final class HealthMetricReconciliationTests: XCTestCase {
         )
         XCTAssertEqual(progress.finalObservation, .reconciled(2))
         XCTAssertEqual(
-            progress.finalObservation?.automaticConfirmationMessage,
-            "Apple Health updated · 2 days"
+            progress.finalObservation?.manualMessage,
+            "Apple Health synced · 2 days"
         )
 
         let encoded = try JSONEncoder().encode(progress)
@@ -661,8 +719,8 @@ final class HealthMetricReconciliationTests: XCTestCase {
             .reconciledWithoutDayCount
         )
         XCTAssertEqual(
-            upgraded.finalObservation?.automaticConfirmationMessage,
-            "Apple Health updated"
+            upgraded.finalObservation?.manualMessage,
+            "Apple Health synced"
         )
 
         let roundTrip = try JSONDecoder().decode(
@@ -674,8 +732,8 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertEqual(roundTrip.reconciledCount, 1)
         XCTAssertEqual(roundTrip.finalObservation, .reconciledWithoutDayCount)
         XCTAssertEqual(
-            roundTrip.finalObservation?.automaticConfirmationMessage,
-            "Apple Health updated"
+            roundTrip.finalObservation?.manualMessage,
+            "Apple Health synced"
         )
     }
 
@@ -757,27 +815,27 @@ final class HealthMetricReconciliationTests: XCTestCase {
         XCTAssertEqual(gate.request(), .start)
     }
 
-    func testObservableSuccessOnlyAnnouncesARealReconciliation() {
+    func testManualConfirmationCopyPinsUserFacingSyncMessages() {
         let changed = HealthSyncObservation.successful(
             reconciledCount: 2,
             sourceDataCount: 3
         )
         XCTAssertEqual(changed, .reconciled(2))
-        XCTAssertEqual(changed.automaticConfirmationMessage, "Apple Health updated · 2 days")
+        XCTAssertEqual(changed.manualMessage, "Apple Health synced · 2 days")
 
         let noChange = HealthSyncObservation.successful(
             reconciledCount: 0,
             sourceDataCount: 3
         )
         XCTAssertEqual(noChange, .noNewData)
-        XCTAssertNil(noChange.automaticConfirmationMessage)
+        XCTAssertEqual(noChange.manualMessage, "Apple Health checked — no new data")
 
         let noSource = HealthSyncObservation.successful(
             reconciledCount: 0,
             sourceDataCount: 0
         )
         XCTAssertEqual(noSource, .noSourceData)
-        XCTAssertNil(noSource.automaticConfirmationMessage)
-        XCTAssertNil(HealthSyncObservation.failed.automaticConfirmationMessage)
+        XCTAssertEqual(noSource.manualMessage, "No Apple Health data found")
+        XCTAssertNil(HealthSyncObservation.failed.manualMessage)
     }
 }

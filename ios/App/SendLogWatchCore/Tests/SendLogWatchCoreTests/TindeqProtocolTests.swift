@@ -1,5 +1,6 @@
 import XCTest
 import SendLogWatchCore
+import SendLogHealthCore
 
 final class TindeqProtocolTests: XCTestCase {
     /// Build a weight frame: [0x01][len][(float32 LE kg, uint32 LE µs) * n]

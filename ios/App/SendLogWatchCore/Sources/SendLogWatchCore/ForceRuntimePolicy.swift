@@ -84,6 +84,9 @@ public enum ForceHapticEvent: Sendable, Equatable {
     case salvage
     case failure
     case finish
+    /// #791 W3: the moment a hold's peak force is established (the gauge
+    /// settles below the rep peak). Played via `ForcePeakHapticTracker`.
+    case holdPeak
 }
 
 /// Deterministic policy for the Force runtime session, reduced-luminance
@@ -197,7 +200,7 @@ public enum ForceRuntimePolicy {
     /// through this policy.
     public static func shouldAcknowledgeHaptic(for event: ForceHapticEvent) -> Bool {
         switch event {
-        case .start, .stop, .save, .salvage, .failure, .finish:
+        case .start, .stop, .save, .salvage, .failure, .finish, .holdPeak:
             return true
         }
     }

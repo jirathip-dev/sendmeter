@@ -808,6 +808,7 @@ private struct GuidedForceProtocolView: View {
     ) -> some View {
         VStack(spacing: layout.sectionGap) {
             topBar(elapsed: elapsed)
+            protocolIdentityHeader
             phaseBanner(
                 presentation,
                 remaining: session.remainingSeconds(at: date),
@@ -822,6 +823,48 @@ private struct GuidedForceProtocolView: View {
         .padding(.top, max(8, geometry.safeAreaInsets.top))
         .padding(.bottom, max(12, geometry.safeAreaInsets.bottom))
         .frame(maxWidth: 620)
+    }
+
+    private var protocolIdentityHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(session.preset.name).font(.headline)
+                Spacer(minLength: 8)
+                StatusPill(session.preset.protocolMode == .reverseAction ? "MOVEMENT" : "STATIC", color: SendmeterStyle.primary)
+            }
+            Text(protocolSummary(session.preset))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            targetContext(session.targetPlan.referenceBand(
+                forSet: session.run.currentStage.setNumber,
+                selectedSide: session.run.currentStage.side,
+                fallbackSide: session.fallbackSide
+            ))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func protocolSummary(_ preset: TindeqPreset) -> String {
+        let repsAndSets = "\(preset.repetitions) rep\(preset.repetitions == 1 ? "" : "s") × \(preset.sets) set\(preset.sets == 1 ? "" : "s")"
+        if preset.protocolMode == .reverseAction {
+            return "\(preset.cadenceOutSeconds.formatted())s out · \(preset.cadenceReturnSeconds.formatted())s return · \(repsAndSets) · \(preset.restBetweenSetsSeconds)s set rest"
+        }
+        return "\(preset.holdScheduleSummary) · \(repsAndSets) · \(preset.restBetweenRepetitionsSeconds)s rep rest · \(preset.restBetweenSetsSeconds)s set rest"
+    }
+
+    @ViewBuilder
+    private func targetContext(_ band: ForceTargetBand?) -> some View {
+        if let band {
+            Text("Target \(band.kilograms.formatted(.number.precision(.fractionLength(1)))) kg · range \(band.lowKilograms.formatted(.number.precision(.fractionLength(1))))–\(band.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(SendmeterStyle.caution)
+        } else {
+            Label("No target configured for this protocol", systemImage: "scope")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func topBar(elapsed: Double) -> some View {
@@ -978,6 +1021,13 @@ private struct GuidedForceProtocolView: View {
                 "Target \(band.kilograms.formatted(.number.precision(.fractionLength(1)))) kilograms. "
                     + (inTarget ? "On target" : "Move toward target")
             )
+        } else {
+            Label("No target configured for this protocol", systemImage: "scope")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
     }
 
@@ -1015,7 +1065,12 @@ private struct GuidedForceProtocolView: View {
                 )
                 .frame(height: chartHeight)
                 .layoutPriority(1)
-                .accessibilityLabel("Live force trace")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    ForceTraceAccessibility.liveSummary(
+                        peakKilograms: session.model.tindeq.peakKilograms
+                    )
+                )
             }
         }
         .frame(maxWidth: .infinity)
@@ -1157,6 +1212,7 @@ struct ForceView: View {
     @State private var guidedFullscreenPresented = false
     @State private var guidedMinimizeRequested = false
     @State private var guidedLaunchInFlight = false
+    @State private var showProtocolDetails = false
     @State private var manualFullscreenPresented = false
     @State private var manualFullscreenLifecycle = ManualForceFullscreenLifecycle()
     @State private var manualFullscreenHandsFree = false
@@ -1619,6 +1675,12 @@ struct ForceView: View {
                         }
                     }
 
+                    ForceContextSummaryCard(
+                        preset: selectedPreset,
+                        targetBand: selectedTargetReferenceBand,
+                        handsFreeEnabled: handsFreeEnabled
+                    )
+
                     ForceDeviceCard(
                         device: model.tindeq,
                         handsFreeEnabled: $handsFreeEnabled,
@@ -1663,7 +1725,10 @@ struct ForceView: View {
                     // fully-typed `init` below) so the constraint solver
                     // type-checks it in isolation (CI "unable to type-check
                     // this expression in reasonable time").
-                    recordingContextCard
+                    DisclosureGroup("Protocol details", isExpanded: $showProtocolDetails) {
+                        recordingContextCard
+                    }
+                    .font(.subheadline.weight(.semibold))
 
                     if showsForceAnalysisCards {
                         ForceProgressCardBoundary(
@@ -1736,6 +1801,10 @@ struct ForceView: View {
                     RecentForceCard(recordings: Array(model.recordings.prefix(8)))
                 }
                 .padding()
+                .padding(.bottom, 80)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Color.clear.frame(height: 72)
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Force")
@@ -1875,6 +1944,7 @@ struct ForceView: View {
                     phase: manualFullscreenLifecycle.phase,
                     exercise: manualFullscreenContext.tag,
                     side: manualFullscreenContext.side,
+                    selectedProtocol: manualFullscreenContext.preset,
                     targetBand: manualFullscreenContext.targetBand,
                     saving: savingSummary || model.handsFreeSaveInFlight,
                     onMinimize: {
@@ -2465,6 +2535,48 @@ private struct GuidedForceResumeCard: View {
     }
 }
 
+private struct ForceContextSummaryCard: View {
+    let preset: TindeqPreset?
+    let targetBand: ForceTargetBand?
+    let handsFreeEnabled: Bool
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    SectionLabel("Current phase", systemImage: "waveform.path.ecg")
+                    Spacer()
+                    StatusPill(handsFreeEnabled ? "Hands-free" : "Ready", color: handsFreeEnabled ? SendmeterStyle.caution : SendmeterStyle.optimal)
+                }
+                Text(preset?.name ?? "Free pull")
+                    .font(.title3.bold())
+                Text(preset.map(protocolSummary) ?? (handsFreeEnabled ? "STATIC · Pull to start, release to stop" : "STATIC · Tap Start Pull when ready"))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if let targetBand {
+                    Text("Target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kg · range \(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1))))–\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(SendmeterStyle.caution)
+                } else {
+                    Label("No target configured for this protocol", systemImage: "scope")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                Label(handsFreeEnabled ? "Pull to start · release to stop" : "Tap Start Pull when ready", systemImage: handsFreeEnabled ? "hand.draw" : "play.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(SendmeterStyle.primary)
+            }
+        }
+    }
+
+    private func protocolSummary(_ preset: TindeqPreset) -> String {
+        if preset.protocolMode == .reverseAction {
+            return "MOVEMENT · \(preset.cadenceOutSeconds.formatted())s out / \(preset.cadenceReturnSeconds.formatted())s return · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenSetsSeconds)s set rest"
+        }
+        return "STATIC · \(preset.holdScheduleSummary) · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenRepetitionsSeconds)s rep rest · \(preset.restBetweenSetsSeconds)s set rest"
+    }
+}
+
 private struct ForceDeviceCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let device: TindeqBluetooth
@@ -2605,7 +2717,12 @@ private struct ForceDeviceCard: View {
                         target: targetBand?.kilograms
                     )
                     .frame(height: 190)
-                    .accessibilityLabel("Live force trace")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        ForceTraceAccessibility.liveSummary(
+                            peakKilograms: device.peakKilograms
+                        )
+                    )
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "waveform.path.ecg")
@@ -3551,7 +3668,7 @@ struct ForceTraceChart: View {
             let lastSample = sampleRange.last.map(self.sample(at:))
             let firstTime = firstSample?.milliseconds ?? 0
             let lastTime = max(firstTime + 1, lastSample?.milliseconds ?? firstTime + 1)
-            let gridColor = ChartToken.grid.color(scheme)
+            let gridColor = ChartToken.forceTraceGridColor(scheme)
             let optimalColor = ChartToken.optimal.color(scheme)
 
             func y(_ kilograms: Double) -> CGFloat {
@@ -3574,7 +3691,7 @@ struct ForceTraceChart: View {
                 let lowerY = y(targetRange.lowerBound)
                 context.fill(
                     Path(CGRect(x: 0, y: upperY, width: size.width, height: max(1, lowerY - upperY))),
-                    with: .color(optimalColor.opacity(ChartToken.optimal.bandOpacity(scheme)))
+                    with: .color(optimalColor.opacity(ChartToken.forceTraceBandOpacity(scheme)))
                 )
             }
             if let target {
@@ -3603,7 +3720,7 @@ struct ForceTraceChart: View {
                 style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
             )
         }
-        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+        .background(ChartToken.forceTraceBackground(scheme), in: RoundedRectangle(cornerRadius: 12))
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
@@ -3637,6 +3754,12 @@ private struct WatchForceMirrorCard: View {
                 if !force.spark.isEmpty {
                     ForceTraceChart(samples: force.spark, targetRange: nil, target: nil)
                         .frame(height: 100)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(
+                            ForceTraceAccessibility.liveSummary(
+                                peakKilograms: force.peakKilograms
+                            )
+                        )
                 }
                 Text("Direct WatchConnectivity · updated \(force.updatedAt, style: .relative) ago")
                     .font(.caption)

@@ -1,14 +1,3 @@
-# Swift correctness gate — compiles the watch and phone targets and runs
-# SendLogWatchTests on a simulator.
-#
-# Deliberately NOT part of ci.yml: macOS runners bill at a large multiple of
-# Ubuntu (#150), and workflow-level `paths` is the only way GitHub will keep a
-# macOS runner from spinning up at all on a web-only PR. A job-level `if:`
-# would still allocate the runner before evaluating.
-#
-# This is a correctness check, not a deploy. No signing, no App Store Connect
-# key, no upload, and no `[testflight]` subject gate — see testflight.yml for
-# that lane.
 name: iOS CI
 
 on:
@@ -16,156 +5,63 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main, staging]
     paths:
-      - "ios/**"
-      # These Capacitor plugins are resolved and compiled by the macOS lane
-      # after `npm ci` and `npx cap sync ios`; keep plugin graph changes on
-      # this expensive native validation path instead of web CI alone.
-      - "native-plugins/sendlog-auth-bridge/**"
-      - "native-plugins/sendlog-health/**"
-      - "native-plugins/sendlog-live-activity/**"
-      - "native-plugins/sendlog-passkey/**"
+      - "native/SendmeterNative/**"
+      - "ios/App/SendLogWatchCore/**"
+      - "ios/App/SendLogWatch Watch App/**"
+      - "ios/App/SendLogWatch Watch App-Info.plist"
+      - "ios/App/SendLogWatchWidgets/**"
+      - "ios/App/SendLogWatchWidgets-Info.plist"
+      - "native-plugins/sendlog-health-core/**"
+      - "tools/anti-slop-swift/**"
+      - ".anti-slop.json"
+      - "scripts/**"
       - ".github/workflows/ios-ci.yml"
-  # Manual escape hatch for verifying the lane itself without a native change.
   workflow_dispatch:
 
-# Superseded pushes shouldn't keep an expensive runner busy.
 concurrency:
   group: ios-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # The pure-logic watch tests live in the SendLogWatchCore SwiftPM package
-  # (#191), so they need no simulator and no Xcode — run them on Ubuntu,
-  # which bills at a fraction of the macOS rate (#199). The macOS job below
-  # additionally runs the SendLogWatchTests Xcode target (#500), which tests
-  # app-target code (queues, workout ownership, the save path) that cannot
-  # move into the package without moving the code under test.
   package-tests:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
-    # The official image rather than a setup action: one less third-party
-    # dependency, and it pins the toolchain explicitly.
-    #
-    # Must track the Swift version Xcode ships (6.3 as of Xcode 26.6), not
-    # just "some Swift 6": the package uses `nonisolated` on type declarations
-    # (RPEModel.swift), which 6.0 rejects outright — the macOS job compiled it
-    # fine while this one failed to build at all.
-    container: "swift:6.3@sha256:4e0fc24f0f93a5cf9a91bfcf182534bbc0571d70d757389c04ff1f616c1c460f" # Swift 6.3.3, linux/amd64
+    container: "swift:6.3@sha256:4e0fc24f0f93a5cf9a91bfcf182534bbc0571d70d757389c04ff1f616c1c460f"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # UTC, so a date-boundary test can't pass locally and fail here (or the
-      # reverse) purely because of the runner's zone. Calendar/DateFormatter
-      # are also the Foundation surface that differs most between Apple and
-      # swift-corelibs — if anything in this package is going to behave
-      # differently on Linux, it is the date logic.
       - name: Run SendLogWatchCore tests
         env:
           TZ: UTC
         run: swift test --package-path ios/App/SendLogWatchCore
 
-  swift:
-    # Drafts skip the macOS compile; `package-tests` above still runs, so a
-    # draft keeps its Swift feedback at the Ubuntu rate. A draft that gets
-    # force-pushed repeatedly before it is ready was paying the macOS rate for
-    # every one of those pushes, and marking it ready for review re-triggers
-    # this job — so nothing reaches a reviewable state uncompiled. Not
-    # expressible as a workflow-level filter like `paths` is, so this one does
-    # allocate the runner before evaluating; the waste is seconds of idle
-    # runner against minutes of Xcode.
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+  native:
     runs-on: blacksmith-6vcpu-macos-26
-    # 15, not 45: the p50 of this job was ~2 minutes build-only; #500's
-    # simulator boot + test run adds well under a minute (~42s measured
-    # locally: ~21s cold sim boot + a suite that executes in seconds, ~2-20s
-    # depending on load), so 15 still has real headroom. Every wait in the
-    # suite is wall-clock-bounded (#501) precisely so a regression fails in
-    # seconds instead of hanging this job to its ceiling (the #290 shape).
-    # The old ceiling was theoretical until a hung run on
-    # fix/issue-196 sat for 30 minutes before anything cancelled it — 24% of
-    # that month's entire macOS spend from one incident (#290).
-    # `cancel-in-progress` does not cover this: it only fires on a superseding
-    # push, so a hang on the newest commit runs to the timeout unopposed.
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
         with:
-          node-version: 22
-          cache: npm
-
-      # Required even though nothing here is web: postinstall applies the
-      # apple-sign-in SPM patch, and the phone target's package (CapApp-SPM)
-      # is generated from node_modules. Without it the App scheme won't
-      # resolve its dependencies.
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Xcode version
-        run: xcodebuild -version
-
-      # The SendLogWatchTests suite needs a concrete, booted simulator
-      # (#500). Selected by query rather than a hardcoded device
-      # name, which would silently break on the next runner-image Xcode bump.
-      # Booting explicitly (instead of letting xcodebuild do it lazily)
-      # makes a boot failure its own loud step instead of a confusing
-      # test-time timeout.
-      - name: Boot a watchOS simulator
-        id: sim
+          ruby-version: "4.0.5"
+          bundler-cache: true
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Install XcodeGen
+        env:
+          XCODEGEN_VERSION: "2.46.0"
+          XCODEGEN_SHA256: "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806"
         run: |
-          UDID=$(xcrun simctl list devices available --json \
-            | jq -r '[.devices | to_entries[] | select(.key | contains("watchOS")) | .value[]] | first | .udid')
-          if [ -z "$UDID" ] || [ "$UDID" = "null" ]; then
-            echo "No available watchOS simulator on this runner" >&2
-            xcrun simctl list devices >&2
-            exit 1
-          fi
-          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
-          xcrun simctl boot "$UDID" || true # already-booted is fine
-          xcrun simctl bootstatus "$UDID" -b
-
-      # Compiles the same targets the old build-only step did — this is
-      # still the check that catches the #162 class of bug (a missing
-      # `import Supabase` in the offline queues that reached staging green),
-      # and it caught #196's AuthOptions argument-order error the same way —
-      # and then actually EXECUTES SendLogWatchTests, which until #500 was
-      # compiled and discarded: the offline queue, pending-recording queue,
-      # workout ownership and workout save path tests never ran in any CI
-      # job (only the SendLogWatchCore package suite ran, above).
-      #
-      # Unsigned is deliberate and sufficient: the suite is written to run
-      # without the HealthKit entitlement (WorkoutManager tests drive seams
-      # that stop short of HealthKit, and `start()` failing at
-      # `requestAuthorization()` is part of several tests' setup) — the full
-      # suite passes with CODE_SIGNING_ALLOWED=NO. What this still does NOT
-      # cover: HealthKit runtime behavior, background delivery, real
-      # sensors — device-only, as CLAUDE.md's testing ladder says.
-      - name: Build and test watch app
-        run: |
-          xcodebuild test \
-            -project "ios/App/App.xcodeproj" \
-            -scheme "SendLogWatch Watch App" \
-            -destination "id=${{ steps.sim.outputs.udid }}" \
-            -only-testing:SendLogWatchTests \
-            CODE_SIGNING_ALLOWED=NO
-
-      # The App target copies the built web bundle into ios/App/App/public and
-      # resolves plugins from the generated CapApp-SPM package, so it cannot
-      # compile without this — same prep fastlane does before `build_app`
-      # (Fastfile:23). Deliberately placed after the watch steps: the watch
-      # needs none of it, so a native-only regression fails before we spend
-      # macOS minutes on a web build the Ubuntu `quality` job already did.
-      - name: Build web bundle and sync Capacitor
-        run: npm run build && npx cap sync ios
-
-      # Compile-only: the phone app has no test target of its own, and a full
-      # simulator test run isn't worth the minutes. This still catches type
-      # errors and missing imports in the Capacitor host app.
-      - name: Compile phone app
-        run: |
-          xcodebuild build \
-            -project "ios/App/App.xcodeproj" \
-            -scheme "App" \
-            -destination "generic/platform=iOS Simulator" \
-            CODE_SIGNING_ALLOWED=NO
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen.zip"
+          curl --fail --location --silent --show-error "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" --output "$archive"
+          echo "${XCODEGEN_SHA256}  ${archive}" | shasum --algorithm 256 --check --strict
+          unzip -q "$archive" -d "$RUNNER_TEMP/xcodegen"
+          echo "$RUNNER_TEMP/xcodegen/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Generate Xcode project
+        working-directory: native/SendmeterNative
+        run: xcodegen generate
+      - name: Build native iOS app
+        working-directory: native/SendmeterNative
+        run: xcodebuild -project SendmeterNative.xcodeproj -scheme SendmeterNative -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Build native Watch app
+        working-directory: native/SendmeterNative
+        run: xcodebuild -project SendmeterNative.xcodeproj -scheme 'SendLogWatch Watch App' -configuration Debug -destination 'generic/platform=watchOS Simulator' CODE_SIGNING_ALLOWED=NO build

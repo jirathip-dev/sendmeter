@@ -12,6 +12,7 @@ struct ManualForceFullscreen: View {
     let phase: ManualForceFullscreenPhase
     let exercise: String
     let side: TindeqSide
+    let selectedProtocol: TindeqPreset?
     let targetBand: ForceTargetBand?
     let saving: Bool
     let onMinimize: () -> Void
@@ -41,6 +42,7 @@ struct ManualForceFullscreen: View {
                     ScrollView(showsIndicators: false) {
                         VStack(spacing: 14) {
                             topBar
+                            protocolDetails
                             phaseBanner(presentation, accent: accent)
                             targetCoach
                             liveChart(height: chartHeight)
@@ -79,6 +81,33 @@ struct ManualForceFullscreen: View {
         .interactiveDismissDisabled(true)
     }
 
+    private var protocolDetails: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(selectedProtocol.map(protocolSummary) ?? "STATIC · Free pull")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if let targetBand {
+                Text("Target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kg · range \(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1))))–\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(SendmeterStyle.caution)
+            } else {
+                Label("No target configured for this protocol", systemImage: "scope")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func protocolSummary(_ preset: TindeqPreset) -> String {
+        if preset.protocolMode == .reverseAction {
+            return "MOVEMENT · \(preset.cadenceOutSeconds.formatted())s out / \(preset.cadenceReturnSeconds.formatted())s return · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenSetsSeconds)s set rest"
+        }
+        return "STATIC · \(preset.holdScheduleSummary) · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenRepetitionsSeconds)s rep rest · \(preset.restBetweenSetsSeconds)s set rest"
+    }
+
     private var topBar: some View {
         HStack(spacing: 10) {
             Button(action: onMinimize) {
@@ -96,7 +125,7 @@ struct ManualForceFullscreen: View {
                     .font(.caption2.weight(.bold))
                     .tracking(1.1)
                     .lineLimit(1)
-                Text(exercise.isEmpty ? "Free pull" : exercise)
+                Text(selectedProtocol?.name ?? (exercise.isEmpty ? "Free pull" : exercise))
                     .font(.headline)
                     .lineLimit(1)
             }
@@ -206,7 +235,12 @@ struct ManualForceFullscreen: View {
                     target: targetBand?.kilograms
                 )
                 .frame(height: height)
-                .accessibilityLabel("Live force trace")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    ForceTraceAccessibility.liveSummary(
+                        peakKilograms: device.peakKilograms
+                    )
+                )
             }
         }
     }
