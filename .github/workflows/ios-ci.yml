@@ -38,7 +38,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  classify-dependencies:
+  classify:
     name: Classify native dependency changes
     runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
@@ -110,7 +110,7 @@ jobs:
         run: swift test --package-path ios/App/SendLogWatchCore
 
   swift:
-    needs: classify-dependencies
+    needs: classify
     # Drafts skip the macOS compile; `package-tests` above still runs, so a
     # draft keeps its Swift feedback at the Ubuntu rate. A draft that gets
     # force-pushed repeatedly before it is ready was paying the macOS rate for
@@ -119,7 +119,7 @@ jobs:
     # expressible as a workflow-level filter like `paths` is, so this one does
     # allocate the runner before evaluating; the waste is seconds of idle
     # runner against minutes of Xcode.
-    if: needs['classify-dependencies'].outputs.native_changed == 'true' && (github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false)
+    if: needs.classify.outputs.native_changed == 'true' && (github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false)
     runs-on: blacksmith-6vcpu-macos-26
     # 15, not 45: the p50 of this job was ~2 minutes build-only; #500's
     # simulator boot + test run adds well under a minute (~42s measured
