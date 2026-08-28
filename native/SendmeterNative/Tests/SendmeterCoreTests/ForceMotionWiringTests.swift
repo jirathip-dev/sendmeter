@@ -58,10 +58,15 @@ final class ForceMotionWiringTests: XCTestCase {
         let manual = code(source("Sources/Features/Force/ManualForceFullscreen.swift"))
         let forceView = exactType(force, startingWith: "struct ForceView: View")
         let forceBody = exactFunction(forceView, startingWith: "var body: some View {")
-        let guidedSections = exactFunction(force, startingWith: "private func protocolSections(")
+        let guidedView = exactType(force, startingWith: "private struct GuidedForceProtocolView: View")
+        let guidedSections = exactFunction(guidedView, startingWith: "private func protocolSections(")
         let guidedTargetCoach = exactBlock(force, startingWith: "private var targetCoach: some View", missingMessage: "property")
+        let outsideView = exactType(force, startingWith: "private struct ForceContextSummaryCard: View")
+        let outsideSummary = exactFunction(outsideView, startingWith: "private func protocolSummary(")
+        let guidedSummary = exactFunction(guidedView, startingWith: "private func protocolSummary(")
         let manualBody = exactFunction(manual, startingWith: "var body: some View {")
         let manualDetails = exactBlock(manual, startingWith: "private var protocolDetails: some View", missingMessage: "property")
+        let manualSummary = exactFunction(manual, startingWith: "private func protocolSummary(")
 
         XCTAssertTrue(guidedSections.contains("protocolIdentityHeader"))
         XCTAssertTrue(guidedSections.contains("targetCoach"))
@@ -74,10 +79,30 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertTrue(manualBody.contains("targetCoach"))
         XCTAssertTrue(manualDetails.contains("No target configured for this protocol"))
         XCTAssertTrue(manualDetails.contains("else"))
-        XCTAssertGreaterThanOrEqual(force.components(separatedBy: "restBetweenRepetitionsSeconds").count, 3)
-        XCTAssertGreaterThanOrEqual(force.components(separatedBy: "restBetweenSetsSeconds").count, 3)
-        XCTAssertTrue(manual.contains("restBetweenRepetitionsSeconds"))
-        XCTAssertTrue(manual.contains("restBetweenSetsSeconds"))
+
+        for summary in [guidedSummary, outsideSummary, manualSummary] {
+            let branches = protocolSummaryBranches(summary)
+            XCTAssertTrue(branches.staticBranch.contains("preset.holdSeconds"))
+            XCTAssertTrue(branches.staticBranch.contains("preset.restBetweenRepetitionsSeconds"))
+            XCTAssertTrue(branches.staticBranch.contains("preset.restBetweenSetsSeconds"))
+            XCTAssertTrue(branches.movementBranch.contains("preset.cadenceOutSeconds"))
+            XCTAssertTrue(branches.movementBranch.contains("preset.cadenceReturnSeconds"))
+            XCTAssertTrue(branches.movementBranch.contains("preset.restBetweenSetsSeconds"))
+            XCTAssertFalse(branches.movementBranch.contains("preset.restBetweenRepetitionsSeconds"))
+        }
+    }
+
+    private func protocolSummaryBranches(_ source: String) -> (staticBranch: String, movementBranch: String) {
+        guard let movementStart = source.range(of: "if preset.protocolMode == .reverseAction {"),
+              let staticStart = source.range(of: "return", options: .backwards)
+        else {
+            XCTFail("Missing protocol summary branches")
+            return ("", "")
+        }
+        return (
+            String(source[staticStart.lowerBound..<source.endIndex]),
+            String(source[movementStart.lowerBound..<staticStart.lowerBound])
+        )
     }
 
     private func source(_ relativePath: String) -> String {
