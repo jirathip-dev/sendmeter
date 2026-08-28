@@ -27,11 +27,11 @@ lists npm, GitHub Actions, and Swift (v5 and v6) as supported ecosystems.
 
 `.github/dependabot.yml` monitors:
 
-- the root npm project and the separate `mcp/` npm project each week;
+- the separate `mcp/` npm project each week;
 - every GitHub Actions workflow each week; and
-- the SwiftPM manifests in `ios/App/SendLogWatchCore`,
-  `native-plugins/sendlog-{auth-bridge,health-core,health,live-activity,passkey}`,
-  `native/SendmeterNative`, and `tools/anti-slop-swift` each week.
+- the retained SwiftPM manifests in `ios/App/SendLogWatchCore`,
+  `native-plugins/sendlog-health-core`, `native/SendmeterNative`, and
+  `tools/anti-slop-swift` each week.
 
 Production and development npm patch/minor updates are grouped separately;
 major updates are grouped separately for deliberate manual triage. Security

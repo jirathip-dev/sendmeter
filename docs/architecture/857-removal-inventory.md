@@ -86,10 +86,8 @@ above are included in that MCP total. The measured TypeScript reduction is
 therefore 406 → 23 files (373 root web files removed, with the five shared
 inputs relocated rather than lost).
 
-The baseline workflows contained 8 `npm ci` invocations across 6
-npm-installing jobs: root quality, root MCP, Capacitor iOS, Supabase SQL,
-legacy web TestFlight, and native TestFlight. The after-state contains 1
-npm-installing job:
+The baseline workflows contained 5 semantically parsed `npm ci` invocations
+across 5 jobs. The after-state contains 1 `npm ci` invocation in 1 job:
 MCP's package-local job in `mcp.yml`; native Swift/TestFlight, secret scanning,
 Supabase CLI SQL verification, and migration deployment do not install the
 retired root package. Workflow job count is reduced from 15 named workflow

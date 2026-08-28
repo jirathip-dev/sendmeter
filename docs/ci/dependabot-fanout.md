@@ -45,7 +45,7 @@ first policy cycle (next scheduled 2026-08-31)** — is one open routine
 version-update PR per manifest:
 
 ```
-root npm 1 + mcp npm 1 + GitHub Actions 1 + 8 SwiftPM manifests = 11 PRs
+mcp npm 1 + GitHub Actions 1 + 4 surviving SwiftPM manifests = 6 PRs
 maximum routine version-update fan-out per weekly cycle
 ```
 
