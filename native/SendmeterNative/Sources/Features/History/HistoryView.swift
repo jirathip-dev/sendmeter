@@ -442,10 +442,6 @@ struct HistoryView: View {
 
     // MARK: Rows
 
-    private func isExpandable(_ session: SendmeterCore.Session) -> Bool {
-        (session.type == "tindeq" && session.groupID != nil) || session.workoutSource != nil
-    }
-
     private func zoneMix(for session: SendmeterCore.Session) -> [ZoneQuality: Double]? {
         guard session.type == "tindeq", let groupID = session.groupID else { return nil }
         return ZoneMix.zoneSets(recordingsByGroup[groupID] ?? [])
@@ -463,50 +459,28 @@ struct HistoryView: View {
             zone: zone(for: session),
             zoneMix: zoneMix(for: session)
         )
-        if isExpandable(session) {
-            NavigationLink {
-                SessionDetailView(session: session)
-            } label: {
-                row
+        // #815: EVERY session kind (Tindeq grouped, workout, manual/plain,
+        // pending, rejected) taps through to the same existing read-only
+        // detail surface — never straight into the editor. Edit stays
+        // explicit on the swipe action below; there is no tap-to-edit.
+        NavigationLink {
+            SessionDetailView(session: session)
+        } label: {
+            row
+        }
+        .hapticButtonStyle(.plain)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) { delete(session) } label: {
+                Label("Trash", systemImage: "trash")
             }
-            .hapticButtonStyle(.plain)
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button(role: .destructive) { delete(session) } label: {
-                    Label("Trash", systemImage: "trash")
-                }
-                Button {
-                    // #656: a tap opening a sheet arms the presentation tick.
-                    Haptics.shared.tap()
-                    editingSession = session
-                } label: {
-                    Label("Edit", systemImage: "pencil")
-                }
-                .tint(SendmeterStyle.primary)
-            }
-        } else {
             Button {
-                // #656: a tap opening a sheet arms the presentation tick —
-                // inside the action, the same mechanism as every other site
-                // (review F13 — no second gesture recognizer).
+                // #656: a tap opening a sheet arms the presentation tick.
                 Haptics.shared.tap()
                 editingSession = session
             } label: {
-                row
+                Label("Edit", systemImage: "pencil")
             }
-            .hapticButtonStyle(.plain)
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button(role: .destructive) { delete(session) } label: {
-                    Label("Trash", systemImage: "trash")
-                }
-                Button {
-                    // #656: a tap opening a sheet arms the presentation tick.
-                    Haptics.shared.tap()
-                    editingSession = session
-                } label: {
-                    Label("Edit", systemImage: "pencil")
-                }
-                .tint(SendmeterStyle.primary)
-            }
+            .tint(SendmeterStyle.primary)
         }
     }
 

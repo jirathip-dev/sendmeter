@@ -130,7 +130,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
-- Native: a failed background refresh (reopening the app, a background fetch, or a follow-up after an edit) no longer shows the "Couldn't reach Sendmeter" banner while your loaded history and readiness data are still on screen — that banner is reserved for a load failure with no data on screen, so a genuine offline cold start still gets the honest banner and the retry.
+- Native History: tapping any session row — Tindeq grouped, workout, manual/plain, pending or rejected — now always opens the existing read-only detail (records, zone mix, workout summary/HR trace, or the honest plain-session summary) instead of sometimes landing in the editor. Edit stays on the explicit swipe action.
+- Native History: as part of the same tap fix, a plain/manual session no longer jumps straight into the session editor on tap; it opens the same read-only detail surface as every other row, with its real date, duration, RPE and load — nothing fabricated.
 - Native History now converges permanent Trash deletions across signed-in devices, so a session or Force recording deleted forever no longer remains in another device's cached history after sync.
 - Native Force: a mid-pull Progressor disconnect now salvages the interrupted rep as its own recording — persisted with the exercise and side you had set when the pull started (never a fallback), reported as recovered in History, and reported through the durable lost-recording notice if the save itself fails — instead of only offering a manual Save Recovered Pull prompt that could be missed.
 - Native Training Load: the Daily Load heatmap no longer renders all-gray when a session is dated up to a week ahead — a future-dated session no longer inflates the color scale, which was washing real load days down to the faintest level.
