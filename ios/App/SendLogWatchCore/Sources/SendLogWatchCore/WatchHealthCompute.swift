@@ -220,7 +220,12 @@ public enum WatchHealthCompute {
                 value: -offset,
                 to: todayStart
             ) else { continue }
-            let series = dailyLoadSeries(rows: rows, days: lookback, now: dateStart)
+            let series = dailyLoadSeries(
+                rows: rows,
+                days: lookback,
+                now: dateStart,
+                timeZone: timeZone
+            )
             if let ratio = ewmaAcwr(dailyLoads: series) {
                 result[dateStart.dateString(in: calendar)] = ratio
             }

@@ -60,14 +60,17 @@ public enum HealthPrecedenceDecision: Equatable, Sendable {
 /// row then converges deterministically and never flaps.
 public enum HealthMetricPrecedence {
     /// A row is fresh when its `computedAt` is on the same local calendar
-    /// day as `now`.
+    /// day as `now` — evaluated in the EXPLICIT `timeZone` (the user's
+    /// local day, never the host's): the shared policy must return the same
+    /// answer regardless of the machine running it (hosted CI is UTC).
     public static func isFresh(
         _ row: HealthPrecedenceRow,
         now: Date,
         timeZone: TimeZone
     ) -> Bool {
         guard let computedAt = row.computedAt else { return false }
-        let calendar = Calendar.gregorianLocal
+        var calendar = Calendar.gregorianLocal
+        calendar.timeZone = timeZone
         return computedAt.dateString(in: calendar) == now.dateString(in: calendar)
     }
 

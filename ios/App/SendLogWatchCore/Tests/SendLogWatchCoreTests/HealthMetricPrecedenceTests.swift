@@ -155,6 +155,33 @@ final class HealthMetricPrecedenceTests: XCTestCase {
             )
         )
     }
+
+    /// Regression (hosted CI, UTC Linux): `isFresh` must honor the EXPLICIT
+    /// timeZone, never the host's. 00:30 Bangkok on Aug 28 IS the 27th
+    /// 17:30 UTC — the same instant is same-day in Bangkok and different-day
+    /// in UTC. Under the old implementation (host-local zone) this test
+    /// fails on BOTH hosts: a UTC host claims Bangkok is different-day, a
+    /// +07 host claims UTC is same-day.
+    func testIsFreshHonorsTheExplicitTimeZoneNotTheHost() {
+        let instant = date(28, hour: 0, minute: 30) // Bangkok Aug 28 00:30 = Aug 27 17:30 UTC
+        let now = date(28, hour: 7)                 // Bangkok Aug 28 07:00 = Aug 28 00:00 UTC
+        XCTAssertTrue(
+            HealthMetricPrecedence.isFresh(
+                row(computedAt: instant),
+                now: now,
+                timeZone: timeZone
+            ),
+            "Bangkok: both instants are on Aug 28 — fresh"
+        )
+        XCTAssertFalse(
+            HealthMetricPrecedence.isFresh(
+                row(computedAt: instant),
+                now: now,
+                timeZone: TimeZone(identifier: "UTC")!
+            ),
+            "UTC: the instant is Aug 27 17:30 vs now Aug 28 00:00 — not same-day"
+        )
+    }
 }
 
 private extension HealthMetricPrecedenceTests {
