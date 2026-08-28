@@ -7,6 +7,14 @@ import XCTest
 /// iOS 17+ because `@Observable` and typed `@Environment` are unavailable on
 /// older deployment targets.
 final class AppModelSplitTests: XCTestCase {
+    func testWatchHealthKitCancellationHasExplicitOwnershipSafeTeardown() {
+        let service = code(source("../../ios/App/SendLogWatch Watch App/Services/WatchHealthKitService.swift"))
+        XCTAssertTrue(
+            service.contains("deinit {"),
+            "The generic cancellation owner needs explicit teardown for Swift 6.3.3 Release SIL"
+        )
+    }
+
     func testForceStateLivesInDedicatedObservableModel() {
         let forceModel = code(source("Sources/App/ForceModel.swift"))
         for declaration in [
