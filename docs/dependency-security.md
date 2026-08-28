@@ -132,3 +132,7 @@ convenience.
 6. If the only available upstream fix is incompatible, document the exact
    advisory and temporary exception in this file with an owner and expiry, add
    the regression coverage, and schedule removal before merging.
+7. Close stale major Dependabot PRs promptly when they are not being actively
+   upgraded, because a major is still a version update and consumes the
+   manifest's one-slot queue. Root npm #827 and native GRDB #829 are current
+   examples; leaving either stale can starve routine patch/minor updates.

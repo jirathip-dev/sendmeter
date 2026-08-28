@@ -24,6 +24,10 @@ on:
       - "native-plugins/sendlog-health/**"
       - "native-plugins/sendlog-live-activity/**"
       - "native-plugins/sendlog-passkey/**"
+      # Root manifests are admitted to the cheap classifier below. Only
+      # native-facing dependency changes promote the macOS job.
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/ios-ci.yml"
   # Manual escape hatch for verifying the lane itself without a native change.
   workflow_dispatch:
@@ -34,6 +38,65 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify-dependencies:
+    name: Classify native dependency changes
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      native_changed: ${{ steps.classify.outputs.native_changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Detect native-facing dependency changes
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            echo 'native_changed=true' >> "$GITHUB_OUTPUT"
+            echo 'workflow_dispatch: native gate requested'
+            exit 0
+          fi
+
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          if grep -Eq '^(ios/|native-plugins/(sendlog-(auth-bridge|health|live-activity|passkey))/|\.github/workflows/ios-ci\.yml$)' <<< "$changed"; then
+            echo 'native_changed=true' >> "$GITHUB_OUTPUT"
+            echo 'native source/plugin path changed'
+            exit 0
+          fi
+
+          if ! grep -Eq '^(package\.json|package-lock\.json)$' <<< "$changed"; then
+            echo 'native_changed=false' >> "$GITHUB_OUTPUT"
+            echo 'no root dependency manifest changed'
+            exit 0
+          fi
+
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const fs = require('node:fs');
+          const base = process.env.BASE_SHA;
+          const native = /^(?:@capacitor(?:\/|$)|@capacitor-community\/(?:bluetooth-le|keep-awake|apple-sign-in)$|sendlog-(?:auth-bridge|health|live-activity|passkey)$)/;
+          const read = (file) => JSON.parse(file === 'package.json'
+            ? execFileSync('git', ['show', `${base}:${file}`], { encoding: 'utf8' })
+            : fs.readFileSync(file, 'utf8'));
+          const before = read('package.json');
+          const after = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const sections = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
+          const changed = sections.flatMap((section) => Object.keys({
+            ...(before[section] || {}), ...(after[section] || {}),
+          }).filter((name) => native.test(name) && before[section]?.[name] !== after[section]?.[name]));
+          const lockDiff = execFileSync('git', ['diff', '--unified=0', base, process.env.HEAD_SHA, '--', 'package-lock.json'], { encoding: 'utf8' });
+          const lockNative = lockDiff.split('\n').some((line) => (line.startsWith('+') || line.startsWith('-')) &&
+            /@capacitor(?:\/|$)|@capacitor-community\/(?:bluetooth-le|keep-awake|apple-sign-in)|sendlog-(?:auth-bridge|health|live-activity|passkey)/.test(line));
+          const nativeChanged = changed.length > 0 || lockNative;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `native_changed=${nativeChanged}\n`);
+          console.log(nativeChanged ? `native-facing packages changed: ${[...new Set(changed)].join(', ') || 'lockfile'}` : 'root dependency change is unrelated to native-facing packages');
+          NODE
+
   # The pure-logic watch tests live in the SendLogWatchCore SwiftPM package
   # (#191), so they need no simulator and no Xcode — run them on Ubuntu,
   # which bills at a fraction of the macOS rate (#199). The macOS job below
@@ -65,6 +128,7 @@ jobs:
         run: swift test --package-path ios/App/SendLogWatchCore
 
   swift:
+    needs: classify-dependencies
     # Drafts skip the macOS compile; `package-tests` above still runs, so a
     # draft keeps its Swift feedback at the Ubuntu rate. A draft that gets
     # force-pushed repeatedly before it is ready was paying the macOS rate for
@@ -73,7 +137,7 @@ jobs:
     # expressible as a workflow-level filter like `paths` is, so this one does
     # allocate the runner before evaluating; the waste is seconds of idle
     # runner against minutes of Xcode.
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    if: needs['classify-dependencies'].outputs.native_changed == 'true' && (github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false)
     runs-on: blacksmith-6vcpu-macos-26
     # 15, not 45: the p50 of this job was ~2 minutes build-only; #500's
     # simulator boot + test run adds well under a minute (~42s measured

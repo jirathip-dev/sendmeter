@@ -15,11 +15,16 @@ handling.
 
 ## Path-aware CI review
 
-The expensive native workflows already use workflow-level path filters, which
-prevents a runner from being allocated for unrelated changes:
+The expensive native workflows use a workflow-level path filter plus a cheap
+dependency classifier, which prevents a macOS runner from being allocated for
+unrelated changes:
 
-- `ios-ci.yml` runs for `ios/**`, the four Capacitor native plugin trees, or
-  its own workflow file.
+- `ios-ci.yml` admits `ios/**`, the four Capacitor native plugin trees, its own
+  workflow file, and the root npm manifests to a Blacksmith Ubuntu classifier.
+  The classifier compares root dependency declarations and lockfile changes
+  for Capacitor/plugin families and BLE/Health-related packages. Only a
+  native-facing result promotes the macOS `swift` job; unrelated root npm
+  changes run the cheap package-test/classifier work but skip macOS.
 - `native-swift.yml` runs for the native Swift/watch trees, native health core,
   Swift tooling and its gate scripts, or its own workflow file.
 - `ci.yml` remains unconditional for pull requests so npm audit, typecheck,
@@ -33,8 +38,9 @@ prevents a runner from being allocated for unrelated changes:
   fan-out source.
 
 Therefore an unrelated root dependency-only change keeps the web, audit, and
-secret gates but skips the native/iOS jobs; a change under the Swift/iOS or
-Capacitor plugin paths keeps the native gates.
+secret gates and skips the macOS native/iOS job; a native-facing root package
+or lockfile change, or a change under the Swift/iOS or Capacitor plugin paths,
+keeps the native gates.
 
 ## Before / after measurement
 
@@ -52,12 +58,18 @@ routine update PR slots
 
 This is a queue bound, not a promise that every manifest receives an update.
 Security updates are intentionally excluded from the routine bound. Native
-runner allocation is further reduced by the existing path filters: unrelated
-dependency changes use the Blacksmith 4-vCPU Ubuntu quality/audit and
+runner allocation is further reduced by the classifier: unrelated dependency
+changes use the Blacksmith 4-vCPU Ubuntu classifier plus quality/audit and
 secret-scan jobs, while only Swift/iOS-affecting paths allocate the Blacksmith
 6-vCPU macOS native jobs. The exact after wall-clock and hosted workflow-run
 count require the next Dependabot weekly cycle; Blacksmith accounting and the
 zero GitHub-billable-minute result must be confirmed from that hosted run.
+
+Because major groups also consume the one version-update slot, operators must
+close stale major PRs promptly when they are not being actively upgraded.
+Otherwise a stale major can starve routine patch/minor updates for that
+manifest. Root npm major PR #827 and native GRDB major PR #829 are the current
+instances requiring this manual treatment.
 
 ## Fixture evidence
 
@@ -65,10 +77,12 @@ The policy's trigger matrix is:
 
 | Fixture change | Expected relevant gates | Local proof | Hosted proof |
 | --- | --- | --- | --- |
-| Security/audit-style dependency change | `CI` audit and `Secret scan` | YAML inspection confirms both workflows have no dependency path filter | Required on the PR: GitHub event admission and successful jobs |
-| Swift/iOS-affecting dependency change under `ios/**`, native Swift, or Capacitor plugin paths | `Native Swift` and/or `iOS CI`, plus `CI` and `Secret scan` | YAML path-list inspection confirms the matching paths | Required on the PR: GitHub path-filter admission and successful native jobs |
-| Unrelated dependency-only change outside those paths | `CI` and `Secret scan`; native/iOS jobs skipped | YAML path-list inspection confirms no matching native path | Required on the PR: GitHub skipped-state confirmation for native/iOS workflows |
+| Security/audit-style dependency change | `CI` audit and `Secret scan` | Workflow trigger inspection proves both are unfiltered; the gate result is not simulated locally | Required on the PR: a real high/critical audit fixture must fail the audit gate, while gitleaks still scans |
+| Swift/iOS-affecting dependency change under `ios/**`, native Swift, Capacitor plugin paths, or native-facing root packages | `Native Swift` and/or `iOS CI`, plus `CI` and `Secret scan` | Classifier source inspection proves the selected package families and native paths promote the macOS job | Required on the PR: a real positive dependency fixture must admit and pass the native gate |
+| Unrelated dependency-only change outside those paths | `CI` and `Secret scan`; macOS native/iOS job skipped | Classifier source inspection proves unrelated root packages return false | Required on the PR: GitHub must show classifier success and no macOS native job |
 
-These local checks validate the committed trigger contract; they cannot emulate
-GitHub's hosted path-filter event evaluation. The orchestrator must attach the
-hosted run links and final skipped/successful conclusions to the PR evidence.
+These local checks validate the committed trigger and classifier contract; they
+cannot emulate GitHub's hosted path-filter event evaluation, Dependabot's
+queue behavior, or an audit failure. The orchestrator must attach hosted links
+for the positive native fixture and intentionally failing audit fixture; the
+current PR itself only proves the unrelated-change skip path.
