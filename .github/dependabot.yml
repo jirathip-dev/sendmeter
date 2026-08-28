@@ -12,7 +12,9 @@ updates:
       day: "monday"
       time: "03:00"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 5
+    # This limit applies to version updates; security updates keep their own
+    # unthrottled path below.
+    open-pull-requests-limit: 1
     groups:
       npm-security:
         applies-to: "security-updates"
@@ -30,6 +32,8 @@ updates:
         update-types:
           - "patch"
           - "minor"
+      # Major version updates stay separate for manual triage; they are not
+      # part of the routine update path.
       npm-major:
         applies-to: "version-updates"
         patterns:
@@ -44,7 +48,7 @@ updates:
       day: "monday"
       time: "03:20"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       mcp-npm-security:
         applies-to: "security-updates"
@@ -76,7 +80,7 @@ updates:
       day: "monday"
       time: "03:40"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
     groups:
       github-actions-security:
         applies-to: "security-updates"
@@ -98,7 +102,7 @@ updates:
       day: "tuesday"
       time: "03:00"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-core-security:
         applies-to: "security-updates"
@@ -119,7 +123,7 @@ updates:
       day: "tuesday"
       time: "03:05"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-auth-security:
         applies-to: "security-updates"
@@ -140,7 +144,7 @@ updates:
       day: "tuesday"
       time: "03:10"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-health-core-security:
         applies-to: "security-updates"
@@ -161,7 +165,7 @@ updates:
       day: "tuesday"
       time: "03:15"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-health-security:
         applies-to: "security-updates"
@@ -182,7 +186,7 @@ updates:
       day: "tuesday"
       time: "03:20"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-live-activity-security:
         applies-to: "security-updates"
@@ -203,7 +207,7 @@ updates:
       day: "tuesday"
       time: "03:25"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-passkey-security:
         applies-to: "security-updates"
@@ -224,7 +228,7 @@ updates:
       day: "tuesday"
       time: "03:30"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-native-security:
         applies-to: "security-updates"
@@ -245,7 +249,7 @@ updates:
       day: "tuesday"
       time: "03:35"
       timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
       swift-tool-security:
         applies-to: "security-updates"
