@@ -21,6 +21,7 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
     "test:db:purge": "supabase test db --local supabase/tests/purge_sync_generation.sql",
+    "test:db:health-precedence": "supabase test db --local supabase/tests/health_metrics_precedence.sql",
     "db:status": "supabase status",
     "postinstall": "patch-package",
     "migration:status": "node scripts/migration-status.mjs",
