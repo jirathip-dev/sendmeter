@@ -30,9 +30,19 @@ final class HealthSyncManager {
     private var coalescer = ReadinessRefreshCoalescer()
     private var passTask: Task<Void, Never>?
     private var lastHealthRefreshStartedAt: TimeInterval?
-    private var hasRequestedNotifications = false
-    private var authorizationAcknowledged = false
+    private var notificationAuthorization = NotificationAuthorizationState.unknown
     private var hasScheduledAmbientRefresh = false
+
+    /// Whether the user has answered the morning-notification prompt. A
+    /// denial is an answered question — respected, never re-requested in
+    /// this process, and explicitly logged at the denial site (not a silent
+    /// skip). A fresh process re-asks once; the OS then returns the stored
+    /// answer without a second prompt.
+    private enum NotificationAuthorizationState: Equatable {
+        case unknown
+        case granted
+        case denied
+    }
 
     init() {
         Self.current = self
@@ -75,21 +85,41 @@ final class HealthSyncManager {
 
     private func startPass(reason: ReadinessRefreshReason) {
         passTask?.cancel()
+        // ONE task owns the whole pass loop: the initial pass plus the
+        // coalescer's single queued follow-up — so `passTask.value` is a real
+        // completion handle for the awaiting WK background task.
         passTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            if await self.performAutomaticPass() {
-                if self.coalescer.isRunning {
-                    switch self.coalescer.complete() {
-                    case .idle:
-                        break
-                    case let .rerun(queuedReason):
-                        self.startPass(reason: queuedReason)
-                    }
+            while true {
+                guard await self.performAutomaticPass() else {
+                    self.coalescer.cancel()
+                    return
                 }
-            } else {
-                self.coalescer.cancel()
+                guard self.coalescer.isRunning else { return }
+                switch self.coalescer.complete() {
+                case .idle:
+                    return
+                case let .rerun(queuedReason):
+                    _ = queuedReason
+                    continue
+                }
             }
         }
+    }
+
+    /// The WKApplicationRefreshBackgroundTask entry point (Blocker-2 fix):
+    /// registers a coalesced pass (or joins the in-flight one) and DOES NOT
+    /// RETURN until the whole pass — including its queued follow-up — has
+    /// completed. The app delegate calls setTaskCompleted only after this
+    /// returns, so the runtime cannot suspend the app mid-compute.
+    func runAwaitingBackgroundPass() async {
+        switch coalescer.request(reason: .foreground) {
+        case .start:
+            startPass(reason: .foreground)
+        case .queued:
+            break
+        }
+        await passTask?.value
     }
 
     /// One full pass: morning window handling → compute → reconcile →
@@ -312,9 +342,11 @@ final class HealthSyncManager {
 
     /// One local notification per account per day when the morning refresh
     /// produced a scored readiness reading (never re-notifies). The marker
-    /// is persisted ONLY after the notification is actually added: a denied
-    /// or failed authorization leaves the day unmarked so the next trigger
-    /// retries.
+    /// is persisted ONLY after the notification is actually added: a failed
+    /// delivery leaves the day retriable. A user DENIAL is an answered
+    /// question — respected and logged (state .denied), never re-requested
+    /// in this process; the score still surfaces through the
+    /// complication/widget snapshot.
     private func maybeNotifyMorningScore(
         observation: WatchHealthSyncObservation,
         metric: WatchHealthMetric?,
@@ -328,15 +360,25 @@ final class HealthSyncManager {
         let notifiedKey = "sendmeter.watch.health-morning-notified.\(userID.uuidString).\(today)"
         guard UserDefaults.standard.object(forKey: notifiedKey) == nil else { return }
 
-        if !hasRequestedNotifications {
-            hasRequestedNotifications = true
+        switch notificationAuthorization {
+        case .denied:
+            // Respect the user's answer: not an error, not silent — the
+            // complication/widget snapshot still carries the score.
+            Self.log.notice("morning notification denied by the user — respecting the choice")
+            return
+        case .unknown:
             let granted = (try? await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound])) ?? false
-            authorizationAcknowledged = granted
+            notificationAuthorization = granted ? .granted : .denied
+            if !granted {
+                Self.log.notice(
+                    "morning notification authorization denied — not re-requesting; score still reaches the complication"
+                )
+                return
+            }
+        case .granted:
+            break
         }
-        // Not authorized: NO marker — the next supported trigger retries
-        // (the score still surfaces through the complication/widget).
-        guard authorizationAcknowledged else { return }
 
         let content = UNMutableNotificationContent()
         content.title = "Readiness \(readiness)"

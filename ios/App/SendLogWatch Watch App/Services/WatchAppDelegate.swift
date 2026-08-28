@@ -16,8 +16,12 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
                 task.setTaskCompleted()
                 continue
             }
+            // Blocker-2 fix: the pass is AWAITED — the background task may
+            // only complete after the health pass (including its queued
+            // follow-up) has finished, otherwise the runtime could suspend
+            // the app mid-compute.
             Task { @MainActor in
-                HealthSyncManager.current?.trigger(reason: .foreground)
+                await HealthSyncManager.current?.runAwaitingBackgroundPass()
                 refresh.setTaskCompleted()
             }
         }
