@@ -77,12 +77,14 @@ The policy's trigger matrix is:
 
 | Fixture change | Expected relevant gates | Local proof | Hosted proof |
 | --- | --- | --- | --- |
-| Security/audit-style dependency change | `CI` audit and `Secret scan` | Workflow trigger inspection proves both are unfiltered; the gate result is not simulated locally | Required on the PR: a real high/critical audit fixture must fail the audit gate, while gitleaks still scans |
-| Swift/iOS-affecting dependency change under `ios/**`, native Swift, Capacitor plugin paths, or native-facing root packages | `Native Swift` and/or `iOS CI`, plus `CI` and `Secret scan` | Classifier source inspection proves the selected package families and native paths promote the macOS job | Required on the PR: a real positive dependency fixture must admit and pass the native gate |
-| Unrelated dependency-only change outside those paths | `CI` and `Secret scan`; macOS native/iOS job skipped | Classifier source inspection proves unrelated root packages return false | Required on the PR: GitHub must show classifier success and no macOS native job |
+| Security/audit-style dependency change | `CI` audit and `Secret scan` | Workflow trigger inspection proves both are unfiltered; the gate result is not simulated locally | Hosted audit fixture failed quality at [run 33158879834](https://github.com/jirathip-dev/sendmeter/actions/runs/33158879834), proving the high-severity audit gate bites |
+| Swift/iOS-affecting root dependency change | `Native Swift`/`iOS CI`, plus `CI` and `Secret scan` | Classifier tests cover Capacitor scopes, safe-area, and lockfile-only changes | Hosted `@capacitor-community/safe-area` fixture classified and ran Swift successfully at [run 33160303844](https://github.com/jirathip-dev/sendmeter/actions/runs/33160303844) |
+| Unrelated root dependency-only change | `CI` and `Secret scan`; macOS native/iOS job skipped | Classifier tests cover unrelated packages | Hosted `@types/node` fixture classified false and skipped Swift at [run 33160110906](https://github.com/jirathip-dev/sendmeter/actions/runs/33160110906) |
 
-These local checks validate the committed trigger and classifier contract; they
-cannot emulate GitHub's hosted path-filter event evaluation, Dependabot's
-queue behavior, or an audit failure. The orchestrator must attach hosted links
-for the positive native fixture and intentionally failing audit fixture; the
-current PR itself only proves the unrelated-change skip path.
+The three hosted fixtures above were appended as temporary commits and then
+reverted without force-pushing: unrelated fixture `19990be` → revert `1a77b08`,
+native fixture `2b76a18` → revert `a16a39b`, and audit fixture `a7c9455` →
+revert `0cd24b1`. The current branch retains the run links while its net
+product/configuration diff restores the intended tree. Local checks cannot
+emulate GitHub's hosted path-filter event evaluation or Dependabot queue
+behavior.
