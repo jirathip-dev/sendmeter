@@ -15,9 +15,9 @@ import {
   CHRONIC_SPAN_DAYS,
   type LoadSession,
 } from "../src/load.js";
-import { today } from "../src/dates.js";
-import * as webMetrics from "../../src/lib/metrics.js";
-import type { Session } from "../../src/types.js";
+import { today } from "../src/shared/dates.js";
+import * as webMetrics from "../src/shared/metrics.js";
+import type { Session } from "../src/shared/types.js";
 
 function asWebSessions(sessions: LoadSession[]): Session[] {
   return sessions as unknown as Session[];
