@@ -3,7 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 
-const NATIVE_REFERENCE = /(?:@capacitor(?:\/|-)|sendlog-|(?:^|[/:-])capacitor(?:[/#@]|$)|healthkit|bluetooth)/i;
+const NATIVE_REFERENCE = /(?:@capacitor(?:\/|-)|sendlog-|(?:^|[/:-])capacitor(?:[/#@-]|$)|healthkit|bluetooth)/i;
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });

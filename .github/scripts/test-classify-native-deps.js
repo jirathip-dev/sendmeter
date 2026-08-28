@@ -41,6 +41,8 @@ assert.equal(scenario('native', () => editPackage((deps) => { deps['@capacitor/c
 assert.equal(scenario('safe-area', () => editPackage((deps) => { deps['@capacitor-community/safe-area'] = '^1.1.0'; })), true);
 assert.equal(scenario('alias', () => editPackage((deps) => { deps.bridge = 'npm:@capacitor/core@8.0.0'; })), true);
 assert.equal(scenario('url', () => editPackage((deps) => { deps.bridge = 'github:ionic-team/capacitor#v8.0.0'; })), true);
+assert.equal(scenario('capacitor-community-url', () => editPackage((deps) => { deps.bridge = 'github:capacitor-community/http#v1.4.1'; })), true);
+assert.equal(scenario('non-native-url', () => editPackage((deps) => { deps.bridge = 'github:someorg/some-lib#v2.0.0'; })), false);
 assert.equal(scenario('lockfile-wrapper-resolved', () => {
   const lock = JSON.parse(fs.readFileSync(path.join(repo, 'package-lock.json'), 'utf8'));
   lock.packages['node_modules/wrapper'].resolved = 'github:ionic-team/capacitor#v8.1.0';
