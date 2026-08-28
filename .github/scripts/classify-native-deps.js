@@ -12,7 +12,7 @@ function git(args, cwd) {
 
 export function classify({ base, head, cwd = process.cwd() }) {
   const files = git(['diff', '--name-only', base, head], cwd).trim().split('\n').filter(Boolean);
-  if (files.some((file) => file.startsWith('ios/') || file.startsWith('native-plugins/') || file === '.github/workflows/ios-ci.yml')) {
+  if (files.some((file) => file.startsWith('ios/') || file.startsWith('native-plugins/'))) {
     return { nativeChanged: true, reason: 'native path changed' };
   }
   if (!files.includes('package.json') && !files.includes('package-lock.json')) {
