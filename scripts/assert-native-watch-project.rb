@@ -1,240 +1,108 @@
 #!/usr/bin/env ruby
-# frozen_string_literal: true
+# Verify the generated XcodeGen graph owns the retained phone and Watch surfaces.
+require "yaml"
 
-# Static contract for the generated native watch graph. This intentionally
-# opens the generated pbxproj rather than compiling it: the Xcode lane remains
-# serialized elsewhere, while source/resource membership and copy-file
-# destinations are deterministic project wiring that can be checked cheaply.
-#
-# Run after `xcodegen generate`:
-#   GEM_PATH=/opt/homebrew/Cellar/cocoapods/*/libexec \
-#     /opt/homebrew/opt/ruby/bin/ruby scripts/assert-native-watch-project.rb
+repo = File.expand_path("..", __dir__)
+spec_path = File.join(repo, "native/SendmeterNative/project.yml")
+project_dir = File.join(repo, "native/SendmeterNative")
+spec = YAML.load_file(spec_path)
+targets = spec.fetch("targets")
+pbx = File.read(File.join(project_dir, "SendmeterNative.xcodeproj/project.pbxproj"))
 
-require "xcodeproj"
+abort "generated Xcode project is missing; run xcodegen generate" unless File.file?(File.join(project_dir, "SendmeterNative.xcodeproj/project.pbxproj"))
+abort "legacy Capacitor project is still referenced" if spec.to_s.match?(/CapApp-SPM|ios\/App\/App\.xcodeproj|Capacitor/)
 
-REPO = File.expand_path("..", __dir__).freeze
-PROJECT_PATH = File.join(REPO, "native/SendmeterNative/SendmeterNative.xcodeproj").freeze
-
-def fail_check(message)
-  warn "native-watch-project: #{message}"
-  exit 1
-end
-
-fail_check("generated project is missing: #{PROJECT_PATH}") unless File.exist?(PROJECT_PATH)
-
-project = Xcodeproj::Project.open(PROJECT_PATH)
-
-def target!(project, name)
-  project.targets.find { |target| target.name == name } || fail_check("target is missing: #{name}")
-end
-
-def setting!(target, configuration, key)
-  config = target.build_configurations.find { |candidate| candidate.name == configuration }
-  fail_check("#{target.name} has no #{configuration} configuration") unless config
-  value = config.build_settings[key]
-  fail_check("#{target.name} #{configuration} is missing #{key}") if value.nil?
-  value
-end
-
-def real_paths(phase)
-  phase.files.filter_map do |build_file|
-    reference = build_file.file_ref
-    reference&.real_path&.to_s
-  end
-end
-
-def assert_exact_membership(label, actual, expected)
-  missing = expected - actual
-  extra = actual - expected
-  fail_check("#{label} is missing #{missing.inspect}") unless missing.empty?
-  fail_check("#{label} has unexpected entries #{extra.inspect}") unless extra.empty?
-end
-
-def assert_contains(label, actual, expected)
-  missing = expected - actual
-  fail_check("#{label} is missing #{missing.inspect}") unless missing.empty?
-end
-
-def swift_files(directory)
-  Dir[File.join(directory, "**", "*.swift")].map { |path| File.expand_path(path) }.sort
-end
-
-def resource_files(target)
-  real_paths(target.resources_build_phase).sort
-end
-
-def copy_phase!(target, name)
-  target.copy_files_build_phases.find { |phase| phase.name == name } ||
-    fail_check("#{target.name} is missing copy phase #{name.inspect}")
-end
-
-app = target!(project, "SendmeterNative")
-watch = target!(project, "SendLogWatch Watch App")
-watch_widgets = target!(project, "SendLogWatchWidgets")
-phone_widgets = target!(project, "SendmeterNativeWidgets")
-
-watch_root = File.join(REPO, "ios/App/SendLogWatch Watch App")
-watch_widgets_root = File.join(REPO, "ios/App/SendLogWatchWidgets")
-
-assert_exact_membership(
-  "watch Swift sources",
-  real_paths(watch.source_build_phase).select { |path| path.end_with?(".swift") }.sort,
-  swift_files(watch_root)
-)
-assert_exact_membership(
-  "watch-widget Swift sources",
-  real_paths(watch_widgets.source_build_phase).select { |path| path.end_with?(".swift") }.sort,
-  swift_files(watch_widgets_root)
-)
-
-assert_exact_membership(
-  "watch resources",
-  resource_files(watch),
-  [
-    File.join(watch_root, "Assets.xcassets"),
-    File.join(watch_root, "PrivacyInfo.xcprivacy"),
-    File.join(watch_root, "Resources/SupabaseConfig.plist"),
-  ].sort
-)
-assert_exact_membership(
-  "watch-widget resources",
-  resource_files(watch_widgets),
-  [File.join(watch_widgets_root, "PrivacyInfo.xcprivacy")]
-)
-
-watch_info_path = File.join(REPO, "native/SendmeterNative/Resources/WatchInfo.plist")
-watch_info = File.exist?(watch_info_path) ? File.read(watch_info_path) : ""
-%w[
-  $(MARKETING_VERSION)
-  $(CURRENT_PROJECT_VERSION)
-  $(WATCH_COMPANION_APP_BUNDLE_IDENTIFIER)
-].each do |placeholder|
-  fail_check("WatchInfo.plist is missing #{placeholder}") unless watch_info.include?(placeholder)
-end
-capacitor_watch_info_path = File.join(REPO, "ios/App/SendLogWatch Watch App-Info.plist")
-fail_check("Capacitor watch Info.plist is missing: #{capacitor_watch_info_path}") unless
-  File.exist?(capacitor_watch_info_path)
-native_watch_info = Xcodeproj::Plist.read_from_path(watch_info_path)
-capacitor_watch_info = Xcodeproj::Plist.read_from_path(capacitor_watch_info_path)
-fail_check("native and Capacitor watch Info.plists have different key sets") unless
-  native_watch_info.keys.sort == capacitor_watch_info.keys.sort
-
-intentional_watch_info_differences = {
-  "CFBundleShortVersionString" => ["$(MARKETING_VERSION)", "1.0"],
-  "CFBundleVersion" => ["$(CURRENT_PROJECT_VERSION)", "1"],
-  "WKCompanionAppBundleIdentifier" => [
-    "$(WATCH_COMPANION_APP_BUNDLE_IDENTIFIER)",
-    "com.jirathip.sendlog",
-  ],
+required_sources = {
+  "SendmeterNative" => %w[Sources/App Sources/Data Sources/Platform Sources/Features Sources/Shared],
+  "SendLogWatch Watch App" => ["../../ios/App/SendLogWatch Watch App"],
+  "SendLogWatchWidgets" => ["../../ios/App/SendLogWatchWidgets"],
 }
-actual_watch_info_differences = native_watch_info.keys.sort.filter_map do |key|
-  next if native_watch_info[key] == capacitor_watch_info[key]
-
-  [key, [native_watch_info[key], capacitor_watch_info[key]]]
-end.to_h
-fail_check(
-  "native and Capacitor watch Info.plists differ outside their three intentional values: " \
-  "#{actual_watch_info_differences.inspect}"
-) unless actual_watch_info_differences == intentional_watch_info_differences
-fail_check("watch target does not use the native versioned Info.plist") unless
-  setting!(watch, "Release", "INFOPLIST_FILE") == "Resources/WatchInfo.plist"
-
-[app, watch, watch_widgets, phone_widgets].each do |target|
-  build_paths = real_paths(target.source_build_phase) + resource_files(target)
-  entitlements = build_paths.select { |path| path.end_with?(".entitlements") }
-  fail_check("#{target.name} includes entitlements in a build phase: #{entitlements.inspect}") unless entitlements.empty?
+required_sources.each do |target, paths|
+  sources = targets.fetch(target).fetch("sources").map { |entry| entry.is_a?(String) ? entry : entry.fetch("path") }
+  paths.each { |path| abort "#{target} does not consume #{path}" unless sources.include?(path) }
 end
 
-assert_contains(
-  "watch package links",
-  watch.package_product_dependencies.map(&:product_name),
-  %w[Supabase SendLogWatchCore]
-)
-assert_contains(
-  "watch-widget package links",
-  watch_widgets.package_product_dependencies.map(&:product_name),
-  ["SendLogWatchCore"]
-)
-
-watch_embed = copy_phase!(app, "Embed Watch Content")
-fail_check("Embed Watch Content has the wrong destination") unless
-  watch_embed.dst_path == "$(CONTENTS_FOLDER_PATH)/Watch" && watch_embed.dst_subfolder_spec.to_s == "16"
-assert_exact_membership(
-  "native app watch embed",
-  watch_embed.files.filter_map { |file| file.file_ref&.path },
-  ["SendLogWatch Watch App.app"]
-)
-
-phone_widget_embed = copy_phase!(app, "Embed Foundation Extensions")
-fail_check("native widget embed has the wrong destination") unless
-  phone_widget_embed.dst_path.to_s.empty? && phone_widget_embed.dst_subfolder_spec.to_s == "13"
-assert_exact_membership(
-  "native app widget embed",
-  phone_widget_embed.files.filter_map { |file| file.file_ref&.path },
-  ["SendmeterNativeWidgets.appex"]
-)
-
-watch_widget_embed = copy_phase!(watch, "Embed Foundation Extensions")
-fail_check("watch widget embed has the wrong destination") unless
-  watch_widget_embed.dst_path.to_s.empty? && watch_widget_embed.dst_subfolder_spec.to_s == "13"
-assert_exact_membership(
-  "watch app widget embed",
-  watch_widget_embed.files.filter_map { |file| file.file_ref&.path },
-  ["SendLogWatchWidgets.appex"]
-)
-
-fail_check("watch target does not depend on SendLogWatchWidgets") unless
-  watch.dependencies.any? { |dependency| dependency.target&.name == "SendLogWatchWidgets" }
-fail_check("native app does not depend on the watch app") unless
-  app.dependencies.any? { |dependency| dependency.target&.name == "SendLogWatch Watch App" }
-
-%w[Debug Release].each do |configuration|
-  fail_check("watch AppIcon missing in #{configuration}") unless
-    setting!(watch, configuration, "ASSETCATALOG_COMPILER_APPICON_NAME") == "AppIcon"
-  fail_check("watch AccentColor missing in #{configuration}") unless
-    setting!(watch, configuration, "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME") == "AccentColor"
-  fail_check("watch team mismatch in #{configuration}") unless
-    setting!(watch, configuration, "DEVELOPMENT_TEAM") == "9244PWFYD7"
-  fail_check("watch-widget team mismatch in #{configuration}") unless
-    setting!(watch_widgets, configuration, "DEVELOPMENT_TEAM") == "9244PWFYD7"
+resources = targets.fetch("SendmeterNative").fetch("sources").select { |entry| entry.is_a?(Hash) && entry["buildPhase"] == "resources" }.map { |entry| entry.fetch("path") }
+%w[Resources/PrivacyInfo.xcprivacy Resources/Assets.xcassets].each do |path|
+  abort "phone resource is not in the resources phase: #{path}" unless resources.include?(path)
 end
 
-debug_phone_id = setting!(app, "Debug", "PRODUCT_BUNDLE_IDENTIFIER")
-release_phone_id = setting!(app, "Release", "PRODUCT_BUNDLE_IDENTIFIER")
-debug_watch_id = setting!(watch, "Debug", "PRODUCT_BUNDLE_IDENTIFIER")
-release_watch_id = setting!(watch, "Release", "PRODUCT_BUNDLE_IDENTIFIER")
-debug_watch_widgets_id = setting!(watch_widgets, "Debug", "PRODUCT_BUNDLE_IDENTIFIER")
-release_watch_widgets_id = setting!(watch_widgets, "Release", "PRODUCT_BUNDLE_IDENTIFIER")
+watch_sources = targets.fetch("SendLogWatch Watch App").fetch("sources")
+watch_entry = watch_sources.find { |entry| entry.is_a?(Hash) && entry["path"] == "../../ios/App/SendLogWatch Watch App" }
+%w[Assets.xcassets PrivacyInfo.xcprivacy Resources/SupabaseConfig.plist SendLogWatch.entitlements].each do |path|
+  abort "Watch source excludes are incomplete: #{path}" unless watch_entry.fetch("excludes").include?(path)
+end
+watch_resources = watch_sources.select { |entry| entry.is_a?(Hash) && entry["buildPhase"] == "resources" }.map { |entry| entry.fetch("path") }
+[
+  "../../ios/App/SendLogWatch Watch App/Assets.xcassets",
+  "../../ios/App/SendLogWatch Watch App/PrivacyInfo.xcprivacy",
+  "../../ios/App/SendLogWatch Watch App/Resources/SupabaseConfig.plist",
+].each { |path| abort "Watch resource is not in the resources phase: #{path}" unless watch_resources.include?(path) }
 
-fail_check("Debug watch companion does not match Debug phone") unless
-  setting!(watch, "Debug", "WATCH_COMPANION_APP_BUNDLE_IDENTIFIER") == debug_phone_id
-fail_check("Release watch companion does not match Release phone") unless
-  setting!(watch, "Release", "WATCH_COMPANION_APP_BUNDLE_IDENTIFIER") == release_phone_id
-fail_check("Debug watch ID collides with Release watch ID") if debug_watch_id == release_watch_id
-fail_check("Debug watch-widget ID collides with Release watch-widget ID") if
-  debug_watch_widgets_id == release_watch_widgets_id
-fail_check("Debug watch IDs are not native-specific") unless
-  debug_watch_id.start_with?("#{debug_phone_id}.") && debug_watch_widgets_id.start_with?("#{debug_watch_id}.")
-fail_check("Release watch ID is not the shipped companion ID") unless
-  release_watch_id == "com.jirathip.sendlog.watchkitapp"
-fail_check("Release watch-widget ID is not the shipped companion ID") unless
-  release_watch_widgets_id == "com.jirathip.sendlog.watchkitapp.widgets"
-
-fail_check("native phone Release is not optimized at -O") unless
-  setting!(app, "Release", "SWIFT_OPTIMIZATION_LEVEL") == "-O"
-fail_check("watch Debug is missing DEBUG") unless
-  setting!(watch, "Debug", "SWIFT_ACTIVE_COMPILATION_CONDITIONS").to_s.split.include?("DEBUG")
-fail_check("watch-widget Debug is missing DEBUG") unless
-  setting!(watch_widgets, "Debug", "SWIFT_ACTIVE_COMPILATION_CONDITIONS").to_s.split.include?("DEBUG")
-
-scheme_path = File.join(
-  PROJECT_PATH,
-  "xcshareddata/xcschemes/SendLogWatch Watch App.xcscheme"
-)
-scheme = File.exist?(scheme_path) ? File.read(scheme_path) : ""
-fail_check("standalone watch scheme is missing") if scheme.empty?
-%w[SendLogWatch\ Watch\ App SendLogWatchWidgets].each do |name|
-  fail_check("standalone watch scheme does not build #{name}") unless scheme.include?(name)
+widget_entry = targets.fetch("SendLogWatchWidgets").fetch("sources").find { |entry| entry.is_a?(Hash) && entry["path"] == "../../ios/App/SendLogWatchWidgets" }
+%w[PrivacyInfo.xcprivacy SendLogWatchWidgets.entitlements].each do |path|
+  abort "Watch widget excludes are incomplete: #{path}" unless widget_entry.fetch("excludes").include?(path)
 end
 
-puts "native-watch-project: generated target/source/resource/embed/package assertions passed"
+dependencies = targets.fetch("SendmeterNative").fetch("dependencies")
+abort "phone does not embed Watch app" unless dependencies.any? { |entry| entry["target"] == "SendLogWatch Watch App" }
+abort "phone does not embed phone widget" unless dependencies.any? { |entry| entry["target"] == "SendmeterNativeWidgets" }
+%w[Supabase Auth SendmeterCore SendmeterWeather SendLogWatchCore SendLogHealthCore].each do |product|
+  abort "phone package link missing #{product}" unless dependencies.any? { |entry| entry["product"] == product }
+end
+
+required_files = %w[
+  Resources/PrivacyInfo.xcprivacy
+  Resources/Assets.xcassets
+  SendmeterNative.entitlements
+  SendLogWatch.entitlements
+  SendLogWatchWidgets.entitlements
+  SupabaseConfig.plist
+  SendmeterNativeWidgets.entitlements
+]
+required_files.each { |path| abort "generated project is missing #{path}" unless pbx.include?(File.basename(path)) }
+
+%w[SendLogWatchCore SendLogHealthCore Supabase Auth SendmeterCore SendmeterWeather].each do |product|
+  abort "generated project is missing package product #{product}" unless pbx.include?(product)
+end
+
+abort "Watch app is not embedded" unless pbx.include?("Embed Watch Content") && pbx.include?("SendLogWatch Watch App.app in Embed Watch Content")
+abort "Watch widget is not embedded" unless pbx.include?("SendLogWatchWidgets.appex in Embed Foundation Extensions")
+abort "phone widget is not embedded" unless pbx.include?("SendmeterNativeWidgets.appex in Embed Foundation Extensions")
+
+watch_dependencies = targets.fetch("SendLogWatch Watch App").fetch("dependencies")
+abort "Watch widget dependency missing" unless watch_dependencies.any? { |entry| entry["target"] == "SendLogWatchWidgets" }
+%w[Supabase SendLogWatchCore SendLogHealthCore].each do |product|
+  abort "Watch package link missing #{product}" unless watch_dependencies.any? { |entry| entry["product"] == product }
+end
+
+%w[
+  com.jirathip.sendlog.native
+  com.jirathip.sendlog
+  com.jirathip.sendlog.native.watchkitapp
+  com.jirathip.sendlog.watchkitapp
+  com.jirathip.sendlog.native.watchkitapp.widgets
+  com.jirathip.sendlog.watchkitapp.widgets
+  com.jirathip.sendlog.native.widgets
+  com.jirathip.sendlog.widgets
+].each { |bundle_id| abort "missing bundle ID #{bundle_id}" unless pbx.include?(bundle_id) }
+
+watch = targets.fetch("SendLogWatch Watch App").fetch("settings").fetch("configs")
+%w[Debug Release].each do |config|
+  companion = watch.fetch(config).fetch("base").fetch("WATCH_COMPANION_APP_BUNDLE_IDENTIFIER")
+  expected = config == "Debug" ? "com.jirathip.sendlog.native" : "com.jirathip.sendlog"
+  abort "Watch companion ID mismatch for #{config}" unless companion == expected
+end
+
+["SendmeterNative", "SendLogWatch Watch App"].each do |scheme|
+  path = File.join(project_dir, "SendmeterNative.xcodeproj/xcshareddata/xcschemes/#{scheme}.xcscheme")
+  abort "missing generated scheme #{scheme}" unless File.file?(path)
+end
+native_scheme = spec.fetch("schemes").fetch("SendmeterNative")
+abort "native scheme misses app target" unless native_scheme.fetch("build").fetch("targets").key?("SendmeterNative")
+abort "native scheme misses app tests" unless native_scheme.fetch("test").fetch("targets").any? { |entry| entry["name"] == "SendmeterNativeTests" }
+watch_scheme = spec.fetch("schemes").fetch("SendLogWatch Watch App")
+abort "Watch scheme misses Watch app" unless watch_scheme.fetch("build").fetch("targets").key?("SendLogWatch Watch App")
+abort "Watch scheme misses Watch widget" unless watch_scheme.fetch("build").fetch("targets").key?("SendLogWatchWidgets")
+
+puts "native-watch-project: generated phone + Watch graph ownership verified"

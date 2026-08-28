@@ -1,0 +1,39 @@
+name: MCP
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - "mcp/**"
+      - ".github/workflows/mcp.yml"
+  pull_request:
+    branches: [main, staging]
+    paths:
+      - "mcp/**"
+      - ".github/workflows/mcp.yml"
+
+jobs:
+  quality:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+      - name: Install dependencies
+        working-directory: mcp
+        run: npm ci
+      - name: Audit dependencies (high/critical)
+        working-directory: mcp
+        run: npm audit --audit-level=high
+      - name: Typecheck
+        working-directory: mcp
+        run: npm run typecheck
+      - name: Tests
+        working-directory: mcp
+        run: npm test
+      - name: Build
+        working-directory: mcp
+        run: npm run build

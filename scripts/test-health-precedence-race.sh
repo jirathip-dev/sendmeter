@@ -91,7 +91,7 @@ sleep 1
 
 # --- Main pgTAP session ----------------------------------------------------
 cd "$repo_root"
-npx supabase test db --local supabase/tests/health_metrics_precedence_race.sql
+supabase test db --local supabase/tests/health_metrics_precedence_race.sql
 status=$?
 
 # Wait out the holder so its transaction releases the lock.

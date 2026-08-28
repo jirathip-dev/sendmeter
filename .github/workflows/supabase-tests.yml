@@ -8,14 +8,14 @@ on:
     paths:
       - "supabase/migrations/**"
       - "supabase/tests/**"
-      - "package.json"
+      - "scripts/test-health-precedence-race.sh"
       - ".github/workflows/supabase-tests.yml"
   pull_request:
     branches: [main, staging]
     paths:
       - "supabase/migrations/**"
       - "supabase/tests/**"
-      - "package.json"
+      - "scripts/test-health-precedence-race.sh"
       - ".github/workflows/supabase-tests.yml"
 
 jobs:
@@ -25,29 +25,24 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: supabase/setup-cli@v1
         with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
+          version: 2.115.0
       - name: Start disposable local Supabase
-        run: npx supabase start --exclude vector --ignore-health-check
+        run: supabase start --exclude vector --ignore-health-check
 
       - name: Apply current migrations to local database
-        run: npx supabase db reset --local --no-seed
+        run: supabase db reset --local --no-seed
 
       - name: Run purge/account-deletion SQL regression
-        run: npm run test:db:purge
+        run: supabase test db --local supabase/tests/purge_sync_generation.sql
 
       - name: Run health-metrics precedence SQL regression
-        run: npm run test:db:health-precedence
+        run: supabase test db --local supabase/tests/health_metrics_precedence.sql
 
       - name: Run health-metrics precedence race SQL regression
-        run: npm run test:db:health-precedence-race
+        run: bash scripts/test-health-precedence-race.sh
 
       - name: Stop disposable local Supabase
         if: always()
-        run: npx supabase stop --no-backup
+        run: supabase stop --no-backup

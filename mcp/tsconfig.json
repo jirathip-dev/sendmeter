@@ -18,5 +18,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "../src/lib/metrics.ts", "../src/lib/dates.ts", "../src/lib/force-curve.ts", "../src/lib/capabilityModel.ts", "../src/types.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }
