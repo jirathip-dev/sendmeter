@@ -16,6 +16,7 @@ final class RecoveryInputsWiringTests: XCTestCase {
         XCTAssertTrue(source.contains("plotArea.clipped()"))
         XCTAssertTrue(source.contains(".value(\"28d EWMA\""))
         XCTAssertTrue(source.contains("StrokeStyle(lineWidth: 1.5, dash:"))
+        XCTAssertTrue(source.contains("RecoveryBarGradient.classification"))
         XCTAssertTrue(source.contains("RecoveryBarGradient.position"))
     }
 }

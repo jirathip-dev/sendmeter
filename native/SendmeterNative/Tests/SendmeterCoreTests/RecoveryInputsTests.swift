@@ -127,7 +127,9 @@ final class RecoveryInputsTests: XCTestCase {
         let metrics = (0..<60).map { makeMetric(dayOffset: 59 - $0, reference: reference, hrv: Double($0 + 1)) }
         let series = RecoveryInputsSeries.build(metrics: metrics, referenceDate: reference, timeZone: bangkok)
         let hrv = try XCTUnwrap(series.rows.first { $0.metric == .hrv })
-        XCTAssertTrue(hrv.days.allSatisfy { $0.trend != nil && $0.trend28 != nil })
+        let latest = try XCTUnwrap(hrv.days.last)
+        XCTAssertEqual(try XCTUnwrap(latest.trend), 57.00000012756625, accuracy: 0.0000001)
+        XCTAssertEqual(try XCTUnwrap(latest.trend28), 46.69921130379113, accuracy: 0.0000001)
     }
 
     private func makeMetric(

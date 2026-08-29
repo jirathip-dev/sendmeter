@@ -379,7 +379,13 @@ private struct RecoveryMetricRowView: View {
     }
 
     private func barColor(value: Double, baseline: Double) -> Color {
-        let position = RecoveryBarGradient.position(value: value, baseline: baseline)
+        let position: Double
+        switch RecoveryBarGradient.classification(value: value, baseline: baseline) {
+        case .neutral:
+            position = 0.5
+        case .below, .above:
+            position = RecoveryBarGradient.position(value: value, baseline: baseline)
+        }
         let lower = UIColor(ChartToken.caution.color(scheme))
         let middle = UIColor(ChartToken.health.color(scheme))
         let upper = UIColor(ChartToken.load.color(scheme))
@@ -411,15 +417,26 @@ private struct RecoveryMetricRowView: View {
 
     private func tooltip(for day: RecoverySeriesDay, x: CGFloat, plotFrame: CGRect) -> some View {
         let value = selectedMetricDay?.value
+        let trend7 = selectedMetricDay?.trend
+        let trend28 = selectedMetricDay?.trend28
         let text = value.map {
             series.metric.formattedWithUnit($0, for: preference)
         } ?? "No data"
+        let trendText: (Double?) -> String = { trend in
+            trend.map { series.metric.formattedWithUnit($0, for: preference) } ?? "—"
+        }
         let content = VStack(alignment: .leading, spacing: 2) {
             Text(LocalDateSupport.monthDayLabel(for: day.date))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Text(text)
                 .font(.subheadline.weight(.semibold).monospacedDigit())
+            Text("7d EWMA  \(trendText(trend7))")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Text("28d EWMA  \(trendText(trend28))")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
         .padding(8)
         .background(ChartToken.tooltip.color(scheme), in: RoundedRectangle(cornerRadius: 8))
