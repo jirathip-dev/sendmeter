@@ -26,6 +26,11 @@ struct RecoveryInputsSheet: View {
     /// Haptic dedupe: one `.selection` tick per day crossed, never per drag
     /// frame, matching the readiness trend card.
     @State private var tickedDay: RecoverySeriesDay?
+    private let fixtureMetrics: [HealthMetric]?
+
+    init(fixtureMetrics: [HealthMetric]? = nil) {
+        self.fixtureMetrics = fixtureMetrics
+    }
 
     private var preference: UnitsPreference {
         AppUnits.normalize(unitsPreference)
@@ -75,7 +80,7 @@ struct RecoveryInputsSheet: View {
     }
 
     private func rebuild() {
-        snapshot = RecoveryInputsSeries.build(metrics: model.healthMetrics)
+        snapshot = RecoveryInputsSeries.build(metrics: fixtureMetrics ?? model.healthMetrics)
         if let selectedDay,
            !snapshot.days.contains(where: { $0.id == selectedDay.id }) {
             self.selectedDay = nil

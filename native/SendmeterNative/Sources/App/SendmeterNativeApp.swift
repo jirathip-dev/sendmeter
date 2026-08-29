@@ -76,7 +76,15 @@ struct RootView: View {
                 case .loading:
                     SplashView()
                 case .signedOut:
+                    #if DEBUG
+                    if CommandLine.arguments.contains("--recovery-fixture") {
+                        RecoveryInputsFixtureView()
+                    } else {
+                        LoginView()
+                    }
+                    #else
                     LoginView()
+                    #endif
                 case .signedIn:
                     if model.passwordRecovery {
                         PasswordRecoveryView()
@@ -132,6 +140,52 @@ struct RootView: View {
         .preferredColorScheme(theme.resolvedScheme(prefersDark: systemScheme == .dark))
     }
 }
+
+#if DEBUG
+private struct RecoveryInputsFixtureView: View {
+    private let metrics: [HealthMetric]
+
+    init() {
+        let reference = Date()
+        let values: [(Int, Double, Double, Double, Double, Double, Double, Double)] = [
+            (13, 42, 61, 13.8, 6.4, 0.9, 1.4, 68.2),
+            (12, 48, 59, 14.1, 7.1, 1.1, 1.6, 68.0),
+            (11, 55, 57, 13.6, 7.7, 1.3, 1.8, 67.8),
+            (10, 61, 56, 13.2, 8.0, 1.5, 1.9, 67.9),
+            (9, 58, 55, 13.5, 7.5, 1.2, 1.7, 68.1),
+            (8, 64, 54, 13.0, 8.2, 1.6, 2.0, 68.3),
+            (7, 60, 53, 13.4, 7.8, 1.4, 1.8, 68.5),
+            (6, 67, 52, 12.9, 8.4, 1.7, 2.1, 68.4),
+            (5, 63, 51, 13.1, 7.9, 1.5, 1.9, 68.6),
+            (4, 70, 50, 12.7, 8.6, 1.8, 2.2, 68.8),
+            (3, 66, 49, 12.8, 8.1, 1.6, 2.0, 68.7),
+            (2, 72, 48, 12.5, 8.8, 1.9, 2.3, 68.9),
+            (1, 69, 47, 12.6, 8.3, 1.7, 2.1, 69.0),
+            (0, 75, 46, 12.3, 9.0, 2.0, 2.4, 69.2)
+        ]
+        metrics = values.enumerated().compactMap { index, value in
+            guard index != 5 else { return nil }
+            return HealthMetric(
+                date: LocalDateSupport.daysAgo(value.0, from: reference, timeZone: .current),
+                readiness: nil,
+                zone: nil,
+                computedAt: reference,
+                hrvSDNNMilliseconds: value.1,
+                restingHeartRate: value.2,
+                sleepHours: value.4,
+                sleepDeepHours: value.5,
+                sleepREMHours: value.6,
+                bodyMassKilograms: value.7,
+                respiratoryRate: value.3
+            )
+        }
+    }
+
+    var body: some View {
+        RecoveryInputsSheet(fixtureMetrics: metrics)
+    }
+}
+#endif
 
 private struct StructuralHapticDiagnosticBanner: View {
     let label: String
