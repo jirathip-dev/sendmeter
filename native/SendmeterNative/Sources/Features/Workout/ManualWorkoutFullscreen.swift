@@ -343,7 +343,11 @@ private struct ForceHeroActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .hapticTap(structuralHapticLevel)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed {
+                    Haptics.shared.playGesture(structuralHapticLevel)
+                }
+            }
             .scaleEffect(
                 ForceMotionPolicy.heroScale(
                     isPressed: configuration.isPressed,
@@ -376,7 +380,11 @@ private struct GlassWorkoutButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .hapticTap(structuralHapticLevel)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed {
+                    Haptics.shared.playGesture(structuralHapticLevel)
+                }
+            }
             .foregroundStyle(tint)
             .background(.ultraThinMaterial, in: Capsule())
             .overlay(Capsule().stroke(tint.opacity(0.18), lineWidth: 1))

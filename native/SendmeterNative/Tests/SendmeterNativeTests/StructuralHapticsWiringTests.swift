@@ -55,7 +55,10 @@ final class StructuralHapticsWiringTests: XCTestCase {
         XCTAssertTrue(style.contains("mode.usesLegacyStructuralGesture"))
         XCTAssertTrue(style.contains("ScrollSafeStructuralButton(configuration: configuration)"))
         XCTAssertTrue(style.contains(".structuralHapticTap()"), "DEBUG A must retain the legacy control path")
-        XCTAssertTrue(structural.contains("buttonStyle(style).hapticTap()"))
+        XCTAssertTrue(structural.contains("buttonStyle(StructuralButtonStyle(style: style))"))
+        XCTAssertTrue(structural.contains("buttonStyle(StructuralPrimitiveButtonStyle(style: style))"))
+        XCTAssertFalse(productionBody.contains("onTapGesture"))
+        XCTAssertFalse(structural.contains("configuration.label.hapticTap"))
     }
 
     func testProductionPathHasNoGlobalZeroDistanceDragRecognizer() {

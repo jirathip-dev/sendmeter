@@ -310,7 +310,11 @@ public struct MetricValue: View {
 public struct PrimaryActionButtonStyle: ButtonStyle {
     public func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .hapticTap(structuralHapticLevel)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed {
+                    Haptics.shared.playGesture(structuralHapticLevel)
+                }
+            }
             .font(.headline)
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, minHeight: 48)

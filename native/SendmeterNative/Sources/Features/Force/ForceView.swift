@@ -672,7 +672,11 @@ private struct GuidedGlassButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .hapticTap(structuralHapticLevel)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed {
+                    Haptics.shared.playGesture(structuralHapticLevel)
+                }
+            }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, 10)

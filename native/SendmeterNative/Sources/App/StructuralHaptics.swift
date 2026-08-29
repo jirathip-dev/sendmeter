@@ -121,12 +121,8 @@ public struct HapticTapModifier: ViewModifier {
     }
 
     private func scrollSafeBody(content: Content) -> some View {
-        // `onTapGesture` participates in the native press path without the
-        // simultaneous recognizer that previously competed with scrolling.
-        content.onTapGesture {
-            guard isEnabled, !muted else { return }
-            Haptics.shared.playGesture(StructuralHaptics.cue(level: level))
-        }
+        // Production explicit surfaces stay on their native action path.
+        content
     }
 }
 
@@ -150,7 +146,7 @@ public extension View {
         if style is any StructuralHapticStyle {
             buttonStyle(style)
         } else {
-            buttonStyle(style).hapticTap()
+            buttonStyle(StructuralButtonStyle(style: style))
         }
     }
 
@@ -158,11 +154,7 @@ public extension View {
     /// `PrimitiveButtonStyle`, so mirror SwiftUI's own overload split.
     @ViewBuilder
     func hapticButtonStyle<S: SwiftUI.PrimitiveButtonStyle>(_ style: S) -> some View {
-        if style is any StructuralHapticStyle {
-            buttonStyle(style)
-        } else {
-            buttonStyle(style).hapticTap()
-        }
+        buttonStyle(StructuralPrimitiveButtonStyle(style: style))
     }
 
     /// Suppress structural feedback for a surface that owns its own feedback
@@ -203,6 +195,38 @@ public struct StructuralDefaultButtonStyle: PrimitiveButtonStyle {
 #else
         ScrollSafeStructuralButton(configuration: configuration)
 #endif
+    }
+}
+
+/// Adapts a regular ButtonStyle to a native action-owned structural tick.
+private struct StructuralButtonStyle<S: ButtonStyle>: PrimitiveButtonStyle {
+    let style: S
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            Haptics.shared.beginTap(cue: StructuralHaptics.cue(level: .normal))
+            Haptics.shared.completeTap()
+            configuration.trigger()
+        } label: {
+            configuration.label
+        }
+        .buttonStyle(style)
+    }
+}
+
+/// Adapts a primitive style without embedding a gesture in its label.
+private struct StructuralPrimitiveButtonStyle<S: PrimitiveButtonStyle>: PrimitiveButtonStyle {
+    let style: S
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            Haptics.shared.beginTap(cue: StructuralHaptics.cue(level: .normal))
+            Haptics.shared.completeTap()
+            configuration.trigger()
+        } label: {
+            configuration.label
+        }
+        .buttonStyle(style)
     }
 }
 
