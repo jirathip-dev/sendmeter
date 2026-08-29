@@ -711,8 +711,11 @@ private struct RoutineRunnerSheet: View {
         .padding(5)
         .routineRunnerGlassBackground(snapshot.visualState, in: Capsule())
         .routineRunnerTopSheen(in: Capsule())
+        .allowsHitTesting(false)
         .overlay {
-            Capsule().strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)
+            Capsule()
+                .strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)
+                .allowsHitTesting(false)
         }
     }
 
