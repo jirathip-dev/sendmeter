@@ -712,7 +712,9 @@ private struct RoutineRunnerSheet: View {
         .routineRunnerGlassBackground(snapshot.visualState, in: Capsule())
         .routineRunnerTopSheen(in: Capsule())
         .overlay {
-            Capsule().strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)
+            Capsule()
+                .strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)
+                .allowsHitTesting(false)
         }
     }
 
@@ -1272,6 +1274,7 @@ private extension View {
                     endPoint: .center
                 )
             )
+            .allowsHitTesting(false)
         }
     }
 }

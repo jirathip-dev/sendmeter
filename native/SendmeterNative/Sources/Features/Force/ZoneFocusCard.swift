@@ -187,7 +187,10 @@ private struct FocusNextButton: View {
 
     var body: some View {
         let color = ChartToken.zoneQuality(recommendation.zone).color(scheme)
-        Button(action: arm) {
+        Button {
+            Haptics.shared.playGesture(.light)
+            arm()
+        } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("FOCUS NEXT")

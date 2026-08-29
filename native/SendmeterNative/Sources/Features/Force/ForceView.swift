@@ -3822,7 +3822,9 @@ private struct ForceProtocolLibraryCard: View {
                                 Image(systemName: "ellipsis.circle")
                                     .font(.title3)
                             }
-                            .hapticTap()
+                            .onTapGesture {
+                                Haptics.shared.playGesture(.light)
+                            }
                         }
                         if preset.id != presets.last?.id { Divider() }
                     }

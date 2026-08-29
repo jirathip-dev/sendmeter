@@ -104,6 +104,20 @@ final class HistoryTapDetailWiringTests: XCTestCase {
         )
     }
 
+    func testPreviouslySilentStructuralControlsOwnTheirTicks() {
+        let zone = code(source("Sources/Features/Force/ZoneFocusCard.swift"))
+        let design = code(source("Sources/App/DesignSystem.swift"))
+        let phases = code(source("Sources/Features/Phases/PhasesView.swift"))
+        let history = code(source("Sources/Features/History/HistoryView.swift"))
+        let force = code(source("Sources/Features/Force/ForceView.swift"))
+
+        XCTAssertTrue(zone.contains("Haptics.shared.playGesture(.light)\n            arm()"))
+        XCTAssertTrue(design.contains("Haptics.shared.playGesture(.light)\n                dismiss()"))
+        XCTAssertGreaterThanOrEqual(countOccurrences("Haptics.shared.playGesture(.light)", in: phases), 2)
+        XCTAssertGreaterThanOrEqual(countOccurrences("Haptics.shared.playGesture(.light)", in: history), 4)
+        XCTAssertTrue(force.contains("Haptics.shared.playGesture(.light)"))
+    }
+
     // MARK: source helpers (duplicated from EmptyStateWiringTests; the
     // private helpers there are not reusable across test classes).
 

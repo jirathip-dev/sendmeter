@@ -185,7 +185,9 @@ private struct CurrentBlockCard: View {
                             .background(SendmeterStyle.phaseColor(phase.id).opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .foregroundStyle(SendmeterStyle.phaseColor(phase.id))
                     }
-                    .hapticTap()
+                    .onTapGesture {
+                        Haptics.shared.playGesture(.light)
+                    }
 
                     if let next = phase.id.nextLogical {
                         Button("End block") { onPropose(next) }

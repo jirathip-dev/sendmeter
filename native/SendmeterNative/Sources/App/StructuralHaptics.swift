@@ -121,10 +121,12 @@ public struct HapticTapModifier: ViewModifier {
     }
 
     private func scrollSafeBody(content: Content) -> some View {
-        // Explicit surfaces own the action closure, so attaching a competing
-        // recognizer here would delay/steal the same touch stream from a
-        // containing ScrollView. Keep the legacy recognizer above DEBUG-only.
-        content
+        // `onTapGesture` participates in the native press path without the
+        // simultaneous recognizer that previously competed with scrolling.
+        content.onTapGesture {
+            guard isEnabled, !muted else { return }
+            Haptics.shared.playGesture(StructuralHaptics.cue(level: level))
+        }
     }
 }
 

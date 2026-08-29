@@ -75,6 +75,28 @@ final class RoutineRunnerVisualWiringTests: XCTestCase {
                 && topContext.contains("foregroundStyle(SendmeterStyle.alert)"),
             "Close keeps its alert meaning in the glyph while its label uses the phase foreground"
         )
+        XCTAssertTrue(
+            topContext.contains("Capsule()\n                .strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)\n                .allowsHitTesting(false)"),
+            "decorative header stroke must not intercept Close"
+        )
+        let sheenHelper = section(
+            workoutSource,
+            startingAt: "func routineRunnerTopSheen<S: Shape>",
+            endingAt: "private func formatTime("
+        )
+        XCTAssertTrue(
+            sheenHelper.contains("shape.fill(\n                LinearGradient(")
+                && sheenHelper.contains(".allowsHitTesting(false)"),
+            "decorative header sheen shape must not intercept Close"
+        )
+        XCTAssertFalse(
+            topContext.contains(".routineRunnerTopSheen(in: Capsule())\n        .allowsHitTesting(false)"),
+            "the sheen gate must not disable the composed header and its Close button"
+        )
+        XCTAssertFalse(
+            topContext.contains("\n        .allowsHitTesting(false)\n        .routineRunnerTopSheen"),
+            "a whole-header hit-test gate must not sit ahead of the sheen helper — it disables Close too"
+        )
 
         // #791 W1: the canonical identity hues moved to `SendmeterSemanticHue`
         // (WatchDesign.swift, shared by phone/watch/widget) and the design

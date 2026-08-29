@@ -358,7 +358,10 @@ public struct ErrorBanner: View {
             Text(message)
                 .font(.subheadline)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button(action: dismiss) {
+            Button {
+                Haptics.shared.playGesture(.light)
+                dismiss()
+            } label: {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.bold))
             }
@@ -422,6 +425,7 @@ public struct AppToast: View {
                 .foregroundStyle(.primary)
             if let action {
                 Button(action.label) {
+                    Haptics.shared.playGesture(.light)
                     dismiss()
                     action.perform()
                 }

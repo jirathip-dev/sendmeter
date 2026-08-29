@@ -1295,7 +1295,9 @@ private struct TrashView: View {
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                             }
-                            .hapticTap()
+                            .onTapGesture {
+                                Haptics.shared.playGesture(.light)
+                            }
                         }
                     }
                 } else {
@@ -1324,7 +1326,9 @@ private struct TrashView: View {
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                             }
-                            .hapticTap()
+                            .onTapGesture {
+                                Haptics.shared.playGesture(.light)
+                            }
                         }
                     }
                 }
