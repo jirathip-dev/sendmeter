@@ -93,6 +93,10 @@ final class RoutineRunnerVisualWiringTests: XCTestCase {
             topContext.contains(".routineRunnerTopSheen(in: Capsule())\n        .allowsHitTesting(false)"),
             "the sheen gate must not disable the composed header and its Close button"
         )
+        XCTAssertFalse(
+            topContext.contains("\n        .allowsHitTesting(false)\n        .routineRunnerTopSheen"),
+            "a whole-header hit-test gate must not sit ahead of the sheen helper — it disables Close too"
+        )
 
         // #791 W1: the canonical identity hues moved to `SendmeterSemanticHue`
         // (WatchDesign.swift, shared by phone/watch/widget) and the design
