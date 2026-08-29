@@ -3825,9 +3825,9 @@ private struct ForceProtocolLibraryCard: View {
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                                     .font(.title3)
-                            }
-                            .onTapGesture {
-                                Haptics.shared.playGesture(.light)
+                                    .onTapGesture {
+                                        Haptics.shared.playGesture(.light)
+                                    }
                             }
                         }
                         if preset.id != presets.last?.id { Divider() }

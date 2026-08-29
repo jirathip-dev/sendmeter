@@ -39,7 +39,7 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertTrue(normalizedStyle.contains("ForceMotionPolicy.heroActionResponseSeconds"))
         XCTAssertTrue(normalizedStyle.contains("ForceMotionPolicy.heroActionDampingFraction"))
         XCTAssertTrue(normalizedStyle.contains("reduceMotion ? nil : .spring("))
-        XCTAssertTrue(style.contains("Haptics.shared.playGesture(structuralHapticLevel)"))
+        XCTAssertTrue(style.contains("StructuralHaptics.cue(level: structuralHapticLevel)"))
         XCTAssertFalse(style.contains(".hapticTap(structuralHapticLevel)"))
         XCTAssertTrue(workout.contains("extension ForceHeroActionButtonStyle: StructuralHapticStyle"))
         XCTAssertTrue(workout.contains("var structuralHapticLevel: HapticTapLevel { .normal }"))

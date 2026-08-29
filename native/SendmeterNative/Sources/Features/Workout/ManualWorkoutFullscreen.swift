@@ -345,7 +345,7 @@ private struct ForceHeroActionButtonStyle: ButtonStyle {
         configuration.label
             .onChange(of: configuration.isPressed) { _, pressed in
                 if pressed {
-                    Haptics.shared.playGesture(structuralHapticLevel)
+                    Haptics.shared.playGesture(StructuralHaptics.cue(level: structuralHapticLevel))
                 }
             }
             .scaleEffect(
@@ -382,7 +382,7 @@ private struct GlassWorkoutButtonStyle: ButtonStyle {
         configuration.label
             .onChange(of: configuration.isPressed) { _, pressed in
                 if pressed {
-                    Haptics.shared.playGesture(structuralHapticLevel)
+                    Haptics.shared.playGesture(StructuralHaptics.cue(level: structuralHapticLevel))
                 }
             }
             .foregroundStyle(tint)
