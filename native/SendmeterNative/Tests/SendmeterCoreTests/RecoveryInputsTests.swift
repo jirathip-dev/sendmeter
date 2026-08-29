@@ -113,6 +113,25 @@ final class RecoveryInputsTests: XCTestCase {
         XCTAssertEqual(hrv.latestDay?.value, 80)
     }
 
+    func testGradientClassificationBoundariesAndSmoothPosition() {
+        XCTAssertEqual(RecoveryBarGradient.classification(value: 100, baseline: 100), .neutral)
+        XCTAssertEqual(RecoveryBarGradient.classification(value: 101, baseline: 100), .neutral)
+        XCTAssertEqual(RecoveryBarGradient.classification(value: 103, baseline: 100), .above)
+        XCTAssertEqual(RecoveryBarGradient.classification(value: 97, baseline: 100), .below)
+        XCTAssertEqual(RecoveryBarGradient.position(value: 120, baseline: 100), 0.6, accuracy: 0.0001)
+        XCTAssertEqual(RecoveryBarGradient.position(value: 80, baseline: 100), 0.4, accuracy: 0.0001)
+    }
+
+    func testBothTrendsUseSixtyDayWarmup() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let metrics = (0..<60).map { makeMetric(dayOffset: 59 - $0, reference: reference, hrv: Double($0 + 1)) }
+        let series = RecoveryInputsSeries.build(metrics: metrics, referenceDate: reference, timeZone: bangkok)
+        let hrv = try XCTUnwrap(series.rows.first { $0.metric == .hrv })
+        let latest = try XCTUnwrap(hrv.days.last)
+        XCTAssertEqual(try XCTUnwrap(latest.trend), 57.00000012756625, accuracy: 0.0000001)
+        XCTAssertEqual(try XCTUnwrap(latest.trend28), 46.69921130379113, accuracy: 0.0000001)
+    }
+
     private func makeMetric(
         dayOffset: Int,
         reference: Date,
