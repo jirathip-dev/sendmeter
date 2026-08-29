@@ -85,14 +85,23 @@ final class HistoryTapDetailWiringTests: XCTestCase {
 
         // Chevron/header AND the populated body both wire the same tap.
         XCTAssertEqual(
-            countOccurrences(".onTapGesture(perform: open)", in: content),
+            countOccurrences(".onTapGesture {", in: content),
             2,
             "the card header/chevron and the populated body must both present the detail"
+        )
+        XCTAssertEqual(
+            countOccurrences("Haptics.shared.playGesture(.light)", in: content),
+            2,
+            "each card action must own its structural tick"
         )
         XCTAssertTrue(card.contains(".sheet(isPresented: $showSendConditions)"))
         XCTAssertTrue(card.contains("SendConditionsDetailSheet()"))
         XCTAssertTrue(card.contains(".accessibilityAction { openSheet() }"))
         XCTAssertTrue(card.contains(".accessibilityAddTraits(.isButton)"))
+        XCTAssertFalse(
+            content.contains(".hapticTap()"),
+            "the card must not install a second recognizer alongside its action"
+        )
     }
 
     // MARK: source helpers (duplicated from EmptyStateWiringTests; the

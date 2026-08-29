@@ -83,9 +83,14 @@ struct ZoneFocusCard: View {
                 .accessibilityAddTraits(.isButton)
                 .accessibilityLabel("Training balance for \(exercise), last four weeks")
                 .accessibilityHint("Opens the training balance detail")
-                .accessibilityAction { detailOpen = true }
-                .hapticTap()
-                .onTapGesture { detailOpen = true }
+                .accessibilityAction {
+                    Haptics.shared.playGesture(.light)
+                    detailOpen = true
+                }
+                .onTapGesture {
+                    Haptics.shared.playGesture(.light)
+                    detailOpen = true
+                }
 
                 FocusNextButton(
                     recommendation: recommendation,

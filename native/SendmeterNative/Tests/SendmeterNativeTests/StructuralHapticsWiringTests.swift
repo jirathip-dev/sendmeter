@@ -44,6 +44,14 @@ final class StructuralHapticsWiringTests: XCTestCase {
         XCTAssertTrue(modifier.contains("guard tracking, isEnabled, !muted else { return }"))
         XCTAssertTrue(modifier.contains("tracking = false"))
         XCTAssertTrue(modifier.contains("Haptics.shared.cancelTap()"))
+        let productionBody = exactBlock(
+            modifier,
+            startingWith: "private func scrollSafeBody(content: Content) -> some View"
+        )
+        XCTAssertFalse(
+            productionBody.contains("simultaneousGesture(TapGesture())"),
+            "production explicit surfaces must not install a competing tap recognizer"
+        )
         XCTAssertTrue(style.contains("mode.usesLegacyStructuralGesture"))
         XCTAssertTrue(style.contains("ScrollSafeStructuralButton(configuration: configuration)"))
         XCTAssertTrue(style.contains(".structuralHapticTap()"), "DEBUG A must retain the legacy control path")

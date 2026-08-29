@@ -40,8 +40,8 @@ private extension StructuralHapticTapPolicy {
 /// The SwiftUI half of the structural haptics layer (#752).
 ///
 /// Production uses SwiftUI's native Button action/press path for implicit
-/// buttons and a simultaneous `TapGesture` for explicit button/card surfaces.
-/// Both let a scroll recognizer win before the tap is committed. The
+/// buttons. Explicit card surfaces fire from their own action closure rather
+/// than installing a second recognizer that competes with scrolling. The
 /// DEBUG-only A/B arms also expose the pre-fix zero-distance drag control so
 /// the original structural-gesture hypothesis can be compared on-device.
 /// The one-tick tracker is Core (`StructuralHapticTracker`); this modifier only
@@ -121,19 +121,10 @@ public struct HapticTapModifier: ViewModifier {
     }
 
     private func scrollSafeBody(content: Content) -> some View {
-        content.simultaneousGesture(
-            TapGesture()
-                .onEnded {
-                    guard isEnabled, !muted else { return }
-                    Haptics.shared.beginTap(
-                        cue: StructuralHaptics.cue(level: level)
-                    )
-                    // The action/press path settles after the native tap has
-                    // won over scrolling; the dispatcher keeps the cue open
-                    // briefly so an explicit action can upgrade it once.
-                    Haptics.shared.completeTap()
-                }
-        )
+        // Explicit surfaces own the action closure, so attaching a competing
+        // recognizer here would delay/steal the same touch stream from a
+        // containing ScrollView. Keep the legacy recognizer above DEBUG-only.
+        content
     }
 }
 
