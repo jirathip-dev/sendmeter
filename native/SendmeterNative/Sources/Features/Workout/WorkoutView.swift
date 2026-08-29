@@ -1222,7 +1222,7 @@ private struct RoutineRunnerGlassButtonStyle: ButtonStyle {
         configuration.label
             .onChange(of: configuration.isPressed) { _, pressed in
                 if pressed {
-                    Haptics.shared.playGesture(structuralHapticLevel)
+                    Haptics.shared.playGesture(StructuralHaptics.cue(level: structuralHapticLevel))
                 }
             }
             .font(.subheadline.weight(.semibold))
