@@ -176,6 +176,7 @@ struct MainTabView: View {
 }
 
 struct SplashView: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -229,7 +230,7 @@ struct SplashView: View {
                         kangaroo(
                             in: proxy,
                             pose: SplashDynoTimeline.pose(
-                                at: context.date.timeIntervalSinceReferenceDate
+                                at: context.date.timeIntervalSince(model.splashPresentationDate ?? context.date)
                             )
                         )
                     }
@@ -248,6 +249,9 @@ struct SplashView: View {
                     .padding(.bottom, 24)
             }
             .ignoresSafeArea()
+        }
+        .onAppear {
+            model.splashPresented(at: Date())
         }
     }
 

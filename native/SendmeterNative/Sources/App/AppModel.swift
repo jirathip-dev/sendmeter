@@ -197,9 +197,11 @@ private struct CacheEntityIdentity: Hashable {
 @Observable
 public final class AppModel {
     public private(set) var bootState: AppBootState = .loading
-    /// Starts when this process creates its model; warm resumes reuse the model.
-    private let splashPresentationFloor = SplashPresentationFloor(coldStartAt: Date())
+    /// Set by SplashView's first presentation, after synchronous model setup.
+    private var splashPresentationFloor: SplashPresentationFloor?
+    private var splashPresentationWaiters: [CheckedContinuation<SplashPresentationFloor, Never>] = []
     private var splashPresentationFloorConsumed = false
+    public private(set) var splashPresentationDate: Date?
     public private(set) var authSession: AuthSession?
     /// Local auth self-heal and the SDK's resulting `.signedOut` event can
     /// cross an await in either order. This gate makes the account boundary
@@ -821,9 +823,27 @@ public final class AppModel {
     private func awaitSplashPresentationFloor() async {
         guard !splashPresentationFloorConsumed else { return }
         splashPresentationFloorConsumed = true
-        let remaining = splashPresentationFloor.remaining(at: Date())
+        let floor: SplashPresentationFloor
+        if let splashPresentationFloor {
+            floor = splashPresentationFloor
+        } else {
+            floor = await withCheckedContinuation { continuation in
+                splashPresentationWaiters.append(continuation)
+            }
+        }
+        let remaining = floor.remaining(at: Date())
         guard remaining > 0 else { return }
         try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+    }
+
+    func splashPresented(at date: Date) {
+        guard splashPresentationFloor == nil else { return }
+        splashPresentationDate = date
+        let floor = SplashPresentationFloor(coldStartAt: date)
+        splashPresentationFloor = floor
+        let waiters = splashPresentationWaiters
+        splashPresentationWaiters.removeAll()
+        waiters.forEach { $0.resume(returning: floor) }
     }
 
     /// The Observation equivalent of the former `$status` sink. Keeping this
