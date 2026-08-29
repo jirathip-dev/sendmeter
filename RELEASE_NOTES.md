@@ -72,6 +72,9 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native Recovery Inputs charts now keep every bar inside its card, show both
+  7-day and 28-day trends, and color each value smoothly against its 28-day baseline.
+
 - Apple Watch now reads the same semantic hues as the iPhone and widgets — primary/optimal/caution/danger (a high/recover ACWR day is orange on both, not orange-phone vs pink-watch), with the watch's own Always-On dimming preserved. Force, Workout, and Status now share one glyph mapping (scalemass / figure.climbing / chart.bar.fill) across watch, phone, and widgets.
 - Apple Watch Force setup now uses compact chip pickers for exercise and protocol selection, matching the phone's chip treatment, with the selected protocol's summary kept one glance below the picker.
 - Apple Watch Force now gives a subtle click when a hold's peak is established — the force settling below the rep's peak — once per rep, on top of the existing start/save/finish confirmations.

@@ -104,10 +104,19 @@ struct RecoveryInputsSheet: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+            HStack(spacing: 5) {
+                Rectangle()
+                    .fill(ChartToken.reference.color(scheme))
+                    .frame(width: 14, height: 2)
+                    .overlay { Rectangle().stroke(style: StrokeStyle(lineWidth: 1, dash: [3, 2])).foregroundStyle(ChartToken.reference.color(scheme)) }
+                Text("28d")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Bars show each day. The blue line is the seven-day average trend.")
+        .accessibilityLabel("Bars show each day. The blue line is the seven-day average trend. The dashed line is the 28-day average trend.")
     }
 
     // MARK: - Rows
@@ -286,14 +295,14 @@ private struct RecoveryMetricRowView: View {
 
             ForEach(series.days) { day in
                 if let value = day.value {
+                    let baseline = day.trend28 ?? series.yDomain?.lowerBound ?? value
                     BarMark(
                         x: .value("Day", day.dateValue),
-                        y: .value(series.metric.title, value)
+                        yStart: .value("Baseline", series.yDomain?.lowerBound ?? baseline),
+                        yEnd: .value(series.metric.title, value)
                     )
-                    .foregroundStyle(
-                        ChartToken.health.color(scheme)
-                            .opacity(selectedDay == nil || selectedDay?.id == day.id ? 0.75 : 0.38)
-                    )
+                    .foregroundStyle(barColor(value: value, baseline: baseline))
+                    .opacity(selectedDay == nil || selectedDay?.id == day.id ? 0.75 : 0.38)
                     .cornerRadius(2)
                 }
 
@@ -305,6 +314,16 @@ private struct RecoveryMetricRowView: View {
                     )
                     .foregroundStyle(ChartToken.focus.color(scheme))
                     .lineStyle(StrokeStyle(lineWidth: 2))
+                    .interpolationMethod(.monotone)
+                }
+                if let trend28 = day.trend28, let runIndex = day.runIndex {
+                    LineMark(
+                        x: .value("Day", day.dateValue),
+                        y: .value("28d EWMA", trend28),
+                        series: .value("Long run", runIndex)
+                    )
+                    .foregroundStyle(ChartToken.reference.color(scheme))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                     .interpolationMethod(.monotone)
                 }
             }
@@ -324,6 +343,9 @@ private struct RecoveryMetricRowView: View {
             }
         }
         .frame(height: chartHeight)
+        .chartPlotStyle { plotArea in
+            plotArea.clipped()
+        }
         .chartOverlay { proxy in
             GeometryReader { geo in
                 let plotFrame = geo[proxy.plotAreaFrame]
@@ -354,6 +376,26 @@ private struct RecoveryMetricRowView: View {
             }
         }
         .hapticTapMuted()
+    }
+
+    private func barColor(value: Double, baseline: Double) -> Color {
+        let position = RecoveryBarGradient.position(value: value, baseline: baseline)
+        let lower = UIColor(ChartToken.caution.color(scheme))
+        let middle = UIColor(ChartToken.health.color(scheme))
+        let upper = UIColor(ChartToken.load.color(scheme))
+        if position <= 0.5 {
+            return blend(lower, middle, amount: position * 2)
+        }
+        return blend(middle, upper, amount: (position - 0.5) * 2)
+    }
+
+    private func blend(_ first: UIColor, _ second: UIColor, amount: Double) -> Color {
+        var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+        var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+        first.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+        second.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+        let t = CGFloat(amount)
+        return Color(red: r1 + (r2 - r1) * t, green: g1 + (g2 - g1) * t, blue: b1 + (b2 - b1) * t, opacity: a1 + (a2 - a1) * t)
     }
 
     private func nearestDay(at x: CGFloat, proxy: ChartProxy, plotFrame: CGRect) -> RecoverySeriesDay? {
