@@ -180,13 +180,10 @@ struct SplashView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        // #662: the shipped Capacitor app's splash — cave backdrop filled to
-        // the screen with the separated kangaroo centered on top. Mirrors the
-        // web SplashScreen component (src/components/SplashScreen.tsx +
-        // src/index.css .splash-*). KEEP-IN-SYNC: if you change either side,
-        // update the other (assets live in Resources/Assets.xcassets, motion
-        // values in SplashDynoTimeline; the web side carries the twin
-        // KEEP-IN-SYNC comment in SplashScreen.tsx).
+        // #841: the native splash keeps the retired web/Capacitor dyno motion
+        // contract in SplashDynoTimeline. The web component is retired; keep
+        // this animation's zero phase, transform-only stops, and reduce-motion
+        // pose aligned with that historical reference.
         ZStack {
             // Cave backdrop: web `object-fit: cover; object-position: center
             // 57%` (center 64% on ≥720px-wide screens). The image is wider

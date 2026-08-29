@@ -197,6 +197,9 @@ private struct CacheEntityIdentity: Hashable {
 @Observable
 public final class AppModel {
     public private(set) var bootState: AppBootState = .loading
+    /// Starts when this process creates its model; warm resumes reuse the model.
+    private let splashPresentationFloor = SplashPresentationFloor(coldStartAt: Date())
+    private var splashPresentationFloorConsumed = false
     public private(set) var authSession: AuthSession?
     /// Local auth self-heal and the SDK's resulting `.signedOut` event can
     /// cross an await in either order. This gate makes the account boundary
@@ -813,6 +816,14 @@ public final class AppModel {
                 await self.handleAuthEvent(event, session: session)
             }
         }
+    }
+
+    private func awaitSplashPresentationFloor() async {
+        guard !splashPresentationFloorConsumed else { return }
+        splashPresentationFloorConsumed = true
+        let remaining = splashPresentationFloor.remaining(at: Date())
+        guard remaining > 0 else { return }
+        try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
     }
 
     /// The Observation equivalent of the former `$status` sink. Keeping this
@@ -1678,6 +1689,7 @@ public final class AppModel {
                 authSession = nil
                 didBootstrapUserID = nil
                 resetAccountState()
+                await awaitSplashPresentationFloor()
                 bootState = .signedOut
                 await tearDownRealtime()
                 return
@@ -1714,11 +1726,11 @@ public final class AppModel {
                 break
             }
             let changedUser = authSession?.user.id != session.user.id
+            async let splashFloor: Void = awaitSplashPresentationFloor()
             if changedUser {
                 await teardownGuidedProtocolBeforeAuthRevocation()
             }
             authSession = session
-            bootState = .signedIn
             watch.relaySession(session)
             if changedUser || didBootstrapUserID != session.user.id {
                 resetAccountState()
@@ -1763,6 +1775,8 @@ public final class AppModel {
                     break
                 }
             }
+            await splashFloor
+            bootState = .signedIn
             updateAuthClockAdvisory(for: session)
         case .passwordRecovery:
             let preparedSession: AuthSession?
@@ -1787,6 +1801,7 @@ public final class AppModel {
             }
             authSession = preparedSession
             passwordRecovery = true
+            await awaitSplashPresentationFloor()
             bootState = preparedSession == nil ? .signedOut : .signedIn
             if accountChanged || preparedSession == nil {
                 // Password-recovery callbacks can carry a different session
