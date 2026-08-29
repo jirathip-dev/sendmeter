@@ -76,12 +76,22 @@ final class RoutineRunnerVisualWiringTests: XCTestCase {
             "Close keeps its alert meaning in the glyph while its label uses the phase foreground"
         )
         XCTAssertTrue(
-            topContext.contains(".routineRunnerTopSheen(in: Capsule())\n        .allowsHitTesting(false)"),
-            "decorative header sheen must not intercept Close"
-        )
-        XCTAssertTrue(
             topContext.contains("Capsule()\n                .strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)\n                .allowsHitTesting(false)"),
             "decorative header stroke must not intercept Close"
+        )
+        let sheenHelper = section(
+            workoutSource,
+            startingAt: "func routineRunnerTopSheen<S: Shape>",
+            endingAt: "private func formatTime("
+        )
+        XCTAssertTrue(
+            sheenHelper.contains("shape.fill(\n                LinearGradient(")
+                && sheenHelper.contains(".allowsHitTesting(false)"),
+            "decorative header sheen shape must not intercept Close"
+        )
+        XCTAssertFalse(
+            topContext.contains(".routineRunnerTopSheen(in: Capsule())\n        .allowsHitTesting(false)"),
+            "the sheen gate must not disable the composed header and its Close button"
         )
 
         // #791 W1: the canonical identity hues moved to `SendmeterSemanticHue`
