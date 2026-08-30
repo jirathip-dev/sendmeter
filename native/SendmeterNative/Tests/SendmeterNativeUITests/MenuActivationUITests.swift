@@ -7,6 +7,10 @@ final class MenuActivationUITests: XCTestCase {
         app.launch()
         defer { app.terminate() }
 
+        let tickCount = app.staticTexts["menu-tick-count"]
+        XCTAssertTrue(tickCount.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Menu ticks: 0"].exists, "Menu must be silent before selection")
+
         let trigger = app.buttons["change-block-menu"]
         XCTAssertTrue(trigger.waitForExistence(timeout: 10))
         trigger.tap()

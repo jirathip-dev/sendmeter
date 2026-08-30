@@ -167,7 +167,7 @@ final class StructuralHapticsWiringTests: XCTestCase {
     func testMenuWiringKeepsTriggerStyleAndRowTick() {
         let source = code(source("Sources/Features/Phases/PhasesView.swift"))
         XCTAssertTrue(source.contains("Menu {"))
-        XCTAssertFalse(source.contains(".hapticTap()"))
+        XCTAssertFalse(source.contains(".onTapGesture {\n                                Haptics.shared.playGesture(.light)"))
         XCTAssertTrue(source.contains("Button(candidate.name) {\n                                Haptics.shared.playGesture(.light)\n                                onPropose(candidate.id)\n                            }"))
     }
 

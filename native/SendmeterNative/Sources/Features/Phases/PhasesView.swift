@@ -170,6 +170,7 @@ struct CurrentBlockCard: View {
                     }
                 }
                 HStack(spacing: 12) {
+                    // Menu presentation is intentionally silent; only selecting a row is a user action and ticks once.
                     Menu {
                         ForEach(PhaseCatalog.all.filter { $0.id != phase.id }) { candidate in
                             Button(candidate.name) {
@@ -184,9 +185,6 @@ struct CurrentBlockCard: View {
                             .padding(.vertical, 9)
                             .background(SendmeterStyle.phaseColor(phase.id).opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .foregroundStyle(SendmeterStyle.phaseColor(phase.id))
-                            .onTapGesture {
-                                Haptics.shared.playGesture(.light)
-                            }
                             .accessibilityIdentifier("change-block-menu")
                     }
 

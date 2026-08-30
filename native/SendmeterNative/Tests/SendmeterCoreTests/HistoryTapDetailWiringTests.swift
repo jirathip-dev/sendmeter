@@ -113,7 +113,7 @@ final class HistoryTapDetailWiringTests: XCTestCase {
 
         XCTAssertTrue(zone.contains("Haptics.shared.playGesture(.light)\n            arm()"))
         XCTAssertTrue(design.contains("Haptics.shared.playGesture(.light)\n                dismiss()"))
-        XCTAssertGreaterThanOrEqual(countOccurrences("Haptics.shared.playGesture(.light)", in: phases), 2)
+        XCTAssertEqual(countOccurrences("Haptics.shared.playGesture(.light)", in: phases), 1)
         XCTAssertGreaterThanOrEqual(countOccurrences("Haptics.shared.playGesture(.light)", in: history), 4)
         XCTAssertTrue(force.contains("Haptics.shared.playGesture(.light)"))
     }
