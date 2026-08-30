@@ -1,4 +1,5 @@
 import Foundation
+import SendmeterCore
 import XCTest
 @testable import Sendmeter
 
@@ -44,10 +45,21 @@ final class StructuralHapticsWiringTests: XCTestCase {
         XCTAssertTrue(modifier.contains("guard tracking, isEnabled, !muted else { return }"))
         XCTAssertTrue(modifier.contains("tracking = false"))
         XCTAssertTrue(modifier.contains("Haptics.shared.cancelTap()"))
+        let productionBody = exactBlock(
+            modifier,
+            startingWith: "private func scrollSafeBody(content: Content) -> some View"
+        )
+        XCTAssertFalse(
+            productionBody.contains("simultaneousGesture(TapGesture())"),
+            "production explicit surfaces must not install a competing tap recognizer"
+        )
         XCTAssertTrue(style.contains("mode.usesLegacyStructuralGesture"))
         XCTAssertTrue(style.contains("ScrollSafeStructuralButton(configuration: configuration)"))
         XCTAssertTrue(style.contains(".structuralHapticTap()"), "DEBUG A must retain the legacy control path")
-        XCTAssertTrue(structural.contains("buttonStyle(style).hapticTap()"))
+        XCTAssertTrue(structural.contains("buttonStyle(StructuralButtonStyle(style: style))"))
+        XCTAssertTrue(structural.contains("buttonStyle(StructuralPrimitiveButtonStyle(style: style))"))
+        XCTAssertFalse(productionBody.contains("onTapGesture"))
+        XCTAssertFalse(structural.contains("configuration.label.hapticTap"))
     }
 
     func testProductionPathHasNoGlobalZeroDistanceDragRecognizer() {
@@ -149,6 +161,14 @@ final class StructuralHapticsWiringTests: XCTestCase {
         XCTAssertTrue(toast.contains(".contentShape(Capsule())"))
         XCTAssertFalse(errorBanner.contains(".contentShape(Rectangle())"))
         XCTAssertFalse(toast.contains(".contentShape(Rectangle())"))
+    }
+
+
+    func testMenuWiringKeepsTriggerStyleAndRowTick() {
+        let source = code(source("Sources/Features/Phases/PhasesView.swift"))
+        XCTAssertTrue(source.contains("Menu {"))
+        XCTAssertFalse(source.contains(".onTapGesture {\n                                Haptics.shared.playGesture(.light)"))
+        XCTAssertTrue(source.contains("Button(candidate.name) {\n                                Haptics.shared.playGesture(.light)\n                                onPropose(candidate.id)\n                            }"))
     }
 
     private func source(_ relativePath: String) -> String {

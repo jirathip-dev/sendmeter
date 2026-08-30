@@ -1,15 +1,13 @@
 # Dependency security and maintenance
 
-This repository is configured for Dependabot version updates. Native Dependabot
-security updates are currently inert: a read-only settings check found
-vulnerability alerts unavailable and automated security fixes disabled. The
-human gate is Guy-only: under repository Settings → Advanced Security, Guy must
-enable the dependency graph, Dependabot alerts, and Dependabot security
-updates. GitHub requires those features for grouped security updates. Issue
-#804 remains open until Guy explicitly approves that settings change. Until
-then, the `security-updates` groups in `.github/dependabot.yml` cannot produce
-native security PRs; the CI `npm audit` gates and version-update PRs remain
-active.
+This repository is configured for Dependabot version updates. The dependency
+graph, Dependabot alerts, and Dependabot security updates are enabled, authorized
+by Guy on 2026-08-30 through the GitHub API, with live read-back verification.
+GitHub requires those features for grouped security updates, so the
+`security-updates` groups in `.github/dependabot.yml` can now produce native
+security PRs; the CI `npm audit` gates and version-update PRs remain active.
+This document previously recorded these settings as Guy-only and the gate as
+unlifted; explicit owner authorization lifted that gate on 2026-08-30.
 
 All updates are reviewable pull requests only: there is no auto-merge
 configuration, and dependency updates do not receive write permissions beyond
@@ -97,10 +95,10 @@ convenience.
 
 ## Operator response
 
-1. Do not enable or disable repository security settings from an agent. Keep
-   issue #804 open until Guy approves the Settings → Advanced Security gate
-   for the dependency graph, Dependabot alerts, and Dependabot security
-   updates.
+1. Repository security settings remain owner-authorization-gated by policy:
+   agents must not enable or disable them without explicit owner direction. The
+   2026-08-30 authorization completed the enablement; issue #804 records the
+   evidence.
 2. Treat a high/critical MCP audit failure or Dependabot security PR as a
    blocking security change.
 3. Reproduce with the affected package's install and audit gate, inspect the

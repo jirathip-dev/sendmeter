@@ -72,9 +72,17 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native iPhone tab bar now reads Dashboard → Force → Workout → History →
+  Settings, with the approved climbing mascots on the Force and Workout tabs
+  and on the Manual workout card (replacing the SF Symbols).
+
+- Native Recovery Inputs charts now keep every bar inside its card, show both
+  7-day and 28-day trends, and color each value smoothly against its 28-day baseline.
+
 - Apple Watch now reads the same semantic hues as the iPhone and widgets — primary/optimal/caution/danger (a high/recover ACWR day is orange on both, not orange-phone vs pink-watch), with the watch's own Always-On dimming preserved. Force, Workout, and Status now share one glyph mapping (scalemass / figure.climbing / chart.bar.fill) across watch, phone, and widgets.
 - Apple Watch Force setup now uses compact chip pickers for exercise and protocol selection, matching the phone's chip treatment, with the selected protocol's summary kept one glance below the picker.
 - Apple Watch Force now gives a subtle click when a hold's peak is established — the force settling below the rep's peak — once per rep, on top of the existing start/save/finish confirmations.
+- Native splash: the kangaroo now starts at its rest pose and remains visible for at least one second on a cold launch, including with Reduce Motion enabled; warm resumes remain immediate.
 - Native splash: the kangaroo now plays the same looping dyno as the web/Capacitor app — crouch, jump, drop back-first onto the pad, recover — with the matching 4.2s cycle and easing; Reduce Motion keeps a static frame instead.
 - Native sheets now share an 18-point corner radius and consistent open/close feedback across Home, Force, Training Load, History, Workout, and Settings; dismissible sheets also show a grabber and support drag-to-dismiss while the guided routine runner keeps its classified Close path.
 - Native empty states now use Sendmeter artwork, product-specific guidance, and one clear next action when you have no workouts, force history, or Progressor connection.
@@ -142,6 +150,10 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native Force: guided protocol launch now snapshots the selected side through target resolution, preserving Left/Right and applying only the active exercise's deterministic fallback for stale values.
+- Native History and Send Conditions now activate on the first tap without delaying vertical scrolling; structural haptics remain on the action that wins the gesture.
+- Native Routine runner: the Close control is tappable again, including across
+  its full accessible hit target, without changing the existing exit safety flow.
 - Native History: tapping any session row — Tindeq grouped, workout, manual/plain, pending or rejected — now always opens the existing read-only detail (records, zone mix, workout summary/HR trace, or the honest plain-session summary) instead of sometimes landing in the editor. Edit stays on the explicit swipe action.
 - Native History: as part of the same tap fix, a plain/manual session no longer jumps straight into the session editor on tap; it opens the same read-only detail surface as every other row, with its real date, duration, RPE and load — nothing fabricated.
 - Native History now converges permanent Trash deletions across signed-in devices, so a session or Force recording deleted forever no longer remains in another device's cached history after sync.

@@ -1,0 +1,13 @@
+{
+  "images" : [
+    {
+      "filename" : "workout-r16-optical-160.svg",
+      "idiom" : "universal",
+      "preserves-vector-representation" : true
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

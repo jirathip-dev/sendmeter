@@ -1,5 +1,24 @@
 import Foundation
 
+public enum RecoveryBarGradient: Equatable, Sendable {
+    case below
+    case neutral
+    case above
+
+    public static func classification(value: Double, baseline: Double) -> RecoveryBarGradient {
+        let distance = abs(value - baseline) / max(abs(baseline), 1e-9)
+        if distance < 0.02 { return .neutral }
+        return value < baseline ? .below : .above
+    }
+
+    /// 0 is yellow, 0.5 is neutral, and 1 is purple. Values between those
+    /// anchors preserve the day's relative distance rather than using bands.
+    public static func position(value: Double, baseline: Double) -> Double {
+        let distance = min(abs(value - baseline) / max(abs(baseline), 1e-9), 1)
+        return min(max(0.5 + (value >= baseline ? distance : -distance) * 0.5, 0), 1)
+    }
+}
+
 /// The seven raw HealthKit inputs behind the daily readiness score (#753).
 ///
 /// This is the native data-driven replacement for the web's
@@ -109,6 +128,7 @@ public struct RecoveryMetricDay: Equatable, Identifiable, Sendable {
     public let dateValue: Date
     public let value: Double?
     public let trend: Double?
+    public let trend28: Double?
     public let runIndex: Int?
 
     public init(
@@ -116,12 +136,14 @@ public struct RecoveryMetricDay: Equatable, Identifiable, Sendable {
         dateValue: Date,
         value: Double?,
         trend: Double?,
+        trend28: Double? = nil,
         runIndex: Int? = nil
     ) {
         self.date = date
         self.dateValue = dateValue
         self.value = value
         self.trend = trend
+        self.trend28 = trend28
         self.runIndex = runIndex
     }
 
@@ -131,6 +153,7 @@ public struct RecoveryMetricDay: Equatable, Identifiable, Sendable {
             dateValue: dateValue,
             value: value,
             trend: trend,
+            trend28: trend28,
             runIndex: runIndex
         )
     }
@@ -164,6 +187,7 @@ public struct RecoveryMetricSeries: Equatable, Identifiable, Sendable {
         for day in days {
             if let value = day.value { present.append(value) }
             if let trend = day.trend { present.append(trend) }
+            if let trend28 = day.trend28 { present.append(trend28) }
         }
         guard let minimum = present.min(), let maximum = present.max() else { return nil }
         if minimum == maximum {
@@ -197,12 +221,14 @@ public struct RecoveryInputsSeries: Equatable, Sendable {
         metrics: [HealthMetric],
         visibleDays: Int = 14,
         trendSpan: Int = 7,
+        longTrendSpan: Int = 28,
         warmupDays: Int = 60,
         referenceDate: Date = Date(),
         timeZone: TimeZone = .current
     ) -> RecoveryInputsSeries {
         precondition(visibleDays > 0, "visibleDays must be positive")
         precondition(trendSpan > 0, "trendSpan must be positive")
+        precondition(longTrendSpan > 0, "longTrendSpan must be positive")
         precondition(warmupDays >= visibleDays, "warmupDays must cover the visible window")
 
         let byDate = Dictionary(
@@ -222,6 +248,7 @@ public struct RecoveryInputsSeries: Equatable, Sendable {
         let rows = RecoveryMetric.allCases.compactMap { metric -> RecoveryMetricSeries? in
             let rawValues = allDates.map { metric.value(from: byDate[$0.date]) }
             let trends = TrainingMetrics.ewma(values: rawValues, span: trendSpan)
+            let longTrends = TrainingMetrics.ewma(values: rawValues, span: longTrendSpan)
             let dated = allDates.indices.map { index in
                 let day = allDates[index]
                 let value = rawValues[index]
@@ -229,7 +256,8 @@ public struct RecoveryInputsSeries: Equatable, Sendable {
                     date: day.date,
                     dateValue: day.dateValue,
                     value: value,
-                    trend: value == nil ? nil : trends[index]
+                    trend: value == nil ? nil : trends[index],
+                    trend28: value == nil ? nil : longTrends[index]
                 )
             }
             let grouped = groupedIntoRuns(Array(dated.suffix(visibleDays)))

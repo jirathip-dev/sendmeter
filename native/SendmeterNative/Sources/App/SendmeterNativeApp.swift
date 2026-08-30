@@ -5,6 +5,7 @@ import SwiftUI
 @main
 struct SendmeterNativeApp: App {
     private let structuralHapticMode: StructuralHapticDiagnosticMode
+    private let menuActivationProbe: Bool
     @State private var model: AppModel
     // #631: the theme choice is read in init — before the first frame —
     // so a saved appearance never flashes the default scheme.
@@ -13,11 +14,13 @@ struct SendmeterNativeApp: App {
 
     init() {
         #if DEBUG
+        menuActivationProbe = CommandLine.arguments.contains("--menu-activation-probe")
         structuralHapticMode = StructuralHapticDiagnosticMode.resolve(
             arguments: CommandLine.arguments,
             debugBuild: true
         )
         #else
+        menuActivationProbe = false
         // Release/TestFlight has no diagnostic parser or opt-in path.
         structuralHapticMode = .normal
         #endif
@@ -31,7 +34,17 @@ struct SendmeterNativeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(structuralHapticMode: structuralHapticMode)
+            Group {
+                #if DEBUG
+                if menuActivationProbe {
+                    MenuActivationProbeView()
+                } else {
+                    RootView(structuralHapticMode: structuralHapticMode)
+                }
+                #else
+                RootView(structuralHapticMode: structuralHapticMode)
+                #endif
+            }
                 .buttonStyle(StructuralDefaultButtonStyle(mode: structuralHapticMode))
                 .environment(\.structuralHapticTapPolicy, structuralHapticMode.tapPolicy)
                 .environment(model)
@@ -76,7 +89,19 @@ struct RootView: View {
                 case .loading:
                     SplashView()
                 case .signedOut:
+                    #if DEBUG
+                    if CommandLine.arguments.contains("--tabs-fixture") {
+                        // #875 evidence harness: render the real tab bar
+                        // without a signed-in session.
+                        TabsFixtureView(selectedTab: fixtureTabArgument())
+                    } else if CommandLine.arguments.contains("--recovery-fixture") {
+                        RecoveryInputsFixtureView()
+                    } else {
+                        LoginView()
+                    }
+                    #else
                     LoginView()
+                    #endif
                 case .signedIn:
                     if model.passwordRecovery {
                         PasswordRecoveryView()
@@ -133,6 +158,89 @@ struct RootView: View {
     }
 }
 
+#if DEBUG
+private struct RecoveryInputsFixtureView: View {
+    private let metrics: [HealthMetric]
+
+    init() {
+        let reference = Date()
+        let values: [(Int, Double, Double, Double, Double, Double, Double, Double)] = [
+            (13, 42, 61, 13.8, 6.4, 0.9, 1.4, 68.2),
+            (12, 48, 59, 14.1, 7.1, 1.1, 1.6, 68.0),
+            (11, 55, 57, 13.6, 7.7, 1.3, 1.8, 67.8),
+            (10, 61, 56, 13.2, 8.0, 1.5, 1.9, 67.9),
+            (9, 58, 55, 13.5, 7.5, 1.2, 1.7, 68.1),
+            (8, 64, 54, 13.0, 8.2, 1.6, 2.0, 68.3),
+            (7, 60, 53, 13.4, 7.8, 1.4, 1.8, 68.5),
+            (6, 67, 52, 12.9, 8.4, 1.7, 2.1, 68.4),
+            (5, 63, 51, 13.1, 7.9, 1.5, 1.9, 68.6),
+            (4, 70, 50, 12.7, 8.6, 1.8, 2.2, 68.8),
+            (3, 66, 49, 12.8, 8.1, 1.6, 2.0, 68.7),
+            (2, 72, 48, 12.5, 8.8, 1.9, 2.3, 68.9),
+            (1, 69, 47, 12.6, 8.3, 1.7, 2.1, 69.0),
+            (0, 75, 46, 12.3, 9.0, 2.0, 2.4, 69.2)
+        ]
+        metrics = values.enumerated().compactMap { index, value in
+            guard index != 5 else { return nil }
+            return HealthMetric(
+                date: LocalDateSupport.daysAgo(value.0, from: reference, timeZone: .current),
+                readiness: nil,
+                zone: nil,
+                computedAt: reference,
+                hrvSDNNMilliseconds: value.1,
+                restingHeartRate: value.2,
+                sleepHours: value.4,
+                sleepDeepHours: value.5,
+                sleepREMHours: value.6,
+                bodyMassKilograms: value.7,
+                respiratoryRate: value.3
+            )
+        }
+    }
+
+    var body: some View {
+        RecoveryInputsSheet(fixtureMetrics: metrics)
+    }
+}
+#endif
+
+#if DEBUG
+/// #875 evidence harness: presents the real `MainTabView` (tab bar + approved
+/// mascots) without a signed-in Supabase session so simulator screenshots can
+/// prove tab order and mascot rendering in light and dark. DEBUG-only — the
+/// selected tab comes from `--tabs-fixture <name>`; the app's normal
+/// signed-in flow never reaches this view.
+private struct TabsFixtureView: View {
+    private let selectedTab: AppTab
+    @Environment(AppModel.self) private var model
+
+    init(selectedTab: AppTab) {
+        self.selectedTab = selectedTab
+    }
+
+    var body: some View {
+        MainTabView()
+            .onAppear {
+                model.selectedTab = selectedTab
+            }
+    }
+}
+
+private func fixtureTabArgument() -> AppTab {
+    let args = CommandLine.arguments
+    guard let flagIndex = args.firstIndex(of: "--tabs-fixture"),
+          flagIndex + 1 < args.count
+    else { return .dashboard }
+    switch args[flagIndex + 1] {
+    case "force": return .force
+    case "workout": return .workout
+    case "history": return .history
+    case "settings": return .settings
+    default: return .dashboard
+    }
+}
+#endif
+
 private struct StructuralHapticDiagnosticBanner: View {
     let label: String
 
@@ -158,12 +266,31 @@ struct MainTabView: View {
             DashboardView()
                 .tabItem { Label("Dashboard", systemImage: SendmeterIconSymbol.status.rawValue) }
                 .tag(AppTab.dashboard)
-            WorkoutView()
-                .tabItem { Label("Workout", systemImage: SendmeterIconSymbol.workout.rawValue) }
-                .tag(AppTab.workout)
+            // #875: approved mascot masters replace the SF Symbols on the
+            // mascot tabs. The single-scale SVG imagesets render as
+            // templates (explicit `.renderingMode(.template)` — the tab bar
+            // only tints SF Symbols automatically), tinted in the selected
+            // state and grayed when inactive, light and dark.
             ForceView()
-                .tabItem { Label("Force", systemImage: SendmeterIconSymbol.force.rawValue) }
+                .tabItem {
+                    Label {
+                        Text("Force")
+                    } icon: {
+                        Image("ForceMascotTab")
+                            .renderingMode(.template)
+                    }
+                }
                 .tag(AppTab.force)
+            WorkoutView()
+                .tabItem {
+                    Label {
+                        Text("Workout")
+                    } icon: {
+                        Image("WorkoutMascotTab")
+                            .renderingMode(.template)
+                    }
+                }
+                .tag(AppTab.workout)
             HistoryView()
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
                 .tag(AppTab.history)
@@ -176,17 +303,15 @@ struct MainTabView: View {
 }
 
 struct SplashView: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        // #662: the shipped Capacitor app's splash — cave backdrop filled to
-        // the screen with the separated kangaroo centered on top. Mirrors the
-        // web SplashScreen component (src/components/SplashScreen.tsx +
-        // src/index.css .splash-*). KEEP-IN-SYNC: if you change either side,
-        // update the other (assets live in Resources/Assets.xcassets, motion
-        // values in SplashDynoTimeline; the web side carries the twin
-        // KEEP-IN-SYNC comment in SplashScreen.tsx).
+        // #841: the native splash keeps the retired web/Capacitor dyno motion
+        // contract in SplashDynoTimeline. The web component is retired; keep
+        // this animation's zero phase, transform-only stops, and reduce-motion
+        // pose aligned with that historical reference.
         ZStack {
             // Cave backdrop: web `object-fit: cover; object-position: center
             // 57%` (center 64% on ≥720px-wide screens). The image is wider
@@ -232,7 +357,7 @@ struct SplashView: View {
                         kangaroo(
                             in: proxy,
                             pose: SplashDynoTimeline.pose(
-                                at: context.date.timeIntervalSinceReferenceDate
+                                at: context.date.timeIntervalSince(model.splashPresentationDate ?? context.date)
                             )
                         )
                     }
@@ -251,6 +376,9 @@ struct SplashView: View {
                     .padding(.bottom, 24)
             }
             .ignoresSafeArea()
+        }
+        .onAppear {
+            model.splashPresented(at: Date())
         }
     }
 

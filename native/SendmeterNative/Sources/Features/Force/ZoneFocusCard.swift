@@ -83,9 +83,14 @@ struct ZoneFocusCard: View {
                 .accessibilityAddTraits(.isButton)
                 .accessibilityLabel("Training balance for \(exercise), last four weeks")
                 .accessibilityHint("Opens the training balance detail")
-                .accessibilityAction { detailOpen = true }
-                .hapticTap()
-                .onTapGesture { detailOpen = true }
+                .accessibilityAction {
+                    Haptics.shared.playGesture(.light)
+                    detailOpen = true
+                }
+                .onTapGesture {
+                    Haptics.shared.playGesture(.light)
+                    detailOpen = true
+                }
 
                 FocusNextButton(
                     recommendation: recommendation,
@@ -182,7 +187,10 @@ private struct FocusNextButton: View {
 
     var body: some View {
         let color = ChartToken.zoneQuality(recommendation.zone).color(scheme)
-        Button(action: arm) {
+        Button {
+            Haptics.shared.playGesture(.light)
+            arm()
+        } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("FOCUS NEXT")

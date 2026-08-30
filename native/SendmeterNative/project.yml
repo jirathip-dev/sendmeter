@@ -150,6 +150,20 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Sendmeter.app/Sendmeter"
         BUNDLE_LOADER: "$(TEST_HOST)"
+  SendmeterNativeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/SendmeterNativeUITests
+    dependencies:
+      - target: SendmeterNative
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native.uitests
+        SWIFT_VERSION: 5.0
+        IPHONEOS_DEPLOYMENT_TARGET: 17.0
+        GENERATE_INFOPLIST_FILE: YES
   # #768: Reuse the existing Capacitor companion sources rather than creating
   # a second watch implementation. The native-only plist supplies the
   # per-configuration companion ID and version variables. XcodeGen's watchOS
@@ -335,6 +349,9 @@ schemes:
       config: Debug
       targets:
         - name: SendmeterNativeTests
+          parallelizable: false
+          randomExecutionOrder: false
+        - name: SendmeterNativeUITests
           parallelizable: false
           randomExecutionOrder: false
     run:

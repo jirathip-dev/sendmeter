@@ -335,9 +335,18 @@ private struct StartWorkoutCard: View {
     var body: some View {
         SurfaceCard {
             VStack(spacing: 18) {
-                Image(systemName: "figure.climbing")
-                    .font(.system(size: 52))
+                // #875: the approved Workout mascot (optical 160 master)
+                // replaces the SF Symbol; template rendering keeps the
+                // SendmeterStyle.primary tint and Dynamic Type behavior. The
+                // image is decorative — the title/description carry the
+                // meaning — so it stays out of the accessibility tree.
+                Image("WorkoutMascotLarge")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 52, height: 52)
                     .foregroundStyle(SendmeterStyle.primary)
+                    .accessibilityHidden(true)
                 VStack(spacing: 6) {
                     Text("Manual workout")
                         .font(.title2.bold())
@@ -712,7 +721,9 @@ private struct RoutineRunnerSheet: View {
         .routineRunnerGlassBackground(snapshot.visualState, in: Capsule())
         .routineRunnerTopSheen(in: Capsule())
         .overlay {
-            Capsule().strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)
+            Capsule()
+                .strokeBorder(snapshot.visualState.foregroundColor.opacity(0.2), lineWidth: 1)
+                .allowsHitTesting(false)
         }
     }
 
@@ -1218,7 +1229,11 @@ private struct RoutineRunnerGlassButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .hapticTap(structuralHapticLevel)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed {
+                    Haptics.shared.playGesture(StructuralHaptics.cue(level: structuralHapticLevel))
+                }
+            }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(state.foregroundColor)
             .padding(.horizontal, 12)
@@ -1272,6 +1287,7 @@ private extension View {
                     endPoint: .center
                 )
             )
+            .allowsHitTesting(false)
         }
     }
 }
