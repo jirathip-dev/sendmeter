@@ -2419,7 +2419,7 @@ struct ForceView: View {
         }
         let launchResolutionKey = targetResolutionKey
         let launchTag = tag
-        let launchSide = side
+        let launchSide = ExerciseSidePolicy.normalizeSide(sideMode, side)
         let launchSelection = selectedSelection
         let launchZoneCurve = zoneCurve
         let launchHandsFreeEnabled = handsFreeEnabled

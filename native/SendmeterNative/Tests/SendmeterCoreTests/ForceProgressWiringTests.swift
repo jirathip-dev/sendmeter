@@ -152,6 +152,21 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertTrue(forceView.contains("model.handsFree.cancelArm()"))
     }
 
+    func testGuidedLaunchSnapshotsLeftThroughAsyncTargetResolution() {
+        let forceView = code(source("Sources/Features/Force/ForceView.swift"))
+        let launch = region(forceView, from: "private func launch(", to: "private func endGuidedSession")
+
+        XCTAssertTrue(launch.contains("let launchSide = ExerciseSidePolicy.normalizeSide(sideMode, side)"))
+        XCTAssertTrue(launch.contains("fallbackSide: launchSide"))
+        XCTAssertTrue(launch.contains("startingSide: startSide"))
+        XCTAssertTrue(launch.contains("let session = GuidedForceProtocolSession("))
+        XCTAssertTrue(launch.contains("fallbackSide: launchSide"))
+
+        let snapshot = launch[..<(launch.range(of: "Task {")?.lowerBound ?? launch.endIndex)]
+        XCTAssertTrue(snapshot.contains("let launchSide = ExerciseSidePolicy.normalizeSide(sideMode, side)"))
+        XCTAssertFalse(snapshot.contains("side = .both"))
+    }
+
     private func source(_ relativePath: String) -> String {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
