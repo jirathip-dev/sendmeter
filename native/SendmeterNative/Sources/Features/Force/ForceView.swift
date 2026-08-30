@@ -2419,20 +2419,24 @@ struct ForceView: View {
         }
         let launchResolutionKey = targetResolutionKey
         let launchTag = tag
-        let launchSide = ExerciseSidePolicy.normalizeSide(sideMode, side)
+        let launchSideMode = sideMode
+        let launchSide = side
         let launchSelection = selectedSelection
         let launchZoneCurve = zoneCurve
         let launchHandsFreeEnabled = handsFreeEnabled
         let launchAccountScope = model.accountScope
-        let startSide: TindeqSide = launchSide == .right ? .right : .left
         guidedLaunchInFlight = true
         resolvingTargets = true
         Task {
-            let plan = await model.resolveForceTargetPlan(
+            let session = await Self.makeGuidedLaunchSession(
+                model: model,
                 preset: preset,
                 tag: launchTag,
-                startingSide: startSide,
-                fallbackSide: launchSide
+                sideMode: launchSideMode,
+                side: launchSide,
+                selection: launchSelection,
+                zoneCurve: launchZoneCurve,
+                handsFreeEnabled: launchHandsFreeEnabled
             )
             guard !Task.isCancelled,
                   guidedLaunchInFlight,
@@ -2459,25 +2463,53 @@ struct ForceView: View {
             case .allowed:
                 break
             }
-            selectedTargetPlan = plan
+            selectedTargetPlan = session.targetPlan
             resolvingTargets = false
-            let session = GuidedForceProtocolSession(
-                model: model,
-                preset: preset,
-                targetPlan: plan,
-                tag: launchTag,
-                startingSide: startSide,
-                fallbackSide: launchSide,
-                selection: launchSelection,
-                references: launchZoneCurve,
-                handsFreeEnabled: launchHandsFreeEnabled
-            )
             guidedSession = session
             registerGuidedTeardown(for: session)
             guidedMinimizeRequested = false
             guidedLaunchInFlight = false
             guidedFullscreenPresented = true
         }
+    }
+
+    /// The guided-launch boundary chain (#874): normalize the picker's side
+    /// under the active exercise mode (the producer snapshot), derive the
+    /// starting side, resolve the target plan through the real async
+    /// resolver, and construct the session. Extracted from `launch()` so the
+    /// AC1 regression test drives the REAL producer → async resolution →
+    /// session construction boundary — a `.both` coercion at the producer is
+    /// exactly the reported Left→Both failure.
+    @MainActor
+    static func makeGuidedLaunchSession(
+        model: AppModel,
+        preset: TindeqPreset,
+        tag: String,
+        sideMode: ExerciseSideMode,
+        side: TindeqSide,
+        selection: ForceProtocolSelection,
+        zoneCurve: ZoneCurveInput?,
+        handsFreeEnabled: Bool
+    ) async -> GuidedForceProtocolSession {
+        let launchSide = ExerciseSidePolicy.normalizeSide(sideMode, side)
+        let startSide: TindeqSide = launchSide == .right ? .right : .left
+        let plan = await model.resolveForceTargetPlan(
+            preset: preset,
+            tag: tag,
+            startingSide: startSide,
+            fallbackSide: launchSide
+        )
+        return GuidedForceProtocolSession(
+            model: model,
+            preset: preset,
+            targetPlan: plan,
+            tag: tag,
+            startingSide: startSide,
+            fallbackSide: launchSide,
+            selection: selection,
+            references: zoneCurve,
+            handsFreeEnabled: handsFreeEnabled
+        )
     }
 
     private func endGuidedSession(_ session: GuidedForceProtocolSession) {

@@ -73,6 +73,47 @@ final class GuidedForceSideBehaviorTests: XCTestCase {
         )
     }
 
+    // MARK: - AC1: the REAL launch boundary (producer → async resolve → session)
+
+    @MainActor
+    func testAC1RealLaunchBoundaryKeepsExplicitLeftEndToEnd() async throws {
+        let model = try await makeSignedInModel()
+        let preset = Self.targetedAlternatingPreset()
+
+        // Drive the exact chain `launch()` uses: the picker side + the active
+        // exercise's side mode are normalized by the producer snapshot, then
+        // handed through the real async resolver, then into the session.
+        let session = await ForceView.makeGuidedLaunchSession(
+            model: model,
+            preset: preset,
+            tag: "Test Tag",
+            sideMode: .unilateralOrBilateral,
+            side: .left,
+            selection: .free,
+            zoneCurve: nil,
+            handsFreeEnabled: false
+        )
+
+        // Producer: an explicit Left under a Left-allowing mode stays Left.
+        XCTAssertEqual(session.fallbackSide, .left, "producer must keep explicit Left")
+        // The run's first work stage is Left.
+        let firstWork = try XCTUnwrap(session.run.stages.first(where: { $0.kind == .work }))
+        XCTAssertEqual(firstWork.side, .left)
+        // The real async resolver keyed a Left band and never a Both band.
+        let keys = Array(session.targetPlan.targets.keys)
+        XCTAssertTrue(
+            keys.contains(ForceTargetKey(setNumber: 1, side: .left)),
+            "real launch chain must produce a .left-keyed band; got \(keys)"
+        )
+        XCTAssertFalse(
+            keys.contains { $0.side == .both },
+            "real launch chain must never key .both for explicit Left; got \(keys)"
+        )
+        // Save attribution on the produced session stays Left.
+        let savedSide = firstWork.side == .unspecified ? session.fallbackSide : firstWork.side
+        XCTAssertEqual(savedSide, .left)
+    }
+
     // MARK: - AC5: bilateral-only exercises carry .both via fallbackSide, never .left
 
     @MainActor
