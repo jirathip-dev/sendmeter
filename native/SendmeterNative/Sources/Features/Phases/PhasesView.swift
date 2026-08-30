@@ -189,7 +189,6 @@ struct CurrentBlockCard: View {
                             }
                             .accessibilityIdentifier("change-block-menu")
                     }
-                    .hapticTap()
 
                     if let next = phase.id.nextLogical {
                         Button("End block") { onPropose(next) }
@@ -217,6 +216,7 @@ struct CurrentBlockCard: View {
 #if DEBUG
 struct MenuActivationProbeView: View {
     @State private var callbackCount = 0
+    @State private var tickCount = 0
 
     var body: some View {
         VStack {
@@ -229,6 +229,14 @@ struct MenuActivationProbeView: View {
             )
             Text("Menu callbacks: \(callbackCount)")
                 .accessibilityIdentifier("menu-callback-count")
+            Text("Menu ticks: \(tickCount)")
+                .accessibilityIdentifier("menu-tick-count")
+        }
+        .task {
+            while !Task.isCancelled {
+                tickCount = Haptics.shared.debugEmissionCount
+                try? await Task.sleep(for: .milliseconds(50))
+            }
         }
     }
 }

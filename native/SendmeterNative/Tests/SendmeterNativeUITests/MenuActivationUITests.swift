@@ -15,7 +15,9 @@ final class MenuActivationUITests: XCTestCase {
         XCTAssertTrue(menuItem.waitForExistence(timeout: 5), "Menu presentation did not expose Strength")
         menuItem.tap()
 
-        XCTAssertTrue(app.staticTexts["Menu callbacks: 1"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Menu ticks: 1"].waitForExistence(timeout: 5), "Menu activation did not emit exactly one haptic tick")
+        XCTAssertFalse(app.staticTexts["Menu ticks: 2"].exists)
+        XCTAssertTrue(app.staticTexts["Menu callbacks: 1"].exists)
         XCTAssertFalse(app.staticTexts["Menu callbacks: 2"].exists)
     }
 }
