@@ -15,7 +15,7 @@ private struct GuidedForceSaveKey: Hashable {
 }
 
 @MainActor
-private final class GuidedForceProtocolSession: ObservableObject, Identifiable {
+final class GuidedForceProtocolSession: ObservableObject, Identifiable {
     let id: UUID
     let model: AppModel
     let preset: TindeqPreset

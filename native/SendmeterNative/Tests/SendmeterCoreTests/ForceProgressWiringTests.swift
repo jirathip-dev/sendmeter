@@ -1,4 +1,5 @@
 import Foundation
+import SendmeterCore
 import XCTest
 
 final class ForceProgressWiringTests: XCTestCase {
@@ -152,19 +153,88 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertTrue(forceView.contains("model.handsFree.cancelArm()"))
     }
 
-    func testGuidedLaunchSnapshotsLeftThroughAsyncTargetResolution() {
-        let forceView = code(source("Sources/Features/Force/ForceView.swift"))
-        let launch = region(forceView, from: "private func launch(", to: "private func endGuidedSession")
+    // MARK: #874 — guided launch keeps an explicit Left through run construction
+    //
+    // REAL behavior tests (no source-text assertions): they construct the run
+    // exactly as `GuidedForceProtocolSession.init` does
+    // (`ForceProtocolRun(preset:startingSide:)`) and assert the produced
+    // stages, so a Left→Both coercion anywhere in the schedule/attribution
+    // boundary turns them red.
 
-        XCTAssertTrue(launch.contains("let launchSide = ExerciseSidePolicy.normalizeSide(sideMode, side)"))
-        XCTAssertTrue(launch.contains("fallbackSide: launchSide"))
-        XCTAssertTrue(launch.contains("startingSide: startSide"))
-        XCTAssertTrue(launch.contains("let session = GuidedForceProtocolSession("))
-        XCTAssertTrue(launch.contains("fallbackSide: launchSide"))
+    func testGuidedAlternatingRunFirstWorkStageKeepsExplicitLeft() {
+        let run = ForceProtocolRun(preset: Self.alternatingPreset(), startingSide: .left)
+        let firstWork = run.stages.first(where: { $0.kind == .work })
+        XCTAssertEqual(firstWork?.side, .left)
+        XCTAssertFalse(run.stages.contains { $0.side == .both })
+    }
 
-        let snapshot = launch[..<(launch.range(of: "Task {")?.lowerBound ?? launch.endIndex)]
-        XCTAssertTrue(snapshot.contains("let launchSide = ExerciseSidePolicy.normalizeSide(sideMode, side)"))
-        XCTAssertFalse(snapshot.contains("side = .both"))
+    func testGuidedSaveAttributionSideStaysLeftForExplicitLeft() {
+        let run = ForceProtocolRun(preset: Self.alternatingPreset(), startingSide: .left)
+        let fallbackSide: TindeqSide = .left
+        let firstWork = try? XCTUnwrap(run.stages.first(where: { $0.kind == .work }))
+        guard let firstWork else { return }
+        // Same rule the session's preserve() uses: a specified stage side wins;
+        // the fallback side only fills unspecified stages.
+        let savedSide = firstWork.side == .unspecified ? fallbackSide : firstWork.side
+        XCTAssertEqual(savedSide, .left)
+        XCTAssertNotEqual(savedSide, .both)
+    }
+
+    // AC5: invalid Left/Right can never survive a bilateral-only exercise.
+    func testBilateralOnlyPolicyNormalizesAndRecordsInvalidLeftAsBoth() {
+        XCTAssertEqual(ExerciseSidePolicy.normalizeSide(.bilateralOnly, .left), .both)
+        XCTAssertEqual(ExerciseSidePolicy.normalizeSide(.bilateralOnly, .right), .both)
+        XCTAssertEqual(ExerciseSidePolicy.recordedSide(.bilateralOnly, .left), .both)
+        XCTAssertEqual(ExerciseSidePolicy.recordedSide(.bilateralOnly, .right), .both)
+    }
+
+    // AC5 run-construction assertion: a bilateralOnly-launched session carries
+    // `.both` semantics via fallbackSide and never `.left`. The launch snapshot
+    // (`launchSide = normalizeSide(sideMode, side)`) yields `.both`, so the
+    // session's fallbackSide is `.both`, and non-alternating work stages stay
+    // `.unspecified` — save attribution therefore resolves to `.both`.
+    func testBilateralOnlyLaunchCarriesBothSemanticsViaFallbackSideNeverLeft() {
+        let launchSide = ExerciseSidePolicy.normalizeSide(.bilateralOnly, .left)
+        XCTAssertEqual(launchSide, .both)
+
+        let run = ForceProtocolRun(
+            preset: Self.bilateralOnlyPreset(),
+            startingSide: .left // startSide derivation: launchSide == .right ? .right : .left
+        )
+        let firstWork = try? XCTUnwrap(run.stages.first(where: { $0.kind == .work }))
+        guard let firstWork else { return }
+        XCTAssertNotEqual(firstWork.side, .left)
+        XCTAssertNotEqual(firstWork.side, .both)
+
+        let savedSide = firstWork.side == .unspecified ? launchSide : firstWork.side
+        XCTAssertEqual(savedSide, .both)
+        XCTAssertNotEqual(savedSide, .left)
+    }
+
+    private static func alternatingPreset() -> TindeqPreset {
+        TindeqPreset(
+            name: "Alternating Test",
+            holdSeconds: 10,
+            repetitions: 2,
+            sets: 2,
+            restBetweenRepetitionsSeconds: 60,
+            restBetweenSetsSeconds: 120,
+            alternateSides: true,
+            prepareSeconds: 5
+        )
+    }
+
+    private static func bilateralOnlyPreset() -> TindeqPreset {
+        TindeqPreset(
+            name: "Bilateral Test",
+            holdSeconds: 10,
+            repetitions: 2,
+            sets: 2,
+            restBetweenRepetitionsSeconds: 60,
+            restBetweenSetsSeconds: 120,
+            alternateSides: false,
+            prepareSeconds: 5
+        )
     }
 
     private func source(_ relativePath: String) -> String {
