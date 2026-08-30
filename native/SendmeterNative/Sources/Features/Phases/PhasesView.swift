@@ -124,7 +124,7 @@ struct PhasesView: View {
     }
 }
 
-private struct CurrentBlockCard: View {
+struct CurrentBlockCard: View {
     let phase: PhaseDefinition
     let age: BlockAge?
     let acwr: Double?
@@ -187,7 +187,9 @@ private struct CurrentBlockCard: View {
                             .onTapGesture {
                                 Haptics.shared.playGesture(.light)
                             }
+                            .accessibilityIdentifier("change-block-menu")
                     }
+                    .hapticTap()
 
                     if let next = phase.id.nextLogical {
                         Button("End block") { onPropose(next) }
@@ -211,6 +213,26 @@ private struct CurrentBlockCard: View {
         }
     }
 }
+
+#if DEBUG
+struct MenuActivationProbeView: View {
+    @State private var callbackCount = 0
+
+    var body: some View {
+        VStack {
+            CurrentBlockCard(
+                phase: PhaseCatalog.definition(for: .capacity),
+                age: nil,
+                acwr: nil,
+                canonicalStart: "2026-01-01",
+                onPropose: { _ in callbackCount += 1 }
+            )
+            Text("Menu callbacks: \(callbackCount)")
+                .accessibilityIdentifier("menu-callback-count")
+        }
+    }
+}
+#endif
 
 private struct GuidanceCard: View {
     let guidance: BlockGuidance

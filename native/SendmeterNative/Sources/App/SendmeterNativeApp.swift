@@ -5,6 +5,7 @@ import SwiftUI
 @main
 struct SendmeterNativeApp: App {
     private let structuralHapticMode: StructuralHapticDiagnosticMode
+    private let menuActivationProbe: Bool
     @State private var model: AppModel
     // #631: the theme choice is read in init — before the first frame —
     // so a saved appearance never flashes the default scheme.
@@ -13,11 +14,13 @@ struct SendmeterNativeApp: App {
 
     init() {
         #if DEBUG
+        menuActivationProbe = CommandLine.arguments.contains("--menu-activation-probe")
         structuralHapticMode = StructuralHapticDiagnosticMode.resolve(
             arguments: CommandLine.arguments,
             debugBuild: true
         )
         #else
+        menuActivationProbe = false
         // Release/TestFlight has no diagnostic parser or opt-in path.
         structuralHapticMode = .normal
         #endif
@@ -31,7 +34,17 @@ struct SendmeterNativeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(structuralHapticMode: structuralHapticMode)
+            Group {
+                #if DEBUG
+                if menuActivationProbe {
+                    MenuActivationProbeView()
+                } else {
+                    RootView(structuralHapticMode: structuralHapticMode)
+                }
+                #else
+                RootView(structuralHapticMode: structuralHapticMode)
+                #endif
+            }
                 .buttonStyle(StructuralDefaultButtonStyle(mode: structuralHapticMode))
                 .environment(\.structuralHapticTapPolicy, structuralHapticMode.tapPolicy)
                 .environment(model)

@@ -164,21 +164,11 @@ final class StructuralHapticsWiringTests: XCTestCase {
     }
 
 
-    func testMenuActivationPresentsAndTicksOnce() {
+    func testMenuWiringKeepsTriggerStyleAndRowTick() {
         let source = code(source("Sources/Features/Phases/PhasesView.swift"))
         XCTAssertTrue(source.contains("Menu {"))
+        XCTAssertTrue(source.contains(".hapticTap()"))
         XCTAssertTrue(source.contains("Button(candidate.name) {\n                                Haptics.shared.playGesture(.light)\n                                onPropose(candidate.id)\n                            }"))
-
-        var isPresented = false
-        var tickCount = 0
-        func activateMenu() {
-            isPresented = true
-            tickCount += 1
-        }
-        activateMenu()
-
-        XCTAssertTrue(isPresented, "synthesized menu activation must present the menu")
-        XCTAssertEqual(tickCount, 1, "synthesized menu activation must emit one tick")
     }
 
     private func source(_ relativePath: String) -> String {
