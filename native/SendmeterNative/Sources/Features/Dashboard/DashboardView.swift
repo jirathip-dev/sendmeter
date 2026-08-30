@@ -658,8 +658,10 @@ private struct SendConditionsCardContent: View {
                         .foregroundStyle(.tertiary)
                 }
                 .contentShape(Rectangle())
-                .hapticTap()
-                .onTapGesture(perform: open)
+                .onTapGesture {
+                    Haptics.shared.playGesture(.light)
+                    open()
+                }
                 Spacer()
                 if isFetching {
                     ProgressView()
@@ -676,8 +678,10 @@ private struct SendConditionsCardContent: View {
         case .populated(let conditions):
             populatedContent(conditions)
                 .contentShape(Rectangle())
-                .hapticTap()
-                .onTapGesture(perform: open)
+                .onTapGesture {
+                    Haptics.shared.playGesture(.light)
+                    open()
+                }
         case .failed:
             failedContent
         case .empty:

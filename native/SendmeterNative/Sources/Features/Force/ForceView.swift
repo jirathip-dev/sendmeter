@@ -672,7 +672,11 @@ private struct GuidedGlassButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .hapticTap(structuralHapticLevel)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed {
+                    Haptics.shared.playGesture(StructuralHaptics.cue(level: structuralHapticLevel))
+                }
+            }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, 10)
@@ -3821,8 +3825,10 @@ private struct ForceProtocolLibraryCard: View {
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                                     .font(.title3)
+                                    .onTapGesture {
+                                        Haptics.shared.playGesture(.light)
+                                    }
                             }
-                            .hapticTap()
                         }
                         if preset.id != presets.last?.id { Divider() }
                     }

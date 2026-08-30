@@ -38,6 +38,9 @@ public final class Haptics {
     private var impacts: [UIImpactFeedbackGenerator.FeedbackStyle: UIImpactFeedbackGenerator] = [:]
     private var notification: UINotificationFeedbackGenerator?
     private var selection: UISelectionFeedbackGenerator?
+#if DEBUG
+    public private(set) var debugEmissionCount = 0
+#endif
     private init() {}
 
     /// A structural button/card touch started. Mirrors the web delegated
@@ -161,6 +164,9 @@ public final class Haptics {
     }
 
     private func fire(_ cue: HapticCue) {
+#if DEBUG
+        debugEmissionCount += 1
+#endif
         switch cue {
         case .light:
             impact(.light)

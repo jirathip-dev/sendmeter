@@ -85,14 +85,37 @@ final class HistoryTapDetailWiringTests: XCTestCase {
 
         // Chevron/header AND the populated body both wire the same tap.
         XCTAssertEqual(
-            countOccurrences(".onTapGesture(perform: open)", in: content),
+            countOccurrences(".onTapGesture {", in: content),
             2,
             "the card header/chevron and the populated body must both present the detail"
+        )
+        XCTAssertEqual(
+            countOccurrences("Haptics.shared.playGesture(.light)", in: content),
+            2,
+            "each card action must own its structural tick"
         )
         XCTAssertTrue(card.contains(".sheet(isPresented: $showSendConditions)"))
         XCTAssertTrue(card.contains("SendConditionsDetailSheet()"))
         XCTAssertTrue(card.contains(".accessibilityAction { openSheet() }"))
         XCTAssertTrue(card.contains(".accessibilityAddTraits(.isButton)"))
+        XCTAssertFalse(
+            content.contains(".hapticTap()"),
+            "the card must not install a second recognizer alongside its action"
+        )
+    }
+
+    func testPreviouslySilentStructuralControlsOwnTheirTicks() {
+        let zone = code(source("Sources/Features/Force/ZoneFocusCard.swift"))
+        let design = code(source("Sources/App/DesignSystem.swift"))
+        let phases = code(source("Sources/Features/Phases/PhasesView.swift"))
+        let history = code(source("Sources/Features/History/HistoryView.swift"))
+        let force = code(source("Sources/Features/Force/ForceView.swift"))
+
+        XCTAssertTrue(zone.contains("Haptics.shared.playGesture(.light)\n            arm()"))
+        XCTAssertTrue(design.contains("Haptics.shared.playGesture(.light)\n                dismiss()"))
+        XCTAssertEqual(countOccurrences("Haptics.shared.playGesture(.light)", in: phases), 1)
+        XCTAssertGreaterThanOrEqual(countOccurrences("Haptics.shared.playGesture(.light)", in: history), 4)
+        XCTAssertTrue(force.contains("Haptics.shared.playGesture(.light)"))
     }
 
     // MARK: source helpers (duplicated from EmptyStateWiringTests; the

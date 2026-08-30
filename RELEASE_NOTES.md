@@ -146,6 +146,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native History and Send Conditions now activate on the first tap without delaying vertical scrolling; structural haptics remain on the action that wins the gesture.
 - Native Routine runner: the Close control is tappable again, including across
   its full accessible hit target, without changing the existing exit safety flow.
 - Native History: tapping any session row — Tindeq grouped, workout, manual/plain, pending or rejected — now always opens the existing read-only detail (records, zone mix, workout summary/HR trace, or the honest plain-session summary) instead of sometimes landing in the editor. Edit stays on the explicit swipe action.

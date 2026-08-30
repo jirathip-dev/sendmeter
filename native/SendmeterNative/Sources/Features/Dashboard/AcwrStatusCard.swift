@@ -78,8 +78,10 @@ struct AcwrStatusCard: View {
                 .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
-        .hapticTap()
-        .onTapGesture(perform: openTrainingLoad)
+        .onTapGesture {
+            Haptics.shared.playGesture(.light)
+            openTrainingLoad()
+        }
     }
 
     private var infoButton: some View {
@@ -129,8 +131,10 @@ struct AcwrStatusCard: View {
             footer
         }
         .contentShape(Rectangle())
-        .hapticTap()
-        .onTapGesture(perform: openTrainingLoad)
+        .onTapGesture {
+            Haptics.shared.playGesture(.light)
+            openTrainingLoad()
+        }
     }
 
     // MARK: - Risk track

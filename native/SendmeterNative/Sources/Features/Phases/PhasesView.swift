@@ -124,7 +124,7 @@ struct PhasesView: View {
     }
 }
 
-private struct CurrentBlockCard: View {
+struct CurrentBlockCard: View {
     let phase: PhaseDefinition
     let age: BlockAge?
     let acwr: Double?
@@ -170,6 +170,7 @@ private struct CurrentBlockCard: View {
                     }
                 }
                 HStack(spacing: 12) {
+                    // Menu presentation is intentionally silent; only selecting a row is a user action and ticks once.
                     Menu {
                         ForEach(PhaseCatalog.all.filter { $0.id != phase.id }) { candidate in
                             Button(candidate.name) {
@@ -184,8 +185,8 @@ private struct CurrentBlockCard: View {
                             .padding(.vertical, 9)
                             .background(SendmeterStyle.phaseColor(phase.id).opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .foregroundStyle(SendmeterStyle.phaseColor(phase.id))
+                            .accessibilityIdentifier("change-block-menu")
                     }
-                    .hapticTap()
 
                     if let next = phase.id.nextLogical {
                         Button("End block") { onPropose(next) }
@@ -209,6 +210,35 @@ private struct CurrentBlockCard: View {
         }
     }
 }
+
+#if DEBUG
+struct MenuActivationProbeView: View {
+    @State private var callbackCount = 0
+    @State private var tickCount = 0
+
+    var body: some View {
+        VStack {
+            CurrentBlockCard(
+                phase: PhaseCatalog.definition(for: .capacity),
+                age: nil,
+                acwr: nil,
+                canonicalStart: "2026-01-01",
+                onPropose: { _ in callbackCount += 1 }
+            )
+            Text("Menu callbacks: \(callbackCount)")
+                .accessibilityIdentifier("menu-callback-count")
+            Text("Menu ticks: \(tickCount)")
+                .accessibilityIdentifier("menu-tick-count")
+        }
+        .task {
+            while !Task.isCancelled {
+                tickCount = Haptics.shared.debugEmissionCount
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+    }
+}
+#endif
 
 private struct GuidanceCard: View {
     let guidance: BlockGuidance
