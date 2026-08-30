@@ -72,6 +72,10 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native iPhone tab bar now reads Dashboard → Force → Workout → History →
+  Settings, with the approved climbing mascots on the Force and Workout tabs
+  and on the Manual workout card (replacing the SF Symbols).
+
 - Native Recovery Inputs charts now keep every bar inside its card, show both
   7-day and 28-day trends, and color each value smoothly against its 28-day baseline.
 

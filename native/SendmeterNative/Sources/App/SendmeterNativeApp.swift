@@ -90,7 +90,11 @@ struct RootView: View {
                     SplashView()
                 case .signedOut:
                     #if DEBUG
-                    if CommandLine.arguments.contains("--recovery-fixture") {
+                    if CommandLine.arguments.contains("--tabs-fixture") {
+                        // #875 evidence harness: render the real tab bar
+                        // without a signed-in session.
+                        TabsFixtureView(selectedTab: fixtureTabArgument())
+                    } else if CommandLine.arguments.contains("--recovery-fixture") {
                         RecoveryInputsFixtureView()
                     } else {
                         LoginView()
@@ -200,6 +204,43 @@ private struct RecoveryInputsFixtureView: View {
 }
 #endif
 
+#if DEBUG
+/// #875 evidence harness: presents the real `MainTabView` (tab bar + approved
+/// mascots) without a signed-in Supabase session so simulator screenshots can
+/// prove tab order and mascot rendering in light and dark. DEBUG-only — the
+/// selected tab comes from `--tabs-fixture <name>`; the app's normal
+/// signed-in flow never reaches this view.
+private struct TabsFixtureView: View {
+    private let selectedTab: AppTab
+    @Environment(AppModel.self) private var model
+
+    init(selectedTab: AppTab) {
+        self.selectedTab = selectedTab
+    }
+
+    var body: some View {
+        MainTabView()
+            .onAppear {
+                model.selectedTab = selectedTab
+            }
+    }
+}
+
+private func fixtureTabArgument() -> AppTab {
+    let args = CommandLine.arguments
+    guard let flagIndex = args.firstIndex(of: "--tabs-fixture"),
+          flagIndex + 1 < args.count
+    else { return .dashboard }
+    switch args[flagIndex + 1] {
+    case "force": return .force
+    case "workout": return .workout
+    case "history": return .history
+    case "settings": return .settings
+    default: return .dashboard
+    }
+}
+#endif
+
 private struct StructuralHapticDiagnosticBanner: View {
     let label: String
 
@@ -225,12 +266,31 @@ struct MainTabView: View {
             DashboardView()
                 .tabItem { Label("Dashboard", systemImage: SendmeterIconSymbol.status.rawValue) }
                 .tag(AppTab.dashboard)
-            WorkoutView()
-                .tabItem { Label("Workout", systemImage: SendmeterIconSymbol.workout.rawValue) }
-                .tag(AppTab.workout)
+            // #875: approved mascot masters replace the SF Symbols on the
+            // mascot tabs. The single-scale SVG imagesets render as
+            // templates (explicit `.renderingMode(.template)` — the tab bar
+            // only tints SF Symbols automatically), tinted in the selected
+            // state and grayed when inactive, light and dark.
             ForceView()
-                .tabItem { Label("Force", systemImage: SendmeterIconSymbol.force.rawValue) }
+                .tabItem {
+                    Label {
+                        Text("Force")
+                    } icon: {
+                        Image("ForceMascotTab")
+                            .renderingMode(.template)
+                    }
+                }
                 .tag(AppTab.force)
+            WorkoutView()
+                .tabItem {
+                    Label {
+                        Text("Workout")
+                    } icon: {
+                        Image("WorkoutMascotTab")
+                            .renderingMode(.template)
+                    }
+                }
+                .tag(AppTab.workout)
             HistoryView()
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
                 .tag(AppTab.history)
