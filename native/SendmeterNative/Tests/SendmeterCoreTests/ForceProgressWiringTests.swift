@@ -1,4 +1,5 @@
 import Foundation
+import SendmeterCore
 import XCTest
 
 final class ForceProgressWiringTests: XCTestCase {
@@ -150,6 +151,125 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertTrue(forceView.contains("GuidedForceHandsFreeTimingPolicy"))
         XCTAssertTrue(forceView.contains("case .refusedActiveRecording"))
         XCTAssertTrue(forceView.contains("model.handsFree.cancelArm()"))
+    }
+
+    // MARK: #874 — guided launch keeps an explicit Left through run construction
+    //
+    // REAL behavior tests (no source-text assertions): they construct the run
+    // exactly as `GuidedForceProtocolSession.init` does
+    // (`ForceProtocolRun(preset:startingSide:)`) and assert the produced
+    // stages, so a Left→Both coercion anywhere in the schedule/attribution
+    // boundary turns them red.
+
+    func testGuidedAlternatingRunFirstWorkStageKeepsExplicitLeft() {
+        let run = ForceProtocolRun(preset: Self.alternatingPreset(), startingSide: .left)
+        let firstWork = run.stages.first(where: { $0.kind == .work })
+        XCTAssertEqual(firstWork?.side, .left)
+        XCTAssertFalse(run.stages.contains { $0.side == .both })
+    }
+
+    func testGuidedSaveAttributionSideStaysLeftForExplicitLeft() {
+        let run = ForceProtocolRun(preset: Self.alternatingPreset(), startingSide: .left)
+        let fallbackSide: TindeqSide = .left
+        let firstWork = try? XCTUnwrap(run.stages.first(where: { $0.kind == .work }))
+        guard let firstWork else { return }
+        // Same rule the session's preserve() uses: a specified stage side wins;
+        // the fallback side only fills unspecified stages.
+        let savedSide = firstWork.side == .unspecified ? fallbackSide : firstWork.side
+        XCTAssertEqual(savedSide, .left)
+        XCTAssertNotEqual(savedSide, .both)
+    }
+
+    // AC5: invalid Left/Right can never survive a bilateral-only exercise.
+    func testBilateralOnlyPolicyNormalizesAndRecordsInvalidLeftAsBoth() {
+        XCTAssertEqual(ExerciseSidePolicy.normalizeSide(.bilateralOnly, .left), .both)
+        XCTAssertEqual(ExerciseSidePolicy.normalizeSide(.bilateralOnly, .right), .both)
+        XCTAssertEqual(ExerciseSidePolicy.recordedSide(.bilateralOnly, .left), .both)
+        XCTAssertEqual(ExerciseSidePolicy.recordedSide(.bilateralOnly, .right), .both)
+    }
+
+    // AC5 run-construction assertion: a bilateralOnly-launched session carries
+    // `.both` semantics via fallbackSide and never `.left`. The launch snapshot
+    // (`launchSide = normalizeSide(sideMode, side)`) yields `.both`, so the
+    // session's fallbackSide is `.both`, and non-alternating work stages stay
+    // `.unspecified` — save attribution therefore resolves to `.both`.
+    func testBilateralOnlyLaunchCarriesBothSemanticsViaFallbackSideNeverLeft() {
+        let launchSide = ExerciseSidePolicy.normalizeSide(.bilateralOnly, .left)
+        XCTAssertEqual(launchSide, .both)
+
+        let run = ForceProtocolRun(
+            preset: Self.bilateralOnlyPreset(),
+            startingSide: .left // startSide derivation: launchSide == .right ? .right : .left
+        )
+        let firstWork = try? XCTUnwrap(run.stages.first(where: { $0.kind == .work }))
+        guard let firstWork else { return }
+        XCTAssertNotEqual(firstWork.side, .left)
+        XCTAssertNotEqual(firstWork.side, .both)
+
+        let savedSide = firstWork.side == .unspecified ? launchSide : firstWork.side
+        XCTAssertEqual(savedSide, .both)
+        XCTAssertNotEqual(savedSide, .left)
+    }
+
+    // AC1 wiring regression (fix round 4): the REAL `ForceView.launch()` state
+    // snapshot → helper handoff must stay uncoerced. The app-target behavior
+    // tests drive `makeGuidedLaunchSession(side: .left)` directly; this
+    // source/wiring assertion closes the remaining caller-side hole (the
+    // view-state snapshot at the launch call site) with the accepted repo
+    // closure: assert the snapshot lines read the LIVE properties, the
+    // delegate passes the SNAPSHOT values through, and no `.both` literal
+    // exists anywhere in the launch region. Mutating either the snapshot
+    // (`let launchSide = side` → `= .both`) or the delegate argument
+    // (`side: launchSide` → `side: .both`) turns this test red.
+    func testGuidedLaunchSnapshotAndDelegateHandoffStayUncoerced() {
+        let forceView = code(source("Sources/Features/Force/ForceView.swift"))
+        let launchBody = exactFunction(
+            forceView,
+            startingWith: "private func launch(_ preset: TindeqPreset)"
+        )
+
+        // The snapshot reads the LIVE view state at the launch call site.
+        XCTAssertTrue(launchBody.contains("let launchSideMode = sideMode"))
+        XCTAssertTrue(launchBody.contains("let launchSide = side"))
+        XCTAssertTrue(launchBody.contains("let launchSelection = selectedSelection"))
+
+        // The delegate passes the SNAPSHOT values through, never a literal.
+        XCTAssertTrue(launchBody.contains("sideMode: launchSideMode"))
+        XCTAssertTrue(launchBody.contains("side: launchSide"))
+        XCTAssertTrue(launchBody.contains("selection: launchSelection"))
+        XCTAssertTrue(launchBody.contains("handsFreeEnabled: launchHandsFreeEnabled"))
+
+        // No `.both` coercion anywhere in the launch region.
+        XCTAssertFalse(
+            launchBody.contains(".both"),
+            "launch() must never stamp a .both literal into the snapshot/delegate handoff"
+        )
+    }
+
+    private static func alternatingPreset() -> TindeqPreset {
+        TindeqPreset(
+            name: "Alternating Test",
+            holdSeconds: 10,
+            repetitions: 2,
+            sets: 2,
+            restBetweenRepetitionsSeconds: 60,
+            restBetweenSetsSeconds: 120,
+            alternateSides: true,
+            prepareSeconds: 5
+        )
+    }
+
+    private static func bilateralOnlyPreset() -> TindeqPreset {
+        TindeqPreset(
+            name: "Bilateral Test",
+            holdSeconds: 10,
+            repetitions: 2,
+            sets: 2,
+            restBetweenRepetitionsSeconds: 60,
+            restBetweenSetsSeconds: 120,
+            alternateSides: false,
+            prepareSeconds: 5
+        )
     }
 
     private func source(_ relativePath: String) -> String {

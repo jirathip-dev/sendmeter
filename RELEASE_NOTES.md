@@ -146,6 +146,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native Force: guided protocol launch now snapshots the selected side through target resolution, preserving Left/Right and applying only the active exercise's deterministic fallback for stale values.
 - Native History and Send Conditions now activate on the first tap without delaying vertical scrolling; structural haptics remain on the action that wins the gesture.
 - Native Routine runner: the Close control is tappable again, including across
   its full accessible hit target, without changing the existing exit safety flow.
