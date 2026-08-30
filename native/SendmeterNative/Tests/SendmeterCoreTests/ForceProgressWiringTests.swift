@@ -211,6 +211,41 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertNotEqual(savedSide, .left)
     }
 
+    // AC1 wiring regression (fix round 4): the REAL `ForceView.launch()` state
+    // snapshot → helper handoff must stay uncoerced. The app-target behavior
+    // tests drive `makeGuidedLaunchSession(side: .left)` directly; this
+    // source/wiring assertion closes the remaining caller-side hole (the
+    // view-state snapshot at the launch call site) with the accepted repo
+    // closure: assert the snapshot lines read the LIVE properties, the
+    // delegate passes the SNAPSHOT values through, and no `.both` literal
+    // exists anywhere in the launch region. Mutating either the snapshot
+    // (`let launchSide = side` → `= .both`) or the delegate argument
+    // (`side: launchSide` → `side: .both`) turns this test red.
+    func testGuidedLaunchSnapshotAndDelegateHandoffStayUncoerced() {
+        let forceView = code(source("Sources/Features/Force/ForceView.swift"))
+        let launchBody = exactFunction(
+            forceView,
+            startingWith: "private func launch(_ preset: TindeqPreset)"
+        )
+
+        // The snapshot reads the LIVE view state at the launch call site.
+        XCTAssertTrue(launchBody.contains("let launchSideMode = sideMode"))
+        XCTAssertTrue(launchBody.contains("let launchSide = side"))
+        XCTAssertTrue(launchBody.contains("let launchSelection = selectedSelection"))
+
+        // The delegate passes the SNAPSHOT values through, never a literal.
+        XCTAssertTrue(launchBody.contains("sideMode: launchSideMode"))
+        XCTAssertTrue(launchBody.contains("side: launchSide"))
+        XCTAssertTrue(launchBody.contains("selection: launchSelection"))
+        XCTAssertTrue(launchBody.contains("handsFreeEnabled: launchHandsFreeEnabled"))
+
+        // No `.both` coercion anywhere in the launch region.
+        XCTAssertFalse(
+            launchBody.contains(".both"),
+            "launch() must never stamp a .both literal into the snapshot/delegate handoff"
+        )
+    }
+
     private static func alternatingPreset() -> TindeqPreset {
         TindeqPreset(
             name: "Alternating Test",
