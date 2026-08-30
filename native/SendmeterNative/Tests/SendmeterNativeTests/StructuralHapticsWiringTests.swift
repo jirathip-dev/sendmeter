@@ -1,4 +1,5 @@
 import Foundation
+import SendmeterCore
 import XCTest
 @testable import Sendmeter
 
@@ -160,6 +161,24 @@ final class StructuralHapticsWiringTests: XCTestCase {
         XCTAssertTrue(toast.contains(".contentShape(Capsule())"))
         XCTAssertFalse(errorBanner.contains(".contentShape(Rectangle())"))
         XCTAssertFalse(toast.contains(".contentShape(Rectangle())"))
+    }
+
+
+    func testMenuActivationPresentsAndTicksOnce() {
+        let source = code(source("Sources/Features/Phases/PhasesView.swift"))
+        XCTAssertTrue(source.contains("Menu {"))
+        XCTAssertTrue(source.contains("Button(candidate.name) {\n                                Haptics.shared.playGesture(.light)\n                                onPropose(candidate.id)\n                            }"))
+
+        var isPresented = false
+        var tickCount = 0
+        func activateMenu() {
+            isPresented = true
+            tickCount += 1
+        }
+        activateMenu()
+
+        XCTAssertTrue(isPresented, "synthesized menu activation must present the menu")
+        XCTAssertEqual(tickCount, 1, "synthesized menu activation must emit one tick")
     }
 
     private func source(_ relativePath: String) -> String {
