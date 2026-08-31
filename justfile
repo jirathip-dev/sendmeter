@@ -9,11 +9,15 @@ default:
 
 # --- fast, no simulator -------------------------------------------------
 
-# Watch pure-logic package tests (runs on host, no simulator)
+# PRIMARY gate: full native SwiftPM suite (~1136 tests, host, no simulator)
+core:
+    swift test --package-path native/SendmeterNative
+
+# Watch pure-logic package tests (host, no simulator)
 watch-core:
     swift test --package-path ios/App/SendLogWatchCore
 
-# Health/readiness math tests (runs on host, no simulator)
+# Health/readiness math tests (host, no simulator)
 health-core:
     swift test --package-path native-plugins/sendlog-health-core
 
@@ -29,30 +33,36 @@ slop-cold:
 check-static:
     bash scripts/validate-native-static.sh
 
-# Slop scan + both Swift core test suites (the fast lane after edits)
-fast: slop watch-core health-core
+# Slop scan + all three Swift test suites (the fast lane after edits)
+fast: slop core watch-core health-core
 
 # --- xcodegen (required before any xcodebuild) --------------------------
 
 # Regenerate Xcode projects from project.yml (XcodeGen)
 gen:
-    xcodegen generate
+    cd native/SendmeterNative && xcodegen generate
+
+# Generated-project ownership gate (run after any gen-affecting change)
+check-watch-project:
+    ruby scripts/assert-native-watch-project.rb
 
 # --- build (needs Xcode; CODE_SIGNING_ALLOWED=NO like CI) ---------------
 
 # Build the native iOS app (unsigned, generic destination)
 build-ios:
-    xcodebuild -project native/SendmeterNative/SendmeterNative.xcodeproj \
+    cd native/SendmeterNative && xcodebuild \
+      -project SendmeterNative.xcodeproj \
       -scheme SendmeterNative -configuration Debug \
       -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 
 # Build the watch app (unsigned, generic destination)
 build-watch:
-    xcodebuild -project native/SendmeterNative/SendmeterNative.xcodeproj \
+    cd native/SendmeterNative && xcodebuild \
+      -project SendmeterNative.xcodeproj \
       -scheme 'SendLogWatch Watch App' -configuration Debug \
       -destination 'generic/platform=watchOS Simulator' CODE_SIGNING_ALLOWED=NO build
 
 # --- full parity with native-swift.yml Core tests -----------------------
 
 # Everything CI gates on, in CI order (excludes simulator-only steps)
-ci: slop slop-cold watch-core health-core build-ios build-watch
+ci: slop slop-cold core watch-core health-core gen check-watch-project build-ios build-watch
