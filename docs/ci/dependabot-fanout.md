@@ -41,23 +41,37 @@ The issue recorded the before baseline as **10 update PRs**, **29 workflow
 runs**, and **48.37 minutes wall-clock**. The runners were Blacksmith runners;
 GitHub-billable minutes were recorded as **0**.
 
-After policy — **expected maximum, measured values to be recorded after the
-first policy cycle (next scheduled 2026-08-31)** — is one open routine
-version-update PR per retained manifest, including Bundler for Fastlane:
+After policy — measured after the first post-policy cycle. Measurement window:
+2026-08-30T19:00Z → 2026-09-02T02:00Z (covers both the config-true
+Asia/Bangkok schedule readings and the alternate UTC reading; recorded
+2026-09-03):
 
-```
-mcp npm 1 + GitHub Actions 1 + 4 surviving SwiftPM manifests + Bundler 1 = 7 PRs
-maximum routine version-update fan-out per weekly cycle
-```
+| Metric | Before baseline | After (measured first cycle) |
+| --- | --- | --- |
+| Routine version-update PRs | 10 | 1 — #877 only (mcp npm development group, @types/node 26.3.0 → 26.4.0, opened 2026-08-30T20:23:09Z) |
+| Workflow runs on dependabot branches | 29 | 2, both success |
+| Wall-clock runner time | 48.37 min | ~0.7 min (42 s total: Secret scan run [33333499451](https://github.com/jirathip-dev/sendmeter/actions/runs/33333499451) = 20 s, MCP run [33333499471](https://github.com/jirathip-dev/sendmeter/actions/runs/33333499471) = 22 s) |
+| Runner class | Blacksmith | Blacksmith 4-vCPU Ubuntu (`blacksmith-4vcpu-ubuntu-2404`); no macOS native job allocated for the MCP-only change |
+| GitHub-billable minutes | 0 | 0 (timing API reports 0 ms billable; Blacksmith-side charge stays separate, as before) |
 
-This is a queue bound, not a promise that every manifest receives an update.
-Security updates are intentionally excluded from the routine bound. The
-classifier further limits expensive native allocation: unrelated dependency
-changes use the Blacksmith 4-vCPU Ubuntu classifier plus quality/audit and
-secret-scan jobs, while native-facing changes can allocate the Blacksmith
-6-vCPU macOS native job. The measured after workflow-run count, wall-clock,
-Blacksmith accounting, and GitHub-billable minutes remain pending until that
-first policy cycle; the before baseline recorded 0 GitHub-billable minutes.
+The single in-window PR ran only its relevant gates — `quality` (MCP) and
+`Secret scan` (gitleaks) — and skipped the macOS native/iOS job, so the
+path-aware classifier worked as designed for the MCP-only change. Coverage is
+unchanged: the native-affecting and unrelated fixtures in the "Fixture
+evidence" section below remain the proof that Swift/iOS-affecting dependency
+changes still run their native gates while unrelated changes skip them.
+GitHub Actions, SwiftPM (all four retained manifests), and Bundler routine
+slots produced **0 PRs** in the window (no updates available in that cycle).
+
+Security updates kept their separate live path: #884 (mcp-npm-security,
+fast-uri 3.1.5 → 3.1.7) opened 2026-09-03T02:52Z with Secret scan and MCP runs
+green — outside the measured routine window and exempt from the routine queue
+bound, recorded to show the security path still flows.
+
+This remains a queue bound, not a promise that every manifest receives an
+update each cycle: mcp npm 1 + GitHub Actions 1 + 4 surviving SwiftPM
+manifests + Bundler 1 = 7 routine version-update PRs maximum per weekly cycle,
+with security updates excluded from the bound.
 
 Because major groups also consume the one version-update slot, operators must
 close stale major PRs promptly when they are not being actively upgraded.
