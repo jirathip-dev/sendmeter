@@ -74,7 +74,11 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertTrue(guidedTargetCoach.contains("No target configured for this protocol"))
         XCTAssertTrue(guidedTargetCoach.contains("else"))
         XCTAssertTrue(forceBody.contains("ForceContextSummaryCard("))
-        XCTAssertTrue(forceBody.contains("DisclosureGroup(\"Protocol details\""))
+        // #833 r2: the recording-context configure card is a direct member of
+        // the outside stack; the low-emphasis collapsed "Protocol details"
+        // disclosure shipped in build 50 is gone from this context.
+        XCTAssertTrue(forceBody.contains("recordingContextCard"))
+        XCTAssertFalse(forceBody.contains("DisclosureGroup(\"Protocol details\""))
         XCTAssertTrue(forceBody.contains(".safeAreaInset(edge: .bottom"))
         XCTAssertTrue(manualBody.contains("protocolDetails"))
         XCTAssertTrue(manualBody.contains("targetCoach"))
@@ -102,6 +106,82 @@ final class ForceMotionWiringTests: XCTestCase {
             restBetweenSetsSeconds: 0
         )
         XCTAssertEqual(varied.holdScheduleSummary, "7/10/12s holds")
+    }
+
+    // MARK: - #833 r2: outside-context protocol hierarchy discoverability
+
+    /// AC1: the outside (pre-start) recording context renders the protocol
+    /// configure surface (recording-context card) directly — never behind a
+    /// collapsed, low-emphasis DisclosureGroup — and the collapse state that
+    /// shipped in build 50 is gone.
+    func testOutsideContextRendersConfigureCardWithoutCollapsedDisclosure() {
+        let force = code(source("Sources/Features/Force/ForceView.swift"))
+        let forceView = exactType(force, startingWith: "struct ForceView: View")
+        let forceBody = exactFunction(forceView, startingWith: "var body: some View {")
+
+        XCTAssertTrue(forceBody.contains("recordingContextCard"))
+        XCTAssertFalse(forceBody.contains("DisclosureGroup(\"Protocol details\""))
+        XCTAssertFalse(forceView.contains("showProtocolDetails"))
+    }
+
+    /// AC1: the outside identity card uses the approved V2 "Selected
+    /// protocol" wording, renders the armed preset's name, and badges the
+    /// STATIC/MOVEMENT mode next to it (guided identity-header language) —
+    /// the mode is not buried in secondary text; an unarmed state honestly
+    /// reads Free pull.
+    func testOutsideIdentityCardShowsSelectedProtocolNameAndModeBadge() {
+        let force = code(source("Sources/Features/Force/ForceView.swift"))
+        let forceView = exactType(force, startingWith: "struct ForceView: View")
+        let forceBody = exactFunction(forceView, startingWith: "var body: some View {")
+        let outsideCard = exactType(force, startingWith: "private struct ForceContextSummaryCard: View")
+
+        XCTAssertTrue(
+            normalizeWhitespace(forceBody).contains(
+                "ForceContextSummaryCard( preset: selectedPreset, targetBand: selectedTargetReferenceBand, handsFreeEnabled: handsFreeEnabled )"
+            )
+        )
+        XCTAssertTrue(outsideCard.contains("SectionLabel(\"Selected protocol\""))
+        XCTAssertTrue(outsideCard.contains("Text(preset.name)"))
+        XCTAssertTrue(outsideCard.contains("Text(\"Free pull\")"))
+        XCTAssertTrue(
+            normalizeWhitespace(outsideCard).contains(
+                "StatusPill( preset.protocolMode == .reverseAction ? \"MOVEMENT\" : \"STATIC\", color: SendmeterStyle.primary )"
+            )
+        )
+    }
+
+    /// AC2: between the armed-target branch and the hands-free action label
+    /// the outside identity card must keep an explicit no-target branch — a
+    /// missing target is never a silent gap in the outside context.
+    func testOutsideIdentityCardRendersExplicitNoTargetState() {
+        let force = code(source("Sources/Features/Force/ForceView.swift"))
+        let outsideCard = exactType(force, startingWith: "private struct ForceContextSummaryCard: View")
+
+        let targetArea = region(
+            outsideCard,
+            from: "if let targetBand {",
+            to: "Label(handsFreeEnabled ? \"Pull to start"
+        )
+        XCTAssertTrue(targetArea.contains("\"No target configured for this protocol\""))
+        XCTAssertTrue(targetArea.contains("else"))
+    }
+
+    /// AC3: the outside identity card keeps the hands-free state pill and the
+    /// next physical action label prominent before starting.
+    func testOutsideIdentityCardKeepsHandsFreeNextActionProminence() {
+        let force = code(source("Sources/Features/Force/ForceView.swift"))
+        let outsideCard = exactType(force, startingWith: "private struct ForceContextSummaryCard: View")
+
+        XCTAssertTrue(
+            outsideCard.contains(
+                "StatusPill(handsFreeEnabled ? \"Hands-free\" : \"Ready\", color: handsFreeEnabled ? SendmeterStyle.caution : SendmeterStyle.optimal)"
+            )
+        )
+        XCTAssertTrue(
+            outsideCard.contains(
+                "Label(handsFreeEnabled ? \"Pull to start · release to stop\" : \"Tap Start Pull when ready\", systemImage: handsFreeEnabled ? \"hand.draw\" : \"play.fill\")"
+            )
+        )
     }
 
     private func protocolSummaryBranches(_ source: String) -> (staticBranch: String, movementBranch: String) {

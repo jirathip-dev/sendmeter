@@ -298,37 +298,54 @@ private struct RecoveryMetricRowView: View {
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
 
+            // Bars first, then the 28-day dashed reference, then the 7-day
+            // solid primary on top (the same draw order as the retired web
+            // card). Both trend families share ONE series dimension whose
+            // values are unique per family-and-run ("7d-run-N" / "28d-run-N"):
+            // the previous per-day interleaved emission used two differently
+            // named series keys with colliding numeric values, and Swift
+            // Charts silently dropped the second (28d) series — device and
+            // simulator evidence showed only the solid 7d line (#753 R2).
             ForEach(series.days) { day in
                 if let value = day.value {
-                    let baseline = day.trend28 ?? series.yDomain?.lowerBound ?? value
+                    // #753 AC6: with no warmed 28d baseline for this day the
+                    // bar renders the neutral treatment — never classify
+                    // against zero, the row minimum, or a fabricated average.
+                    let barTone = day.trend28.map { barColor(value: value, baseline: $0) }
+                        ?? ChartToken.health.color(scheme)
                     BarMark(
                         x: .value("Day", day.dateValue),
-                        yStart: .value("Baseline", series.yDomain?.lowerBound ?? baseline),
+                        yStart: .value("Baseline", series.yDomain?.lowerBound ?? value),
                         yEnd: .value(series.metric.title, value)
                     )
-                    .foregroundStyle(barColor(value: value, baseline: baseline))
+                    .foregroundStyle(barTone)
                     .opacity(selectedDay == nil || selectedDay?.id == day.id ? 0.75 : 0.38)
                     .cornerRadius(2)
                 }
+            }
 
-                if let trend = day.trend, let runIndex = day.runIndex {
-                    LineMark(
-                        x: .value("Day", day.dateValue),
-                        y: .value("7d EWMA", trend),
-                        series: .value("Run", runIndex)
-                    )
-                    .foregroundStyle(ChartToken.focus.color(scheme))
-                    .lineStyle(StrokeStyle(lineWidth: 2))
-                    .interpolationMethod(.monotone)
-                }
+            ForEach(series.days) { day in
                 if let trend28 = day.trend28, let runIndex = day.runIndex {
                     LineMark(
                         x: .value("Day", day.dateValue),
                         y: .value("28d EWMA", trend28),
-                        series: .value("Long run", runIndex)
+                        series: .value("Trend", "28d-run-\(runIndex)")
                     )
                     .foregroundStyle(ChartToken.reference.color(scheme))
                     .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                    .interpolationMethod(.monotone)
+                }
+            }
+
+            ForEach(series.days) { day in
+                if let trend = day.trend, let runIndex = day.runIndex {
+                    LineMark(
+                        x: .value("Day", day.dateValue),
+                        y: .value("7d EWMA", trend),
+                        series: .value("Trend", "7d-run-\(runIndex)")
+                    )
+                    .foregroundStyle(ChartToken.focus.color(scheme))
+                    .lineStyle(StrokeStyle(lineWidth: 2))
                     .interpolationMethod(.monotone)
                 }
             }

@@ -1216,7 +1216,6 @@ struct ForceView: View {
     @State private var guidedFullscreenPresented = false
     @State private var guidedMinimizeRequested = false
     @State private var guidedLaunchInFlight = false
-    @State private var showProtocolDetails = false
     @State private var manualFullscreenPresented = false
     @State private var manualFullscreenLifecycle = ManualForceFullscreenLifecycle()
     @State private var manualFullscreenHandsFree = false
@@ -1728,11 +1727,12 @@ struct ForceView: View {
                     // dedicated `@ViewBuilder` sub-expression (plus an explicit
                     // fully-typed `init` below) so the constraint solver
                     // type-checks it in isolation (CI "unable to type-check
-                    // this expression in reasonable time").
-                    DisclosureGroup("Protocol details", isExpanded: $showProtocolDetails) {
-                        recordingContextCard
-                    }
-                    .font(.subheadline.weight(.semibold))
+                    // this expression in reasonable time"). #833 r2: it is the
+                    // outside context's protocol configure surface and stays a
+                    // direct stack member — the collapsed, low-emphasis
+                    // "Protocol details" DisclosureGroup (build 50) made this
+                    // surface undiscoverable before start.
+                    recordingContextCard
 
                     if showsForceAnalysisCards {
                         ForceProgressCardBoundary(
@@ -2580,15 +2580,33 @@ private struct ForceContextSummaryCard: View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    SectionLabel("Current phase", systemImage: "waveform.path.ecg")
+                    // #833 r2: the outside identity card speaks the approved
+                    // V2 wording — this is where the user reviews the active
+                    // protocol before starting.
+                    SectionLabel("Selected protocol", systemImage: "waveform.path.ecg")
                     Spacer()
                     StatusPill(handsFreeEnabled ? "Hands-free" : "Ready", color: handsFreeEnabled ? SendmeterStyle.caution : SendmeterStyle.optimal)
                 }
-                Text(preset?.name ?? "Free pull")
-                    .font(.title3.bold())
-                Text(preset.map(protocolSummary) ?? (handsFreeEnabled ? "STATIC · Pull to start, release to stop" : "STATIC · Tap Start Pull when ready"))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                if let preset {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(preset.name)
+                            .font(.title3.bold())
+                        Spacer(minLength: 8)
+                        StatusPill(
+                            preset.protocolMode == .reverseAction ? "MOVEMENT" : "STATIC",
+                            color: SendmeterStyle.primary
+                        )
+                    }
+                    Text(protocolSummary(preset))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Free pull")
+                        .font(.title3.bold())
+                    Text(handsFreeEnabled ? "STATIC · Pull to start, release to stop" : "STATIC · Tap Start Pull when ready")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
                 if let targetBand {
                     Text("Target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kg · range \(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1))))–\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
                         .font(.caption.weight(.semibold).monospacedDigit())
