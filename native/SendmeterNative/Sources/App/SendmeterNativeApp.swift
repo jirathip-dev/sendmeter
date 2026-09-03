@@ -267,10 +267,20 @@ struct MainTabView: View {
                 .tabItem { Label("Dashboard", systemImage: SendmeterIconSymbol.status.rawValue) }
                 .tag(AppTab.dashboard)
             // #875: approved mascot masters replace the SF Symbols on the
-            // mascot tabs. The single-scale SVG imagesets render as
-            // templates (explicit `.renderingMode(.template)` — the tab bar
-            // only tints SF Symbols automatically), tinted in the selected
-            // state and grayed when inactive, light and dark.
+            // mascot tabs, rendered as templates (explicit
+            // `.renderingMode(.template)` — the tab bar only tints SF Symbols
+            // automatically), tinted in the selected state and grayed when
+            // inactive, light and dark.
+            //
+            // #875 r2 (device reopen): the approved R11 24 px master does not
+            // hold a kangaroo-deadlift/barbell read at the real 24 pt tab size
+            // (device evidence, umbrella #881). R11 geometry stays frozen; the
+            // delivered rendering now presents the SAME approved master as
+            // pinned 1x/2x/3x rasters at a 28 pt optical size
+            // (r11-force-control-28pt@*.png in ForceMascotTab.imageset; the
+            // master SVG remains as the hash-pinned provenance anchor).
+            // TabGlyphRenderingWiringTests pins this rendering configuration
+            // (template mode, resource wiring, master hash, raster scale).
             ForceView()
                 .tabItem {
                     Label {

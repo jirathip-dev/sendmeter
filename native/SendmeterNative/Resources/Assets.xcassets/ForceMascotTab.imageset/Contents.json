@@ -1,9 +1,19 @@
 {
   "images" : [
     {
-      "filename" : "r11-force-control-24.svg",
+      "filename" : "r11-force-control-28pt@1x.png",
       "idiom" : "universal",
-      "preserves-vector-representation" : true
+      "scale" : "1x"
+    },
+    {
+      "filename" : "r11-force-control-28pt@2x.png",
+      "idiom" : "universal",
+      "scale" : "2x"
+    },
+    {
+      "filename" : "r11-force-control-28pt@3x.png",
+      "idiom" : "universal",
+      "scale" : "3x"
     }
   ],
   "info" : {
