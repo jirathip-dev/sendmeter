@@ -120,7 +120,10 @@ struct WorkoutEffortChartView: View {
                 }
             }
             .chartYAxis {
-                AxisMarks(values: [0, 10]) { value in
+                // #880: same leading-edge pin as the HR chart above — an
+                // automatic placement would reserve a trailing gutter and
+                // detach the "10 eff" label from the bars.
+                AxisMarks(position: .leading, values: [0, 10]) { value in
                     AxisGridLine().foregroundStyle(ChartToken.grid.color(scheme))
                     AxisValueLabel {
                         if let v = value.as(Double.self) {

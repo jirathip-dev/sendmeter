@@ -98,6 +98,8 @@ struct RootView: View {
                         TabsFixtureView(selectedTab: fixtureTabArgument())
                     } else if CommandLine.arguments.contains("--recovery-fixture") {
                         RecoveryInputsFixtureView()
+                    } else if CommandLine.arguments.contains("--workout-charts-fixture") {
+                        WorkoutChartsFixtureView()
                     } else {
                         LoginView()
                     }
@@ -284,6 +286,120 @@ private func fixtureTabArgument() -> AppTab {
     case "history": return .history
     case "settings": return .settings
     default: return .dashboard
+    }
+}
+#endif
+
+#if DEBUG
+/// #880 evidence harness: renders the REAL workout-detail chart stack (the
+/// same `SurfaceCard` + HR/effort composition `SessionDetailView` builds)
+/// with a representative synthetic long workout, so simulator screenshots
+/// can prove the plots use the full card width and the Y labels sit
+/// readable at the leading edge — no signed-in session or backend needed.
+/// DEBUG-only; the app's normal signed-in flow never reaches this view.
+private struct WorkoutChartsFixtureView: View {
+    private let samples: [WorkoutHrSample]
+    private let attempts: [WorkoutAttempt]
+    private let startedAt: Date
+    private let endedAt: Date
+    @State private var selectedTime: Double?
+
+    init() {
+        // 50-minute watch workout, trace at the watch's 3 s stride (1000
+        // samples — over the 600-point chart budget, so the real
+        // downsampling path runs too).
+        let durationSeconds = 50 * 60
+        let end = Date()
+        let start = end.addingTimeInterval(-Double(durationSeconds))
+        startedAt = start
+        endedAt = end
+
+        var built: [WorkoutHrSample] = []
+        for t in stride(from: 0, through: durationSeconds, by: 3) {
+            let minute = Double(t) / 60.0
+            let climbing: Double
+            switch minute {
+            case ..<8: climbing = 118 + 3 * minute      // warm-up ramp → ~142
+            case 8..<13: climbing = 155                  // first climb push
+            case 13..<17: climbing = 124                 // rest
+            case 17..<22: climbing = 163                 // second climb push
+            case 22..<26: climbing = 121                 // rest
+            case 26..<32: climbing = 158                 // third climb push
+            case 32..<50: climbing = 127 + (minute - 32) // cool-down drift
+            default: climbing = 130
+            }
+            let hr = climbing + sin(Double(t) / 21.0) * 4
+            // Sensor gaps (nil) across two 60 s stretches split the runs.
+            if (24...25).contains(minute) || (38...39).contains(minute) {
+                built.append(WorkoutHrSample(t: Double(t), hr: nil))
+            } else {
+                built.append(WorkoutHrSample(t: Double(t), hr: hr))
+            }
+        }
+        samples = built
+        attempts = [
+            WorkoutAttempt(
+                startedAt: start.addingTimeInterval(8 * 60),
+                durationSeconds: 4 * 60,
+                effortScore: 6,
+                source: "manual"
+            ),
+            WorkoutAttempt(
+                startedAt: start.addingTimeInterval(17 * 60),
+                durationSeconds: 4 * 60 + 30,
+                effortScore: 8,
+                source: "detected"
+            ),
+            WorkoutAttempt(
+                startedAt: start.addingTimeInterval(26 * 60),
+                durationSeconds: 5 * 60,
+                effortScore: 9,
+                source: "detected"
+            ),
+            WorkoutAttempt(
+                startedAt: start.addingTimeInterval(40 * 60),
+                durationSeconds: 3 * 60,
+                effortScore: 7,
+                source: "manual"
+            )
+        ]
+    }
+
+    private var chartTMax: Double {
+        WorkoutChartAxis.timeMaxS(
+            startedAt: startedAt,
+            endedAt: endedAt,
+            attempts: attempts,
+            samples: samples
+        )
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 16) {
+                SurfaceCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        WorkoutHrChartView(
+                            samples: samples,
+                            attempts: attempts,
+                            startedAt: startedAt,
+                            endedAt: endedAt,
+                            source: .watch,
+                            tMax: chartTMax,
+                            selectedTime: $selectedTime
+                        )
+                        WorkoutEffortChartView(
+                            attempts: attempts,
+                            startedAt: startedAt,
+                            tMax: chartTMax,
+                            selectedTime: $selectedTime
+                        )
+                    }
+                }
+            }
+            .padding()
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
     }
 }
 #endif
