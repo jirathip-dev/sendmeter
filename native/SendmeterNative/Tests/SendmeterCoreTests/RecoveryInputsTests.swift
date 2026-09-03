@@ -118,8 +118,70 @@ final class RecoveryInputsTests: XCTestCase {
         XCTAssertEqual(RecoveryBarGradient.classification(value: 101, baseline: 100), .neutral)
         XCTAssertEqual(RecoveryBarGradient.classification(value: 103, baseline: 100), .above)
         XCTAssertEqual(RecoveryBarGradient.classification(value: 97, baseline: 100), .below)
-        XCTAssertEqual(RecoveryBarGradient.position(value: 120, baseline: 100), 0.6, accuracy: 0.0001)
-        XCTAssertEqual(RecoveryBarGradient.position(value: 80, baseline: 100), 0.4, accuracy: 0.0001)
+        // The first-fix ramp needed a ±100% excursion to reach an endpoint,
+        // which real readings never make — every bar rendered the same mid
+        // blue on device (#753 Build 50). Saturation is now bounded at 12%
+        // relative distance, so ordinary variance is visible.
+        XCTAssertEqual(RecoveryBarGradient.position(value: 112, baseline: 100), 1.0, accuracy: 0.0001)
+        XCTAssertEqual(RecoveryBarGradient.position(value: 88, baseline: 100), 0.0, accuracy: 0.0001)
+        XCTAssertEqual(RecoveryBarGradient.position(value: 500, baseline: 100), 1.0, accuracy: 0.0001)
+        XCTAssertEqual(RecoveryBarGradient.position(value: 20, baseline: 100), 0.0, accuracy: 0.0001)
+        // Inside the band the position stays smooth: 3%/6% excursions above
+        // and below their 28-day baseline land at distinct, strongly-tinted
+        // positions (the exponents differ per direction so the below ramp
+        // escapes the gray-green middle of the yellow↔blue sRGB blend).
+        XCTAssertEqual(RecoveryBarGradient.position(value: 106, baseline: 100), 0.8628198181, accuracy: 0.0000001)
+        XCTAssertEqual(RecoveryBarGradient.position(value: 103, baseline: 100), 0.7233417961, accuracy: 0.0000001)
+        XCTAssertEqual(RecoveryBarGradient.position(value: 97, baseline: 100), 0.0841181144, accuracy: 0.0000001)
+        XCTAssertEqual(RecoveryBarGradient.position(value: 94, baseline: 100), 0.0353405183, accuracy: 0.0000001)
+        // The ±2% deadband stays exactly neutral.
+        XCTAssertEqual(RecoveryBarGradient.position(value: 102, baseline: 100), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(RecoveryBarGradient.position(value: 100, baseline: 100), 0.5, accuracy: 0.0001)
+    }
+
+    /// #753: a wear gap must never re-seed or zero the 28-day recurrence
+    /// (Capacitor parity). Values 40+offset across offsets 40...0 with offset
+    /// 8 missing must continue the running state through the gap: the visible
+    /// window's 28d values equal the null-aware recurrence (alpha = 2/29,
+    /// first non-null seeds at 80, nil days carry state untouched), the gap
+    /// day carries no trend point, and the day after the gap belongs to a new
+    /// run with the carried value — not a re-seed at its own reading.
+    func testTwentyEightDayEWMACarriesStateAcrossVisibleGap() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let metrics = (0..<41).compactMap { offset -> HealthMetric? in
+            guard offset != 8 else { return nil }
+            return makeMetric(dayOffset: offset, reference: reference, hrv: 40 + Double(offset))
+        }
+        let series = RecoveryInputsSeries.build(metrics: metrics, referenceDate: reference, timeZone: bangkok)
+        let hrv = try XCTUnwrap(series.rows.first { $0.metric == .hrv })
+        let expectedTrend28: [Int: Double] = [
+            13: 64.539307636, 12: 63.674527799, 11: 62.800422433, 10: 61.917634679,
+            9: 61.026763322, 7: 60.059400334, 6: 59.089786518, 5: 58.118077103,
+            4: 57.144416613, 3: 56.168939606, 2: 55.191771357, 1: 54.213028505,
+            0: 53.232819642
+        ]
+        var sawGap = false
+        for (index, day) in hrv.days.enumerated() {
+            let offset = 13 - index
+            if offset == 8 {
+                sawGap = true
+                XCTAssertNil(day.value)
+                XCTAssertNil(day.trend)
+                XCTAssertNil(day.trend28)
+                XCTAssertNil(day.runIndex, "the gap day never belongs to a trend run")
+                continue
+            }
+            let expected = try XCTUnwrap(expectedTrend28[offset])
+            XCTAssertEqual(try XCTUnwrap(day.trend28), expected, accuracy: 0.0000001)
+        }
+        XCTAssertTrue(sawGap)
+        // The day after the gap carries the pre-gap state instead of
+        // re-seeding at its own value (47) or inventing a zero, and the
+        // visible gap splits the runs.
+        let dayAfterGap = hrv.days[6] // index 5 is the offset-8 gap day
+        XCTAssertEqual(dayAfterGap.runIndex, 2)
+        XCTAssertEqual(try XCTUnwrap(dayAfterGap.trend28), 60.059400334, accuracy: 0.0000001)
+        XCTAssertGreaterThan(try XCTUnwrap(dayAfterGap.trend28), 47)
     }
 
     func testBothTrendsUseSixtyDayWarmup() throws {
