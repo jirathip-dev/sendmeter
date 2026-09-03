@@ -150,6 +150,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native History: the workout detail's Heart Rate and Attempts · Effort charts now fill the full card width — their Y-axis value labels sit at the charts' leading edge instead of a detached trailing strip, so the plotted data no longer stops short of the card's right edge.
 - Native Force: guided protocol launch now snapshots the selected side through target resolution, preserving Left/Right and applying only the active exercise's deterministic fallback for stale values.
 - Native History and Send Conditions now activate on the first tap without delaying vertical scrolling; structural haptics remain on the action that wins the gesture.
 - Native Routine runner: the Close control is tappable again, including across
