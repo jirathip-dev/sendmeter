@@ -1,6 +1,8 @@
+import Foundation
 import SendmeterCore
 import SendLogWatchCore
 import SwiftUI
+import UIKit
 
 @main
 struct SendmeterNativeApp: App {
@@ -96,6 +98,8 @@ struct RootView: View {
                         TabsFixtureView(selectedTab: fixtureTabArgument())
                     } else if CommandLine.arguments.contains("--recovery-fixture") {
                         RecoveryInputsFixtureView()
+                    } else if CommandLine.arguments.contains("--workout-charts-fixture") {
+                        WorkoutChartsFixtureView()
                     } else {
                         LoginView()
                     }
@@ -159,47 +163,92 @@ struct RootView: View {
 }
 
 #if DEBUG
+/// #753 R2 evidence fixture: a deterministic 60-day representative history so
+/// the 7d and 28d EWMAs are genuinely warmed before the visible 14-day window
+/// (the first-fix fixture supplied only 14 days, so its "28d" line was an
+/// immature 13-observation average hugging the bars — which hid the parity
+/// defect on device). Values are generated, never sampled: a fixed LCG plus
+/// Box–Muller keeps every simulator capture reproducible. Wear gaps at
+/// offsets 58, 30, and 8 exercise honest warm-up gaps and a visible-window
+/// run split; realistic per-metric ranges and day-to-day noise mix
+/// above/near/below-baseline days against the 28d EWMA in every row except
+/// weight, which honestly stays neutral near its own average.
 private struct RecoveryInputsFixtureView: View {
     private let metrics: [HealthMetric]
 
     init() {
         let reference = Date()
-        let values: [(Int, Double, Double, Double, Double, Double, Double, Double)] = [
-            (13, 42, 61, 13.8, 6.4, 0.9, 1.4, 68.2),
-            (12, 48, 59, 14.1, 7.1, 1.1, 1.6, 68.0),
-            (11, 55, 57, 13.6, 7.7, 1.3, 1.8, 67.8),
-            (10, 61, 56, 13.2, 8.0, 1.5, 1.9, 67.9),
-            (9, 58, 55, 13.5, 7.5, 1.2, 1.7, 68.1),
-            (8, 64, 54, 13.0, 8.2, 1.6, 2.0, 68.3),
-            (7, 60, 53, 13.4, 7.8, 1.4, 1.8, 68.5),
-            (6, 67, 52, 12.9, 8.4, 1.7, 2.1, 68.4),
-            (5, 63, 51, 13.1, 7.9, 1.5, 1.9, 68.6),
-            (4, 70, 50, 12.7, 8.6, 1.8, 2.2, 68.8),
-            (3, 66, 49, 12.8, 8.1, 1.6, 2.0, 68.7),
-            (2, 72, 48, 12.5, 8.8, 1.9, 2.3, 68.9),
-            (1, 69, 47, 12.6, 8.3, 1.7, 2.1, 69.0),
-            (0, 75, 46, 12.3, 9.0, 2.0, 2.4, 69.2)
-        ]
-        metrics = values.enumerated().compactMap { index, value in
-            guard index != 5 else { return nil }
+        var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+        func nextUnit() -> Double {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Double((state >> 33) & 0xFFFF) / 65_535
+        }
+        func gauss(_ sigma: Double) -> Double {
+            let u1 = max(nextUnit(), 1e-9)
+            return sigma * sqrt(-2 * log(u1)) * cos(2 * .pi * nextUnit())
+        }
+        func wave(_ offset: Int, _ period: Int, _ phase: Int) -> Double {
+            sin(2 * .pi * Double(offset + phase) / Double(period))
+        }
+        func clamp(_ value: Double, _ lower: Double, _ upper: Double) -> Double {
+            min(max(value, lower), upper)
+        }
+        let gapOffsets: Set<Int> = [58, 30, 8]
+        metrics = (0..<60).compactMap { offset in
+            guard !gapOffsets.contains(offset) else { return nil }
             return HealthMetric(
-                date: LocalDateSupport.daysAgo(value.0, from: reference, timeZone: .current),
+                date: LocalDateSupport.daysAgo(offset, from: reference, timeZone: .current),
                 readiness: nil,
                 zone: nil,
                 computedAt: reference,
-                hrvSDNNMilliseconds: value.1,
-                restingHeartRate: value.2,
-                sleepHours: value.4,
-                sleepDeepHours: value.5,
-                sleepREMHours: value.6,
-                bodyMassKilograms: value.7,
-                respiratoryRate: value.3
+                hrvSDNNMilliseconds: clamp(62 + 14 * wave(offset, 34, 0) + gauss(9), 25, 150),
+                restingHeartRate: clamp(56 + 6 * wave(offset, 29, 11) + gauss(2.0), 38, 90),
+                sleepHours: clamp(7.4 + 0.9 * wave(offset, 31, 19) + gauss(0.7), 3, 12),
+                sleepDeepHours: clamp(1.45 + 0.35 * wave(offset, 27, 3) + gauss(0.28), 0.15, 3.2),
+                sleepREMHours: clamp(1.75 + 0.45 * wave(offset, 24, 13) + gauss(0.35), 0.2, 4.5),
+                bodyMassKilograms: clamp(67.9 + 0.45 * wave(offset, 60, 23) + gauss(0.2), 60, 80),
+                respiratoryRate: clamp(13.4 + 0.8 * wave(offset, 23, 7) + gauss(0.45), 9, 19)
             )
         }
     }
 
     var body: some View {
         RecoveryInputsSheet(fixtureMetrics: metrics)
+            .onAppear {
+                RecoveryInputsFixtureScroll.scrollToBottomIfRequested()
+            }
+    }
+}
+
+/// #753 R2 evidence: with `--recovery-fixture-scrolled` the sheet scrolls to
+/// its bottom so the lower cards (Deep Sleep, REM Sleep, Weight) and the
+/// shared axis can be captured. DEBUG-only, launch-argument-gated, and the
+/// production sheet is untouched. Retries a few times because the sheet's
+/// ScrollView is created after the NavigationStack appears.
+private enum RecoveryInputsFixtureScroll {
+    static func scrollToBottomIfRequested() {
+        guard CommandLine.arguments.contains("--recovery-fixture-scrolled") else { return }
+        func scroll() {
+            guard let window = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .flatMap(\.windows)
+                .first(where: \.isKeyWindow) else { return }
+            var queue = window.subviews
+            while let view = queue.popLast() {
+                if let scroll = view as? UIScrollView {
+                    let bottom = max(
+                        scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom,
+                        0
+                    )
+                    scroll.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
+                    return
+                }
+                queue.append(contentsOf: view.subviews)
+            }
+        }
+        for delay in [0.8, 1.6, 2.4] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { scroll() }
+        }
     }
 }
 #endif
@@ -241,6 +290,120 @@ private func fixtureTabArgument() -> AppTab {
 }
 #endif
 
+#if DEBUG
+/// #880 evidence harness: renders the REAL workout-detail chart stack (the
+/// same `SurfaceCard` + HR/effort composition `SessionDetailView` builds)
+/// with a representative synthetic long workout, so simulator screenshots
+/// can prove the plots use the full card width and the Y labels sit
+/// readable at the leading edge — no signed-in session or backend needed.
+/// DEBUG-only; the app's normal signed-in flow never reaches this view.
+private struct WorkoutChartsFixtureView: View {
+    private let samples: [WorkoutHrSample]
+    private let attempts: [WorkoutAttempt]
+    private let startedAt: Date
+    private let endedAt: Date
+    @State private var selectedTime: Double?
+
+    init() {
+        // 50-minute watch workout, trace at the watch's 3 s stride (1000
+        // samples — over the 600-point chart budget, so the real
+        // downsampling path runs too).
+        let durationSeconds = 50 * 60
+        let end = Date()
+        let start = end.addingTimeInterval(-Double(durationSeconds))
+        startedAt = start
+        endedAt = end
+
+        var built: [WorkoutHrSample] = []
+        for t in stride(from: 0, through: durationSeconds, by: 3) {
+            let minute = Double(t) / 60.0
+            let climbing: Double
+            switch minute {
+            case ..<8: climbing = 118 + 3 * minute      // warm-up ramp → ~142
+            case 8..<13: climbing = 155                  // first climb push
+            case 13..<17: climbing = 124                 // rest
+            case 17..<22: climbing = 163                 // second climb push
+            case 22..<26: climbing = 121                 // rest
+            case 26..<32: climbing = 158                 // third climb push
+            case 32..<50: climbing = 127 + (minute - 32) // cool-down drift
+            default: climbing = 130
+            }
+            let hr = climbing + sin(Double(t) / 21.0) * 4
+            // Sensor gaps (nil) across two 60 s stretches split the runs.
+            if (24...25).contains(minute) || (38...39).contains(minute) {
+                built.append(WorkoutHrSample(t: Double(t), hr: nil))
+            } else {
+                built.append(WorkoutHrSample(t: Double(t), hr: hr))
+            }
+        }
+        samples = built
+        attempts = [
+            WorkoutAttempt(
+                startedAt: start.addingTimeInterval(8 * 60),
+                durationSeconds: 4 * 60,
+                effortScore: 6,
+                source: "manual"
+            ),
+            WorkoutAttempt(
+                startedAt: start.addingTimeInterval(17 * 60),
+                durationSeconds: 4 * 60 + 30,
+                effortScore: 8,
+                source: "detected"
+            ),
+            WorkoutAttempt(
+                startedAt: start.addingTimeInterval(26 * 60),
+                durationSeconds: 5 * 60,
+                effortScore: 9,
+                source: "detected"
+            ),
+            WorkoutAttempt(
+                startedAt: start.addingTimeInterval(40 * 60),
+                durationSeconds: 3 * 60,
+                effortScore: 7,
+                source: "manual"
+            )
+        ]
+    }
+
+    private var chartTMax: Double {
+        WorkoutChartAxis.timeMaxS(
+            startedAt: startedAt,
+            endedAt: endedAt,
+            attempts: attempts,
+            samples: samples
+        )
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 16) {
+                SurfaceCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        WorkoutHrChartView(
+                            samples: samples,
+                            attempts: attempts,
+                            startedAt: startedAt,
+                            endedAt: endedAt,
+                            source: .watch,
+                            tMax: chartTMax,
+                            selectedTime: $selectedTime
+                        )
+                        WorkoutEffortChartView(
+                            attempts: attempts,
+                            startedAt: startedAt,
+                            tMax: chartTMax,
+                            selectedTime: $selectedTime
+                        )
+                    }
+                }
+            }
+            .padding()
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+    }
+}
+#endif
+
 private struct StructuralHapticDiagnosticBanner: View {
     let label: String
 
@@ -267,10 +430,20 @@ struct MainTabView: View {
                 .tabItem { Label("Dashboard", systemImage: SendmeterIconSymbol.status.rawValue) }
                 .tag(AppTab.dashboard)
             // #875: approved mascot masters replace the SF Symbols on the
-            // mascot tabs. The single-scale SVG imagesets render as
-            // templates (explicit `.renderingMode(.template)` — the tab bar
-            // only tints SF Symbols automatically), tinted in the selected
-            // state and grayed when inactive, light and dark.
+            // mascot tabs, rendered as templates (explicit
+            // `.renderingMode(.template)` — the tab bar only tints SF Symbols
+            // automatically), tinted in the selected state and grayed when
+            // inactive, light and dark.
+            //
+            // #875 r2 (device reopen): the approved R11 24 px master does not
+            // hold a kangaroo-deadlift/barbell read at the real 24 pt tab size
+            // (device evidence, umbrella #881). R11 geometry stays frozen; the
+            // delivered rendering now presents the SAME approved master as
+            // pinned 1x/2x/3x rasters at a 28 pt optical size
+            // (r11-force-control-28pt@*.png in ForceMascotTab.imageset; the
+            // master SVG remains as the hash-pinned provenance anchor).
+            // TabGlyphRenderingWiringTests pins this rendering configuration
+            // (template mode, resource wiring, master hash, raster scale).
             ForceView()
                 .tabItem {
                     Label {

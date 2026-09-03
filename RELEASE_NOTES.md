@@ -75,6 +75,9 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native iPhone tab bar now reads Dashboard → Force → Workout → History →
   Settings, with the approved climbing mascots on the Force and Workout tabs
   and on the Manual workout card (replacing the SF Symbols).
+- Native Force tab: the approved kangaroo mascot now presents at a larger
+  28-point optical size (same approved artwork), so the deadlift/barbell read
+  stays clear at real tab-bar size in light and dark, selected and inactive.
 
 - Native Recovery Inputs charts now keep every bar inside its card, show both
   7-day and 28-day trends, and color each value smoothly against its 28-day baseline.
@@ -150,6 +153,13 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+ - Native History: the workout detail's Heart Rate and Attempts · Effort charts now fill the full card width — their Y-axis value labels sit at the charts' leading edge instead of a detached trailing strip, so the plotted data no longer stops short of the card's right edge.
+ - Native Force: the outside (pre-start) context now leads with a "Selected protocol" card showing the active protocol's name, STATIC/MOVEMENT mode, hold/cadence, sets × reps, and rest details, and the recording/configure card is visible directly on the Force tab again — the collapsed, low-emphasis "Protocol details" disclosure no longer hides protocol configuration before you start, and a missing target still shows the explicit no-target state.
+ - Native iPhone: the top-right "+ Log Session" action moved from the Dashboard
+   toolbar to the Workout tab's top-right toolbar, opening the same Log Session
+   sheet with the same haptic treatment (relocation only — Dashboard no longer
+   shows the plus action). Physical-device verification remains on the
+   end-of-gauntlet TestFlight pass.
 - Native Force: guided protocol launch now snapshots the selected side through target resolution, preserving Left/Right and applying only the active exercise's deterministic fallback for stale values.
 - Native History and Send Conditions now activate on the first tap without delaying vertical scrolling; structural haptics remain on the action that wins the gesture.
 - Native Routine runner: the Close control is tappable again, including across
@@ -162,6 +172,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Training Load: the Daily Load heatmap no longer renders training days nearly gray when one unusually large past day dominates the intensity scale — the scale stays anchored to the typical load, so real days keep their activity hue and visible shading.
 - Native Training Load: the Daily Load heatmap no longer treats a trained day as rest when its stored date arrives as a timestamp or an old Buddhist-era date — session dates are normalized to the same local calendar day the heatmap uses for its lookup.
 - Native Training Load: weekly bars and the delta chip no longer drop sessions whose stored date arrives as a timestamp or an old Buddhist-era date — session dates are normalized to the same local calendar day the load windows use.
+- Native Training Load: the Daily Load heatmap legend now lists only the activities the shown 53-week grid actually renders, and when that window contains no training the section says so instead of presenting a gray grid under colored legend swatches.
 - Native Dashboard: the ACWR projection chart's `Now` marker no longer collides with an early crossing weekday label; the current ratio remains visible in the Dashboard's ACWR cards.
 - Native Dashboard: Send Conditions and Training Block cards now keep the same height while weather data loads or changes state, eliminating the row's layout jump.
 - iPhone: Apple Health sync now backfills every newly observed day in its read window, preserves existing historical rows and today's readiness freeze rules, and shows the last completed sync. Morning refreshes persist follow-up progress for delayed wearable data and pick up eligible passes on later lifecycle/background events; background timing remains device-only to verify.
@@ -177,6 +188,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - iPhone: reopening the app now reacts to both foreground signals — the WebView's visibility change and the native app's own active transition — before re-sharing the current sign-in with the paired Apple Watch and the Health sync, and each reopen triggers a single re-share and a single health sync. When the Apple Watch asks the phone for a fresh sign-in while the iPhone's session is already gone, the reason is now recorded separately in Settings → Sign-in diagnostics under its own entry.
 - Watch: if a Climb Workout fails to start partway through, the watch now ends and discards the partially-started session instead of leaving it running in the background.
 - iPhone: reopening the app no longer shows readiness as "Synced just now" for an older watch-triggered result that actually completed hours earlier; the synced-time marker is also now kept separate per signed-in account.
+- Native Recovery Inputs: each day's bar now visibly colors by how that day compares with its own 28-day average — purple when clearly above it, yellow when clearly below it, neutral blue when near it — instead of every bar rendering the same blue; both trend lines are drawn from the full warmed history so the 7-day and 28-day averages read as distinct trends, and bars never spill outside their card.
 - iPhone: automatic Health syncs (opening the app, foreground, background, morning) no longer show an "Apple Health updated" confirmation toast — only a manual sync from Settings (or a Dashboard pull-to-refresh) confirms with the "Apple Health synced · N days" copy, and the synced-time/card state updates are unchanged.
 - iPhone: an outright-failed registration for watch-triggered readiness refreshes (for example, on an app version missing the needed native support) no longer disables that notification for the rest of the app session; a registration that fails silently without an error is a separate, still-open gap.
 - Routine actions now stay inside the Workout card on narrow phones; sheet headers are more compact without a redundant drag handle; and the Watch home switcher keeps full-size touch targets with slimmer visual pills.

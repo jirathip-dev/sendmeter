@@ -500,4 +500,183 @@ final class TrainingLoadTests: XCTestCase {
         let sum = mix.activities.reduce(0) { $0 + $1.percentage }
         XCTAssertEqual(sum, 100, accuracy: 1.0, "acceptance 5: sums to 100% ±1 rounding")
     }
+
+    // MARK: - Cell fill resolution (#754 r2)
+
+    /// The fill decision the view makes per cell, resolved in Core so the
+    /// color contract is unit-testable: rest and future cells must resolve
+    /// grey; a trained day must resolve to a colored fill.
+    func testHeatmapCellFillResolvesRestAndFutureToGrey() {
+        let rest = TrainingLoad.heatmapCellFill(value: 0, type: "board", future: false, max: 480)
+        XCTAssertTrue(rest.grey)
+        XCTAssertEqual(rest.alpha, 0)
+
+        let noLoad = TrainingLoad.heatmapCellFill(value: -5, type: "", future: false, max: 480)
+        XCTAssertTrue(noLoad.grey)
+
+        let future = TrainingLoad.heatmapCellFill(value: 480, type: "board", future: true, max: 480)
+        XCTAssertTrue(future.grey, "a future-dated row stays grey and unselectable")
+    }
+
+    func testHeatmapCellFillResolvesTrainedDayToColoredFill() {
+        let fill = TrainingLoad.heatmapCellFill(
+            value: 480,
+            type: "board",
+            future: false,
+            max: 480
+        )
+        XCTAssertFalse(fill.grey, "genuine load must never resolve to the rest grey")
+        XCTAssertEqual(fill.type, "board")
+        XCTAssertEqual(fill.level, 4)
+        XCTAssertEqual(fill.alpha, 1.0)
+        XCTAssertTrue(fill.paletteType, "board has a ChartActivityHue entry")
+        XCTAssertEqual(
+            ChartActivityHue(rawValue: fill.type)?.lightHex,
+            "#2E96F0",
+            "the resolved hue is the board palette color the legend paints"
+        )
+    }
+
+    /// The grey+rest symptom, through the real persisted-record shapes: a
+    /// trained day whose session date arrives as a timestamp, plus a legacy
+    /// Buddhist-era row, must resolve to a COLORED cell fill inside the grid —
+    /// not the rest grey (#754). Fails against the pre-#769 raw-key behavior
+    /// (lookup miss -> value 0 -> grey fill).
+    func testHeatmapCellFillForHistoricalRecordsResolvesColored() throws {
+        let today = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-21", timeZone: bangkok))
+        let sessions = [
+            session("2026-06-11T00:00:00Z", "board", 420),
+            session("2569-07-12", "gym", 260),
+            session("2026-08-21", "auto", 100)
+        ]
+        let daily = TrainingLoad.dailyLoads(sessions: sessions, timeZone: bangkok)
+        let grid = TrainingLoad.heatmapGrid(
+            daily: daily,
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+        let cellsByDate = Dictionary(
+            uniqueKeysWithValues: grid.columns.flatMap { $0 }.map { ($0.date, $0) }
+        )
+        for (date, type, value) in [("2026-06-11", "board", 420.0), ("2026-07-12", "gym", 260.0)] {
+            let cell = try XCTUnwrap(cellsByDate[date], "trained day must be inside the grid")
+            let fill = TrainingLoad.heatmapCellFill(
+                value: cell.value,
+                type: cell.type,
+                future: cell.future,
+                max: grid.max
+            )
+            XCTAssertEqual(cell.value, value, "lookup must find the session")
+            XCTAssertEqual(cell.type, type)
+            XCTAssertFalse(fill.grey, "\(date) must not render as rest/grey")
+            XCTAssertTrue(fill.paletteType)
+            XCTAssertGreaterThan(fill.alpha, 0)
+        }
+    }
+
+    /// The reopened-symptom wedge (#754 r2): the legend previously scanned the
+    /// FULL daily map, so an activity whose sessions all fall OUTSIDE the
+    /// rendered 53-week window still got colored swatches next to a grid that
+    /// could not show it — the "grey grid under a colored legend" screen.
+    /// Legend types must come from the rendered cells only.
+    func testHeatmapLegendTypesMatchRenderedGridNotFullHistory() throws {
+        let today = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-18", timeZone: bangkok))
+        // 2020-01-02 is far outside the 53-week window ending 2026-08-22 but a
+        // real session date (DB floor 2020-01-01) — the old full-map legend
+        // advertised it while the grid stayed grey.
+        let sessions = [
+            session("2026-08-18T00:00:00Z", "board", 420),
+            session("2020-01-02", "tindeq", 500)
+        ]
+        let daily = TrainingLoad.dailyLoads(sessions: sessions, timeZone: bangkok)
+        let grid = TrainingLoad.heatmapGrid(
+            daily: daily,
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+
+        XCTAssertTrue(TrainingLoad.heatmapHasVisibleLoad(in: grid))
+        XCTAssertEqual(
+            TrainingLoad.heatmapLegendTypes(in: grid),
+            ["board"],
+            "legend lists only what the rendered grid paints — the tindeq row is outside the window"
+        )
+        XCTAssertTrue(
+            daily["2020-01-02"] != nil,
+            "the out-of-window session still exists in daily (that is the wedge)"
+        )
+        let tindeqCell = grid.columns.flatMap { $0 }.first { $0.date == "2020-01-02" }
+        XCTAssertNil(tindeqCell, "2020-01-02 is not a rendered cell at all")
+    }
+
+    func testHeatmapLegendTypesPaletteOrderWithUnknownLast() throws {
+        let today = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-18", timeZone: bangkok))
+        let daily = [
+            "2026-08-18": DailyLoad(total: 100, type: "tindeq"),
+            "2026-08-17": DailyLoad(total: 100, type: "board"),
+            "2026-08-16": DailyLoad(total: 100, type: "moon_board")
+        ]
+        let grid = TrainingLoad.heatmapGrid(
+            daily: daily,
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+        XCTAssertEqual(
+            TrainingLoad.heatmapLegendTypes(in: grid),
+            ["board", "tindeq", "moon_board"],
+            "palette order, unknown ids last — same ordering the legend always used"
+        )
+    }
+
+    func testHeatmapHasVisibleLoadIsFalseOnlyForLoadFreeWindows() throws {
+        let today = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-18", timeZone: bangkok))
+
+        let empty = TrainingLoad.heatmapGrid(daily: [:], today: today, weeks: 53, timeZone: bangkok)
+        XCTAssertFalse(TrainingLoad.heatmapHasVisibleLoad(in: empty), "no records -> no colored cells")
+
+        // A day whose sessions carry no load is a rest day: still no colored
+        // cells, but it stays inside the map (the view renders rest grey).
+        let restOnly = TrainingLoad.heatmapGrid(
+            daily: ["2026-08-18": DailyLoad(total: 0, type: "board")],
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+        XCTAssertFalse(TrainingLoad.heatmapHasVisibleLoad(in: restOnly))
+        XCTAssertEqual(TrainingLoad.heatmapLegendTypes(in: restOnly), [])
+
+        // A future-dated session (+1 day, allowed by DB `sessions_date_sane`)
+        // is not visible load — future cells stay grey and unselectable.
+        let futureOnly = TrainingLoad.heatmapGrid(
+            daily: ["2026-08-19": DailyLoad(total: 5_000, type: "board")],
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+        XCTAssertFalse(TrainingLoad.heatmapHasVisibleLoad(in: futureOnly))
+
+        // Out-of-window history (older than the grid's start) is also not
+        // rendered load — the sheet's honest empty state takes over.
+        let oldOnly = TrainingLoad.heatmapGrid(
+            daily: ["2020-01-02": DailyLoad(total: 500, type: "tindeq")],
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+        XCTAssertFalse(TrainingLoad.heatmapHasVisibleLoad(in: oldOnly))
+        XCTAssertEqual(TrainingLoad.heatmapLegendTypes(in: oldOnly), [])
+
+        // One real past training day flips it to true.
+        let trained = TrainingLoad.heatmapGrid(
+            daily: ["2026-08-17": DailyLoad(total: 480, type: "board")],
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+        XCTAssertTrue(TrainingLoad.heatmapHasVisibleLoad(in: trained))
+        XCTAssertEqual(TrainingLoad.heatmapLegendTypes(in: trained), ["board"])
+    }
 }

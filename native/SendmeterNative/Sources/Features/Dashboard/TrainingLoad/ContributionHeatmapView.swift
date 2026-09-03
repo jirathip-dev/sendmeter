@@ -69,8 +69,12 @@ struct ContributionHeatmapView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let grid, containerWidth > 0 {
-                heatmap(grid: grid)
-                legend
+                if TrainingLoad.heatmapHasVisibleLoad(in: grid) {
+                    heatmap(grid: grid)
+                    legend(for: grid)
+                } else {
+                    emptyState
+                }
             } else {
                 // Placeholder for the one-frame window before the background
                 // GeometryReader reports the real width — avoids a 1pt flash.
@@ -283,12 +287,34 @@ struct ContributionHeatmapView: View {
 
     // MARK: - Colors / labels
 
+    /// Honest state when the rendered 53-week window has no load at all: a
+    /// silent wall of grey cells would read exactly like the all-grey bug
+    /// (#754), so the sheet explains itself instead — either no records yet,
+    /// or records that fall outside the shown window.
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if daily.isEmpty {
+                Text("No training records yet. Log a session to start your daily load heatmap.")
+            } else {
+                Text("No training load in the past 53 weeks.")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
     private func fillColor(for cell: HeatmapCell, max: Double) -> Color {
-        if cell.future { return Color(uiColor: .secondarySystemFill) }
-        if cell.value <= 0 { return Color(uiColor: .secondarySystemFill) }
-        let level = TrainingLoad.heatmapLevel(value: cell.value, max: max)
-        let hue = ChartActivityHue.color(forActivityID: cell.type, scheme: scheme)
-        return hue.opacity(TrainingLoad.heatmapAlpha(level: level))
+        let fill = TrainingLoad.heatmapCellFill(
+            value: cell.value,
+            type: cell.type,
+            future: cell.future,
+            max: max
+        )
+        if fill.grey { return Color(uiColor: .secondarySystemFill) }
+        let hue = ChartActivityHue.color(forActivityID: fill.type, scheme: scheme)
+        return hue.opacity(fill.alpha)
     }
 
     private func tooltipText(for cell: HeatmapCell) -> String {
@@ -367,25 +393,14 @@ struct ContributionHeatmapView: View {
 
     // MARK: - Legend
 
-    /// Activity types that actually appear (for the legend), in the palette
-    /// order — unknown ids sort last. Mirrors the web's `presentTypes`
-    /// (ContributionHeatmap.tsx), which scans the full `values` map — not the
-    /// rendered grid — so an activity whose sessions all fall outside the
-    /// 53-week window still shows up in the legend.
-    private var legendTypes: [String] {
-        var seen: Set<String> = []
-        for entry in daily.values where entry.total > 0 && !entry.type.isEmpty {
-            seen.insert(entry.type)
-        }
-        return seen.sorted { lhs, rhs in
-            let lhsIndex = ChartActivityHue.allCases.firstIndex { $0.rawValue == lhs } ?? .max
-            let rhsIndex = ChartActivityHue.allCases.firstIndex { $0.rawValue == rhs } ?? .max
-            return lhsIndex < rhsIndex
-        }
-    }
-
-    private var legend: some View {
-        let types = legendTypes
+    /// Activity types the grid actually renders, in palette order — derived
+    /// from the RENDERED cells (via `TrainingLoad.heatmapLegendTypes`), not
+    /// the full `daily` map: an activity whose sessions all fall outside the
+    /// rendered 53-week window must not appear next to a grid that cannot
+    /// show it, which is how the screen read as "grey cells under a colored
+    /// legend" (#754 r2). Rendered only when the grid has visible load.
+    private func legend(for grid: HeatmapGrid) -> some View {
+        let types = TrainingLoad.heatmapLegendTypes(in: grid)
         if types.isEmpty {
             return AnyView(EmptyView())
         }

@@ -282,6 +282,68 @@ public enum TrainingLoad {
         if value <= 0 { return 0 }
         return min(4, Int(ceil(value / max * 4)))
     }
+
+    // MARK: - Cell fill resolution (#754 r2)
+
+    /// The full fill decision for one rendered heatmap cell, mirroring
+    /// `ContributionHeatmapView.fillColor(for:max:)` so the view's color
+    /// contract is unit-testable: rest/no-load and future cells resolve grey;
+    /// a genuine-load cell resolves to its dominant activity type at the
+    /// level alpha. `paletteType` is false when the dominant type has no
+    /// `ChartActivityHue` entry — the view then paints the reference token,
+    /// the same token the legend swatch uses for that type.
+    public static func heatmapCellFill(
+        value: Double,
+        type: String,
+        future: Bool,
+        max: Double
+    ) -> HeatmapCellFill {
+        if future || value <= 0 {
+            return HeatmapCellFill(grey: true, type: "", level: 0, alpha: 0, paletteType: false)
+        }
+        let level = heatmapLevel(value: value, max: max)
+        return HeatmapCellFill(
+            grey: false,
+            type: type,
+            level: level,
+            alpha: heatmapAlpha(level: level),
+            paletteType: ChartActivityHue(rawValue: type) != nil
+        )
+    }
+
+    /// Activity types the RENDERED grid actually paints, in palette order
+    /// (unknown ids sort last) — the legend input. Derived from the grid's
+    /// non-future positive cells, NOT the full `daily` map: an activity whose
+    /// sessions all fall outside the rendered 53-week window must not be
+    /// advertised next to a grid that cannot show it — the grey-grid-under-a-
+    /// colored-legend wedge the #754 reports kept mistaking for a render bug.
+    /// Mirrors the web `presentTypes` ordering.
+    public static func heatmapLegendTypes(in grid: HeatmapGrid) -> [String] {
+        var seen: Set<String> = []
+        for column in grid.columns {
+            for cell in column where !cell.future && cell.value > 0 && !cell.type.isEmpty {
+                seen.insert(cell.type)
+            }
+        }
+        return seen.sorted { lhs, rhs in
+            let lhsIndex = ChartActivityHue.allCases.firstIndex { $0.rawValue == lhs } ?? .max
+            let rhsIndex = ChartActivityHue.allCases.firstIndex { $0.rawValue == rhs } ?? .max
+            return lhsIndex < rhsIndex
+        }
+    }
+
+    /// Whether the grid paints any colored cell at all — a positive,
+    /// non-future day. When false the rendered window is a silent wall of
+    /// grey and the sheet must show its honest empty state instead (#754 r2,
+    /// acceptance 6), rather than reproducing the all-grey appearance.
+    public static func heatmapHasVisibleLoad(in grid: HeatmapGrid) -> Bool {
+        for column in grid.columns {
+            for cell in column where !cell.future && cell.value > 0 {
+                return true
+            }
+        }
+        return false
+    }
 }
 
 public struct ActivityLoad: Equatable, Sendable {
@@ -357,5 +419,26 @@ public struct HeatmapGrid: Equatable, Sendable {
     public init(columns: [[HeatmapCell]], max: Double) {
         self.columns = columns
         self.max = max
+    }
+}
+
+/// The resolved fill for one rendered heatmap cell (see
+/// `TrainingLoad.heatmapCellFill`). Grey cells carry no type/level; colored
+/// cells carry the dominant type and the level alpha the view paints.
+public struct HeatmapCellFill: Equatable, Sendable {
+    public let grey: Bool
+    public let type: String
+    public let level: Int
+    public let alpha: Double
+    /// True when `type` has a `ChartActivityHue` entry; a false value paints
+    /// the reference token (same swatch the legend shows for that type).
+    public let paletteType: Bool
+
+    public init(grey: Bool, type: String, level: Int, alpha: Double, paletteType: Bool) {
+        self.grey = grey
+        self.type = type
+        self.level = level
+        self.alpha = alpha
+        self.paletteType = paletteType
     }
 }

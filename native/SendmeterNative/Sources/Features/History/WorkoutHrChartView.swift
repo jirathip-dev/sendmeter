@@ -237,7 +237,11 @@ struct WorkoutHrChartView: View {
                 }
             }
             .chartYAxis {
-                AxisMarks(values: derived.yTicks) { value in
+                // #880: pin the value labels to the leading edge — an
+                // automatic placement resolves to a TRAILING axis inside
+                // this card, reserving a gutter that shortens the plot and
+                // leaves the labels ("140 bpm") detached from the data.
+                AxisMarks(position: .leading, values: derived.yTicks) { value in
                     AxisGridLine().foregroundStyle(ChartToken.grid.color(scheme))
                     AxisValueLabel {
                         if let v = value.as(Double.self) {
