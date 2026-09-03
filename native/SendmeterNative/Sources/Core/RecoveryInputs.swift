@@ -5,17 +5,45 @@ public enum RecoveryBarGradient: Equatable, Sendable {
     case neutral
     case above
 
+    /// Relative deadband: a value within 2% of its baseline is "near/equal"
+    /// and renders the neutral midpoint (web parity).
+    public static let relativeDeadband = 0.02
+    /// Relative distance at which the bar color saturates. The first-fix ramp
+    /// needed a ±100% excursion to reach an endpoint — real readings never
+    /// make that, so every bar stayed the same mid blue on device (#753
+    /// Build 50). 12% is inside the ordinary variance of the noisy metrics
+    /// (HRV, sleep stages) and reachable by the quiet ones (resting HR).
+    public static let saturationRelativeDistance = 0.12
+    /// Below-baseline ramp exponent. Yellow sits far from the blue neutral in
+    /// sRGB, and a linear ramp drags below-average bars through the
+    /// gray-green middle of the yellow↔blue blend (which reads like the web's
+    /// old success green). The below ramp saturates quickly to stay yellow.
+    public static let belowRampExponent = 0.08
+    /// Above-baseline ramp exponent. Blue→purple stays on-hue, so the above
+    /// ramp can be gentler: small excursions tint toward purple, excursions
+    /// at or beyond the saturation distance render full purple.
+    public static let aboveRampExponent = 0.35
+
     public static func classification(value: Double, baseline: Double) -> RecoveryBarGradient {
         let distance = abs(value - baseline) / max(abs(baseline), 1e-9)
-        if distance < 0.02 { return .neutral }
+        if distance < relativeDeadband { return .neutral }
         return value < baseline ? .below : .above
     }
 
-    /// 0 is yellow, 0.5 is neutral, and 1 is purple. Values between those
-    /// anchors preserve the day's relative distance rather than using bands.
+    /// 0 is full below-baseline (yellow), 0.5 is neutral, and 1 is full
+    /// above-baseline (purple). Smooth inside the deadband→saturation band
+    /// with a per-direction exponent so ordinary variance stays readable;
+    /// clamped (bounded saturation) beyond the band.
     public static func position(value: Double, baseline: Double) -> Double {
-        let distance = min(abs(value - baseline) / max(abs(baseline), 1e-9), 1)
-        return min(max(0.5 + (value >= baseline ? distance : -distance) * 0.5, 0), 1)
+        let distance = abs(value - baseline) / max(abs(baseline), 1e-9)
+        guard distance > relativeDeadband else { return 0.5 }
+        let fraction = min(
+            (distance - relativeDeadband) / (saturationRelativeDistance - relativeDeadband),
+            1
+        )
+        let below = value < baseline
+        let amount = pow(fraction, below ? belowRampExponent : aboveRampExponent)
+        return below ? 0.5 - 0.5 * amount : 0.5 + 0.5 * amount
     }
 }
 
