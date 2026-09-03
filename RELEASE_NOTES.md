@@ -75,6 +75,9 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native iPhone tab bar now reads Dashboard → Force → Workout → History →
   Settings, with the approved climbing mascots on the Force and Workout tabs
   and on the Manual workout card (replacing the SF Symbols).
+- Native Force tab: the approved kangaroo mascot now presents at a larger
+  28-point optical size (same approved artwork), so the deadlift/barbell read
+  stays clear at real tab-bar size in light and dark, selected and inactive.
 
 - Native Recovery Inputs charts now keep every bar inside its card, show both
   7-day and 28-day trends, and color each value smoothly against its 28-day baseline.
