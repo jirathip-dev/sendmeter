@@ -150,7 +150,12 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
-- Native Force: the outside (pre-start) context now leads with a "Selected protocol" card showing the active protocol's name, STATIC/MOVEMENT mode, hold/cadence, sets × reps, and rest details, and the recording/configure card is visible directly on the Force tab again — the collapsed, low-emphasis "Protocol details" disclosure no longer hides protocol configuration before you start, and a missing target still shows the explicit no-target state.
+ - Native Force: the outside (pre-start) context now leads with a "Selected protocol" card showing the active protocol's name, STATIC/MOVEMENT mode, hold/cadence, sets × reps, and rest details, and the recording/configure card is visible directly on the Force tab again — the collapsed, low-emphasis "Protocol details" disclosure no longer hides protocol configuration before you start, and a missing target still shows the explicit no-target state.
+ - Native iPhone: the top-right "+ Log Session" action moved from the Dashboard
+   toolbar to the Workout tab's top-right toolbar, opening the same Log Session
+   sheet with the same haptic treatment (relocation only — Dashboard no longer
+   shows the plus action). Physical-device verification remains on the
+   end-of-gauntlet TestFlight pass.
 - Native Force: guided protocol launch now snapshots the selected side through target resolution, preserving Left/Right and applying only the active exercise's deterministic fallback for stale values.
 - Native History and Send Conditions now activate on the first tap without delaying vertical scrolling; structural haptics remain on the action that wins the gesture.
 - Native Routine runner: the Close control is tappable again, including across
@@ -163,6 +168,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Training Load: the Daily Load heatmap no longer renders training days nearly gray when one unusually large past day dominates the intensity scale — the scale stays anchored to the typical load, so real days keep their activity hue and visible shading.
 - Native Training Load: the Daily Load heatmap no longer treats a trained day as rest when its stored date arrives as a timestamp or an old Buddhist-era date — session dates are normalized to the same local calendar day the heatmap uses for its lookup.
 - Native Training Load: weekly bars and the delta chip no longer drop sessions whose stored date arrives as a timestamp or an old Buddhist-era date — session dates are normalized to the same local calendar day the load windows use.
+- Native Training Load: the Daily Load heatmap legend now lists only the activities the shown 53-week grid actually renders, and when that window contains no training the section says so instead of presenting a gray grid under colored legend swatches.
 - Native Dashboard: the ACWR projection chart's `Now` marker no longer collides with an early crossing weekday label; the current ratio remains visible in the Dashboard's ACWR cards.
 - Native Dashboard: Send Conditions and Training Block cards now keep the same height while weather data loads or changes state, eliminating the row's layout jump.
 - iPhone: Apple Health sync now backfills every newly observed day in its read window, preserves existing historical rows and today's readiness freeze rules, and shows the last completed sync. Morning refreshes persist follow-up progress for delayed wearable data and pick up eligible passes on later lifecycle/background events; background timing remains device-only to verify.
