@@ -150,11 +150,12 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
-- Native iPhone: the top-right "+ Log Session" action moved from the Dashboard
-  toolbar to the Workout tab's top-right toolbar, opening the same Log Session
-  sheet with the same haptic treatment (relocation only — Dashboard no longer
-  shows the plus action). Physical-device verification remains on the
-  end-of-gauntlet TestFlight pass.
+ - Native Force: the outside (pre-start) context now leads with a "Selected protocol" card showing the active protocol's name, STATIC/MOVEMENT mode, hold/cadence, sets × reps, and rest details, and the recording/configure card is visible directly on the Force tab again — the collapsed, low-emphasis "Protocol details" disclosure no longer hides protocol configuration before you start, and a missing target still shows the explicit no-target state.
+ - Native iPhone: the top-right "+ Log Session" action moved from the Dashboard
+   toolbar to the Workout tab's top-right toolbar, opening the same Log Session
+   sheet with the same haptic treatment (relocation only — Dashboard no longer
+   shows the plus action). Physical-device verification remains on the
+   end-of-gauntlet TestFlight pass.
 - Native Force: guided protocol launch now snapshots the selected side through target resolution, preserving Left/Right and applying only the active exercise's deterministic fallback for stale values.
 - Native History and Send Conditions now activate on the first tap without delaying vertical scrolling; structural haptics remain on the action that wins the gesture.
 - Native Routine runner: the Close control is tappable again, including across
