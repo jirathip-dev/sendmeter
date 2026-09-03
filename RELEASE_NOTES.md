@@ -150,6 +150,11 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native iPhone: the top-right "+ Log Session" action moved from the Dashboard
+  toolbar to the Workout tab's top-right toolbar, opening the same Log Session
+  sheet with the same haptic treatment (relocation only — Dashboard no longer
+  shows the plus action). Physical-device verification remains on the
+  end-of-gauntlet TestFlight pass.
 - Native Force: guided protocol launch now snapshots the selected side through target resolution, preserving Left/Right and applying only the active exercise's deterministic fallback for stale values.
 - Native History and Send Conditions now activate on the first tap without delaying vertical scrolling; structural haptics remain on the action that wins the gesture.
 - Native Routine runner: the Close control is tappable again, including across

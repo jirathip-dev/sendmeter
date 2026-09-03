@@ -4,7 +4,6 @@ import SwiftUI
 
 struct DashboardView: View {
     @Environment(AppModel.self) private var model
-    @State private var showLog = false
     @State private var showPhases = false
     @State private var showRecovery = false
 
@@ -37,18 +36,6 @@ struct DashboardView: View {
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Dashboard")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        // #656: a tap opening a sheet arms the presentation
-                        // tick.
-                        Haptics.shared.tap()
-                        showLog = true
-                    } label: {
-                        Label("Log Session", systemImage: "plus.circle.fill")
-                    }
-                }
-            }
             .refreshable {
                 // #661 (finding 5): pull-to-refresh is the ONLY user-initiated
                 // HealthKit resync — run the full server refetch AND a manual
@@ -62,10 +49,6 @@ struct DashboardView: View {
                 // A failed or empty refresh keeps the last reading — never
                 // blank, never fabricated.
                 await model.silentHealthRefresh(trigger: .appear)
-            }
-            .sheet(isPresented: $showLog) {
-                LogSessionSheet()
-                    .sendmeterSheetPresentation()
             }
             .sheet(isPresented: $showPhases) {
                 PhasesView()
@@ -444,82 +427,6 @@ struct SessionSummaryRow: View {
                 .font(.headline.monospacedDigit())
         }
         .contentShape(Rectangle())
-    }
-}
-
-private struct LogSessionSheet: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State private var date = Date()
-    @State private var typeID = "fingerboard"
-    @State private var duration = 45
-    @State private var rpe = 6.0
-    @State private var note = ""
-
-    private var selectedType: SessionTypeDefinition {
-        SessionTypeCatalog.definition(for: typeID)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Session") {
-                    DatePicker("Date", selection: $date, displayedComponents: .date)
-                    Picker("Type", selection: $typeID) {
-                        ForEach(SessionTypeCatalog.all) { type in
-                            Text(type.label).tag(type.id)
-                        }
-                    }
-                    Stepper("Duration: \(duration) min", value: $duration, in: 1...600, step: 5)
-                }
-
-                Section("Effort") {
-                    HStack {
-                        Text("RPE")
-                        Slider(value: $rpe, in: 1...10, step: 0.5)
-                        Text(rpe, format: .number.precision(.fractionLength(0...1)))
-                            .monospacedDigit()
-                            .frame(width: 32)
-                    }
-                    Text("Training load: \(Double(duration) * rpe, format: .number.precision(.fractionLength(0)))")
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Notes") {
-                    TextField("Optional note", text: $note, axis: .vertical)
-                        .lineLimit(2...6)
-                }
-            }
-            .navigationTitle("Log Session")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let draft = SessionDraft(
-                            date: LocalDateSupport.string(from: date),
-                            type: typeID,
-                            typeLabel: selectedType.label,
-                            durationMinutes: duration,
-                            rpe: rpe,
-                            note: note,
-                            phase: model.settings.currentPhase
-                        )
-                        Task {
-                            await model.logSession(draft)
-                            dismiss()
-                        }
-                    }
-                }
-            }
-            .onChange(of: typeID) { newValue in
-                let definition = SessionTypeCatalog.definition(for: newValue)
-                duration = definition.defaultDurationMinutes
-                rpe = definition.defaultRPE
-            }
-        }
     }
 }
 
