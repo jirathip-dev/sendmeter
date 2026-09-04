@@ -161,6 +161,15 @@ public struct SurfaceCard<Content: View>: View {
     }
 }
 
+/// Illustration options for the shared product empty state. The splash
+/// composite stays the default for generic product surfaces; the Force
+/// device empty state opts into the approved kangaroo mascot hero glyph
+/// (#894) so its disconnected/empty card carries no cave/photo background.
+public enum ProductEmptyStateArtwork {
+    case splash
+    case forceMascot
+}
+
 /// Shared product empty state for data surfaces that have finished loading but
 /// have nothing useful to show yet. The illustration deliberately reuses the
 /// shipped splash art so an empty screen still feels like Sendmeter, rather
@@ -169,6 +178,7 @@ public struct ProductEmptyState: View {
     let title: String
     let message: String
     let actionTitle: String
+    let artwork: ProductEmptyStateArtwork
     let action: () -> Void
     let compact: Bool
 
@@ -177,13 +187,15 @@ public struct ProductEmptyState: View {
         message: String,
         actionTitle: String,
         compact: Bool = false,
+        artwork: ProductEmptyStateArtwork = .splash,
         action: @escaping () -> Void
     ) {
         self.title = title
         self.message = message
         self.actionTitle = actionTitle
-        self.compact = compact
+        self.artwork = artwork
         self.action = action
+        self.compact = compact
     }
 
     public var body: some View {
@@ -210,31 +222,49 @@ public struct ProductEmptyState: View {
         .frame(maxWidth: .infinity)
     }
 
+    @ViewBuilder
     private var illustration: some View {
-        ZStack {
-            Image("SplashCaveBackground")
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay(
-                    LinearGradient(
-                        colors: [.clear, .black.opacity(0.42)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .clipped()
-
-            Image("SplashKangaroo")
+        switch artwork {
+        case .forceMascot:
+            // #894: the approved R11 Force hero master (160 optical variant)
+            // replaces the cave/photo composite on the Force device empty
+            // state. Template rendering keeps the native primary tint in
+            // light and dark; the image stays decorative like the splash
+            // composite, so it remains out of the accessibility tree.
+            Image("ForceMascotLarge")
+                .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
-                .frame(width: compact ? 82 : 122)
-                .shadow(color: .black.opacity(0.34), radius: 10, y: 7)
+                .frame(width: compact ? 82 : 122, height: compact ? 82 : 118)
+                .foregroundStyle(SendmeterStyle.primary)
+                .frame(maxWidth: .infinity)
+                .accessibilityHidden(true)
+        case .splash:
+            ZStack {
+                Image("SplashCaveBackground")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.42)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .clipped()
+
+                Image("SplashKangaroo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: compact ? 82 : 122)
+                    .shadow(color: .black.opacity(0.34), radius: 10, y: 7)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: compact ? 82 : 118)
+            .clipShape(RoundedRectangle(cornerRadius: compact ? 12 : 16, style: .continuous))
+            .accessibilityHidden(true)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: compact ? 82 : 118)
-        .clipShape(RoundedRectangle(cornerRadius: compact ? 12 : 16, style: .continuous))
-        .accessibilityHidden(true)
     }
 }
 

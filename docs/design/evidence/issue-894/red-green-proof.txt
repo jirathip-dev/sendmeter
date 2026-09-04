@@ -1,0 +1,32 @@
+# #894 discriminating wiring-test proof (RED on old code -> GREEN after fix)
+
+Gate: Tests/SendmeterCoreTests/ForceEmptyStateArtworkWiringTests.swift (source-text pins + asset hash).
+Host date 2026-09-04 (lane orch/894-force-empty-glyph, base cb184cd).
+
+## RED — new test vs OLD code (cave/photo composite still wired; exit 1)
+
+/Users/jirathip/.herdr/worktrees/sendmeter/orch-894-force-empty-glyph/native/SendmeterNative/Tests/SendmeterCoreTests/ForceEmptyStateArtworkWiringTests.swift:31: error: -[SendmeterCoreTests.ForceEmptyStateArtworkWiringTests testForceDeviceEmptyStateOptsIntoApprovedMascotArtwork] : XCTAssertTrue failed - the Force empty state must opt into the approved mascot artwork; the cave/photo composite is banned on this surface
+/Users/jirathip/.herdr/worktrees/sendmeter/orch-894-force-empty-glyph/native/SendmeterNative/Tests/SendmeterCoreTests/ForceEmptyStateArtworkWiringTests.swift:41: error: -[SendmeterCoreTests.ForceEmptyStateArtworkWiringTests testForceDeviceEmptyStateOptsIntoApprovedMascotArtwork] : XCTAssertEqual failed: ("0") is not equal to ("1") - only the Force device empty state opts into the mascot artwork today
+/Users/jirathip/.herdr/worktrees/sendmeter/orch-894-force-empty-glyph/native/SendmeterNative/Tests/SendmeterCoreTests/ForceEmptyStateArtworkWiringTests.swift:50: error: -[SendmeterCoreTests.ForceEmptyStateArtworkWiringTests testProductEmptyStateShipsMascotArtworkAndKeepsSplashDefault] : XCTAssertTrue failed
+/Users/jirathip/.herdr/worktrees/sendmeter/orch-894-force-empty-glyph/native/SendmeterNative/Tests/SendmeterCoreTests/ForceEmptyStateArtworkWiringTests.swift:51: error: -[SendmeterCoreTests.ForceEmptyStateArtworkWiringTests testProductEmptyStateShipsMascotArtworkAndKeepsSplashDefault] : XCTAssertTrue failed
+/Users/jirathip/.herdr/worktrees/sendmeter/orch-894-force-empty-glyph/native/SendmeterNative/Tests/SendmeterCoreTests/ForceEmptyStateArtworkWiringTests.swift:59: error: -[SendmeterCoreTests.ForceEmptyStateArtworkWiringTests testProductEmptyStateShipsMascotArtworkAndKeepsSplashDefault] : XCTAssertTrue failed
+/Users/jirathip/.herdr/worktrees/sendmeter/orch-894-force-empty-glyph/native/SendmeterNative/Tests/SendmeterCoreTests/ForceEmptyStateArtworkWiringTests.swift:60: error: -[SendmeterCoreTests.ForceEmptyStateArtworkWiringTests testProductEmptyStateShipsMascotArtworkAndKeepsSplashDefault] : XCTAssertTrue failed
+/Users/jirathip/.herdr/worktrees/sendmeter/orch-894-force-empty-glyph/native/SendmeterNative/Tests/SendmeterCoreTests/ForceEmptyStateArtworkWiringTests.swift:61: error: -[SendmeterCoreTests.ForceEmptyStateArtworkWiringTests testProductEmptyStateShipsMascotArtworkAndKeepsSplashDefault] : XCTAssertTrue failed
+/Users/jirathip/.herdr/worktrees/sendmeter/orch-894-force-empty-glyph/native/SendmeterNative/Tests/SendmeterCoreTests/ForceEmptyStateArtworkWiringTests.swift:62: error: -[SendmeterCoreTests.ForceEmptyStateArtworkWiringTests testProductEmptyStateShipsMascotArtworkAndKeepsSplashDefault] : XCTAssertTrue failed - the hero glyph must take the native primary tint
+/Users/jirathip/.herdr/worktrees/sendmeter/orch-894-force-empty-glyph/native/SendmeterNative/Tests/SendmeterCoreTests/ForceEmptyStateArtworkWiringTests.swift:67: error: -[SendmeterCoreTests.ForceEmptyStateArtworkWiringTests testProductEmptyStateShipsMascotArtworkAndKeepsSplashDefault] : XCTAssertTrue failed
+	 Executed 3 tests, with 9 failures (0 unexpected) in 0.820 (0.821) seconds
+	 Executed 3 tests, with 9 failures (0 unexpected) in 0.820 (0.821) seconds
+	 Executed 3 tests, with 9 failures (0 unexpected) in 0.820 (0.826) seconds
+
+## GREEN — same test after fix (exit 0)
+
+Test Suite 'ForceEmptyStateArtworkWiringTests' passed at 2569-09-04 6:43:48.719 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.095 (0.097) seconds
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.095 (0.097) seconds
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.095 (0.104) seconds
+
+## Full SwiftPM suite at fixed head (exit 0; rerun at the exact final head)
+
+	 Executed 1163 tests, with 0 failures (0 unexpected) in 100.103 (101.289) seconds
+Test Suite 'All tests' passed at 2569-09-04 7:27:11.296 AM.
+	 Executed 1163 tests, with 0 failures (0 unexpected) in 162.580 (163.186) seconds
