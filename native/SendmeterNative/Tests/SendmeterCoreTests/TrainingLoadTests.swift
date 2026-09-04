@@ -679,4 +679,108 @@ final class TrainingLoadTests: XCTestCase {
         XCTAssertTrue(TrainingLoad.heatmapHasVisibleLoad(in: trained))
         XCTAssertEqual(TrainingLoad.heatmapLegendTypes(in: trained), ["board"])
     }
+
+    // MARK: - #895: Buddhist-era/Thai-locale window paths
+
+    /// The reopened-symptom contract (#895): under a Buddhist-era device
+    /// calendar (this suite runs on a Buddhist Calendar.current host; the
+    /// assertions themselves are era-independent), the WINDOW ANCHOR's day
+    /// key, the grid enumeration, the daily map keys, heatmapHasVisibleLoad,
+    /// and the legend must ALL agree in the current era. A record stored with
+    /// a Buddhist-era key (2569 = 2026 + 543) must land on a colored cell in
+    /// the rendered 53-week window, and every rendered cell key must be a CE
+    /// `20xx` day — never a `25xx` key the CE daily map cannot hit.
+    func testBuddhistEraWindowAnchorDailyKeysAndGridAgreeOnCurrentEra() throws {
+        let today = try XCTUnwrap(LocalDateSupport.date(from: "2026-09-01", timeZone: bangkok))
+        // Sessions in the trailing month, stored as legacy Buddhist-era rows
+        // and a timestamp payload — the historical-record shapes #887 pinned
+        // for cell FILL; this test pins the WINDOW side of the same data.
+        let sessions = [
+            session("2569-08-20", "gym", 300),
+            session("2569-08-30", "board", 420),
+            session("2026-08-25T00:00:00Z", "auto", 100)
+        ]
+        let daily = TrainingLoad.dailyLoads(sessions: sessions, timeZone: bangkok)
+
+        XCTAssertNil(daily["2569-08-20"], "Buddhist-era keys must never reach the daily map")
+        XCTAssertEqual(daily["2026-08-20"]?.total, 300)
+        XCTAssertEqual(daily["2026-08-30"]?.total, 420)
+        XCTAssertEqual(daily["2026-08-25"]?.total, 100)
+
+        let grid = TrainingLoad.heatmapGrid(
+            daily: daily,
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+        let cells = grid.columns.flatMap { $0 }
+        XCTAssertFalse(
+            cells.contains { $0.date.hasPrefix("25") || $0.date.hasPrefix("24") },
+            "every rendered cell must be current-era (20xx); a 25xx/24xx grid key can never match the CE daily map"
+        )
+        let cellsByDate = Dictionary(uniqueKeysWithValues: cells.map { ($0.date, $0) })
+        for (date, value) in [("2026-08-20", 300.0), ("2026-08-30", 420.0), ("2026-08-25", 100.0)] {
+            let cell = try XCTUnwrap(cellsByDate[date], "trained day must be inside the window")
+            XCTAssertEqual(cell.value, value)
+            XCTAssertFalse(cell.future)
+        }
+        XCTAssertTrue(
+            TrainingLoad.heatmapHasVisibleLoad(in: grid),
+            "in-window historical records must flip the honest-empty branch off"
+        )
+        XCTAssertEqual(
+            Set(TrainingLoad.heatmapLegendTypes(in: grid)),
+            Set(["gym", "board", "auto"]),
+            "legend derives from the rendered (era-normalized) cells"
+        )
+    }
+
+    /// The view-window anchor itself must be a current-era day under a
+    /// Buddhist-era representation of today: the anchor string "2569-09-04"
+    /// (Buddhist year for 2026-09-04) normalizes through the canonical path
+    /// to the same CE day the grid generates.
+    func testBuddhistEraAnchorDayKeyNormalizesToGridsCurrentEraDay() throws {
+        let anchorKey = try XCTUnwrap(
+            LocalDateSupport.canonicalDayKey("2569-09-04", timeZone: bangkok)
+        )
+        XCTAssertEqual(anchorKey, "2026-09-04", "a Buddhist-era anchor key must land on the CE day")
+        let gridFromCEAnchor = TrainingLoad.heatmapGrid(
+            daily: [:],
+            today: try XCTUnwrap(LocalDateSupport.date(from: "2026-09-04", timeZone: bangkok)),
+            weeks: 53,
+            timeZone: bangkok
+        )
+        // The window's rightmost column ends on the CE Saturday of the anchor
+        // week; assert the whole grid walks current-era keys (2025/2026),
+        // i.e. the window did not enumerate 543 years ahead of the daily map.
+        let dates = gridFromCEAnchor.columns.flatMap { $0 }.map(\.date)
+        XCTAssertTrue(dates.allSatisfy { $0.hasPrefix("2025") || $0.hasPrefix("2026") })
+        XCTAssertEqual(gridFromCEAnchor.columns.last?.last?.date, "2026-09-05")
+    }
+
+    /// Legend advertising under era-normalized records: an activity whose
+    /// sessions fall OUTSIDE the rendered window (even a Buddhist-era row
+    /// that normalizes to an old CE year) must not be listed next to a grid
+    /// that cannot show it (#895 keeps the #887 legend-window contract for
+    /// the era path).
+    func testBuddhistEraOutOfWindowRecordNotAdvertisedByLegend() throws {
+        let today = try XCTUnwrap(LocalDateSupport.date(from: "2026-09-01", timeZone: bangkok))
+        let sessions = [
+            session("2569-08-28", "board", 420),   // -> 2026-08-28, in window
+            session("2568-01-02", "tindeq", 500)   // -> 2025-01-02, out of window
+        ]
+        let daily = TrainingLoad.dailyLoads(sessions: sessions, timeZone: bangkok)
+        let grid = TrainingLoad.heatmapGrid(
+            daily: daily,
+            today: today,
+            weeks: 53,
+            timeZone: bangkok
+        )
+        XCTAssertTrue(TrainingLoad.heatmapHasVisibleLoad(in: grid))
+        XCTAssertEqual(
+            TrainingLoad.heatmapLegendTypes(in: grid),
+            ["board"],
+            "the legend must list only what the rendered window paints"
+        )
+    }
 }

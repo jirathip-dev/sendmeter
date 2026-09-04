@@ -39,6 +39,17 @@ struct ContributionHeatmapView: View {
 
     @Environment(\.colorScheme) private var scheme
     @State private var grid: HeatmapGrid?
+    /// #895: the inputs the cached `grid` was built from. The grid is a pure
+    /// snapshot of `daily` + `today` (F2), so the empty/heatmap/legend
+    /// decision must never run against a build that predates the CURRENT
+    /// `daily` — the reopened-symptom wedge where a session-filled window
+    /// rendered the honest empty state because the snapshot was built while
+    /// `daily` was still empty and never refreshed (the deprecated
+    /// one-parameter `onChange(of:)` action can run against the pre-update
+    /// view value, stranding the cache). `resolvedGrid` therefore rebuilds
+    /// whenever the cached build's inputs differ from the current ones.
+    @State private var gridBuiltFromDaily: [String: DailyLoad] = [:]
+    @State private var gridBuiltFromTodayKey: String = ""
     @State private var containerWidth: CGFloat = 0
     @State private var selectedDate: String?
     /// Haptic dedupe guard: a scrub can deliver many frames for one cell, so
@@ -68,7 +79,8 @@ struct ContributionHeatmapView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let grid, containerWidth > 0 {
+            if containerWidth > 0 {
+                let grid = resolvedGrid
                 if TrainingLoad.heatmapHasVisibleLoad(in: grid) {
                     heatmap(grid: grid)
                     legend(for: grid)
@@ -91,15 +103,34 @@ struct ContributionHeatmapView: View {
                     .onChange(of: proxy.size.width) { newValue in containerWidth = newValue }
             }
         )
-        .onAppear { rebuild() }
-        .onChange(of: daily) { _ in rebuild() }
-        .onChange(of: today) { _ in rebuild() }
+        .onAppear { resetSelection() }
+        .onChange(of: daily) { _, _ in resetSelection() }
+        .onChange(of: today) { _, _ in resetSelection() }
     }
 
-    private func rebuild() {
-        grid = TrainingLoad.heatmapGrid(daily: daily, today: today, weeks: weeks)
-        // Rebuilding is passive (sync/day rollover), so it must not emit a
-        // haptic. A stale selection also cannot survive into a new window.
+    /// The grid for the CURRENT `daily`/`today` inputs. Reuses the cached
+    /// build when its inputs are unchanged (F2: the 53×7 grid is a snapshot,
+    /// never rebuilt per body pass); rebuilds the moment the inputs differ so
+    /// the empty/heatmap/legend decision can never run against a grid that
+    /// predates the current daily map (#895).
+    private var resolvedGrid: HeatmapGrid {
+        let todayKey = LocalDateSupport.string(from: today)
+        if let grid,
+           gridBuiltFromDaily == daily,
+           gridBuiltFromTodayKey == todayKey {
+            return grid
+        }
+        let fresh = TrainingLoad.heatmapGrid(daily: daily, today: today, weeks: weeks)
+        grid = fresh
+        gridBuiltFromDaily = daily
+        gridBuiltFromTodayKey = todayKey
+        return fresh
+    }
+
+    private func resetSelection() {
+        // Data/day replacement is passive (sync/day rollover), so it must not
+        // emit a haptic. A stale selection also cannot survive into a new
+        // window.
         selectedDate = nil
         tickedDate = nil
     }

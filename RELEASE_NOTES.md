@@ -78,6 +78,10 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Force tab: the approved kangaroo mascot now presents at a larger
   28-point optical size (same approved artwork), so the deadlift/barbell read
   stays clear at real tab-bar size in light and dark, selected and inactive.
+- Native Force: the disconnected/empty Progressor card now leads with the
+  approved kangaroo mascot as a large standalone hero glyph (the same artwork
+  family as the Force tab), replacing the cave/photo splash artwork on that
+  surface; the card's copy, button, and styling are unchanged.
 
 - Native Recovery Inputs charts now keep every bar inside its card, show both
   7-day and 28-day trends, and color each value smoothly against its 28-day baseline.
@@ -154,6 +158,7 @@ CI, dependency updates, and refactors unless users experience a change.
 ### Fixed
 
  - Native History: the workout detail's Heart Rate and Attempts · Effort charts now fill the full card width — their Y-axis value labels sit at the charts' leading edge instead of a detached trailing strip, so the plotted data no longer stops short of the card's right edge.
+ - Native Training Load: the Daily Load heatmap no longer shows "No training load in the past 53 weeks." when the sheet opens before your sessions finish syncing — the colored 53-week grid (and its legend) now appears as soon as in-window records arrive, and a window that genuinely has no load still shows the honest empty message.
  - Native Force: the outside (pre-start) context now leads with a "Selected protocol" card showing the active protocol's name, STATIC/MOVEMENT mode, hold/cadence, sets × reps, and rest details, and the recording/configure card is visible directly on the Force tab again — the collapsed, low-emphasis "Protocol details" disclosure no longer hides protocol configuration before you start, and a missing target still shows the explicit no-target state.
  - Native iPhone: the top-right "+ Log Session" action moved from the Dashboard
    toolbar to the Workout tab's top-right toolbar, opening the same Log Session

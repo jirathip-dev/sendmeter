@@ -2739,6 +2739,7 @@ private struct ForceDeviceCard: View {
                             : "Your first pull starts here",
                         message: primaryEmptyMessage,
                         actionTitle: emptyActionTitle,
+                        artwork: .forceMascot,
                         action: emptyAction
                     )
                 } else if device.status == .measuring || device.handsFreeArmed || !device.visibleSampleRange.isEmpty {
