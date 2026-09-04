@@ -20,6 +20,15 @@ struct TrainingLoadSheet: View {
     @State private var daily: [String: DailyLoad] = [:]
     @State private var currentDelta: WeekDelta?
     @State private var referenceDate = Date()
+    /// #895 evidence harness: when non-nil, the sheet renders from these
+    /// deterministic sessions instead of `model.sessions` so simulator
+    /// captures can exercise the Daily Load heatmap without a signed-in
+    /// Supabase session (same pattern as RecoveryInputsSheet.fixtureMetrics).
+    private let fixtureSessions: [Session]?
+
+    init(fixtureSessions: [Session]? = nil) {
+        self.fixtureSessions = fixtureSessions
+    }
 
     var body: some View {
         NavigationStack {
@@ -43,6 +52,13 @@ struct TrainingLoadSheet: View {
         }
         .onAppear { rebuild() }
         .onChange(of: model.sessions) { _ in rebuild() }
+        #if DEBUG
+        // #895 evidence harness: the launch-argument fixture can swap its
+        // session set (empty -> populated) the way a real sync populates
+        // `model.sessions` after the sheet is already on screen. Two-parameter
+        // form: the action must run against the post-update view value.
+        .onChange(of: fixtureSessions) { _, _ in rebuild() }
+        #endif
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             referenceDate = Date()
             rebuild()
@@ -50,17 +66,27 @@ struct TrainingLoadSheet: View {
     }
 
     private func rebuild() {
+        let sessions = fixtureSessions ?? model.sessions
         mix = TrainingLoad.activityMix(
-            sessions: model.sessions,
+            sessions: sessions,
             endDate: LocalDateSupport.string(from: referenceDate)
         )
-        daily = TrainingLoad.dailyLoads(sessions: model.sessions)
-        let weeks = model.weeklyLoads
+        daily = TrainingLoad.dailyLoads(sessions: sessions)
+        let weeks = weeklyLoadsForDisplay
         guard weeks.count >= 2 else { currentDelta = nil; return }
         currentDelta = TrainingLoad.weekDelta(
             current: weeks[weeks.count - 1].total,
             previous: weeks[weeks.count - 2].total
         )
+    }
+
+    /// Weekly totals for the card: `model.weeklyLoads` in production, the
+    /// fixture sessions' own totals when the #895 evidence harness is active.
+    private var weeklyLoadsForDisplay: [WeeklyLoad] {
+        if let fixtureSessions {
+            return TrainingMetrics.weeklyLoads(sessions: fixtureSessions)
+        }
+        return model.weeklyLoads
     }
 
     // MARK: - Weekly load
@@ -78,7 +104,7 @@ struct TrainingLoadSheet: View {
                             .foregroundStyle(deltaColor(delta))
                     }
                 }
-                WeeklyBarsView(weeks: model.weeklyLoads)
+                WeeklyBarsView(weeks: weeklyLoadsForDisplay)
             }
         }
     }
