@@ -78,6 +78,10 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Force tab: the approved kangaroo mascot now presents at a larger
   28-point optical size (same approved artwork), so the deadlift/barbell read
   stays clear at real tab-bar size in light and dark, selected and inactive.
+- Native Force: the disconnected/empty Progressor card now leads with the
+  approved kangaroo mascot as a large standalone hero glyph (the same artwork
+  family as the Force tab), replacing the cave/photo splash artwork on that
+  surface; the card's copy, button, and styling are unchanged.
 
 - Native Recovery Inputs charts now keep every bar inside its card, show both
   7-day and 28-day trends, and color each value smoothly against its 28-day baseline.
