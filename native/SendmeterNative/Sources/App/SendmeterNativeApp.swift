@@ -100,6 +100,14 @@ struct RootView: View {
                         RecoveryInputsFixtureView()
                     } else if CommandLine.arguments.contains("--workout-charts-fixture") {
                         WorkoutChartsFixtureView()
+                    } else if CommandLine.arguments.contains("--training-load-fixture")
+                                || CommandLine.arguments.contains("--training-load-delayed-fixture")
+                                || CommandLine.arguments.contains("--training-load-empty-window-fixture") {
+                        TrainingLoadFixtureView(
+                            mode: TrainingLoadFixtureMode(
+                                arguments: CommandLine.arguments
+                            )
+                        )
                     } else {
                         LoginView()
                     }
@@ -400,6 +408,114 @@ private struct WorkoutChartsFixtureView: View {
             .padding()
         }
         .background(Color(uiColor: .systemGroupedBackground))
+    }
+}
+
+/// #895 evidence harness: renders the REAL `TrainingLoadSheet` from
+/// deterministic session records — in-window multi-activity history, or an
+/// out-of-window-only set — so simulator captures can prove the Daily Load
+/// heatmap colors real in-window records under the device locale and
+/// honestly empties a genuinely load-free window. DEBUG-only; the app's
+/// normal signed-in flow never reaches this view. `--training-load-fixture`
+/// populates immediately; `--training-load-delayed-fixture` starts empty and
+/// fills after ~2.5 s (a sync arriving after the sheet is on screen);
+/// `--training-load-empty-window-fixture` supplies only >53-week-old rows.
+private enum TrainingLoadFixtureMode {
+    case populated
+    case delayed
+    case emptyWindow
+
+    init(arguments: [String]) {
+        if arguments.contains("--training-load-delayed-fixture") {
+            self = .delayed
+        } else if arguments.contains("--training-load-empty-window-fixture") {
+            self = .emptyWindow
+        } else {
+            self = .populated
+        }
+    }
+}
+
+private struct TrainingLoadFixtureView: View {
+    private let mode: TrainingLoadFixtureMode
+    @State private var sessions: [Session] = []
+
+    init(mode: TrainingLoadFixtureMode) {
+        self.mode = mode
+        _sessions = State(initialValue: Self.initialSessions(for: mode))
+    }
+
+    var body: some View {
+        TrainingLoadSheet(fixtureSessions: sessions)
+            .task {
+                guard mode == .delayed else { return }
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                sessions = Self.populatedSessions()
+            }
+    }
+
+    private static func initialSessions(for mode: TrainingLoadFixtureMode) -> [Session] {
+        switch mode {
+        case .delayed: return []
+        case .emptyWindow: return outOfWindowSessions()
+        case .populated: return populatedSessions()
+        }
+    }
+
+    /// Four weeks of mixed activity history: the 53-week grid window holds
+    /// every row, weekly bars and the 28-day mix are non-empty, and the
+    /// rendered window must show colored cells per dominant activity.
+    private static func populatedSessions() -> [Session] {
+        let plans: [(type: String, label: String, duration: Int, rpe: Int)] = [
+            ("board", "Board Climbing", 90, 7),
+            ("auto", "Auto-tracked", 60, 6),
+            ("gym", "Gym Session", 75, 8),
+            ("tindeq", "Tindeq", 45, 5),
+            ("routine", "Routine", 30, 3)
+        ]
+        var built: [Session] = []
+        for offset in 0...27 where offset % 5 != 3 { // rest gaps every 5th day
+            let plan = plans[offset % plans.count]
+            // SAFETY: the format string emits exactly 32 hex characters in
+            // canonical UUID groups (00000000-0000-0000-0000-%012d), which
+            // UUID(uuidString:) always parses.
+            let id = UUID(uuidString: String(
+                format: "00000000-0000-0000-0000-%012d",
+                offset + 1
+            ))!
+            built.append(Session(
+                id: id,
+                date: LocalDateSupport.daysAgo(offset),
+                type: plan.type,
+                typeLabel: plan.label,
+                durationMinutes: plan.duration,
+                rpe: Double(plan.rpe),
+                note: "",
+                phase: .capacity
+            ))
+        }
+        return built
+    }
+
+    /// Real records that predate the rendered window by a wide margin: daily
+    /// is non-empty but the 53-week grid window holds none of it — the honest
+    /// "No training load in the past 53 weeks." state, never a grey wall.
+    private static func outOfWindowSessions() -> [Session] {
+        // SAFETY: fixed canonical 32-hex UUID string; UUID(uuidString:) always
+        // parses it.
+        let id = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
+        return [
+            Session(
+                id: id,
+                date: LocalDateSupport.daysAgo(400),
+                type: "board",
+                typeLabel: "Board Climbing",
+                durationMinutes: 90,
+                rpe: 7,
+                note: "",
+                phase: .capacity
+            )
+        ]
     }
 }
 #endif
