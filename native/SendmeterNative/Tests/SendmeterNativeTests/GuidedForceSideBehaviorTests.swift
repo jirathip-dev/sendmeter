@@ -151,6 +151,147 @@ final class GuidedForceSideBehaviorTests: XCTestCase {
         XCTAssertNotEqual(savedSide, .left)
     }
 
+    // MARK: - #901: Left/Right must NOT alternate; only Both switches sides
+
+    @MainActor
+    func test901RealLaunchBoundaryLeftSelectionNeverAlternates() async throws {
+        let model = try await makeSignedInModel()
+        let preset = Self.targetedAlternatingPreset()
+
+        let session = await ForceView.makeGuidedLaunchSession(
+            model: model,
+            preset: preset,
+            tag: "Test Tag",
+            sideMode: .unilateralOrBilateral,
+            side: .left,
+            selection: .free,
+            zoneCurve: nil,
+            handsFreeEnabled: false
+        )
+
+        // Every work stage runs Left only — no opposite-side work, no
+        // switch-hands stages — even though the preset alternates.
+        let work = session.run.stages.filter { $0.kind == .work }
+        XCTAssertFalse(work.isEmpty)
+        XCTAssertTrue(
+            work.allSatisfy { $0.side == .left },
+            "a Left selection must run Left only; got \(work.map(\.side))"
+        )
+        XCTAssertFalse(session.run.stages.contains { $0.side == .right })
+        XCTAssertFalse(
+            session.run.stages.contains { $0.kind == .switchSide },
+            "a Left selection must never produce a switch-hands prompt"
+        )
+
+        // The target plan resolves the selected side only.
+        let keys = Array(session.targetPlan.targets.keys)
+        XCTAssertTrue(
+            keys.contains(ForceTargetKey(setNumber: 1, side: .left)),
+            "real launch chain must produce a .left-keyed band; got \(keys)"
+        )
+        XCTAssertFalse(
+            keys.contains { $0.side == .right },
+            "a Left selection must never resolve a Right band; got \(keys)"
+        )
+
+        // Save attribution on the produced session stays Left.
+        let firstWork = try XCTUnwrap(work.first)
+        let savedSide = firstWork.side == .unspecified ? session.fallbackSide : firstWork.side
+        XCTAssertEqual(savedSide, .left)
+    }
+
+    @MainActor
+    func test901RealLaunchBoundaryRightSelectionNeverAlternates() async throws {
+        let model = try await makeSignedInModel()
+        let preset = Self.targetedAlternatingPreset()
+
+        let session = await ForceView.makeGuidedLaunchSession(
+            model: model,
+            preset: preset,
+            tag: "Test Tag",
+            sideMode: .unilateralOrBilateral,
+            side: .right,
+            selection: .free,
+            zoneCurve: nil,
+            handsFreeEnabled: false
+        )
+
+        let work = session.run.stages.filter { $0.kind == .work }
+        XCTAssertFalse(work.isEmpty)
+        XCTAssertTrue(work.allSatisfy { $0.side == .right })
+        XCTAssertFalse(session.run.stages.contains { $0.side == .left })
+        XCTAssertFalse(session.run.stages.contains { $0.kind == .switchSide })
+
+        let keys = Array(session.targetPlan.targets.keys)
+        XCTAssertTrue(keys.contains(ForceTargetKey(setNumber: 1, side: .right)))
+        XCTAssertFalse(keys.contains { $0.side == .left })
+
+        let firstWork = try XCTUnwrap(work.first)
+        let savedSide = firstWork.side == .unspecified ? session.fallbackSide : firstWork.side
+        XCTAssertEqual(savedSide, .right)
+    }
+
+    @MainActor
+    func test901RealLaunchBoundaryBothKeepsAlternatingPair() async throws {
+        let model = try await makeSignedInModel()
+        let preset = Self.targetedAlternatingPreset()
+
+        let session = await ForceView.makeGuidedLaunchSession(
+            model: model,
+            preset: preset,
+            tag: "Test Tag",
+            sideMode: .unilateralOrBilateral,
+            side: .both,
+            selection: .free,
+            zoneCurve: nil,
+            handsFreeEnabled: false
+        )
+
+        // Both keeps the alternating schedule exactly as today: both sides
+        // present in work stages, switch-hands stages present, starting
+        // side honored (Both starts Left at this launch boundary).
+        XCTAssertEqual(session.fallbackSide, .both)
+        let work = session.run.stages.filter { $0.kind == .work }
+        XCTAssertFalse(work.isEmpty)
+        XCTAssertTrue(work.contains { $0.side == .left })
+        XCTAssertTrue(work.contains { $0.side == .right })
+        XCTAssertEqual(work.first?.side, .left)
+        XCTAssertTrue(
+            session.run.stages.contains { $0.kind == .switchSide },
+            "Both-mode must keep its switch-hands stages"
+        )
+
+        // Both keeps the per-side target pair.
+        let keys = Array(session.targetPlan.targets.keys)
+        XCTAssertTrue(keys.contains(ForceTargetKey(setNumber: 1, side: .left)))
+        XCTAssertTrue(keys.contains(ForceTargetKey(setNumber: 1, side: .right)))
+        XCTAssertFalse(keys.contains { $0.side == .both })
+    }
+
+    @MainActor
+    func test901RealLaunchBoundaryUnspecifiedKeepsLegacyAlternation() async throws {
+        let model = try await makeSignedInModel()
+        let preset = Self.targetedAlternatingPreset()
+
+        let session = await ForceView.makeGuidedLaunchSession(
+            model: model,
+            preset: preset,
+            tag: "Test Tag",
+            sideMode: .unilateralOrBilateral,
+            side: .unspecified,
+            selection: .free,
+            zoneCurve: nil,
+            handsFreeEnabled: false
+        )
+
+        // Historical/unchosen sides are never reinterpreted (#901): the
+        // legacy alternating schedule stays.
+        let work = session.run.stages.filter { $0.kind == .work }
+        XCTAssertTrue(work.contains { $0.side == .left })
+        XCTAssertTrue(work.contains { $0.side == .right })
+        XCTAssertTrue(session.run.stages.contains { $0.kind == .switchSide })
+    }
+
     // MARK: - Fixtures
 
     private static func alternatingPreset() -> TindeqPreset {

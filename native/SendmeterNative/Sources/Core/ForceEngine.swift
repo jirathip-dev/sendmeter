@@ -440,13 +440,72 @@ public struct ForceProtocolStage: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// #901: the SELECTED side decides the schedule. A single-side selection
+/// (Left/Right) always runs that side alone — even when the preset declares
+/// `alternateSides` — so no opposite-side work or switch-hands stages are
+/// ever produced. Alternation is a Both-mode behavior (and the legacy path
+/// for an unspecified selection); `startingSide` only picks the first hand
+/// of an alternating pair.
+public enum ForceProtocolSidePolicy {
+    public static func isSingleSide(_ side: TindeqSide) -> Bool {
+        side == .left || side == .right
+    }
+
+    public static func alternatingPair(startingSide: TindeqSide) -> [TindeqSide] {
+        startingSide == .right ? [.right, .left] : [.left, .right]
+    }
+
+    /// The work-stage sides of the executed schedule. Left/Right resolve to
+    /// that side ONLY, stamped explicitly (never `.unspecified`), so target
+    /// bands and saved attribution are exact. Both/unspecified fall back to
+    /// the legacy rule: alternate when the preset declares it, else run the
+    /// `.unspecified` stages attributed at save time.
+    public static func scheduleWorkSides(
+        selectedSide: TindeqSide,
+        presetAlternates: Bool,
+        startingSide: TindeqSide
+    ) -> [TindeqSide] {
+        if isSingleSide(selectedSide) {
+            return [selectedSide]
+        }
+        guard presetAlternates else { return [.unspecified] }
+        return alternatingPair(startingSide: startingSide)
+    }
+
+    /// The side set the target plan must resolve — the mirror of
+    /// `scheduleWorkSides` for `resolveForceTargetPlan` (#901): Left/Right
+    /// resolve ONLY the selected side's bands; Both/unspecified keep the
+    /// alternating pair when the preset alternates, else resolve the
+    /// selected side's own band (the app's `fallbackSide`).
+    public static func planWorkSides(
+        selectedSide: TindeqSide,
+        presetAlternates: Bool,
+        startingSide: TindeqSide
+    ) -> [TindeqSide] {
+        if isSingleSide(selectedSide) {
+            return [selectedSide]
+        }
+        guard presetAlternates else { return [selectedSide] }
+        return alternatingPair(startingSide: startingSide)
+    }
+}
+
 public enum ForceProtocolSchedule {
     public static func stages(
         preset: TindeqPreset,
-        startingSide: TindeqSide = .left
+        startingSide: TindeqSide = .left,
+        selectedSide: TindeqSide = .unspecified
     ) -> [ForceProtocolStage] {
         let sets = max(1, preset.sets)
         let repetitions = max(1, preset.repetitions)
+        // #901: the work sides are decided once, up front — the prepare stage
+        // mirrors the first work side so an explicit Left/Right selection is
+        // stamped on the whole run, not only the measurement stages.
+        let workSides = ForceProtocolSidePolicy.scheduleWorkSides(
+            selectedSide: selectedSide,
+            presetAlternates: preset.alternateSides,
+            startingSide: startingSide
+        )
         var stages: [ForceProtocolStage] = []
 
         if preset.prepareSeconds > 0 {
@@ -455,7 +514,7 @@ public enum ForceProtocolSchedule {
                     kind: .prepare,
                     setNumber: 1,
                     repetitionNumber: 1,
-                    side: preset.alternateSides ? startingSide : .unspecified,
+                    side: workSides.first ?? .unspecified,
                     durationSeconds: Double(preset.prepareSeconds),
                     label: "Prepare"
                 )
@@ -478,15 +537,7 @@ public enum ForceProtocolSchedule {
                     continue
                 }
 
-                let sides: [TindeqSide]
-                if preset.alternateSides {
-                    let second: TindeqSide = startingSide == .right ? .left : .right
-                    sides = [startingSide, second]
-                } else {
-                    sides = [.unspecified]
-                }
-
-                for (sideIndex, side) in sides.enumerated() {
+                for (sideIndex, side) in workSides.enumerated() {
                     stages.append(
                         ForceProtocolStage(
                             kind: .work,
@@ -499,13 +550,13 @@ public enum ForceProtocolSchedule {
                                 : "Hold"
                         )
                     )
-                    if sideIndex < sides.count - 1 {
+                    if sideIndex < workSides.count - 1 {
                         stages.append(
                             ForceProtocolStage(
                                 kind: .switchSide,
                                 setNumber: setNumber,
                                 repetitionNumber: repetition,
-                                side: sides[sideIndex + 1],
+                                side: workSides[sideIndex + 1],
                                 durationSeconds: 3,
                                 label: "Switch side"
                             )
@@ -564,10 +615,18 @@ public struct ForceProtocolRun: Codable, Equatable, Sendable {
     public private(set) var pausedElapsedSeconds: Double
     public private(set) var isPaused: Bool
 
-    public init(preset: TindeqPreset, startingSide: TindeqSide = .left) {
+    public init(
+        preset: TindeqPreset,
+        startingSide: TindeqSide = .left,
+        selectedSide: TindeqSide = .unspecified
+    ) {
         self.runID = UUID()
         self.presetID = preset.id
-        self.stages = ForceProtocolSchedule.stages(preset: preset, startingSide: startingSide)
+        self.stages = ForceProtocolSchedule.stages(
+            preset: preset,
+            startingSide: startingSide,
+            selectedSide: selectedSide
+        )
         self.stageIndex = 0
         self.stageStartedAt = nil
         self.pausedElapsedSeconds = 0

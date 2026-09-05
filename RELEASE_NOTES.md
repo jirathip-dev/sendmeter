@@ -182,6 +182,7 @@ CI, dependency updates, and refactors unless users experience a change.
    shows the plus action). Physical-device verification remains on the
    end-of-gauntlet TestFlight pass.
 - Native Force: guided protocol launch now snapshots the selected side through target resolution, preserving Left/Right and applying only the active exercise's deterministic fallback for stale values.
+- Native Force: choosing Left or Right as the side now runs every hold of a guided protocol on that side alone — no switching hands mid-workout, even for protocols whose editor has "Alternate sides" turned on. Alternation (with its switch-hands prompts) now happens only when you record Both sides; the preset editor says so under its Alternate sides toggle, and existing recordings keep their original side attribution.
 - Native History and Send Conditions now activate on the first tap without delaying vertical scrolling; structural haptics remain on the action that wins the gesture.
 - Native Routine runner: the Close control is tappable again, including across
   its full accessible hit target, without changing the existing exit safety flow.

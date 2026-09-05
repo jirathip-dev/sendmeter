@@ -3466,12 +3466,18 @@ public final class AppModel {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        let sides: [TindeqSide]
-        if preset.alternateSides {
-            sides = startingSide == .right ? [.right, .left] : [.left, .right]
-        } else {
-            sides = [fallbackSide]
-        }
+        // #901 mirror of `ForceProtocolSidePolicy.scheduleWorkSides`: the
+        // selected (fallback) side decides the per-side target set — a
+        // Left/Right selection resolves ONLY that side's bands; the preset's
+        // `alternateSides` flag only widens a Both/unspecified selection
+        // into the alternating pair. `fallbackSide` is the normalized side
+        // selection at every call site (launch boundary + context-card
+        // resolution).
+        let sides = ForceProtocolSidePolicy.planWorkSides(
+            selectedSide: fallbackSide,
+            presetAlternates: preset.alternateSides,
+            startingSide: startingSide
+        )
 
         var targets: [ForceTargetKey: ForceTargetBand] = [:]
         let needsCurve = preset.targetFromCurve
