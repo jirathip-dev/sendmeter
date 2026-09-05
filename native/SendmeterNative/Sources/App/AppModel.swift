@@ -3476,6 +3476,10 @@ public final class AppModel {
         var targets: [ForceTargetKey: ForceTargetBand] = [:]
         let needsCurve = preset.targetFromCurve
             || (preset.targetPercentage != nil && preset.percentageBasis == .criticalForce)
+            // #902: a suggested-zone preset resolves its band from the
+            // side-scoped curve (maxF / CF / hill F60), so the references
+            // fetch must include the fitted curve.
+            || preset.zoneQuality != nil
 
         for targetSide in sides {
             guard accountFetch.canApply(

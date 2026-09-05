@@ -526,7 +526,30 @@ public enum ForceCurveEngine {
         references: ForceReferences,
         setNumber: Int
     ) -> ForceTargetBand? {
-        targetBand(
+        // #902: a transient suggested-zone preset (zoneQuality set) resolves
+        // the web's per-quality band from the side-scoped references rather
+        // than a fixed-target ± tolerance band. Nil when the quality's
+        // reference is unusable for this side — honest no-target, never a
+        // stale or invented band.
+        if let zone = preset.zoneQuality,
+           let intensity = preset.zoneIntensityPercent,
+           let target = ZoneMix.zoneTarget(
+               for: zone,
+               references: ZoneCurveInput(
+                   cf: references.criticalForceKilograms,
+                   maxForce: references.maximumForceKilograms,
+                   wPrime: references.impulseAboveCriticalForceKilogramSeconds,
+                   capabilityFit: references.capabilityFit
+               ),
+               intensityPercent: intensity
+           ) {
+            return ForceTargetBand(
+                kilograms: target.targetKilograms,
+                lowKilograms: target.lowKilograms,
+                highKilograms: target.highKilograms
+            )
+        }
+        return targetBand(
             targetKilograms: targetKilograms(
                 preset: preset,
                 references: references,
