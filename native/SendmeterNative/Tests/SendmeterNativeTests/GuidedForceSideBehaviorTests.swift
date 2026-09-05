@@ -34,10 +34,8 @@ final class GuidedForceSideBehaviorTests: XCTestCase {
             startingSide: .left,
             fallbackSide: .left,
             selection: .free,
-            references: nil,
-            handsFreeEnabled: false
+            references: nil
         )
-
         let firstWork = try XCTUnwrap(session.run.stages.first(where: { $0.kind == .work }))
         XCTAssertEqual(firstWork.side, .left)
         XCTAssertEqual(session.fallbackSide, .left)
@@ -90,10 +88,8 @@ final class GuidedForceSideBehaviorTests: XCTestCase {
             sideMode: .unilateralOrBilateral,
             side: .left,
             selection: .free,
-            zoneCurve: nil,
-            handsFreeEnabled: false
+            zoneCurve: nil
         )
-
         // Producer: an explicit Left under a Left-allowing mode stays Left.
         XCTAssertEqual(session.fallbackSide, .left, "producer must keep explicit Left")
         // The run's first work stage is Left.
@@ -139,10 +135,8 @@ final class GuidedForceSideBehaviorTests: XCTestCase {
             startingSide: startSide,
             fallbackSide: launchSide,
             selection: .free,
-            references: nil,
-            handsFreeEnabled: false
+            references: nil
         )
-
         XCTAssertEqual(session.fallbackSide, .both)
         let firstWork = try XCTUnwrap(session.run.stages.first(where: { $0.kind == .work }))
         XCTAssertNotEqual(firstWork.side, .left)
@@ -165,10 +159,8 @@ final class GuidedForceSideBehaviorTests: XCTestCase {
             sideMode: .unilateralOrBilateral,
             side: .left,
             selection: .free,
-            zoneCurve: nil,
-            handsFreeEnabled: false
+            zoneCurve: nil
         )
-
         // Every work stage runs Left only — no opposite-side work, no
         // switch-hands stages — even though the preset alternates.
         let work = session.run.stages.filter { $0.kind == .work }
@@ -212,10 +204,8 @@ final class GuidedForceSideBehaviorTests: XCTestCase {
             sideMode: .unilateralOrBilateral,
             side: .right,
             selection: .free,
-            zoneCurve: nil,
-            handsFreeEnabled: false
+            zoneCurve: nil
         )
-
         let work = session.run.stages.filter { $0.kind == .work }
         XCTAssertFalse(work.isEmpty)
         XCTAssertTrue(work.allSatisfy { $0.side == .right })
@@ -243,10 +233,8 @@ final class GuidedForceSideBehaviorTests: XCTestCase {
             sideMode: .unilateralOrBilateral,
             side: .both,
             selection: .free,
-            zoneCurve: nil,
-            handsFreeEnabled: false
+            zoneCurve: nil
         )
-
         // Both keeps the alternating schedule exactly as today: both sides
         // present in work stages, switch-hands stages present, starting
         // side honored (Both starts Left at this launch boundary).
@@ -280,10 +268,8 @@ final class GuidedForceSideBehaviorTests: XCTestCase {
             sideMode: .unilateralOrBilateral,
             side: .unspecified,
             selection: .free,
-            zoneCurve: nil,
-            handsFreeEnabled: false
+            zoneCurve: nil
         )
-
         // Historical/unchosen sides are never reinterpreted (#901): the
         // legacy alternating schedule stays.
         let work = session.run.stages.filter { $0.kind == .work }

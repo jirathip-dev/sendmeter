@@ -24,7 +24,6 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
     let fallbackSide: TindeqSide
     let selection: ForceProtocolSelection
     let references: ZoneCurveInput?
-    let handsFreeEnabled: Bool
     let accountScope: NativeAccountScope
 
     @Published private(set) var run: ForceProtocolRun
@@ -61,7 +60,6 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         fallbackSide: TindeqSide,
         selection: ForceProtocolSelection,
         references: ZoneCurveInput?,
-        handsFreeEnabled: Bool,
         run: ForceProtocolRun? = nil
     ) {
         self.model = model
@@ -71,7 +69,6 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         self.fallbackSide = fallbackSide
         self.selection = selection
         self.references = references
-        self.handsFreeEnabled = handsFreeEnabled
         self.accountScope = model.accountScope
         // #901: `fallbackSide` is the normalized side selection, so the run
         // is built with it as the SELECTED side — a Left/Right selection
@@ -97,9 +94,11 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
             run.start()
         }
         model.setGuidedProtocolActive(true)
-        if handsFreeEnabled {
-            model.handsFree.stopPolicy = .callerOwned
-        }
+        // #899: every guided work stage is load-triggered — the caller-owned
+        // hands-free controller gates WHEN measurement starts (a real pull),
+        // while this runner owns every stop/save. There is no non-hands-free
+        // guided mode anymore.
+        model.handsFree.stopPolicy = .callerOwned
         if hasBegun {
             refreshActivity(at: Date())
         } else {
@@ -134,10 +133,9 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
     }
 
     var isWaitingForHandsFreePull: Bool {
-        handsFreeEnabled
-            && run.currentStage.kind == .work
+        run.currentStage.kind == .work
             && GuidedForceHandsFreeTimingPolicy.isWaitingForPull(
-                handsFreeEnabled: handsFreeEnabled,
+                handsFreeEnabled: true,
                 measurementObserved: handsFreeMeasurementObserved
             )
     }
@@ -265,7 +263,9 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         // A resumed arm is not a new protocol hold: retain the elapsed work
         // already banked by ForceProtocolRun.pause/resume, and let the
         // scheduled stage continue even before another pull is detected.
-        handsFreeMeasurementObserved = handsFreeEnabled
+        // #899: guided measurement is always load-triggered hands-free, so
+        // the resumed stage continues as a hands-free arm.
+        handsFreeMeasurementObserved = true
         guard startWorkMeasurement() else {
             run.pause(at: date)
             handsFreeMeasurementObserved = false
@@ -298,7 +298,7 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         observeStage(at: date)
         guard !isAdvancing, !sessionEndClaimed else { return }
         let stage = run.currentStage
-        if stage.kind == .work, handsFreeEnabled, !handsFreeMeasurementObserved {
+        if stage.kind == .work, !handsFreeMeasurementObserved {
             // The caller-owned hands-free controller may move to its release
             // state before the BLE recording is stopped. The transport's
             // measuring status is therefore also evidence that a real pull
@@ -313,7 +313,7 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
                 return
             }
             if GuidedForceHandsFreeTimingPolicy.shouldReanchor(
-                handsFreeEnabled: handsFreeEnabled,
+                handsFreeEnabled: true,
                 isMeasuring: measurementObserved,
                 measurementObserved: handsFreeMeasurementObserved
             ) {
@@ -328,10 +328,6 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
     }
 
     private func updateHandsFreeHaptic() {
-        guard handsFreeEnabled else {
-            lastHandsFreeHaptic = nil
-            return
-        }
         let next: HandsFreeHapticState?
         if model.handsFree.isMeasuring {
             next = .measuring
@@ -370,22 +366,13 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
     private func startWorkMeasurement() -> Bool {
         guard ownsAccount, !sessionEndClaimed, !isEnded else { return false }
         guard !workMeasurementReady else { return true }
-        if handsFreeEnabled {
-            model.handsFree.arm()
-            workMeasurementReady = true
-            return true
-        }
-        do {
-            try model.tindeq.startMeasuring()
-            workMeasurementReady = true
-            return true
-        } catch {
-            model.errorMessage = UserFacingError.message(for: error)
-            interrupted = true
-            model.guidedActivity.end(immediate: true)
-            Task { [weak self] in await self?.teardown() }
-            return false
-        }
+        // #899: every guided rep starts from the pull. A work stage arms the
+        // caller-owned hands-free stream and waits for load — the blind
+        // countdown that auto-started `tindeq.startMeasuring()` without a
+        // pull is gone.
+        model.handsFree.arm()
+        workMeasurementReady = true
+        return true
     }
 
     private func advanceCurrentStage(
@@ -738,13 +725,6 @@ private struct GuidedForceProtocolView: View {
                         layout: layout
                     )
                 }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    primaryControl(layout: layout, accent: accent)
-                        .padding(.horizontal, layout.horizontalPadding)
-                        .padding(.top, 8)
-                        .padding(.bottom, max(8, geometry.safeAreaInsets.bottom))
-                        .background(.ultraThinMaterial)
-                }
                 .animation(
                     reduceMotion
                         ? nil
@@ -974,12 +954,12 @@ private struct GuidedForceProtocolView: View {
                     : "Protocol quality",
                 color: accent
             )
-            if session.handsFreeEnabled {
-                StatusPill(
-                    handsFreeStatus.label,
-                    color: handsFreeStatus.color
-                )
-            }
+            // #899: every guided run is hands-free/load-triggered, so the
+            // hands-free status pill is unconditional.
+            StatusPill(
+                handsFreeStatus.label,
+                color: handsFreeStatus.color
+            )
             Spacer(minLength: 4)
             Text("\(session.savedCount) queued")
                 .font(.caption.weight(.semibold).monospacedDigit())
@@ -1122,38 +1102,6 @@ private struct GuidedForceProtocolView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func primaryControl(layout: GuidedForceLayout, accent: Color) -> some View {
-        Button(action: primaryAction) {
-            ZStack {
-                Circle()
-                    .fill(.ultraThinMaterial)
-                Circle()
-                    .fill(accent.opacity(0.22))
-                Circle()
-                    .strokeBorder(accent, lineWidth: 3)
-                VStack(spacing: 6) {
-                    Image(systemName: session.run.isComplete || session.interrupted ? "checkmark" : "stop.fill")
-                        .font(.title2.weight(.bold))
-                    Text(session.run.isComplete || session.interrupted ? "FINISH" : "STOP")
-                        .font(.caption.weight(.black))
-                        .tracking(1.2)
-                }
-                .foregroundStyle(accent)
-            }
-            .frame(width: layout.actionDiameter, height: layout.actionDiameter)
-            .contentShape(Circle())
-        }
-        .hapticButtonStyle(.plain)
-        .disabled(session.isAdvancing || session.isPausing)
-        .accessibilityLabel(
-            session.run.isComplete || session.interrupted
-                ? "Finish guided protocol"
-                : "Stop guided protocol"
-        )
-        .accessibilityHint("Save the current pull if needed and return to Force")
-        .frame(maxWidth: .infinity)
-    }
-
     private var currentTargetBand: ForceTargetBand? {
         let side = session.run.currentStage.side == .unspecified
             ? session.fallbackSide
@@ -1163,15 +1111,6 @@ private struct GuidedForceProtocolView: View {
 
     private var handsFreeWaitingForPull: Bool {
         session.isWaitingForHandsFreePull
-    }
-
-    private func primaryAction() {
-        Task {
-            await session.stopOrFinish()
-            if session.isEnded {
-                onClose()
-            }
-        }
     }
 
     private func endSession() {
@@ -1223,13 +1162,6 @@ struct ForceView: View {
     @State private var guidedFullscreenPresented = false
     @State private var guidedMinimizeRequested = false
     @State private var guidedLaunchInFlight = false
-    @State private var manualFullscreenPresented = false
-    @State private var manualFullscreenLifecycle = ManualForceFullscreenLifecycle()
-    @State private var manualFullscreenHandsFree = false
-    /// The display context is captured at the same start/arm boundary as the
-    /// AppModel recording lock. The fullscreen must not follow a picker edit
-    /// that arrives after a pull already owns the stream.
-    @State private var manualFullscreenContext = FreePullContext()
     @State private var selectedTargetPlan = ForceTargetPlan.empty
     @State private var resolvingTargets = false
     @State private var savingSummary = false
@@ -1396,10 +1328,12 @@ struct ForceView: View {
             if model.handsFree.isArmed {
                 return "Cancel hands-free arm"
             }
-            if handsFreeEnabled, selectedPreset == nil {
+            // #899: nothing armed — the only free-pull start is the
+            // hands-free arm (the toggle is adopted by the action).
+            if selectedPreset == nil {
                 return "Arm Hands-free"
             }
-            return selectedPreset == nil ? "Record a pull" : "Start guided pull"
+            return "Start guided pull"
         case .measuring: return "Stop & save"
         case .unavailable: return "Open Bluetooth Settings"
         case .idle: return "Connect Progressor"
@@ -1414,10 +1348,12 @@ struct ForceView: View {
             if model.handsFree.isArmed {
                 return "Cancel hands-free arm"
             }
-            if handsFreeEnabled, selectedPreset == nil {
+            // #899: nothing armed — the only free-pull start is the
+            // hands-free arm (the toggle is adopted by the action).
+            if selectedPreset == nil {
                 return "Arm Hands-free"
             }
-            return selectedPreset == nil ? "Record a pull" : "Start guided pull"
+            return "Start guided pull"
         case .measuring: return "Stop & save"
         case .unavailable: return "Open Bluetooth Settings"
         case .scanning, .connecting: return "Cancel connection"
@@ -1443,19 +1379,26 @@ struct ForceView: View {
     }
 
     private func startPrimaryForceAction() {
-        if let preset = selectedPreset {
-            launch(preset)
-        } else {
-            startMeasurement()
+        guard let preset = selectedPreset else {
+            // #899: there is no direct-measure "Start Pull" anymore — the
+            // Force card renders this action only when a guided protocol is
+            // armed; without one the honest route is arming a protocol above
+            // or arming hands-free.
+            refuseAction("Arm a guided protocol above or arm Hands-free to record a pull.")
+            return
         }
+        launch(preset)
     }
 
     private func performForceEmptyAction() {
         switch model.tindeq.status {
         case .connected:
             if model.handsFree.isArmed {
-                cancelManualArm()
-            } else if handsFreeEnabled, selectedPreset == nil {
+                cancelHandsFreeArm()
+            } else if selectedPreset == nil {
+                // #899: empty surfaces route to hands-free (adopting the
+                // toggle preference the same way the arm button requires it).
+                if !handsFreeEnabled { handsFreeEnabled = true }
                 armHandsFree()
             } else {
                 startPrimaryForceAction()
@@ -1683,7 +1626,6 @@ struct ForceView: View {
             targetBand: selectedTargetReferenceBand,
             zoneTarget: armedZoneTarget,
             intensityPercent: intensityBinding,
-            handsFreeEnabled: handsFreeEnabled,
             deviceConnected: model.tindeq.status == .connected,
             deviceStatusText: forceDeviceStatusText,
             movementSummary: movementContextSummary,
@@ -1693,7 +1635,7 @@ struct ForceView: View {
     }
 
     /// #750: lock the whole recording context for the same run window the web
-    /// uses (`runActive`): a live free pull, an armed/measuring hands-free
+    /// uses (`runActive`): a live pull, an armed/measuring hands-free
     /// loop, an interrupted rep awaiting recovery, or a guided session. The
     /// focused chip/input `.disabled` calls then report that lock to
     /// VoiceOver instead of relying only on the parent modifier.
@@ -1765,12 +1707,14 @@ struct ForceView: View {
                         hasForceRecordings: !model.recordings.isEmpty,
                         emptyActionTitle: forceDeviceEmptyActionTitle,
                         emptyAction: performForceEmptyAction,
-                        // #653/#710: an armed suggested protocol (Focus-Next
-                        // zone or maintenance) OR a selected saved preset makes
-                        // the main Start button launch that guided protocol —
-                        // the native equivalent of the web's Start-with-an-
-                        // armed-protocol opening the guided timer. With nothing
-                        // armed it stays a free pull. `launch` correctly keeps
+                        // #653/#710/#899: an armed suggested protocol (Focus-
+                        // Next zone or maintenance) OR a selected saved preset
+                        // makes the main Start button launch that guided
+                        // protocol — the native equivalent of the web's
+                        // Start-with-an-armed-protocol opening the guided
+                        // timer. #899 removed the nothing-armed free-pull
+                        // start: with nothing armed the card routes to the
+                        // hands-free arm instead. `launch` correctly keeps
                         // the recording-context selection in sync for a user
                         // preset and clears a suggested arm for a saved one.
                         start: startPrimaryForceAction,
@@ -1778,7 +1722,7 @@ struct ForceView: View {
                         connect: { model.requestConnect() },
                         armHandsFree: armHandsFree,
                         stopAndSave: stopAndSave,
-                        cancelArm: cancelManualArm,
+                        cancelArm: cancelHandsFreeArm,
                         finishSession: {
                             guard !guidedControlsLocked else { return }
                             Task { await model.endGaugeSession() }
@@ -1931,53 +1875,6 @@ struct ForceView: View {
                 if !enabled, !guidedControlsLocked { model.handsFree.disarm() }
                 model.updateKeepAwake()
             }
-            .onChange(of: model.tindeq.status) { status in
-                reconcileManualFullscreen(for: status)
-            }
-            .onChange(of: model.tindeq.completedSummary) { summary in
-                guard !manualFullscreenHandsFree,
-                      manualFullscreenLifecycle.phase == .measuring,
-                      summary != nil
-                else { return }
-                _ = manualFullscreenLifecycle.markReadyToSave()
-            }
-            .onChange(of: model.handsFree.isArmed) { armed in
-                reconcileManualHandsFree(armed: armed)
-            }
-            .onChange(of: model.handsFree.isMeasuring) { measuring in
-                guard manualFullscreenHandsFree else { return }
-                if measuring {
-                    _ = manualFullscreenLifecycle.beginRecording()
-                } else if model.tindeq.completedSummary != nil,
-                          model.handsFreeSaveInFlight {
-                    _ = manualFullscreenLifecycle.requestSave()
-                }
-            }
-            .onChange(of: model.handsFreeSaveInFlight) { inFlight in
-                guard manualFullscreenHandsFree else { return }
-                if inFlight {
-                    _ = manualFullscreenLifecycle.requestSave()
-                } else if model.handsFree.isArmed {
-                    _ = manualFullscreenLifecycle.rearm()
-                } else if model.tindeq.completedSummary != nil {
-                    if manualFullscreenLifecycle.phase == .saving {
-                        manualFullscreenLifecycle.saveFailed()
-                    } else {
-                        _ = manualFullscreenLifecycle.markReadyToSave()
-                    }
-                }
-            }
-            .onChange(of: savingSummary) { saving in
-                guard !saving,
-                      manualFullscreenLifecycle.phase == .saving
-                else { return }
-                if model.tindeq.completedSummary == nil {
-                    manualFullscreenLifecycle.saveSucceeded()
-                    manualFullscreenPresented = false
-                } else {
-                    manualFullscreenLifecycle.saveFailed()
-                }
-            }
             .onChange(of: model.currentUserID) { _ in
                 teardownGuidedSessionIfNeeded()
             }
@@ -2017,27 +1914,10 @@ struct ForceView: View {
                     Color.clear
                 }
             }
-            .fullScreenCover(isPresented: $manualFullscreenPresented, onDismiss: {
-                Haptics.shared.sheetDismissed()
-            }) {
-                ManualForceFullscreen(
-                    device: model.tindeq,
-                    phase: manualFullscreenLifecycle.phase,
-                    exercise: manualFullscreenContext.tag,
-                    side: manualFullscreenContext.side,
-                    selectedProtocol: manualFullscreenContext.preset,
-                    targetBand: manualFullscreenContext.targetBand,
-                    saving: savingSummary || model.handsFreeSaveInFlight,
-                    onMinimize: {
-                        manualFullscreenPresented = false
-                    },
-                    onStopAndSave: stopManualRecording,
-                    onSaveCompleted: retryManualSave,
-                    onCancelArm: cancelManualArm,
-                    onDisconnect: disconnectManualRecording
-                )
-                .onAppear { Haptics.shared.sheetPresented() }
-            }
+            // #899: the standalone manual Force fullscreen (its own
+            // CANCEL/STOP/SAVE phase machine) is removed — hands-free free
+            // pulls live on the Force card, guided protocols own the guided
+            // fullscreen above.
             // #903: the combined movement + side picker — a true full-screen
             // modal with its own 44px Close control and no app tab bar.
             .fullScreenCover(isPresented: $movementPickerPresented, onDismiss: {
@@ -2091,39 +1971,12 @@ struct ForceView: View {
     private func refuseActiveForceRecording(for action: ForceRecordingAction) {
         let message: String
         switch action {
-        case .freePull:
-            message = "Finish the active pull before starting another free pull."
         case .handsFree:
             message = "Finish the active pull before arming hands-free."
         case .guidedProtocol:
             message = "Finish the active pull before starting a guided protocol."
         }
         refuseAction(message)
-    }
-
-    private func reconcileManualFullscreen(for status: TindeqBluetooth.Status) {
-        guard manualFullscreenPresented else { return }
-        switch status {
-        case .measuring:
-            _ = manualFullscreenLifecycle.beginRecording()
-        case .interrupted:
-            manualFullscreenLifecycle.interrupted()
-            manualFullscreenPresented = false
-            manualFullscreenHandsFree = false
-        case .unavailable, .idle, .scanning, .connecting, .connected:
-            break
-        }
-    }
-
-    private func reconcileManualHandsFree(armed: Bool) {
-        guard manualFullscreenHandsFree else { return }
-        if armed {
-            _ = manualFullscreenLifecycle.rearm()
-        } else if model.handsFreeSaveInFlight {
-            _ = manualFullscreenLifecycle.requestSave()
-        } else if model.tindeq.completedSummary != nil {
-            _ = manualFullscreenLifecycle.markReadyToSave()
-        }
     }
 
     private func registerGuidedTeardown(for session: GuidedForceProtocolSession) {
@@ -2170,43 +2023,10 @@ struct ForceView: View {
         }
     }
 
-    private func startMeasurement() {
-        guard !guidedControlsLocked else {
-            refuseAction("Resume or end the active guided protocol before starting a free pull.")
-            return
-        }
-        switch forceRecordingDecision(for: .freePull) {
-        case .refusedActiveRecording:
-            refuseActiveForceRecording(for: .freePull)
-            return
-        case .safeHandoffFromArmedStream:
-            model.handsFree.cancelArm()
-        case .allowed:
-            break
-        }
-        guard !model.tindeq.hasUnsavedRecording else {
-            refuseAction(UserFacingError.message(for: .previousRecordingUnfinished))
-            return
-        }
-        do {
-            // #678: lock the tag/side the moment the recording begins, so a
-            // disconnect-salvage (or the recovery prompt) persists what the
-            // user actually set, never a fallback (web #298).
-            publishFreePullContext()
-            model.lockForceRecordingContext(model.freePullContext)
-            try model.tindeq.startMeasuring()
-            manualFullscreenContext = model.freePullContext
-            manualFullscreenHandsFree = false
-            manualFullscreenLifecycle = ManualForceFullscreenLifecycle()
-            _ = manualFullscreenLifecycle.open(armed: false)
-            manualFullscreenPresented = true
-        } catch {
-            refuseAction(UserFacingError.message(for: error))
-        }
-    }
-
-    /// #628: with the hands-free toggle on, Start arms the load-triggered
-    /// loop instead of recording immediately.
+    /// #628/#899: with nothing guided armed, arming the hands-free stream is
+    /// the only free-pull start — measurement begins when the athlete pulls
+    /// and saves on release (the Force card renders the armed/measuring
+    /// states; the standalone manual fullscreen is gone).
     private func armHandsFree() {
         guard !guidedControlsLocked else {
             refuseAction("Resume or end the active guided protocol before arming hands-free.")
@@ -2236,26 +2056,15 @@ struct ForceView: View {
         model.lockForceRecordingContext(model.freePullContext)
         model.handsFree.arm()
         guard model.handsFree.isArmed else { return }
-        manualFullscreenContext = model.freePullContext
-        manualFullscreenHandsFree = true
-        manualFullscreenLifecycle = ManualForceFullscreenLifecycle()
-        _ = manualFullscreenLifecycle.open(armed: true)
-        manualFullscreenPresented = true
+        model.updateKeepAwake()
     }
 
     private func stopAndSave() {
-        let fullscreenContext = manualFullscreenLifecycle.keepsRecordingAliveWhenMinimized
-            ? manualFullscreenContext
-            : nil
-        stopAndSave(using: fullscreenContext)
-    }
-
-    private func stopAndSave(using fullscreenContext: FreePullContext?) {
         guard !guidedControlsLocked else {
             refuseAction("Resume or end the active guided protocol before stopping a free pull.")
             return
         }
-        // A manual Stop & Save while the hands-free loop owns the rep must go
+        // A Stop & Save while the hands-free loop owns the rep must go
         // through the loop (its claim + re-arm bookkeeping), not the direct
         // path — otherwise the machine still thinks it is recording.
         if model.handsFree.isMeasuring {
@@ -2269,16 +2078,9 @@ struct ForceView: View {
         }
         guard let summary = model.tindeq.stopMeasuring() else {
             refuseAction("No force samples were received.")
-            if fullscreenContext != nil {
-                manualFullscreenLifecycle = ManualForceFullscreenLifecycle()
-                manualFullscreenPresented = false
-            }
             return
         }
-        save(summary, recovered: false, context: fullscreenContext)
-        if fullscreenContext != nil {
-            _ = manualFullscreenLifecycle.requestSave()
-        }
+        save(summary, recovered: false)
     }
 
     private func publishFreePullContext() {
@@ -2293,13 +2095,7 @@ struct ForceView: View {
 
     private func saveCompleted() {
         guard let summary = model.tindeq.completedSummary else { return }
-        let fullscreenContext = manualFullscreenLifecycle.phase == .readyToSave
-            ? manualFullscreenContext
-            : nil
-        if fullscreenContext != nil {
-            _ = manualFullscreenLifecycle.requestSave()
-        }
-        save(summary, recovered: false, context: fullscreenContext)
+        save(summary, recovered: false)
     }
 
     private func saveRecovered() {
@@ -2307,35 +2103,14 @@ struct ForceView: View {
         save(summary, recovered: true)
     }
 
-    private func stopManualRecording() {
-        stopAndSave(using: manualFullscreenContext)
-    }
-
-    private func retryManualSave() {
-        guard let summary = model.tindeq.completedSummary else { return }
-        _ = manualFullscreenLifecycle.requestSave()
-        save(summary, recovered: false, context: manualFullscreenContext)
-    }
-
-    private func cancelManualArm() {
+    private func cancelHandsFreeArm() {
         model.handsFree.cancelArm()
-        _ = manualFullscreenLifecycle.cancelArm()
-        manualFullscreenHandsFree = false
-        manualFullscreenPresented = false
         model.updateKeepAwake()
-    }
-
-    private func disconnectManualRecording() {
-        manualFullscreenLifecycle.interrupted()
-        manualFullscreenHandsFree = false
-        manualFullscreenPresented = false
-        model.tindeq.disconnect()
     }
 
     private func save(
         _ summary: ForceSummary,
-        recovered: Bool,
-        context: FreePullContext? = nil
+        recovered: Bool
     ) {
         guard !savingSummary else { return }
         let saveFlightID = UUID()
@@ -2352,16 +2127,16 @@ struct ForceView: View {
         let attribution = model.forceRecordingLock.map {
             ForceDisconnectSalvage.Attribution(tag: $0.tag, side: $0.side)
         } ?? .empty
-        let savedTag = recovered ? attribution.tag : (context?.tag ?? tag)
-        let savedSide = recovered ? attribution.side : (context?.side ?? recordedSide)
+        let savedTag = recovered ? attribution.tag : tag
+        let savedSide = recovered ? attribution.side : recordedSide
         let note = recovered ? ForceDisconnectSalvage.recoveredNote : ""
         let lossReason = recovered ? ForceDisconnectSalvage.lossReason : "recording"
         // #720: snapshot the recording context before the await so a stale
         // closure can never write a side invalid under the active mode (repo
         // rule: a decision never reads captured state after an `await`).
-        let savedZone = context?.zone ?? recordingZone
-        let savedPreset = context?.preset ?? selectedPreset
-        let savedTargetBand = context?.targetBand ?? recordingZoneTargetBand
+        let savedZone = recordingZone
+        let savedPreset = selectedPreset
+        let savedTargetBand = recordingZoneTargetBand
         Task {
             let enqueued = await model.saveForceSummary(
                 summary,
@@ -2523,7 +2298,6 @@ struct ForceView: View {
         let launchSide = side
         let launchSelection = selectedSelection
         let launchZoneCurve = zoneCurve
-        let launchHandsFreeEnabled = handsFreeEnabled
         let launchAccountScope = model.accountScope
         guidedLaunchInFlight = true
         resolvingTargets = true
@@ -2535,8 +2309,7 @@ struct ForceView: View {
                 sideMode: launchSideMode,
                 side: launchSide,
                 selection: launchSelection,
-                zoneCurve: launchZoneCurve,
-                handsFreeEnabled: launchHandsFreeEnabled
+                zoneCurve: launchZoneCurve
             )
             guard !Task.isCancelled,
                   guidedLaunchInFlight,
@@ -2573,13 +2346,16 @@ struct ForceView: View {
         }
     }
 
-    /// The guided-launch boundary chain (#874): normalize the picker's side
-    /// under the active exercise mode (the producer snapshot), derive the
-    /// starting side, resolve the target plan through the real async
-    /// resolver, and construct the session. Extracted from `launch()` so the
-    /// AC1 regression test drives the REAL producer → async resolution →
-    /// session construction boundary — a `.both` coercion at the producer is
-    /// exactly the reported Left→Both failure.
+    /// The guided-launch boundary chain (#874/#899): normalize the picker's
+    /// side under the active exercise mode (the producer snapshot), derive
+    /// the starting side, resolve the target plan through the real async
+    /// resolver, and construct the session. Every guided session is
+    /// hands-free/load-triggered (#899), so no hands-free preference is
+    /// threaded through — the runner always arms the caller-owned stream for
+    /// each work stage. Extracted from `launch()` so the AC1 regression test
+    /// drives the REAL producer → async resolution → session construction
+    /// boundary — a `.both` coercion at the producer is exactly the reported
+    /// Left→Both failure.
     @MainActor
     static func makeGuidedLaunchSession(
         model: AppModel,
@@ -2588,8 +2364,7 @@ struct ForceView: View {
         sideMode: ExerciseSideMode,
         side: TindeqSide,
         selection: ForceProtocolSelection,
-        zoneCurve: ZoneCurveInput?,
-        handsFreeEnabled: Bool
+        zoneCurve: ZoneCurveInput?
     ) async -> GuidedForceProtocolSession {
         let launchSide = ExerciseSidePolicy.normalizeSide(sideMode, side)
         let startSide: TindeqSide = launchSide == .right ? .right : .left
@@ -2607,8 +2382,7 @@ struct ForceView: View {
             startingSide: startSide,
             fallbackSide: launchSide,
             selection: selection,
-            references: zoneCurve,
-            handsFreeEnabled: handsFreeEnabled
+            references: zoneCurve
         )
     }
 
@@ -2755,7 +2529,7 @@ private struct ForceDeviceCard: View {
         case .interrupted:
             return "Reconnect your Progressor to turn a pull into a force curve."
         case .connected:
-            return "Record a Progressor pull to turn your force into a curve and training trend."
+            return "Record with Hands-free, or run a guided protocol above, to turn your first pull into a force curve."
         default:
             return "Connect your Progressor to turn a pull into a force curve."
         }
@@ -2827,7 +2601,7 @@ private struct ForceDeviceCard: View {
                             .foregroundStyle(SendmeterStyle.primary)
                         Text("Ready to measure")
                             .font(.title3.bold())
-                        Text("Connect a Tindeq Progressor, tare it, then start a pull.")
+                        Text("Connect a Tindeq Progressor, tare it, then arm Hands-free or start a guided protocol.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -3026,15 +2800,24 @@ private struct ForceDeviceCard: View {
                         .hapticButtonStyle(PrimaryActionButtonStyle())
                         .disabled(device.hasUnsavedRecording)
                     }
-                } else if !showsPrimaryEmptyState {
+                } else if protocolArmed {
                     Button(action: start) {
-                        Label(
-                            protocolArmed ? "Start Guided Protocol" : "Start Pull",
-                            systemImage: "play.fill"
-                        )
+                        Label("Start Guided Protocol", systemImage: "play.fill")
                     }
                     .hapticButtonStyle(PrimaryActionButtonStyle())
                     .disabled(device.hasUnsavedRecording)
+                } else if !showsPrimaryEmptyState {
+                    // #899: no direct-measure "Start Pull" remains — with
+                    // nothing armed the honest route is arming a guided
+                    // protocol above or turning on Hands-free below.
+                    Label(
+                        "Pick a guided protocol above, or turn on Hands-free to record a pull",
+                        systemImage: "scope"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
                 }
                 if device.hasUnsavedRecording {
                     Text(UserFacingError.message(for: .previousRecordingUnfinished))

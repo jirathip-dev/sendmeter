@@ -143,14 +143,15 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertFalse(boundary.contains("recordings =="))
     }
 
-    func testForceOwnersKeepManualFullscreenAndGuidedHandsFreeOnExistingPaths() {
+    func testForceOwnersRouteThroughGuidedHandsFreeAndRefusals() {
         let forceView = code(source("Sources/Features/Force/ForceView.swift"))
 
-        XCTAssertTrue(forceView.contains("ManualForceFullscreen("))
-        XCTAssertTrue(forceView.contains("handsFreeEnabled: launchHandsFreeEnabled"))
+        XCTAssertFalse(forceView.contains("ManualForceFullscreen("))
+        XCTAssertFalse(forceView.contains("startMeasurement"))
         XCTAssertTrue(forceView.contains("GuidedForceHandsFreeTimingPolicy"))
         XCTAssertTrue(forceView.contains("case .refusedActiveRecording"))
         XCTAssertTrue(forceView.contains("model.handsFree.cancelArm()"))
+        XCTAssertTrue(forceView.contains("model.handsFree.stopPolicy = .callerOwned"))
     }
 
     // MARK: #874/#901 — guided launch keeps an explicit Left through run construction
@@ -253,10 +254,12 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertTrue(launchBody.contains("let launchSelection = selectedSelection"))
 
         // The delegate passes the SNAPSHOT values through, never a literal.
+        // #899: no hands-free preference crosses the guided-launch boundary —
+        // every guided session is load-triggered hands-free by construction.
         XCTAssertTrue(launchBody.contains("sideMode: launchSideMode"))
         XCTAssertTrue(launchBody.contains("side: launchSide"))
         XCTAssertTrue(launchBody.contains("selection: launchSelection"))
-        XCTAssertTrue(launchBody.contains("handsFreeEnabled: launchHandsFreeEnabled"))
+        XCTAssertFalse(launchBody.contains("launchHandsFreeEnabled"))
 
         // No `.both` coercion anywhere in the launch region.
         XCTAssertFalse(

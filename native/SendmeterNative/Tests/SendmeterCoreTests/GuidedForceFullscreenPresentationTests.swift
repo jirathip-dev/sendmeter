@@ -78,22 +78,18 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
         XCTAssertEqual(paused.progress, 0.2, accuracy: 0.000_001)
     }
 
-    func testLayoutKeepsReadableFloorsOnSmallPortraitAndLandscape() {
+    func testLayoutKeepsAReadableChartFloorOnSmallPortraitAndLandscape() {
         let portrait = GuidedForceLayout.resolve(width: 320, height: 568)
-        XCTAssertGreaterThanOrEqual(portrait.actionDiameter, 96)
         XCTAssertGreaterThanOrEqual(portrait.chartMinimumHeight, 96)
 
         let landscape = GuidedForceLayout.resolve(width: 667, height: 375)
-        XCTAssertGreaterThanOrEqual(landscape.actionDiameter, 96)
         XCTAssertGreaterThanOrEqual(landscape.chartMinimumHeight, 96)
-        XCTAssertLessThan(landscape.actionDiameter, 184)
 
         let largeText = GuidedForceLayout.resolve(width: 320, height: 568, textScale: 1.5)
-        XCTAssertLessThanOrEqual(largeText.actionDiameter, portrait.actionDiameter)
         XCTAssertGreaterThanOrEqual(largeText.chartMinimumHeight, 96)
     }
 
-    func testLayoutAggregateFitIdentifiesPinnedPrimaryActionCases() {
+    func testLayoutAggregateFitKeepsTheCompactScrollBoundary() {
         let compactPortrait = GuidedForceLayout.resolve(width: 320, height: 568)
         XCTAssertFalse(compactPortrait.essentialContentFits)
         XCTAssertGreaterThan(compactPortrait.essentialContentHeight, compactPortrait.viewportHeight)

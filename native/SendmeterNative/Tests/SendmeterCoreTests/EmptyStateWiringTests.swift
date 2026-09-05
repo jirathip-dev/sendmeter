@@ -177,8 +177,8 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(force.contains("private var forceEmptyActionTitle: String"))
         XCTAssertTrue(force.contains("private func performForceEmptyAction()"))
         let normalizedForce = normalizeWhitespace(force)
-        XCTAssertTrue(normalizedForce.contains("case .connected: if model.handsFree.isArmed { cancelManualArm() }"))
-        XCTAssertTrue(normalizedForce.contains("else if handsFreeEnabled, selectedPreset == nil { armHandsFree() }"))
+        XCTAssertTrue(normalizedForce.contains("case .connected: if model.handsFree.isArmed { cancelHandsFreeArm() }"))
+        XCTAssertTrue(normalizedForce.contains("else if selectedPreset == nil { if !handsFreeEnabled { handsFreeEnabled = true } armHandsFree() }"))
         XCTAssertTrue(normalizedForce.contains("else { startPrimaryForceAction() }"))
         XCTAssertTrue(normalizedForce.contains("case .measuring: stopAndSave()"))
         XCTAssertTrue(normalizedForce.contains("case .unavailable: openBluetoothSettings()"))
@@ -200,17 +200,18 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(controls.contains("$handsFreeEnabled"))
         XCTAssertTrue(
             normalizeWhitespace(controls).contains(
-                "else if !showsPrimaryEmptyState { Button(action: start)"
+                "else if handsFreeArmed, protocolArmed { VStack(spacing: 8) { if !showsPrimaryEmptyState { Button(action: start)"
             )
         )
         XCTAssertTrue(
             normalizeWhitespace(controls).contains(
-                "if !showsPrimaryEmptyState { Button(action: start)"
+                "else if protocolArmed { Button(action: start) { Label(\"Start Guided Protocol\""
             )
         )
         XCTAssertTrue(normalizeWhitespace(controls).contains("else if handsFreeEnabled, !protocolArmed {"))
         XCTAssertTrue(controls.contains("Hands-free is ready — use the action above to arm it"))
-        XCTAssertTrue(force.contains("if handsFreeEnabled, selectedPreset == nil"))
+        XCTAssertFalse(force.contains("\"Record a pull\""))
+        XCTAssertFalse(force.contains("Label(\"Start Pull\""))
         XCTAssertTrue(force.contains("return \"Arm Hands-free\""))
         let deviceTitle = exactBlock(
             force,
@@ -218,7 +219,7 @@ final class EmptyStateWiringTests: XCTestCase {
         )
         XCTAssertTrue(
             normalizeWhitespace(deviceTitle).contains(
-                "if handsFreeEnabled, selectedPreset == nil { return \"Arm Hands-free\" }"
+                "if selectedPreset == nil { return \"Arm Hands-free\" }"
             )
         )
         XCTAssertTrue(
@@ -233,7 +234,7 @@ final class EmptyStateWiringTests: XCTestCase {
         )
         XCTAssertTrue(
             normalizeWhitespace(emptyAction).contains(
-                "else if handsFreeEnabled, selectedPreset == nil { armHandsFree() }"
+                "else if selectedPreset == nil { if !handsFreeEnabled { handsFreeEnabled = true } armHandsFree() }"
             )
         )
 
