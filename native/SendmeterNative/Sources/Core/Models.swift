@@ -886,6 +886,17 @@ public struct TindeqPreset: Codable, Equatable, Sendable, Identifiable {
     public var percentageBasis: TargetPercentageBasis
     public var percentageStep: Double
     public var targetFromCurve: Bool
+    /// #902: the trainable quality a TRANSIENT suggested-zone preset arms
+    /// (`ZoneMix.zonePreset`), so `resolveForceTargetPlan` / the target-band
+    /// resolver can reproduce the web's per-quality band math instead of the
+    /// fixed-target tolerance band a user preset carries. Never set on a
+    /// persisted user preset (`PresetRow` maps none of the #902 fields), so
+    /// the protocol library and DB round-trips are unaffected.
+    public var zoneQuality: ZoneQuality?
+    /// #902: the SL-97 session intensity (60–110, step 5) the transient zone
+    /// preset was armed with. Nil on user presets; zone presets always carry
+    /// the clamped value so the resolver never has to guess.
+    public var zoneIntensityPercent: Int?
     public var alternateSides: Bool
     public var protocolMode: ForceProtocolMode
     public var cadenceOutSeconds: Double
@@ -910,6 +921,8 @@ public struct TindeqPreset: Codable, Equatable, Sendable, Identifiable {
         percentageBasis: TargetPercentageBasis = .personalRecord,
         percentageStep: Double = 0,
         targetFromCurve: Bool = false,
+        zoneQuality: ZoneQuality? = nil,
+        zoneIntensityPercent: Int? = nil,
         alternateSides: Bool = false,
         protocolMode: ForceProtocolMode = .hold,
         cadenceOutSeconds: Double = 3,
@@ -933,6 +946,8 @@ public struct TindeqPreset: Codable, Equatable, Sendable, Identifiable {
         self.percentageBasis = percentageBasis
         self.percentageStep = percentageStep
         self.targetFromCurve = targetFromCurve
+        self.zoneQuality = zoneQuality
+        self.zoneIntensityPercent = zoneIntensityPercent
         self.alternateSides = alternateSides
         self.protocolMode = protocolMode
         self.cadenceOutSeconds = cadenceOutSeconds

@@ -72,6 +72,22 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native Force: the recording-context card is redesigned around configure →
+  operate. One "Movement & side" row opens a full-screen movement picker that
+  shows every exercise with its side policy and offers only the sides that
+  exercise allows; protocol choices live under one Suggested | Saved switch
+  and tap-to-arm, and the armed protocol becomes the card hero with its
+  timing, an honest target-band module, and pull-to-start readiness. Saved
+  protocols list under a consistent "Saved · category" pattern.
+- Native Force: recommended zone protocols (Power, Strength, Pow End,
+  Endurance) now arm with a live target band derived from your force curve —
+  Power 90–100% of best short-window force, Strength 80–90% of max, Pow End
+  93–107% of the 60-second hill capability, Endurance 80–100% of critical
+  force — plus an intensity dial (60–110%, 5% steps, remembered between
+  sessions) that rescales the band and adjusts hold time so the dose stays
+  equivalent; with no usable curve reference the zone stays honestly
+  unavailable instead of inventing a target.
+
 - Native iPhone tab bar now reads Dashboard → Force → Workout → History →
   Settings, with the approved climbing mascots on the Force and Workout tabs
   and on the Manual workout card (replacing the SF Symbols).

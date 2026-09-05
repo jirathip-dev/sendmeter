@@ -1242,6 +1242,12 @@ struct ForceView: View {
     /// stamp stays exact.
     @State private var zoneArmedPreset: TindeqPreset?
     @State private var armedZoneQuality: ZoneQuality?
+    /// #902: the SL-97 session intensity dial (60–110, step 5, default 100)
+    /// — persisted across sessions like the web's `loadIntensity`/`saveIntensity`
+    /// AppStorage pair, applied to every suggested-zone arm.
+    @AppStorage("sendmeter.native.force.zone-intensity") private var zoneIntensityPercent = ZoneMix.zoneIntensityDefault
+    /// #903: the combined movement + side full-screen picker presentation.
+    @State private var movementPickerPresented = false
     /// #710: a maintenance suggestion (Warm-up / Prehab) arms its own guided
     /// preset but is NOT a `ZoneQuality` — it records under a maintenance zone
     /// and never feeds training balance. Kept parallel to `armedZoneQuality`
@@ -1306,13 +1312,6 @@ struct ForceView: View {
             return .movement
         }
         return .free
-    }
-
-    /// #711: the measurement mode surfaced in the recording context (web
-    /// `setupMode` / `forceMeasurementMode`). It is a *presentation* of the
-    /// armed protocol's modality, not an independent setting.
-    private var measurementMode: ForceMeasurementMode {
-        ForceMeasurementMode(protocolMode: selectedPreset?.protocolMode ?? .hold)
     }
 
     /// True when the selected guided target is a reverse-action (movement)
@@ -1536,7 +1535,10 @@ struct ForceView: View {
             armedMaintenanceZone = nil
             movementArmedPreset = nil
         case .suggestedZone(let quality):
-            zoneArmedPreset = ZoneMix.zonePreset(for: quality)
+            zoneArmedPreset = zonePreset(
+                forZone: quality,
+                intensityPercent: clampedZoneIntensity
+            )
             armedZoneQuality = quality
             movementArmedPreset = nil
             armedMaintenanceZone = nil
@@ -1596,30 +1598,100 @@ struct ForceView: View {
         publishFreePullContext()
     }
 
-    /// #711: the recording-context card. Extracted from the `body` builder so
-    /// the constraint solver type-checks it as its own `@ViewBuilder`
-    /// sub-expression; the heavy closure/ternary/filter/`&&`/`||` arguments are
-    /// hoisted into distinct typed `let`s, and `ForceMetadataCard` carries an
-    /// explicit fully-typed `init`, together anchoring the solver (CI "unable
-    /// to type-check this expression in reasonable time").
+    /// #902: clamp the persisted intensity dial to the web's [60, 110] range.
+    private var clampedZoneIntensity: Int {
+        ZoneMix.clampZoneIntensity(zoneIntensityPercent)
+    }
+
+    /// #902: the transient suggested-zone preset armed at the current
+    /// intensity. At 100% the timing is exactly the zone protocol table
+    /// (unchanged from pre-#902); a non-100% intensity with a usable
+    /// tag-level curve adjusts hold (and endurance sets) so the executed
+    /// engine schedule matches the web's dose math.
+    private func zonePreset(
+        forZone quality: ZoneQuality,
+        intensityPercent: Int
+    ) -> TindeqPreset {
+        ZoneMix.zonePreset(
+            for: quality,
+            intensityPercent: intensityPercent,
+            references: zoneCurve
+        )
+    }
+
+    /// The tag-level zone target for the armed suggested zone at the current
+    /// intensity — the immediate module numbers while the per-side plan is
+    /// resolving, plus the basis / source-note copy.
+    private var armedZoneTarget: ZoneQualityTarget? {
+        guard let quality = armedZoneQuality, let curve = zoneCurve else { return nil }
+        return ZoneMix.zoneTarget(
+            for: quality,
+            references: curve,
+            intensityPercent: clampedZoneIntensity
+        )
+    }
+
+    /// #902: rebuild the armed zone preset when the slider moves so the
+    /// executed engine schedule follows the dose math (the target-band
+    /// re-resolution runs through the target-plan task key).
+    private func rebuildArmedZonePreset() {
+        guard let quality = armedZoneQuality else { return }
+        zoneArmedPreset = zonePreset(
+            forZone: quality,
+            intensityPercent: clampedZoneIntensity
+        )
+        publishFreePullContext()
+    }
+
+    /// #903: the redesigned recording-context card. Extracted from the `body`
+    /// builder so the constraint solver type-checks it as its own
+    /// `@ViewBuilder` sub-expression; heavy arguments are hoisted into
+    /// distinct typed `let`s (CI "unable to type-check this expression in
+    /// reasonable time").
     @ViewBuilder
     private var recordingContextCard: some View {
         let sideBinding: Binding<TindeqSide> =
             Binding(get: { side }, set: { side = $0 })
-        let movementSummary: String? = measurementMode == .movement
-            ? selectedPreset.map { protocolSummary($0) }
-            : nil
-        let contextRecordings: [TindeqRecording] =
-            model.recordings.filter { $0.tag == tag }
-        let showBalanceHint: Bool =
-            !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !isReverseActionTarget
-        // #750: lock the whole recording context for the same run window the
-        // web uses (`runActive`): a live free pull, an armed/measuring
-        // hands-free loop, an interrupted rep awaiting recovery, or a guided
-        // session. The focused chip/input `.disabled` calls then report that
-        // lock to VoiceOver instead of relying only on the parent modifier.
-        let contextLocked = ForceContextLockPolicy.isLocked(
+        let intensityBinding: Binding<Int>? =
+            armedZoneQuality != nil
+                ? Binding(
+                    get: { clampedZoneIntensity },
+                    set: { zoneIntensityPercent = ZoneMix.clampZoneIntensity($0) }
+                )
+                : nil
+
+        ForceRecordingContextCard(
+            tag: $tag,
+            side: sideBinding,
+            sideMode: sideMode,
+            locked: recordingContextLocked,
+            selectedTarget: selectedSelection,
+            onSelectTarget: handleSelectTarget,
+            selectedPreset: selectedPreset,
+            presets: model.presets,
+            knownTags: model.visibleTagNames,
+            maintenanceAvailable: armableMaintenanceZones,
+            curveInput: zoneCurve,
+            personalRecord: personalRecordForTag,
+            targetBand: selectedTargetReferenceBand,
+            zoneTarget: armedZoneTarget,
+            intensityPercent: intensityBinding,
+            handsFreeEnabled: handsFreeEnabled,
+            deviceConnected: model.tindeq.status == .connected,
+            deviceStatusText: forceDeviceStatusText,
+            movementSummary: movementContextSummary,
+            onOpenPicker: { movementPickerPresented = true }
+        )
+        .disabled(recordingContextLocked)
+    }
+
+    /// #750: lock the whole recording context for the same run window the web
+    /// uses (`runActive`): a live free pull, an armed/measuring hands-free
+    /// loop, an interrupted rep awaiting recovery, or a guided session. The
+    /// focused chip/input `.disabled` calls then report that lock to
+    /// VoiceOver instead of relying only on the parent modifier.
+    private var recordingContextLocked: Bool {
+        ForceContextLockPolicy.isLocked(
             ForceContextLockState(
                 liveRecording: model.tindeq.status == .measuring,
                 interruptedRecording: model.tindeq.interruptedRecording != nil,
@@ -1628,40 +1700,27 @@ struct ForceView: View {
                 guidedSessionActive: guidedControlsLocked
             )
         )
-
-        ForceMetadataCard(
-            tag: $tag,
-            side: sideBinding,
-            sideMode: sideMode,
-            locked: contextLocked,
-            selectedTarget: selectedSelection,
-            onSelectTarget: handleSelectTarget,
-            presets: model.presets,
-            knownTags: model.visibleTagNames,
-            selectedName: selectedPreset?.name,
-            selectedSummary: movementSummary,
-            maintenanceAvailable: armableMaintenanceZones,
-            recordings: contextRecordings,
-            exercise: tag,
-            curveInput: zoneCurve,
-            showsBalance: showBalanceHint,
-            balanceLocked: contextLocked,
-            onPickFocusNext: armRecommendedZone,
-            measurementMode: measurementMode
-        )
-        .disabled(contextLocked)
     }
 
-    /// #711: the armed preset's concise summary (web `protocolSummary`).
-    /// Reverse Action is presented in movement terms (concentric / eccentric)
-    /// rather than the internal out/return direction names.
-    private func protocolSummary(_ preset: TindeqPreset) -> String {
-        let repsAndSets = "\(preset.repetitions) rep\(preset.repetitions == 1 ? "" : "s") × \(preset.sets) set\(preset.sets == 1 ? "" : "s")"
-        let rest = preset.sets > 1 ? " · \(preset.restBetweenSetsSeconds)s rest" : ""
-        if preset.protocolMode == .reverseAction {
-            return "\(preset.cadenceOutSeconds.formatted())s \(MovementTerminology.concentric.lowercased()) · \(preset.cadenceReturnSeconds.formatted())s \(MovementTerminology.eccentric.lowercased()) · \(repsAndSets)\(rest)"
+    /// #903: the collapsed decision row's value — "FDP · Side Left" (the side
+    /// segment is omitted until one is chosen; a missing exercise reads
+    /// honestly as "No exercise").
+    private var movementContextSummary: String {
+        let exercise = activeTag.isEmpty ? "No exercise" : activeTag
+        guard !activeTag.isEmpty, side != .unspecified else { return exercise }
+        return exercise + " · Side " + side.label
+    }
+
+    /// The recording-context card's device-row status text.
+    private var forceDeviceStatusText: String {
+        switch model.tindeq.status {
+        case .connected: return "Connected"
+        case .measuring: return "Measuring"
+        case .scanning, .connecting: return "Connecting…"
+        case .unavailable: return "Bluetooth off"
+        case .interrupted: return "Reconnect"
+        case .idle: return "Disconnected"
         }
-        return "\(preset.holdSeconds)s hold · \(repsAndSets)\(rest)"
     }
 
     var body: some View {
@@ -1678,11 +1737,11 @@ struct ForceView: View {
                         }
                     }
 
-                    ForceContextSummaryCard(
-                        preset: selectedPreset,
-                        targetBand: selectedTargetReferenceBand,
-                        handsFreeEnabled: handsFreeEnabled
-                    )
+                    // #903: the redesigned Configure → Operate order — the
+                    // recording-context card (movement & side decision row,
+                    // protocol list / armed hero + bound load module) leads
+                    // the stack; the Progressor operate card follows it.
+                    recordingContextCard
 
                     ForceDeviceCard(
                         device: model.tindeq,
@@ -1723,16 +1782,20 @@ struct ForceView: View {
                         discardRecovered: { model.tindeq.clearInterruptedRecording() }
                     )
 
-                    // #711: the recording-context card. Extracted into a
-                    // dedicated `@ViewBuilder` sub-expression (plus an explicit
-                    // fully-typed `init` below) so the constraint solver
-                    // type-checks it in isolation (CI "unable to type-check
-                    // this expression in reasonable time"). #833 r2: it is the
-                    // outside context's protocol configure surface and stays a
-                    // direct stack member — the collapsed, low-emphasis
-                    // "Protocol details" DisclosureGroup (build 50) made this
-                    // surface undiscoverable before start.
-                    recordingContextCard
+                    // #903: Focus Next (training balance) leaves the
+                    // recording-context card — the redesigned card carries
+                    // only movement/side + protocol configure + device row.
+                    // It stands as its own recommendation card under the
+                    // operate surface, using the same tag-scoped inputs.
+                    if !activeTag.isEmpty, !isReverseActionTarget {
+                        ZoneFocusCard(
+                            recordings: model.recordings.filter { $0.tag == tag },
+                            exercise: tag,
+                            curveInput: zoneCurve,
+                            onPick: armRecommendedZone,
+                            locked: recordingContextLocked
+                        )
+                    }
 
                     if showsForceAnalysisCards {
                         ForceProgressCardBoundary(
@@ -1849,6 +1912,13 @@ struct ForceView: View {
             .onChange(of: selectedPresetID) { _ in publishFreePullContext() }
             .onChange(of: zoneArmedPreset) { _ in publishFreePullContext() }
             .onChange(of: movementArmedPreset) { _ in publishFreePullContext() }
+            // #902: moving the intensity dial rebuilds the armed zone preset
+            // so the executed schedule (hold / sets) follows the dose math;
+            // the target-plan task key re-resolves the scaled band.
+            .onChange(of: zoneIntensityPercent) { _ in
+                guard armedZoneQuality != nil else { return }
+                rebuildArmedZonePreset()
+            }
             .onChange(of: selectedTargetPlan) { _ in publishFreePullContext() }
             .onChange(of: handsFreeEnabled) { enabled in
                 if !enabled, !guidedControlsLocked { model.handsFree.disarm() }
@@ -1958,6 +2028,24 @@ struct ForceView: View {
                     onSaveCompleted: retryManualSave,
                     onCancelArm: cancelManualArm,
                     onDisconnect: disconnectManualRecording
+                )
+                .onAppear { Haptics.shared.sheetPresented() }
+            }
+            // #903: the combined movement + side picker — a true full-screen
+            // modal with its own 44px Close control and no app tab bar.
+            .fullScreenCover(isPresented: $movementPickerPresented, onDismiss: {
+                Haptics.shared.sheetDismissed()
+                publishFreePullContext()
+            }) {
+                ForceMovementSidePicker(
+                    tag: $tag,
+                    side: Binding(
+                        get: { side },
+                        set: { side = $0 }
+                    ),
+                    knownTags: model.visibleTagNames,
+                    modeProvider: { model.sideMode(for: $0) },
+                    onClose: { movementPickerPresented = false }
                 )
                 .onAppear { Haptics.shared.sheetPresented() }
             }
@@ -2308,7 +2396,7 @@ struct ForceView: View {
         // band the moment Focus Next is armed — the web resolves and displays
         // the zone's target as soon as it is picked, not after Start.
         let presetKey = selectedPresetID?.uuidString
-            ?? zoneArmedPreset.map { "zone:\($0.name)" }
+            ?? zoneArmedPreset.map { "zone:\($0.name)@\(clampedZoneIntensity)" }
             ?? (movementArmedPreset != nil ? "movement" : nil)
             ?? "free"
         return "\(presetKey)|\(tag)|\(side.rawValue)|\(recordingFingerprint)"
@@ -2571,65 +2659,7 @@ private struct GuidedForceResumeCard: View {
     }
 }
 
-private struct ForceContextSummaryCard: View {
-    let preset: TindeqPreset?
-    let targetBand: ForceTargetBand?
-    let handsFreeEnabled: Bool
 
-    var body: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    // #833 r2: the outside identity card speaks the approved
-                    // V2 wording — this is where the user reviews the active
-                    // protocol before starting.
-                    SectionLabel("Selected protocol", systemImage: "waveform.path.ecg")
-                    Spacer()
-                    StatusPill(handsFreeEnabled ? "Hands-free" : "Ready", color: handsFreeEnabled ? SendmeterStyle.caution : SendmeterStyle.optimal)
-                }
-                if let preset {
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(preset.name)
-                            .font(.title3.bold())
-                        Spacer(minLength: 8)
-                        StatusPill(
-                            preset.protocolMode == .reverseAction ? "MOVEMENT" : "STATIC",
-                            color: SendmeterStyle.primary
-                        )
-                    }
-                    Text(protocolSummary(preset))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Free pull")
-                        .font(.title3.bold())
-                    Text(handsFreeEnabled ? "STATIC · Pull to start, release to stop" : "STATIC · Tap Start Pull when ready")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                if let targetBand {
-                    Text("Target \(targetBand.kilograms.formatted(.number.precision(.fractionLength(1)))) kg · range \(targetBand.lowKilograms.formatted(.number.precision(.fractionLength(1))))–\(targetBand.highKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
-                        .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(SendmeterStyle.caution)
-                } else {
-                    Label("No target configured for this protocol", systemImage: "scope")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                Label(handsFreeEnabled ? "Pull to start · release to stop" : "Tap Start Pull when ready", systemImage: handsFreeEnabled ? "hand.draw" : "play.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(SendmeterStyle.primary)
-            }
-        }
-    }
-
-    private func protocolSummary(_ preset: TindeqPreset) -> String {
-        if preset.protocolMode == .reverseAction {
-            return "MOVEMENT · \(preset.cadenceOutSeconds.formatted())s out / \(preset.cadenceReturnSeconds.formatted())s return · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenSetsSeconds)s set rest"
-        }
-        return "STATIC · \(preset.holdScheduleSummary) · \(preset.sets) × \(preset.repetitions) · \(preset.restBetweenRepetitionsSeconds)s rep rest · \(preset.restBetweenSetsSeconds)s set rest"
-    }
-}
 
 private struct ForceDeviceCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -3079,587 +3109,9 @@ private struct ForceDeviceCard: View {
     }
 }
 
-private struct ForceMetadataCard: View {
-    @Environment(\.colorScheme) private var scheme
-    /// #750: compact chip editing state, kept card-local like Capacitor's
-    /// `TagSideEditor` (add-new row and reveal-all are UI ephemera, not
-    /// recording context).
-    @State private var addingTag = false
-    @State private var showAllTags = false
-    @State private var draftTag = ""
-    @FocusState private var newTagFocused: Bool
-    @Binding var tag: String
-    @Binding var side: TindeqSide
-    /// #720: the active exercise's side-applicability policy. The card only
-    /// offers the sides the policy allows — never a hardcoded mode→options map.
-    let sideMode: ExerciseSideMode
-    /// #750: explicit disabled state so VoiceOver and Dynamic Type report
-    /// chips/inputs as disabled during any live run window (free measuring,
-    /// hands-free armed/measuring, interrupted recovery, or guided), not
-    /// merely inert because the parent card is disabled.
-    let locked: Bool
-    /// #710: the single-armed selection — `.free`, a suggested zone /
-    /// maintenance protocol, the resisted-movement suggestion, or a saved user
-    /// preset. Exactly one is active at a time (web
-    /// `withZoneSelected`/`withPresetSelected`).
-    let selectedTarget: ForceProtocolSelection
-    /// Called with the tapped target; ForceView runs the pure reducer
-    /// `ForceProtocolPicker.next` and applies the single-armed result.
-    let onSelectTarget: (ForceProtocolSelection) -> Void
-    let presets: [TindeqPreset]
-    /// #631: pickable exercise names — distinct recording tags minus hidden
-    /// (SL-92). Hidden tags' recordings still exist, they just leave the
-    /// recording-context exercise chips.
-    let knownTags: [String]
-    /// #710: the armed selection's display name (e.g. "Power" / "Warm-up" /
-    /// a saved preset's name), shown as a "Selected:" line.
-    let selectedName: String?
-    /// #711: the armed protocol's concise summary (web `protocolSummary`).
-    /// The parent supplies it only for a MOVEMENT (reverse-action) selection so
-    /// the recording context can present the concentric / eccentric cadence
-    /// where it applies, without changing the static summary line.
-    let selectedSummary: String?
-    /// #710: the maintenance zones whose guided protocol has a usable CF/PR
-    /// right now — an unavailable chip is disabled (web `!warmupT`/`!prehabT`).
-    let maintenanceAvailable: Set<RecordedZone>
-    /// #710: training balance surfaced inside the protocol-selection context
-    /// — tag-filtered recordings + the Focus-Next curve tie-break, mirroring
-    /// Capacitor's `TRAINING BALANCE · FDP` card.
-    let recordings: [TindeqRecording]
-    let exercise: String
-    let curveInput: ZoneCurveInput?
-    let showsBalance: Bool
-    let balanceLocked: Bool
-    let onPickFocusNext: (ZoneQuality) -> Void
-    /// #711: the measurement mode shown as the STATIC / MOVEMENT badge (web
-    /// `ProtocolBadge`), derived by the parent from the armed preset's
-    /// `protocolMode`.
-    let measurementMode: ForceMeasurementMode
 
-    /// #711: explicit fully-typed initializer. The synthesized memberwise init
-    /// carries two `@Binding` property wrappers plus 15 `let`s, and the
-    /// constraint solver times out inferring it at the call site ("unable to
-    /// type-check this expression in reasonable time"). Spelling out every
-    /// parameter type anchors the solver so each call-site argument is matched
-    /// against a known type.
-    init(
-        tag: Binding<String>,
-        side: Binding<TindeqSide>,
-        sideMode: ExerciseSideMode,
-        locked: Bool,
-        selectedTarget: ForceProtocolSelection,
-        onSelectTarget: @escaping (ForceProtocolSelection) -> Void,
-        presets: [TindeqPreset],
-        knownTags: [String],
-        selectedName: String?,
-        selectedSummary: String?,
-        maintenanceAvailable: Set<RecordedZone>,
-        recordings: [TindeqRecording],
-        exercise: String,
-        curveInput: ZoneCurveInput?,
-        showsBalance: Bool,
-        balanceLocked: Bool,
-        onPickFocusNext: @escaping (ZoneQuality) -> Void,
-        measurementMode: ForceMeasurementMode
-    ) {
-        self._tag = tag
-        self._side = side
-        self.sideMode = sideMode
-        self.locked = locked
-        self.selectedTarget = selectedTarget
-        self.onSelectTarget = onSelectTarget
-        self.presets = presets
-        self.knownTags = knownTags
-        self.selectedName = selectedName
-        self.selectedSummary = selectedSummary
-        self.maintenanceAvailable = maintenanceAvailable
-        self.recordings = recordings
-        self.exercise = exercise
-        self.curveInput = curveInput
-        self.showsBalance = showsBalance
-        self.balanceLocked = balanceLocked
-        self.onPickFocusNext = onPickFocusNext
-        self.measurementMode = measurementMode
-    }
 
-    private var activeExercise: String {
-        tag.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 
-    private var trimmedDraft: String {
-        draftTag.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// #750: pure presenter state — de-duplicated tags, active always
-    /// visible, and the `+N` reveal count (see `TagChipList` tests).
-    private var tagChips: TagChipList {
-        TagChipList(
-            allTags: knownTags,
-            activeTag: activeExercise,
-            showsAll: showAllTags
-        )
-    }
-
-    private var contextSummary: String {
-        let exercise = activeExercise.isEmpty ? "No exercise" : activeExercise
-        return "\(exercise) · Side \(sideLabel(side))"
-    }
-
-    private func sideLabel(_ value: TindeqSide) -> String {
-        value == .unspecified ? "—" : value.label
-    }
-
-    private func toggleAddingTag() {
-        addingTag.toggle()
-        if addingTag {
-            newTagFocused = true
-        }
-    }
-
-    private func commitDraft() {
-        if !trimmedDraft.isEmpty {
-            tag = trimmedDraft
-        }
-        draftTag = ""
-        addingTag = false
-        newTagFocused = false
-    }
-
-    private var isFree: Bool { selectedTarget == .free }
-
-    /// The armed suggestion (zone quality or maintenance), if any.
-    private var armedSuggestion: SuggestedProtocol? {
-        selectedTarget.suggested
-    }
-
-    private func isActive(_ suggestion: SuggestedProtocol) -> Bool {
-        armedSuggestion == suggestion
-    }
-
-    private func suggestionColor(_ suggestion: SuggestedProtocol) -> Color {
-        switch suggestion {
-        case .zone(let quality):
-            return ChartToken.zoneQuality(quality).color(scheme)
-        case .maintenance(let zone):
-            return zone == .warmup
-                ? ChartToken.focus.color(scheme)
-                : ChartToken.reference.color(scheme)
-        case .movement:
-            return SendmeterStyle.primary
-        }
-    }
-
-    private var sideOptions: [TindeqSide] {
-        ExerciseSidePolicy.allowedSides(sideMode)
-    }
-
-    /// Show the side selector only when the exercise offers more than one
-    /// concrete side. Bilateral-only (one concrete side) and not-applicable
-    /// (none) hide it — the save path stamps the canonical side instead.
-    private var sidePickerShown: Bool {
-        sideOptions.filter { $0 != .unspecified }.count > 1
-    }
-
-    var body: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 14) {
-                SectionLabel("Recording context", systemImage: "tag")
-
-                // #750: compact glance line — the active exercise and side
-                // are still selectable via the chips below, without the old
-                // large current-exercise box.
-                Text(contextSummary)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .accessibilityElement(children: .combine)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    chipFlow {
-                        ForEach(tagChips.visibleTags, id: \.self) { name in
-                            selectorChip(
-                                name,
-                                active: name == activeExercise,
-                                action: {
-                                    tag = name == activeExercise ? "" : name
-                                }
-                            )
-                        }
-                        if tagChips.hiddenCount > 0 {
-                            selectorChip(
-                                "+\(tagChips.hiddenCount)",
-                                active: false,
-                                action: { showAllTags = true },
-                                accessibilityLabel: "Show \(tagChips.hiddenCount) more exercises"
-                            )
-                        }
-                        selectorChip(
-                            "＋",
-                            active: addingTag,
-                            action: toggleAddingTag,
-                            accessibilityLabel: addingTag
-                                ? "Cancel new exercise"
-                                : "Add exercise"
-                        )
-                    }
-
-                    if addingTag {
-                        HStack(spacing: 8) {
-                            TextField("New exercise — e.g. FDP", text: $draftTag)
-                                .textInputAutocapitalization(.sentences)
-                                .focused($newTagFocused)
-                                .submitLabel(.done)
-                                .onSubmit(commitDraft)
-                                .onAppear { newTagFocused = true }
-                                .disabled(locked)
-                                .padding(10)
-                                .background(
-                                    Color.secondary.opacity(0.08),
-                                    in: RoundedRectangle(cornerRadius: 10)
-                                )
-                                .accessibilityLabel("New exercise")
-                            Button("Add", action: commitDraft)
-                                .hapticButtonStyle(.borderedProminent)
-                                .disabled(locked || trimmedDraft.isEmpty)
-                                .accessibilityLabel("Add exercise")
-                        }
-                    }
-                }
-
-                if sidePickerShown {
-                    chipFlow {
-                        ForEach(sideOptions) { option in
-                            selectorChip(
-                                sideLabel(option),
-                                active: side == option,
-                                action: { side = option }
-                            )
-                        }
-                    }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("Side")
-                }
-
-                protocolSection
-
-                // #711: mode-aware setup guidance. Capacitor surfaces this in
-                // the setup guide sheet; the native recording context shows it
-                // inline so a MOVEMENT selection carries its setup contract
-                // (endpoints, clear path, smooth movement) where it is made.
-                if measurementMode == .movement {
-                    movementGuide
-                }
-
-                // #710: the training-balance surface lives in the protocol-
-                // selection context (Capacitor `TRAINING BALANCE · FDP`) and
-                // draws its own divider once it has a recommendation (no bare
-                // Divider when `ZoneFocusCard` is empty).
-                if showsBalance {
-                    ZoneFocusCard(
-                        recordings: recordings,
-                        exercise: exercise,
-                        curveInput: curveInput,
-                        onPick: onPickFocusNext,
-                        locked: balanceLocked
-                    )
-                }
-            }
-        }
-    }
-
-    /// #710/#711: Free hold / Suggested (colored training-type chips) /
-    /// Movement / Saved are mutually exclusive. Each chip reports the target it
-    /// represents; the pure `ForceProtocolPicker.next` reducer in ForceView
-    /// decides whether the tap deselects (tapping the active chip) or clears
-    /// the others. Rendered as native tinted chips, not web CSS, using the same
-    /// hue families as Capacitor's `QUALITY_COLORS` (Power orange, Strength
-    /// gold, Pow End lavender, Endurance blue, Warm-up purple, Prehab neutral)
-    /// plus the `--primary` MOVEMENT hue.
-    private var protocolSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("Protocol")
-                    .font(.caption2.weight(.semibold))
-                    .tracking(1)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                // #711: the STATIC / MOVEMENT badge (web `ProtocolBadge`).
-                StatusPill(
-                    measurementMode.badgeLabel,
-                    color: measurementMode == .movement
-                        ? SendmeterStyle.primary
-                        : SendmeterStyle.optimal
-                )
-            }
-
-            protocolChip(
-                "Free hold",
-                color: .secondary,
-                active: isFree,
-                action: { onSelectTarget(.free) },
-                disabled: locked
-            )
-
-            Text("Suggested")
-                .font(.caption2.weight(.semibold))
-                .tracking(1)
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
-
-            chipFlow {
-                ForEach(ZoneQuality.allCases) { quality in
-                    let suggestion = SuggestedProtocol.zone(quality)
-                    protocolChip(
-                        quality.label,
-                        color: suggestionColor(suggestion),
-                        active: isActive(suggestion),
-                        action: { onSelectTarget(.suggestedZone(quality)) },
-                        disabled: locked
-                    )
-                }
-            }
-
-            chipFlow {
-                ForEach([RecordedZone.warmup, .prehab], id: \.self) { zone in
-                    let suggestion = SuggestedProtocol.maintenance(zone)
-                    protocolChip(
-                        zone.displayLabel,
-                        color: suggestionColor(suggestion),
-                        active: isActive(suggestion),
-                        action: { onSelectTarget(.suggestedMaintenance(zone)) },
-                        disabled: locked
-                    )
-                    .disabled(!maintenanceAvailable.contains(zone))
-                }
-            }
-
-            // #711: the resisted-movement (reverse_action) suggestion — the
-            // native "Movement Starter" (web `MOVEMENT_STARTER_PRESET`). Tapping
-            // it arms the transient movement preset and flips the badge to
-            // MOVEMENT; a saved static preset or Suggested chip clears it back.
-            chipFlow {
-                let suggestion = SuggestedProtocol.movement
-                protocolChip(
-                    MovementTerminology.resistedMovement,
-                    color: suggestionColor(suggestion),
-                    active: isActive(suggestion),
-                    action: { onSelectTarget(.movement) },
-                    disabled: locked
-                )
-            }
-
-            if let selectedName {
-                Text("Selected: \(selectedName)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let selectedSummary {
-                Text(selectedSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if !presets.isEmpty {
-                Text("Saved")
-                    .font(.caption2.weight(.semibold))
-                    .tracking(1)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
-
-                chipFlow {
-                    ForEach(presets) { preset in
-                        protocolChip(
-                            preset.name,
-                            color: SendmeterStyle.primary,
-                            active: selectedTarget == .savedPreset(preset.id),
-                            action: { onSelectTarget(.savedPreset(preset.id)) },
-                            disabled: locked
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    /// #711: the mode-aware movement setup guidance inline in the recording
-    /// context (the native sibling of Capacitor's `ForceSetupGuide` movement
-    /// copy). Only shown while a MOVEMENT protocol is armed.
-    private var movementGuide: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Movement setup", systemImage: "arrow.left.and.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(SendmeterStyle.primary)
-            Text("Mark both movement endpoints and keep the path clear of pinch or impact hazards.")
-            Text("Move smoothly through your chosen range. Jerking to chase a target can create misleading force peaks.")
-            Text("Keep the movement area clear and use an appropriate tether or clear impact area for compliant or spring setups.")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            SendmeterStyle.primary.opacity(0.08),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
-        .accessibilityElement(children: .combine)
-    }
-
-    /// A wrapping row of coloured protocol chips (#710).
-    private func chipFlow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        FlowLayout(spacing: 8) {
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// One neutral selector chip for exercises/sides. Active = solid primary
-    /// fill, inactive = tinted surface — the native analogue of the web
-    /// `BoxChip` selected/inactive fill states.
-    /// #750: `disabled` is called explicitly at every chip so the locked
-    /// run window is reported to VoiceOver rather than relying only on the
-    /// parent card's `.disabled`.
-    private func selectorChip(
-        _ label: String,
-        active: Bool,
-        action: @escaping () -> Void,
-        accessibilityLabel: String? = nil
-    ) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(active ? Color.white : Color.primary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(
-                    active
-                        ? SendmeterStyle.primary
-                        : Color.secondary.opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(
-                            active ? Color.clear : Color.secondary.opacity(0.35),
-                            lineWidth: 1
-                        )
-                )
-        }
-        .hapticButtonStyle(.plain)
-        .disabled(locked)
-        .accessibilityAddTraits(active ? [.isSelected] : [])
-        .accessibilityLabel(Text(accessibilityLabel ?? label))
-        .accessibilityValue(active ? "Selected" : "Not selected")
-    }
-
-    /// One coloured protocol chip. Active = solid hue fill, inactive =
-    /// tinted surface with a coloured label — the native analogue of the web
-    /// `BoxChip` selected/inactive fill states.
-    private func protocolChip(
-        _ label: String,
-        color: Color,
-        active: Bool,
-        action: @escaping () -> Void,
-        disabled: Bool = false
-    ) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(active ? Color.white : color)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(
-                    active ? color : color.opacity(0.12),
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(color.opacity(active ? 0 : 0.35), lineWidth: 1)
-                )
-        }
-        .hapticButtonStyle(.plain)
-        .disabled(disabled)
-        .accessibilityAddTraits(active ? [.isSelected] : [])
-        .accessibilityLabel(label)
-        .accessibilityValue(active ? "Selected" : "Not selected")
-    }
-}
-
-/// #710: a minimal horizontal flow layout so the coloured protocol chips wrap
-/// onto a new line instead of overflowing a narrow iPhone width — the native
-/// analogue of the web's `flexWrap: "wrap"` BoxChip row. iOS 16+ (`Layout`
-/// protocol).
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) -> CGSize {
-        let rows = makeRows(proposal: proposal, subviews: subviews)
-        let width = rows.map(\.width).max() ?? 0
-        let height = rows.map(\.height).reduce(0, +)
-            + spacing * CGFloat(max(0, rows.count - 1))
-        return CGSize(width: proposal.width ?? width, height: height)
-    }
-
-    func placeSubviews(
-        in bounds: CGRect,
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) {
-        let rows = makeRows(proposal: proposal, subviews: subviews)
-        var y = bounds.minY
-        for row in rows {
-            var x = bounds.minX
-            for (itemOffset, subviewIndex) in row.items.enumerated() {
-                let size = row.sizes[itemOffset]
-                subviews[subviewIndex].place(
-                    at: CGPoint(x: x, y: y),
-                    proposal: ProposedViewSize(size)
-                )
-                x += size.width + spacing
-            }
-            y += row.height + spacing
-        }
-    }
-
-    private struct Row {
-        var items: [Int] = []
-        var sizes: [CGSize] = []
-        var width: CGFloat = 0
-        var height: CGFloat = 0
-    }
-
-    private func makeRows(
-        proposal: ProposedViewSize,
-        subviews: Subviews
-    ) -> [Row] {
-        let maxWidth = proposal.width ?? .infinity
-        var rows: [Row] = []
-        var current = Row()
-        for (index, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(ProposedViewSize(width: nil, height: nil))
-            if !current.items.isEmpty,
-               current.width + spacing + size.width > maxWidth {
-                rows.append(current)
-                current = Row()
-            }
-            if current.items.isEmpty {
-                current.height = size.height
-            }
-            current.items.append(index)
-            current.sizes.append(size)
-            current.width += (current.items.count == 1 ? 0 : spacing) + size.width
-            current.height = max(current.height, size.height)
-        }
-        if !current.items.isEmpty {
-            rows.append(current)
-        }
-        return rows
-    }
-}
 
 struct ForceTraceChart: View {
     private enum SampleSource {

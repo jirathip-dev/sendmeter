@@ -276,11 +276,22 @@ public struct ZoneCurveInput: Sendable, Equatable {
     /// The fit's maximum force (web `maxF`).
     public let maxForce: Double?
     public let wPrime: Double?
+    /// #902: the smart Hill capability fit the web's `predictCapability`
+    /// consumes for the power-endurance 60s reference (F60). Native fits are
+    /// always the hill family (`ForceCurveEngine.fitCapability`), so no
+    /// `family` discriminator is needed.
+    public let capabilityFit: ForceCapabilityFit?
 
-    public init(cf: Double?, maxForce: Double?, wPrime: Double?) {
+    public init(
+        cf: Double?,
+        maxForce: Double?,
+        wPrime: Double?,
+        capabilityFit: ForceCapabilityFit? = nil
+    ) {
         self.cf = cf
         self.maxForce = maxForce
         self.wPrime = wPrime
+        self.capabilityFit = capabilityFit
     }
 
     /// From a full `ForceCurveModel` — the web's exact shape.
@@ -288,14 +299,38 @@ public struct ZoneCurveInput: Sendable, Equatable {
         self.init(
             cf: model.criticalForceKilograms,
             maxForce: model.maximumForceKilograms,
-            wPrime: model.impulseAboveCriticalForceKilogramSeconds
+            wPrime: model.impulseAboveCriticalForceKilogramSeconds,
+            capabilityFit: model.capabilityFit
         )
     }
 
     /// From the native cached tag curve, which now carries the fit's maximum
     /// force so the peak prediction is capped exactly like the web's.
     public init(_ curve: TagForceCurve) {
-        self.init(cf: curve.cf, maxForce: curve.maxForceKilograms, wPrime: curve.wPrime)
+        self.init(
+            cf: curve.cf,
+            maxForce: curve.maxForceKilograms,
+            wPrime: curve.wPrime,
+            capabilityFit: curve.forceCurveModel?.capabilityFit
+        )
+    }
+
+    /// #902: the power-endurance reference — the smart Hill capability curve
+    /// predicted at 60 seconds (web `predictCapability(model, 60)`). Nil
+    /// unless a usable hill fit exists (mirrors the web's validity gate:
+    /// family is always `hill` natively, cf/maxF/tau/p finite with
+    /// `maxF > cf`).
+    public var f60Kilograms: Double? {
+        guard let fit = capabilityFit,
+              fit.criticalForceKilograms.isFinite, fit.criticalForceKilograms > 0,
+              fit.maximumForceKilograms.isFinite,
+              fit.maximumForceKilograms > fit.criticalForceKilograms,
+              fit.tau.isFinite, fit.tau > 0,
+              fit.exponent.isFinite, fit.exponent > 0,
+              fit.sumSquaredError.isFinite, fit.sumSquaredError >= 0
+        else { return nil }
+        let predicted = ForceCurveEngine.predictCapabilityFit(fit, seconds: 60)
+        return predicted.isFinite && predicted > 0 ? predicted : nil
     }
 }
 
@@ -524,7 +559,18 @@ extension ZoneMix {
     /// zone then comes from `recordingZone(for: .suggestedZone(zone))` so a
     /// recording saved under the run carries the quality it was performed
     /// under, with no standalone zone setting involved.
-    public static func zonePreset(for zone: ZoneQuality) -> TindeqPreset {
+    ///
+    /// #902: the preset is transient and carries the zone quality + SL-97
+    /// intensity so the target resolver reproduces the web's per-quality band.
+    /// At 100% (or with no usable reference) the timing is exactly the
+    /// `zoneProtocols` table — byte-identical to the pre-#902 preset; a
+    /// non-100% intensity with a usable reference adjusts hold (and endurance
+    /// sets) so the executed engine schedule matches the web's dose math.
+    public static func zonePreset(
+        for zone: ZoneQuality,
+        intensityPercent: Int = Self.zoneIntensityDefault,
+        references: ZoneCurveInput? = nil
+    ) -> TindeqPreset {
         let prescription = zoneProtocols[zone] ?? ZoneProtocol(
             holdSeconds: 5,
             restBetweenRepetitionsSeconds: 150,
@@ -532,13 +578,26 @@ extension ZoneMix {
             sets: 1,
             restBetweenSetsSeconds: 0
         )
+        let pct = clampZoneIntensity(intensityPercent)
+        var holdSeconds = prescription.holdSeconds
+        var sets = prescription.sets
+        if pct != Self.zoneIntensityDefault,
+           let references,
+           let target = zoneTarget(for: zone, references: references, intensityPercent: pct) {
+            holdSeconds = target.holdSeconds
+            if let adjustedSets = target.adjustedSets {
+                sets = adjustedSets
+            }
+        }
         return TindeqPreset(
             name: zone.label,
-            holdSeconds: prescription.holdSeconds,
+            holdSeconds: holdSeconds,
             repetitions: prescription.repetitions,
-            sets: prescription.sets,
+            sets: sets,
             restBetweenRepetitionsSeconds: prescription.restBetweenRepetitionsSeconds,
-            restBetweenSetsSeconds: prescription.restBetweenSetsSeconds
+            restBetweenSetsSeconds: prescription.restBetweenSetsSeconds,
+            zoneQuality: zone,
+            zoneIntensityPercent: pct
         )
     }
 
@@ -860,5 +919,313 @@ private extension Double {
         let rounded = roundedToTenths
         if rounded == rounded.rounded() { return "\(Int(rounded))" }
         return String(format: "%.1f", rounded)
+    }
+}
+
+// MARK: - Zone target bands + adjustable session intensity (#902, SL-97 parity)
+
+extension ZoneMix {
+    /// The web's `ZONE_INTENSITY` dial constants (`force-curve.ts` SL-97):
+    /// 60–110% in 5% steps, default 100. Applied to the four trainable
+    /// qualities; maintenance protocols are deliberately unchanged.
+    public static let zoneIntensityMinimum = 60
+    public static let zoneIntensityMaximum = 110
+    public static let zoneIntensityStep = 5
+    public static let zoneIntensityDefault = 100
+
+    /// `clampIntensity` (`force-curve.ts`): a raw pct is clamped to
+    /// [60, 110] before any band/hold math.
+    public static func clampZoneIntensity(_ percent: Int) -> Int {
+        min(zoneIntensityMaximum, max(zoneIntensityMinimum, percent))
+    }
+
+    /// `roundHoldS` (`force-curve.ts`): holds <20s round to the nearest
+    /// second; ≥20s round to the nearest 5s (the base protocols are already
+    /// specified on those grids: 5/7/10s vs 30s).
+    public static func roundHoldSeconds(_ seconds: Double) -> Int {
+        seconds < 20
+            ? Int(seconds.rounded())
+            : Int((seconds / 5).rounded()) * 5
+    }
+
+    /// `HOLD_CLAMP_S` (`force-curve.ts`): the per-zone hold clamps for the
+    /// above-CF zones. Endurance has no entry — its hold runs through
+    /// `adjustedEndurance`'s own [20, 240] clamp.
+    public static func holdClampSeconds(for quality: ZoneQuality) -> ClosedRange<Double>? {
+        switch quality {
+        case .power: return 3...15
+        case .strength: return 5...30
+        case .powerEndurance: return 5...15
+        case .endurance: return nil
+        }
+    }
+
+    /// `adjustedHoldAboveCf` (`force-curve.ts`): hold compensation for the
+    /// above-CF zones (power / strength / power-endurance). Scaling the load
+    /// down extends the hold so the per-rep dose — impulse above CF (W′
+    /// cost), or plain force × time without a CF fit — stays constant. The
+    /// returned value is clamped to the zone's hold clamp and rounded.
+    public static func adjustedHoldAboveCf(
+        quality: ZoneQuality,
+        cf: Double?,
+        wPrime: Double?,
+        baseKilograms: Double,
+        adjustedKilograms: Double,
+        baseHoldSeconds: Double
+    ) -> Int {
+        guard let clamp = holdClampSeconds(for: quality) else {
+            return roundHoldSeconds(baseHoldSeconds)
+        }
+        let holdSeconds: Double
+        if let cf, cf.isFinite, wPrime != nil, baseKilograms > cf {
+            if adjustedKilograms > cf {
+                // Constant W′ cost: (F − CF) × t stays fixed.
+                holdSeconds = (baseKilograms - cf) * baseHoldSeconds / (adjustedKilograms - cf)
+            } else {
+                // At/below CF the W′ cost is undefined (the hold could run
+                // indefinitely) — cap at the zone's longest allowed hold.
+                holdSeconds = clamp.upperBound
+            }
+        } else {
+            // No CF fit — impulse-preserving fallback: force × time constant.
+            holdSeconds = baseHoldSeconds * baseKilograms / adjustedKilograms
+        }
+        let clamped = min(clamp.upperBound, max(clamp.lowerBound, holdSeconds))
+        return roundHoldSeconds(clamped)
+    }
+
+    /// `adjustedEndurance` (`force-curve.ts`): hold compensation for
+    /// endurance (targets sit at/below CF, where W′ accounting is invalid).
+    /// A pure heuristic of the intensity: total time-under-tension
+    /// (sets × hold) stays roughly constant — hold scales by `(100/pct)²`
+    /// clamped to [20, 240]s, and sets shrink to compensate (reps stays 1 —
+    /// the 1×N protocol shape, #320). Like the web's exported function, the
+    /// raw pct is deliberately NOT clamped to the UI dial here (callers on
+    /// the zone path clamp first via `clampZoneIntensity`); the [20, 240]
+    /// clamp is what makes extreme inputs safe.
+    public static func adjustedEndurance(
+        baseHoldSeconds: Int,
+        baseSets: Int,
+        intensityPercent: Int
+    ) -> (holdSeconds: Int, sets: Int) {
+        let rawHoldSeconds = Double(baseHoldSeconds) * pow(100.0 / Double(intensityPercent), 2)
+        let holdSeconds = roundHoldSeconds(min(240, max(20, rawHoldSeconds)))
+        let sets = min(
+            baseSets,
+            max(1, Int((Double(baseSets * baseHoldSeconds) / Double(holdSeconds)).rounded()))
+        )
+        return (holdSeconds, sets)
+    }
+
+    /// `zoneTarget` (`force-curve.ts`): the per-quality target band + adjusted
+    /// hold for `quality` at `intensityPercent`, derived from `references`.
+    /// Returns nil when the quality's required reference is unusable — the
+    /// honest no-target state (the suggested chip is disabled; no stale band,
+    /// no invented target). Every number mirrors the web's rounding exactly
+    /// (kg to 1 dp; hold rounded per `roundHoldSeconds` after clamping).
+    public static func zoneTarget(
+        for quality: ZoneQuality,
+        references: ZoneCurveInput,
+        intensityPercent: Int = Self.zoneIntensityDefault
+    ) -> ZoneQualityTarget? {
+        let pct = clampZoneIntensity(intensityPercent)
+        let scale = Double(pct) / 100
+        let suffix = pct == Self.zoneIntensityDefault ? "" : " · intensity \(pct)%"
+        let protocolHold = Double(anchorHoldSeconds(quality))
+
+        let aboveCf: (
+            reference: Double,
+            baseKilograms: Double,
+            lowMultiplier: Double,
+            highMultiplier: Double,
+            basis: String,
+            referenceName: String
+        )?
+        switch quality {
+        case .power, .strength:
+            guard let maxForce = references.maxForce, maxForce.isFinite, maxForce > 0 else { return nil }
+            let center: Double = quality == .power ? 0.95 : 0.85
+            let lowMultiplier: Double = quality == .power ? 0.90 : 0.80
+            let highMultiplier: Double = quality == .power ? 1.00 : 0.90
+            let basis = quality == .power
+                ? "90–100% of your best short-window force (\(fmtOneDecimal(maxForce)) kg)"
+                : "80–90% of max (\(fmtOneDecimal(maxForce)) kg)"
+            aboveCf = (
+                maxForce,
+                round1(maxForce * center),
+                lowMultiplier,
+                highMultiplier,
+                basis,
+                "From maxF \(fmtOneDecimal(maxForce)) kg"
+            )
+        case .powerEndurance:
+            guard let f60 = references.f60Kilograms else { return nil }
+            aboveCf = (
+                f60,
+                round1(f60),
+                0.93,
+                1.07,
+                "Hill capability curve at 60 seconds",
+                "From F60 \(fmtOneDecimal(f60)) kg"
+            )
+        case .endurance:
+            aboveCf = nil
+        }
+
+        if let aboveCf {
+            let adjustedKilograms = round1(aboveCf.baseKilograms * scale)
+            let hold = adjustedHoldAboveCf(
+                quality: quality,
+                cf: references.cf,
+                wPrime: references.wPrime,
+                baseKilograms: aboveCf.baseKilograms,
+                adjustedKilograms: adjustedKilograms,
+                baseHoldSeconds: protocolHold
+            )
+            return ZoneQualityTarget(
+                quality: quality,
+                lowKilograms: round1(aboveCf.reference * aboveCf.lowMultiplier * scale),
+                targetKilograms: adjustedKilograms,
+                highKilograms: round1(aboveCf.reference * aboveCf.highMultiplier * scale),
+                holdSeconds: hold,
+                exactHoldSeconds: exactAdjustedHold(
+                    quality: quality,
+                    cf: references.cf,
+                    wPrime: references.wPrime,
+                    baseKilograms: aboveCf.baseKilograms,
+                    adjustedKilograms: adjustedKilograms,
+                    baseHoldSeconds: protocolHold
+                ),
+                baseHoldSeconds: anchorHoldSeconds(quality),
+                adjustedSets: nil,
+                basis: aboveCf.basis + suffix,
+                referenceNote: aboveCf.referenceName
+            )
+        }
+
+        // Endurance: 80–100% of critical force (center 90%), with the hold /
+        // sets adjusted by the TUT heuristic.
+        guard let cf = references.cf, cf.isFinite, cf > 0 else { return nil }
+        let baseKilograms = round1(cf * 0.9)
+        let adjustedKilograms = round1(baseKilograms * scale)
+        let baseSets = zoneProtocols[quality]?.sets ?? 1
+        let endurance = adjustedEndurance(
+            baseHoldSeconds: anchorHoldSeconds(quality),
+            baseSets: baseSets,
+            intensityPercent: pct
+        )
+        return ZoneQualityTarget(
+            quality: quality,
+            lowKilograms: round1(cf * 0.8 * scale),
+            targetKilograms: adjustedKilograms,
+            highKilograms: round1(cf * scale),
+            holdSeconds: endurance.holdSeconds,
+            exactHoldSeconds: min(240, max(20, Double(anchorHoldSeconds(quality)) * pow(100.0 / Double(pct), 2))),
+            baseHoldSeconds: anchorHoldSeconds(quality),
+            adjustedSets: endurance.sets == baseSets ? nil : endurance.sets,
+            basis: "80–100% of critical force (\(fmtOneDecimal(cf)) kg)\(suffix)",
+            referenceNote: "From CF \(fmtOneDecimal(cf)) kg"
+        )
+    }
+
+    /// The exact (pre-rounding) adjusted hold the `~Ns hold` readout renders.
+    /// `adjustedHoldAboveCf`'s rounded result stays the executed schedule;
+    /// this keeps the "≈" display honest when rounding moved the number.
+    private static func exactAdjustedHold(
+        quality: ZoneQuality,
+        cf: Double?,
+        wPrime: Double?,
+        baseKilograms: Double,
+        adjustedKilograms: Double,
+        baseHoldSeconds: Double
+    ) -> Double {
+        guard let clamp = holdClampSeconds(for: quality) else { return baseHoldSeconds }
+        let raw: Double
+        if let cf, cf.isFinite, wPrime != nil, baseKilograms > cf {
+            if adjustedKilograms > cf {
+                raw = (baseKilograms - cf) * baseHoldSeconds / (adjustedKilograms - cf)
+            } else {
+                raw = clamp.upperBound
+            }
+        } else {
+            raw = baseHoldSeconds * baseKilograms / adjustedKilograms
+        }
+        return min(clamp.upperBound, max(clamp.lowerBound, raw))
+    }
+
+    /// `fmt1` (`force-curve.ts`): `Math.round(v * 10) / 10`.
+    static func round1(_ value: Double) -> Double {
+        (value * 10).rounded() / 10
+    }
+
+    /// One-decimal display of a rounded kg reference ("22.0") — the module
+    /// readouts and source notes format references this way.
+    static func fmtOneDecimal(_ value: Double) -> String {
+        String(format: "%.1f", round1(value))
+    }
+}
+
+/// #902: one quality's resolved target at a given session intensity — the
+/// native sibling of the web's `ZoneTarget` record (`force-curve.ts`),
+/// carrying the numbers the load module renders live.
+public struct ZoneQualityTarget: Sendable, Equatable {
+    public let quality: ZoneQuality
+    public let lowKilograms: Double
+    public let targetKilograms: Double
+    public let highKilograms: Double
+    /// The executed hold per rep — rounded (and endurance sets-shrunk)
+    /// exactly like the web.
+    public let holdSeconds: Int
+    /// The exact pre-rounding adjusted hold — the "~Ns hold" display basis.
+    public let exactHoldSeconds: Double
+    /// The zone's protocol-table anchor hold at 100% (the
+    /// "Adjusted from Ns @100%" note basis).
+    public let baseHoldSeconds: Int
+    /// Endurance-only: the shrunk set count at this intensity; nil for the
+    /// above-CF zones whose set count never changes.
+    public let adjustedSets: Int?
+    /// The web's basis sentence, with the live reference value where the web
+    /// carries one (Power/Strength/Endurance) and the " · intensity N%"
+    /// suffix when intensity ≠ 100.
+    public let basis: String
+    /// The short source note the load module shows at 100% intensity
+    /// ("From maxF 22.0 kg" / "From CF 20.0 kg" / "From F60 25.0 kg").
+    public let referenceNote: String
+
+    public init(
+        quality: ZoneQuality,
+        lowKilograms: Double,
+        targetKilograms: Double,
+        highKilograms: Double,
+        holdSeconds: Int,
+        exactHoldSeconds: Double,
+        baseHoldSeconds: Int,
+        adjustedSets: Int?,
+        basis: String,
+        referenceNote: String
+    ) {
+        self.quality = quality
+        self.lowKilograms = lowKilograms
+        self.targetKilograms = targetKilograms
+        self.highKilograms = highKilograms
+        self.holdSeconds = holdSeconds
+        self.exactHoldSeconds = exactHoldSeconds
+        self.baseHoldSeconds = baseHoldSeconds
+        self.adjustedSets = adjustedSets
+        self.basis = basis
+        self.referenceNote = referenceNote
+    }
+
+    /// True when the intensity moved the executed schedule off the protocol
+    /// anchor (the "Adjusted from Ns @100%" note + "~Ns hold" readout).
+    public var isAdjusted: Bool {
+        holdSeconds != baseHoldSeconds || adjustedSets != nil
+    }
+
+    /// The module's source note: the reference note at 100%, or the
+    /// adjustment note ("Adjusted from 5s @100%") once the intensity moved
+    /// the schedule.
+    public var sourceNote: String {
+        isAdjusted ? "Adjusted from \(baseHoldSeconds)s @100%" : referenceNote
     }
 }
