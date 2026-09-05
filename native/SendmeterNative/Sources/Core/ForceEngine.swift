@@ -401,6 +401,82 @@ public enum ForcePublishSnapshotBuilder {
     }
 }
 
+// MARK: - Live force trace Y-domain (#900)
+
+/// The live force trace's Y-domain (the chart's top value in kg).
+///
+/// #900: the domain must be a stable function of the stage/target band, not
+/// of whatever samples happen to sit in the sliding window. Every guided rep
+/// records through its own accumulator, so a rep boundary resets the buffer
+/// and the visible window empties; a window-derived scale collapsed with it
+/// and the target band visibly jumped between reps and across surfaces.
+///
+/// The domain is therefore anchored to the band's upper bound (× headroom,
+/// never below the old 10 kg absolute floor) and only expands for a real
+/// in-window peak or a held recent-pull peak. Window contents at or below
+/// the anchor cannot move the scale. A held peak is only honored while a
+/// target band is present — with no band there is no level to stabilize, and
+/// the scale keeps its original fit-the-window behavior.
+public enum ForceChartYDomain {
+    /// The absolute lowest domain top (kg), preserved from the original
+    /// per-frame formula so a bandless trace never collapses to zero.
+    public static let floorKilograms = 10.0
+    /// Headroom above the anchor/peaks so the strongest drawn value stays
+    /// inside the chart instead of touching its top edge.
+    public static let headroom = 1.15
+
+    /// The Y-domain top for one rendered window.
+    ///
+    /// - Parameters:
+    ///   - bandUpperBoundKilograms: the stage/target band's upper bound, or
+    ///     nil when no band is shown (hands-free without a plan, watch
+    ///     mirror, saved recordings).
+    ///   - windowPeakKilograms: the strongest sample in the visible window.
+    ///   - heldPeakKilograms: the strongest peak seen since the current
+    ///     target context began (rep-boundary hysteresis); ignored when no
+    ///     band is present.
+    public static func maxValue(
+        bandUpperBoundKilograms: Double?,
+        windowPeakKilograms: Double,
+        heldPeakKilograms: Double
+    ) -> Double {
+        let anchor = max(floorKilograms, bandUpperBoundKilograms ?? 0)
+        let held = bandUpperBoundKilograms == nil ? 0 : heldPeakKilograms
+        return max(anchor, windowPeakKilograms, held) * headroom
+    }
+}
+
+/// Rep-boundary hysteresis for `ForceChartYDomain`: remembers the strongest
+/// window peak of the current target context so the scale stays open after
+/// the window empties, and re-anchors the moment the target band changes
+/// (the level may move only when the numeric target changes).
+public struct ForceChartYDomainTracker: Equatable, Sendable {
+    public private(set) var heldPeakKilograms: Double
+    private var bandUpperBoundKilograms: Double?
+
+    public init() {
+        heldPeakKilograms = 0
+        bandUpperBoundKilograms = nil
+    }
+
+    /// Feed one displayed window (call once per visible-window change).
+    ///
+    /// A changed band upper bound starts a new target context: the held peak
+    /// resets so the domain re-anchors to the new band. Otherwise the held
+    /// peak only grows — a monotone hold never collapses under an empty
+    /// window and converges identically from either live chart feed.
+    public mutating func frame(
+        bandUpperBoundKilograms: Double?,
+        windowPeakKilograms: Double
+    ) {
+        if bandUpperBoundKilograms != self.bandUpperBoundKilograms {
+            self.bandUpperBoundKilograms = bandUpperBoundKilograms
+            heldPeakKilograms = 0
+        }
+        heldPeakKilograms = max(heldPeakKilograms, windowPeakKilograms)
+    }
+}
+
 // MARK: - Guided force protocol
 
 public enum ForceProtocolStageKind: String, Codable, Sendable {
