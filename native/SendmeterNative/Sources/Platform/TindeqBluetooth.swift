@@ -153,29 +153,6 @@ public final class TindeqBluetooth: NSObject {
         }
     }
 
-    public func startMeasuring() throws {
-        guard status == .connected,
-              let peripheral,
-              let controlCharacteristic
-        else { throw BluetoothError.notReady }
-        guard !hasUnsavedRecording else { throw BluetoothError.unsavedRecording }
-        accumulator.reset()
-        currentKilograms = 0
-        peakKilograms = 0
-        averageKilograms = 0
-        elapsedMilliseconds = 0
-        visibleSampleRange = 0..<0
-        isRecording = true
-        wasHandsFreeRecording = false
-        status = .measuring
-        startFlushDriver()
-        peripheral.writeValue(
-            Data([TindeqProtocolConstants.Command.startWeight.rawValue]),
-            for: controlCharacteristic,
-            type: .withResponse
-        )
-    }
-
     public func stopMeasuring() -> ForceSummary? {
         let summary = accumulator.summary()
         completedSummary = summary

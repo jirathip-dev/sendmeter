@@ -115,3 +115,35 @@ The concrete removed dependency inventory is the root `package.json` and
 `sendlog-passkey`. The MCP package retains its own `package.json`, lockfile,
 and dependency graph; native Swift packages retain their explicit SwiftPM
 dependencies.
+
+## #899 addendum (2026-09-06): guided STOP/FINISH circle + standalone manual Force mode
+
+Decision (Guy, 2026-09-05, issue #899): all Force work goes guided +
+hands-free. The guided runner's large STOP/FINISH action circle is removed
+(the top-bar End pill is the only explicit save+exit, unchanged), every
+guided work stage is load-triggered (hands-free arm, no blind countdown),
+and the standalone manual Force mode — direct-measure free pulls behind the
+`ManualForceFullscreen` CANCEL/STOP/SAVE phase machine — is cut end-to-end.
+
+| Surface | Decision | Evidence / retained owner |
+|---|---|---|
+| `native/SendmeterNative/Sources/Features/Force/ManualForceFullscreen.swift` | REMOVE | Its own phase machine viewport; deleted. No project.yml/Package.swift entry — sources are auto-globbed. |
+| `native/SendmeterNative/Sources/Core/ManualForceFullscreenPresentation.swift` | REMOVE | `ManualForceFullscreenPhase`/`Lifecycle`/`StagePresentation` served only the manual fullscreen; guided presentation lives in `Core/GuidedForceFullscreenPresentation.swift` (KEEP). Not load-bearing for saved-recording decoding (`ForceDisconnectSalvage`/`FreePullContext` are separate Core types). |
+| `native/SendmeterNative/Tests/SendmeterCoreTests/ManualForceFullscreenPresentationTests.swift` | REMOVE | Manual lifecycle tests deleted with the mode. |
+| `ForceView.swift` guided runner STOP/FINISH circle (`primaryControl`, bottom `.safeAreaInset`, `primaryAction`, `"STOP"`/`"FINISH"` labels) | REMOVE | GuidedForceProtocolView keeps `topBar` End pill (`Button("End", action: endSession)`) → `stopOrFinish()` → `endAndSavePartial()` chain. |
+| `GuidedForceLayout.actionDiameter` (Core `GuidedForceFullscreenPresentation.swift`) | REMOVE | Circle sizing math deleted; fit estimate now covers the trace column only (identity header itemized so compact layouts still scroll). |
+| `GuidedForceProtocolSession.handsFreeEnabled` parameter + `startWorkMeasurement()` blind `tindeq.startMeasuring()` fallback | REMOVE | Every guided work stage arms the caller-owned hands-free stream; `stopPolicy = .callerOwned` unconditional; launch no longer snapshots the toggle (`makeGuidedLaunchSession` parameter dropped). |
+| `TindeqBluetooth.startMeasuring()` | REMOVE | Direct-measure transport entry had no remaining callers after the manual cut (hands-free promotes via `armHandsFree()`/`beginArmedRecording()`). |
+| `ForceRecordingAction.freePull` (Core `ForceRecordingContextPolicy.swift`) | REMOVE | `.freePull` decision requests existed only for `startMeasurement()`; remaining claimants are `.handsFree` and `.guidedProtocol`. |
+| `ForceView.startMeasurement()`, `manualFullscreen*` `@State`, manual `.fullScreenCover`, `reconcileManual*`, `stopManualRecording`, `retryManualSave`, `cancelManualArm`, `disconnectManualRecording`, `stopAndSave(using:)` fullscreen context | REMOVE | Manual presentation/lifecycle glue; `save()` no longer takes a captured `FreePullContext`. |
+| `ForceDeviceCard`/empty-state manual start ("Start Pull", "Record a pull", "Tap Start Pull when ready") | REMOVE/ROUTE | Connected nothing-armed surfaces route to the hands-free arm (empty actions adopt + arm) or an honest guided/hands-free prompt; guided start requires an armed protocol. |
+| `ForceRecordingContextCard` hands-free conditional copy/identity | REWRITE | Armed-hero Hands-free chip and "Pull to start · release to stop" readiness copy unconditional; `handsFreeEnabled` prop dropped. |
+| `RELEASE_NOTES.md` Unreleased bullets describing the removed surfaces | REWRITE | User-facing removal entries added under Fixed; unreleased Added bullets updated to the guided/hands-free wording. |
+
+Retained unchanged: the guided End pill and `endSession`/`stopOrFinish`/
+`endAndSavePartial` save-in-flight chain, hands-free free-pull arming on the
+Force card (`armHandsFree` without any fullscreen), the 
+`GuidedForceProtocolSession` stage/preserve machine, guided Live Activity
+mirroring, and all Watch (`ios/App/**`) surfaces — the removal sweeps
+(`startMeasurement`, `ManualForceFullscreen`) return zero hits outside this
+inventory.

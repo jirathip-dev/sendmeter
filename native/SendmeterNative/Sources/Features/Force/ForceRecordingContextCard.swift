@@ -53,7 +53,6 @@ struct ForceRecordingContextCard: View {
     /// Non-nil only while a suggested zone protocol is armed: the SL-97
     /// intensity dial (60–110, step 5, persisted by the parent).
     let intensityPercent: Binding<Int>?
-    let handsFreeEnabled: Bool
     /// Recording-device row state (design S1/S3/S5 footer).
     let deviceConnected: Bool
     let deviceStatusText: String
@@ -445,23 +444,23 @@ struct ForceRecordingContextCard: View {
             HStack(spacing: 8) {
                 RecordingContextEyebrow(title: "Armed protocol", systemImage: "waveform.path.ecg")
                 Spacer(minLength: 8)
-                if handsFreeEnabled {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(RecordingContextPalette.handsFreeGold)
-                            .frame(width: 6, height: 6)
-                        Text("Hands-free")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                    }
-                    .padding(.horizontal, 9)
-                    .frame(minHeight: 28)
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(RecordingContextPalette.line(scheme), lineWidth: 1)
-                    )
-                    .accessibilityElement(children: .combine)
+                // #899: every guided protocol is pull-gated, so the armed
+                // hero always carries the hands-free identity.
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(RecordingContextPalette.handsFreeGold)
+                        .frame(width: 6, height: 6)
+                    Text("Hands-free")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(RecordingContextPalette.metadata(scheme))
                 }
+                .padding(.horizontal, 9)
+                .frame(minHeight: 28)
+                .overlay(
+                    Capsule()
+                        .strokeBorder(RecordingContextPalette.line(scheme), lineWidth: 1)
+                )
+                .accessibilityElement(children: .combine)
             }
 
             if let preset = selectedPreset {
@@ -808,15 +807,15 @@ struct ForceRecordingContextCard: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: Readiness row
+    // MARK: Readiness row (#899: guided + hands-free only — no tap-to-start)
 
     private var readinessRow: some View {
         HStack(spacing: 9) {
-            Image(systemName: handsFreeEnabled ? "hand.draw" : "play.fill")
+            Image(systemName: "hand.draw")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
             VStack(alignment: .leading, spacing: 2) {
-                Text(handsFreeEnabled ? "Pull to start · release to stop" : "Tap Start Pull when ready")
+                Text("Pull to start · release to stop")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
                 Text("Armed now · no confirmation step")

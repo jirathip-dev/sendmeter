@@ -30,7 +30,9 @@ final class ForceRecordingContextPolicyTests: XCTestCase {
         )
     }
 
-    func testSelectingAProtocolDoesNotBlockAFreeActionBeforeTheStreamStarts() {
+    // #899: `.freePull` (direct-measure manual start) is removed — the
+    // remaining stream claimants are the hands-free arm and guided protocols.
+    func testSelectingAProtocolDoesNotBlockHandsFreeOrGuidedBeforeTheStreamStarts() {
         let state = ForceRecordingContextState(
             liveRecording: false,
             handsFreeArmed: false,
@@ -38,7 +40,7 @@ final class ForceRecordingContextPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            ForceRecordingContextPolicy.decision(for: .freePull, state: state),
+            ForceRecordingContextPolicy.decision(for: .handsFree, state: state),
             .allowed
         )
         XCTAssertEqual(
@@ -70,7 +72,7 @@ final class ForceRecordingContextPolicyTests: XCTestCase {
             protocolArmed: true
         )
 
-        for action in [ForceRecordingAction.freePull, .handsFree, .guidedProtocol] {
+        for action in [ForceRecordingAction.handsFree, .guidedProtocol] {
             XCTAssertEqual(
                 ForceRecordingContextPolicy.decision(for: action, state: state),
                 .refusedActiveRecording

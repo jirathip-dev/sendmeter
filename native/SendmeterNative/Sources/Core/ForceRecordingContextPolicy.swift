@@ -3,9 +3,10 @@ import Foundation
 /// The actions that may claim the Progressor stream from the phone Force tab.
 /// A selected protocol is only a prescription; it is not a stream owner until
 /// the run starts. Keeping that distinction in Core prevents a picker state
-/// from being treated as a concurrency lock.
+/// from being treated as a concurrency lock. #899: `.freePull` (the
+/// direct-measure manual start) is removed — the remaining claimants are the
+/// hands-free arm and a guided-protocol launch.
 public enum ForceRecordingAction: String, Equatable, Sendable {
-    case freePull
     case handsFree
     case guidedProtocol
 }
