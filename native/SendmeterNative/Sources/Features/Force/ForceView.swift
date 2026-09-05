@@ -73,7 +73,14 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         self.references = references
         self.handsFreeEnabled = handsFreeEnabled
         self.accountScope = model.accountScope
-        let initialRun = run ?? ForceProtocolRun(preset: preset, startingSide: startingSide)
+        // #901: `fallbackSide` is the normalized side selection, so the run
+        // is built with it as the SELECTED side — a Left/Right selection
+        // never alternates, even for an `alternateSides` preset.
+        let initialRun = run ?? ForceProtocolRun(
+            preset: preset,
+            startingSide: startingSide,
+            selectedSide: fallbackSide
+        )
         self.run = initialRun
         self.id = initialRun.runID
     }
@@ -2442,12 +2449,17 @@ struct ForceView: View {
         }
         resolvingTargets = true
         selectedTargetPlan = .empty
-        let startSide: TindeqSide = side == .right ? .right : .left
+        // #901: resolve from the NORMALIZED selection (the same value the
+        // launch boundary derives) so the context-card plan mirrors the
+        // executed run's plan — a Left/Right selection resolves only that
+        // side's bands, never the alternating pair.
+        let resolvedSide = ExerciseSidePolicy.normalizeSide(sideMode, side)
+        let startSide: TindeqSide = resolvedSide == .right ? .right : .left
         let plan = await model.resolveForceTargetPlan(
             preset: preset,
             tag: tag,
             startingSide: startSide,
-            fallbackSide: side
+            fallbackSide: resolvedSide
         )
         guard !Task.isCancelled else { return }
         guard targetResolutionKey == requestKey,
@@ -3500,6 +3512,12 @@ private struct ForcePresetEditor: View {
                     )
                     Stepper("Prepare: \(draft.prepareSeconds) s", value: $draft.prepareSeconds, in: 0...60)
                     Toggle("Alternate sides", isOn: $draft.alternateSides)
+                    // #901: the toggle is a Both-mode declaration — a
+                    // Left/Right side selection overrides it and runs that
+                    // side only, with no switch-hands stages.
+                    Text("Alternation applies when you record Both sides; a Left or Right selection runs that side only.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Target") {
