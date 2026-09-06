@@ -2918,6 +2918,10 @@ struct ForceTraceChart: View {
     let targetRange: ClosedRange<Double>?
     let target: Double?
     @Environment(\.colorScheme) private var scheme
+    /// #900: rep-boundary hysteresis — the held peak lives here so a rep
+    /// boundary that empties the visible window cannot collapse the scale
+    /// under the stage band (see `ForceChartYDomain`/`ForceChartYDomainTracker`).
+    @State private var domainTracker = ForceChartYDomainTracker()
 
     init(
         samples: [TindeqSample],
@@ -2961,11 +2965,11 @@ struct ForceTraceChart: View {
     var body: some View {
         Canvas { context, size in
             let sampleRange = self.sampleRange
-            var maxSample = 0.0
-            for index in sampleRange {
-                maxSample = max(maxSample, self.sample(at: index).kilograms)
-            }
-            let maxValue = max(10, max(maxSample, targetRange?.upperBound ?? 0)) * 1.15
+            let maxValue = ForceChartYDomain.maxValue(
+                bandUpperBoundKilograms: targetRange?.upperBound,
+                windowPeakKilograms: windowPeakKilograms,
+                heldPeakKilograms: domainTracker.heldPeakKilograms
+            )
             let firstSample = sampleRange.first.map(self.sample(at:))
             let lastSample = sampleRange.last.map(self.sample(at:))
             let firstTime = firstSample?.milliseconds ?? 0
@@ -3024,6 +3028,49 @@ struct ForceTraceChart: View {
         }
         .background(ChartToken.forceTraceBackground(scheme), in: RoundedRectangle(cornerRadius: 12))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        // #900: feed the domain tracker whenever the live window changes
+        // (buffer appends move the published range; a rep boundary resets
+        // the shared buffer, which the content count catches even before
+        // the next flush publishes an empty range). Array sources render a
+        // complete, static window and never need the hold.
+        .onChange(of: domainFeedStamp) { _ in
+            feedDomainTracker()
+        }
+    }
+
+    /// The strongest sample in the current visible window (0 when empty).
+    private var windowPeakKilograms: Double {
+        var peak = 0.0
+        for index in sampleRange {
+            peak = max(peak, self.sample(at: index).kilograms)
+        }
+        return peak
+    }
+
+    /// The live window's change identity: published range plus buffer content
+    /// count, so both a window advance and a rep-boundary buffer reset feed
+    /// the tracker. Nil for array sources, which never need the hold.
+    private var domainFeedStamp: DomainFeedStamp? {
+        guard case let .buffer(buffer, range) = source else { return nil }
+        return DomainFeedStamp(
+            lower: range.lowerBound,
+            upper: range.upperBound,
+            contentCount: buffer.count
+        )
+    }
+
+    private func feedDomainTracker() {
+        guard case .buffer = source else { return }
+        domainTracker.frame(
+            bandUpperBoundKilograms: targetRange?.upperBound,
+            windowPeakKilograms: windowPeakKilograms
+        )
+    }
+
+    private struct DomainFeedStamp: Equatable {
+        let lower: Int
+        let upper: Int
+        let contentCount: Int
     }
 }
 
