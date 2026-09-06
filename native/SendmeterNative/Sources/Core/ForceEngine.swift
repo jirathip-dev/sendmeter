@@ -401,6 +401,82 @@ public enum ForcePublishSnapshotBuilder {
     }
 }
 
+// MARK: - Live force trace Y-domain (#900)
+
+/// The live force trace's Y-domain (the chart's top value in kg).
+///
+/// #900: the domain must be a stable function of the stage/target band, not
+/// of whatever samples happen to sit in the sliding window. Every guided rep
+/// records through its own accumulator, so a rep boundary resets the buffer
+/// and the visible window empties; a window-derived scale collapsed with it
+/// and the target band visibly jumped between reps and across surfaces.
+///
+/// The domain is therefore anchored to the band's upper bound (× headroom,
+/// never below the old 10 kg absolute floor) and only expands for a real
+/// in-window peak or a held recent-pull peak. Window contents at or below
+/// the anchor cannot move the scale. A held peak is only honored while a
+/// target band is present — with no band there is no level to stabilize, and
+/// the scale keeps its original fit-the-window behavior.
+public enum ForceChartYDomain {
+    /// The absolute lowest domain top (kg), preserved from the original
+    /// per-frame formula so a bandless trace never collapses to zero.
+    public static let floorKilograms = 10.0
+    /// Headroom above the anchor/peaks so the strongest drawn value stays
+    /// inside the chart instead of touching its top edge.
+    public static let headroom = 1.15
+
+    /// The Y-domain top for one rendered window.
+    ///
+    /// - Parameters:
+    ///   - bandUpperBoundKilograms: the stage/target band's upper bound, or
+    ///     nil when no band is shown (hands-free without a plan, watch
+    ///     mirror, saved recordings).
+    ///   - windowPeakKilograms: the strongest sample in the visible window.
+    ///   - heldPeakKilograms: the strongest peak seen since the current
+    ///     target context began (rep-boundary hysteresis); ignored when no
+    ///     band is present.
+    public static func maxValue(
+        bandUpperBoundKilograms: Double?,
+        windowPeakKilograms: Double,
+        heldPeakKilograms: Double
+    ) -> Double {
+        let anchor = max(floorKilograms, bandUpperBoundKilograms ?? 0)
+        let held = bandUpperBoundKilograms == nil ? 0 : heldPeakKilograms
+        return max(anchor, windowPeakKilograms, held) * headroom
+    }
+}
+
+/// Rep-boundary hysteresis for `ForceChartYDomain`: remembers the strongest
+/// window peak of the current target context so the scale stays open after
+/// the window empties, and re-anchors the moment the target band changes
+/// (the level may move only when the numeric target changes).
+public struct ForceChartYDomainTracker: Equatable, Sendable {
+    public private(set) var heldPeakKilograms: Double
+    private var bandUpperBoundKilograms: Double?
+
+    public init() {
+        heldPeakKilograms = 0
+        bandUpperBoundKilograms = nil
+    }
+
+    /// Feed one displayed window (call once per visible-window change).
+    ///
+    /// A changed band upper bound starts a new target context: the held peak
+    /// resets so the domain re-anchors to the new band. Otherwise the held
+    /// peak only grows — a monotone hold never collapses under an empty
+    /// window and converges identically from either live chart feed.
+    public mutating func frame(
+        bandUpperBoundKilograms: Double?,
+        windowPeakKilograms: Double
+    ) {
+        if bandUpperBoundKilograms != self.bandUpperBoundKilograms {
+            self.bandUpperBoundKilograms = bandUpperBoundKilograms
+            heldPeakKilograms = 0
+        }
+        heldPeakKilograms = max(heldPeakKilograms, windowPeakKilograms)
+    }
+}
+
 // MARK: - Guided force protocol
 
 public enum ForceProtocolStageKind: String, Codable, Sendable {
@@ -440,13 +516,72 @@ public struct ForceProtocolStage: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// #901: the SELECTED side decides the schedule. A single-side selection
+/// (Left/Right) always runs that side alone — even when the preset declares
+/// `alternateSides` — so no opposite-side work or switch-hands stages are
+/// ever produced. Alternation is a Both-mode behavior (and the legacy path
+/// for an unspecified selection); `startingSide` only picks the first hand
+/// of an alternating pair.
+public enum ForceProtocolSidePolicy {
+    public static func isSingleSide(_ side: TindeqSide) -> Bool {
+        side == .left || side == .right
+    }
+
+    public static func alternatingPair(startingSide: TindeqSide) -> [TindeqSide] {
+        startingSide == .right ? [.right, .left] : [.left, .right]
+    }
+
+    /// The work-stage sides of the executed schedule. Left/Right resolve to
+    /// that side ONLY, stamped explicitly (never `.unspecified`), so target
+    /// bands and saved attribution are exact. Both/unspecified fall back to
+    /// the legacy rule: alternate when the preset declares it, else run the
+    /// `.unspecified` stages attributed at save time.
+    public static func scheduleWorkSides(
+        selectedSide: TindeqSide,
+        presetAlternates: Bool,
+        startingSide: TindeqSide
+    ) -> [TindeqSide] {
+        if isSingleSide(selectedSide) {
+            return [selectedSide]
+        }
+        guard presetAlternates else { return [.unspecified] }
+        return alternatingPair(startingSide: startingSide)
+    }
+
+    /// The side set the target plan must resolve — the mirror of
+    /// `scheduleWorkSides` for `resolveForceTargetPlan` (#901): Left/Right
+    /// resolve ONLY the selected side's bands; Both/unspecified keep the
+    /// alternating pair when the preset alternates, else resolve the
+    /// selected side's own band (the app's `fallbackSide`).
+    public static func planWorkSides(
+        selectedSide: TindeqSide,
+        presetAlternates: Bool,
+        startingSide: TindeqSide
+    ) -> [TindeqSide] {
+        if isSingleSide(selectedSide) {
+            return [selectedSide]
+        }
+        guard presetAlternates else { return [selectedSide] }
+        return alternatingPair(startingSide: startingSide)
+    }
+}
+
 public enum ForceProtocolSchedule {
     public static func stages(
         preset: TindeqPreset,
-        startingSide: TindeqSide = .left
+        startingSide: TindeqSide = .left,
+        selectedSide: TindeqSide = .unspecified
     ) -> [ForceProtocolStage] {
         let sets = max(1, preset.sets)
         let repetitions = max(1, preset.repetitions)
+        // #901: the work sides are decided once, up front — the prepare stage
+        // mirrors the first work side so an explicit Left/Right selection is
+        // stamped on the whole run, not only the measurement stages.
+        let workSides = ForceProtocolSidePolicy.scheduleWorkSides(
+            selectedSide: selectedSide,
+            presetAlternates: preset.alternateSides,
+            startingSide: startingSide
+        )
         var stages: [ForceProtocolStage] = []
 
         if preset.prepareSeconds > 0 {
@@ -455,7 +590,7 @@ public enum ForceProtocolSchedule {
                     kind: .prepare,
                     setNumber: 1,
                     repetitionNumber: 1,
-                    side: preset.alternateSides ? startingSide : .unspecified,
+                    side: workSides.first ?? .unspecified,
                     durationSeconds: Double(preset.prepareSeconds),
                     label: "Prepare"
                 )
@@ -478,15 +613,7 @@ public enum ForceProtocolSchedule {
                     continue
                 }
 
-                let sides: [TindeqSide]
-                if preset.alternateSides {
-                    let second: TindeqSide = startingSide == .right ? .left : .right
-                    sides = [startingSide, second]
-                } else {
-                    sides = [.unspecified]
-                }
-
-                for (sideIndex, side) in sides.enumerated() {
+                for (sideIndex, side) in workSides.enumerated() {
                     stages.append(
                         ForceProtocolStage(
                             kind: .work,
@@ -499,13 +626,13 @@ public enum ForceProtocolSchedule {
                                 : "Hold"
                         )
                     )
-                    if sideIndex < sides.count - 1 {
+                    if sideIndex < workSides.count - 1 {
                         stages.append(
                             ForceProtocolStage(
                                 kind: .switchSide,
                                 setNumber: setNumber,
                                 repetitionNumber: repetition,
-                                side: sides[sideIndex + 1],
+                                side: workSides[sideIndex + 1],
                                 durationSeconds: 3,
                                 label: "Switch side"
                             )
@@ -564,10 +691,18 @@ public struct ForceProtocolRun: Codable, Equatable, Sendable {
     public private(set) var pausedElapsedSeconds: Double
     public private(set) var isPaused: Bool
 
-    public init(preset: TindeqPreset, startingSide: TindeqSide = .left) {
+    public init(
+        preset: TindeqPreset,
+        startingSide: TindeqSide = .left,
+        selectedSide: TindeqSide = .unspecified
+    ) {
         self.runID = UUID()
         self.presetID = preset.id
-        self.stages = ForceProtocolSchedule.stages(preset: preset, startingSide: startingSide)
+        self.stages = ForceProtocolSchedule.stages(
+            preset: preset,
+            startingSide: startingSide,
+            selectedSide: selectedSide
+        )
         self.stageIndex = 0
         self.stageStartedAt = nil
         self.pausedElapsedSeconds = 0

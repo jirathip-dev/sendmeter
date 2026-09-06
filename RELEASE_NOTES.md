@@ -42,10 +42,10 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Settings → Troubleshooting now lists recent on-device auth events (sign-in, refresh, sign-out, and failure reasons), and token-bearing requests refresh an expired session before use instead of trusting a stale bearer token.
 - Native Manual workouts now open in an adaptive, phase-tinted full-page timer with BOULDER/DONE controls, persisted 1/2/3/5-minute rest targets, rest-over haptic/audio feedback (including a sound notification when backgrounded), and a minimize action that keeps the workout running.
 - Native Manual workouts now mirror to the lock screen as a Live Activity: CLIMBING counts up from the boulder start, RESTING counts down to your configured rest target, the boulder count is pinned alongside Stop/Boulder actions, and the card is cleaned up when the workout ends or the app is relaunched. (Lock-screen rendering is device-only to verify.)
-- Native Force now keeps the selected protocol identity, STATIC/MOVEMENT details, resolved target band, or an explicit no-target state visible in guided and manual fullscreens; the outside recording context foregrounds the next hands-free/manual action and reserves bottom scroll clearance from the tab bar.
-- Native guided Force protocols now use an immersive, phase-tinted fullscreen with OUT/RETURN cadence guidance, live force chart and target coaching, a large stop control, and minimize/reopen that keeps the same protocol running.
+- Native Force now keeps the selected protocol identity, STATIC/MOVEMENT details, resolved target band, or an explicit no-target state visible in the guided fullscreen and the outside recording context; the outside context foregrounds the next hands-free action and reserves bottom scroll clearance from the tab bar.
+- Native guided Force protocols now use an immersive, phase-tinted fullscreen with OUT/RETURN cadence guidance, live force chart and target coaching, pull-to-start load triggering for every rep, and minimize/reopen that keeps the same protocol running.
 - Native guided routines now use a full-screen WORKING OUT / REST / PAUSED / DONE timer with phase colors, a glass countdown ring, current/next rep context, and optional audio cues. Audio and timer behavior still need physical-device verification.
-- Native Force regular pulls now open a dedicated live fullscreen with phase, curve, controls, and the selected protocol target; the same target band appears on Force history/duration charts, and hands-free can hand off safely into a guided protocol.
+- Native Force free pulls now record through the hands-free arm (pull to start, release to save) with the same selected-protocol target band on Force history/duration charts, and hands-free can hand off safely into a guided protocol.
 - Native Force now shows Static capacity and Resisted movement progress tiles; the Static detail sheet includes the recent peak trend, force-duration model, and side comparison, while movement metrics stay execution-only and never alter Static PR, Hill/CF, or asymmetry.
 - Native Training Load charts now support tap/scrub tooltips for weekly load and activity mix, with selection haptics and heatmap selection/dismissal feedback.
 - Native History HR + effort, Tindeq per-rep history, peak-force trend and curve, ACWR next-7-day projection, and force consistency charts now support tap/scrub tooltips with one selection haptic tick per value change (iOS 17+), plus VoiceOver chart descriptors (iOS 16+).
@@ -71,6 +71,22 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Workout: tapping a routine now opens a read-only preview of its steps — name and detail, work seconds, repetitions, rest, plus the total duration to expect — and starting a routine is explicit from that preview's Start button. Nothing starts on tap anymore.
 
 ### Improved
+
+- Native Force: the recording-context card is redesigned around configure →
+  operate. One "Movement & side" row opens a full-screen movement picker that
+  shows every exercise with its side policy and offers only the sides that
+  exercise allows; protocol choices live under one Suggested | Saved switch
+  and tap-to-arm, and the armed protocol becomes the card hero with its
+  timing, an honest target-band module, and pull-to-start readiness. Saved
+  protocols list under a consistent "Saved · category" pattern.
+- Native Force: recommended zone protocols (Power, Strength, Pow End,
+  Endurance) now arm with a live target band derived from your force curve —
+  Power 90–100% of best short-window force, Strength 80–90% of max, Pow End
+  93–107% of the 60-second hill capability, Endurance 80–100% of critical
+  force — plus an intensity dial (60–110%, 5% steps, remembered between
+  sessions) that rescales the band and adjusts hold time so the dose stays
+  equivalent; with no usable curve reference the zone stays honestly
+  unavailable instead of inventing a target.
 
 - Native iPhone tab bar now reads Dashboard → Force → Workout → History →
   Settings, with the approved climbing mascots on the Force and Workout tabs
@@ -157,6 +173,9 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+ - Native Force: the live force chart's scale now stays anchored to your protocol's target band and the strongest pull of the current run, so the target band no longer jumps to a different height when a rep finishes (the chart window empties) or when you leave the guided fullscreen — only a genuinely bigger pull still expands the chart scale.
+ - Native Force: the guided runner no longer shows the large STOP/FINISH circle — it covered the live chart on small screens and sat below the one-handed thumb zone on large ones. The top-bar End pill is now the single explicit save-and-exit (it still saves the in-flight pull through the same queue), and every guided rep starts from the pull.
+ - Native Force: standalone manual Force mode is removed. Free pulls start only from the Hands-free arm (pull to start, release to save), guided protocols always wait for a pull before a work stage begins, and empty or disconnected Force surfaces route to a guided protocol or Hands-free instead of offering a manual start.
  - Native History: the workout detail's Heart Rate and Attempts · Effort charts now fill the full card width — their Y-axis value labels sit at the charts' leading edge instead of a detached trailing strip, so the plotted data no longer stops short of the card's right edge.
  - Native Training Load: the Daily Load heatmap no longer shows "No training load in the past 53 weeks." when the sheet opens before your sessions finish syncing — the colored 53-week grid (and its legend) now appears as soon as in-window records arrive, and a window that genuinely has no load still shows the honest empty message.
  - Native Force: the outside (pre-start) context now leads with a "Selected protocol" card showing the active protocol's name, STATIC/MOVEMENT mode, hold/cadence, sets × reps, and rest details, and the recording/configure card is visible directly on the Force tab again — the collapsed, low-emphasis "Protocol details" disclosure no longer hides protocol configuration before you start, and a missing target still shows the explicit no-target state.
@@ -166,6 +185,7 @@ CI, dependency updates, and refactors unless users experience a change.
    shows the plus action). Physical-device verification remains on the
    end-of-gauntlet TestFlight pass.
 - Native Force: guided protocol launch now snapshots the selected side through target resolution, preserving Left/Right and applying only the active exercise's deterministic fallback for stale values.
+- Native Force: choosing Left or Right as the side now runs every hold of a guided protocol on that side alone — no switching hands mid-workout, even for protocols whose editor has "Alternate sides" turned on. Alternation (with its switch-hands prompts) now happens only when you record Both sides; the preset editor says so under its Alternate sides toggle, and existing recordings keep their original side attribution.
 - Native History and Send Conditions now activate on the first tap without delaying vertical scrolling; structural haptics remain on the action that wins the gesture.
 - Native Routine runner: the Close control is tappable again, including across
   its full accessible hit target, without changing the existing exit safety flow.

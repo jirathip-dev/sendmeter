@@ -18,20 +18,13 @@ final class ForceAccessibilityWiringTests: XCTestCase {
 
     func testEveryLiveForceTraceAnnouncesItsPeakSummary() {
         let force = code(source("Sources/Features/Force/ForceView.swift"))
-        let manual = code(source("Sources/Features/Force/ManualForceFullscreen.swift"))
 
         XCTAssertEqual(
             countOccurrences("ForceTraceAccessibility.liveSummary(", in: force),
             3,
             "guided, Progressor, and Watch live traces must all announce a peak"
         )
-        XCTAssertEqual(
-            countOccurrences("ForceTraceAccessibility.liveSummary(", in: manual),
-            1,
-            "manual fullscreen's live trace must announce a peak"
-        )
-        XCTAssertFalse(force.contains(".accessibilityLabel(\"Live force trace\")"))
-        XCTAssertFalse(manual.contains(".accessibilityLabel(\"Live force trace\")"))
+        XCTAssertFalse(force.contains(".accessibilityLabel(\\\"Live force trace\\\")"))
     }
 
     func testLiveSummaryNamesPeakForceInKilograms() {

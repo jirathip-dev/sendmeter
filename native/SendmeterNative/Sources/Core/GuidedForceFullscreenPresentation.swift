@@ -52,12 +52,12 @@ public struct GuidedForceStagePresentation: Equatable, Sendable {
     }
 }
 
-/// Sizes for the two elements that must remain usable on the smallest phone:
-/// the live trace and the primary circle.  The view may scroll when Dynamic
-/// Type makes its intrinsic content taller than the viewport, but it never
-/// shrinks either element below these floors.
+/// Sizes for the element that must remain usable on the smallest phone: the
+/// live trace. The view may scroll when Dynamic Type makes its intrinsic
+/// content taller than the viewport, but it never shrinks the trace below its
+/// floor. #899: the STOP/FINISH action circle is gone, so no bottom action
+/// block reserves space in the fit estimate.
 public struct GuidedForceLayout: Equatable, Sendable {
-    public let actionDiameter: Double
     public let chartMinimumHeight: Double
     public let sectionGap: Double
     public let horizontalPadding: Double
@@ -65,14 +65,12 @@ public struct GuidedForceLayout: Equatable, Sendable {
     public let viewportHeight: Double
 
     public init(
-        actionDiameter: Double,
         chartMinimumHeight: Double,
         sectionGap: Double,
         horizontalPadding: Double,
         essentialContentHeight: Double = 0,
         viewportHeight: Double = 0
     ) {
-        self.actionDiameter = actionDiameter
         self.chartMinimumHeight = chartMinimumHeight
         self.sectionGap = sectionGap
         self.horizontalPadding = horizontalPadding
@@ -94,7 +92,7 @@ public struct GuidedForceLayout: Equatable, Sendable {
 
     /// Resolves a compact layout from the actual available viewport. `textScale`
     /// is supplied by the SwiftUI caller so accessibility sizes reserve more
-    /// room without making the chart or action unusably small.
+    /// room without making the chart unusably small.
     public static func resolve(
         width: Double,
         height: Double,
@@ -104,30 +102,29 @@ public struct GuidedForceLayout: Equatable, Sendable {
         let safeHeight = max(320, height)
         let safeTextScale = min(1.8, max(1, textScale))
         let padding = safeWidth < 360 ? 12 : 16
-        let widthBound = min(184, max(96, safeWidth - (Double(padding) * 2)))
-        let heightBound = safeHeight < 520
-            ? max(96, safeHeight * (safeTextScale > 1.25 ? 0.22 : 0.26))
-            : widthBound
-        let action = min(widthBound, heightBound)
-        let chartFloor = max(
-            96,
-            min(156, safeHeight * (safeTextScale > 1.25 ? 0.15 : 0.18))
-        )
         let sectionGap = safeHeight < 520 ? 8.0 : 12.0
         let bannerHeight = safeTextScale > 1.25
             ? 176.0
             : (safeHeight < 520 ? 132.0 : 160.0)
+        let chartFloor = max(
+            96,
+            min(156, safeHeight * (safeTextScale > 1.25 ? 0.15 : 0.18))
+        )
+        // #899: no bottom action circle anymore — the estimate covers the
+        // top bar, protocol identity header, phase banner, status row,
+        // target coach, live chart, and the pause/skip controls row. Keeping
+        // the estimate honest matters: a falsely-fitting layout would clip
+        // the controls instead of scrolling.
         let essentialHeight = 52.0
+            + 46.0
             + bannerHeight
             + 44.0
             + 84.0
             + chartFloor
             + 52.0
-            + action
             + (sectionGap * 6)
             + 24.0
         return GuidedForceLayout(
-            actionDiameter: action,
             chartMinimumHeight: chartFloor,
             sectionGap: sectionGap,
             horizontalPadding: Double(padding),

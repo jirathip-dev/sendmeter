@@ -143,33 +143,51 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertFalse(boundary.contains("recordings =="))
     }
 
-    func testForceOwnersKeepManualFullscreenAndGuidedHandsFreeOnExistingPaths() {
+    func testForceOwnersRouteThroughGuidedHandsFreeAndRefusals() {
         let forceView = code(source("Sources/Features/Force/ForceView.swift"))
 
-        XCTAssertTrue(forceView.contains("ManualForceFullscreen("))
-        XCTAssertTrue(forceView.contains("handsFreeEnabled: launchHandsFreeEnabled"))
+        XCTAssertFalse(forceView.contains("ManualForceFullscreen("))
+        XCTAssertFalse(forceView.contains("startMeasurement"))
         XCTAssertTrue(forceView.contains("GuidedForceHandsFreeTimingPolicy"))
         XCTAssertTrue(forceView.contains("case .refusedActiveRecording"))
         XCTAssertTrue(forceView.contains("model.handsFree.cancelArm()"))
+        XCTAssertTrue(forceView.contains("model.handsFree.stopPolicy = .callerOwned"))
     }
 
-    // MARK: #874 — guided launch keeps an explicit Left through run construction
+    // MARK: #874/#901 — guided launch keeps an explicit Left through run construction
     //
     // REAL behavior tests (no source-text assertions): they construct the run
-    // exactly as `GuidedForceProtocolSession.init` does
-    // (`ForceProtocolRun(preset:startingSide:)`) and assert the produced
-    // stages, so a Left→Both coercion anywhere in the schedule/attribution
-    // boundary turns them red.
+    // exactly as `GuidedForceProtocolSession.init` does after #901
+    // (`ForceProtocolRun(preset:startingSide:selectedSide:)` with
+    // `selectedSide` = the normalized side selection / fallbackSide) and
+    // assert the produced stages, so a Left→Both coercion anywhere in the
+    // schedule/attribution boundary turns them red, and so a Left/Right
+    // selection can never regress into an alternating schedule (#901).
 
     func testGuidedAlternatingRunFirstWorkStageKeepsExplicitLeft() {
-        let run = ForceProtocolRun(preset: Self.alternatingPreset(), startingSide: .left)
+        let run = ForceProtocolRun(
+            preset: Self.alternatingPreset(),
+            startingSide: .left,
+            selectedSide: .left
+        )
         let firstWork = run.stages.first(where: { $0.kind == .work })
         XCTAssertEqual(firstWork?.side, .left)
         XCTAssertFalse(run.stages.contains { $0.side == .both })
+        // #901: an explicit Left must run LEFT ONLY — no opposite-side work
+        // and no switch-hands stages, even though the preset alternates.
+        let work = run.stages.filter { $0.kind == .work }
+        XCTAssertFalse(work.isEmpty)
+        XCTAssertTrue(work.allSatisfy { $0.side == .left })
+        XCTAssertFalse(run.stages.contains { $0.kind == .switchSide })
+        XCTAssertFalse(run.stages.contains { $0.side == .right })
     }
 
     func testGuidedSaveAttributionSideStaysLeftForExplicitLeft() {
-        let run = ForceProtocolRun(preset: Self.alternatingPreset(), startingSide: .left)
+        let run = ForceProtocolRun(
+            preset: Self.alternatingPreset(),
+            startingSide: .left,
+            selectedSide: .left
+        )
         let fallbackSide: TindeqSide = .left
         let firstWork = try? XCTUnwrap(run.stages.first(where: { $0.kind == .work }))
         guard let firstWork else { return }
@@ -191,15 +209,17 @@ final class ForceProgressWiringTests: XCTestCase {
     // AC5 run-construction assertion: a bilateralOnly-launched session carries
     // `.both` semantics via fallbackSide and never `.left`. The launch snapshot
     // (`launchSide = normalizeSide(sideMode, side)`) yields `.both`, so the
-    // session's fallbackSide is `.both`, and non-alternating work stages stay
-    // `.unspecified` — save attribution therefore resolves to `.both`.
+    // session's fallbackSide is `.both` (threaded through as the run's
+    // `selectedSide`), and non-alternating work stages stay `.unspecified` —
+    // save attribution therefore resolves to `.both`.
     func testBilateralOnlyLaunchCarriesBothSemanticsViaFallbackSideNeverLeft() {
         let launchSide = ExerciseSidePolicy.normalizeSide(.bilateralOnly, .left)
         XCTAssertEqual(launchSide, .both)
 
         let run = ForceProtocolRun(
             preset: Self.bilateralOnlyPreset(),
-            startingSide: .left // startSide derivation: launchSide == .right ? .right : .left
+            startingSide: .left, // startSide derivation: launchSide == .right ? .right : .left
+            selectedSide: launchSide
         )
         let firstWork = try? XCTUnwrap(run.stages.first(where: { $0.kind == .work }))
         guard let firstWork else { return }
@@ -234,15 +254,31 @@ final class ForceProgressWiringTests: XCTestCase {
         XCTAssertTrue(launchBody.contains("let launchSelection = selectedSelection"))
 
         // The delegate passes the SNAPSHOT values through, never a literal.
+        // #899: no hands-free preference crosses the guided-launch boundary —
+        // every guided session is load-triggered hands-free by construction.
         XCTAssertTrue(launchBody.contains("sideMode: launchSideMode"))
         XCTAssertTrue(launchBody.contains("side: launchSide"))
         XCTAssertTrue(launchBody.contains("selection: launchSelection"))
-        XCTAssertTrue(launchBody.contains("handsFreeEnabled: launchHandsFreeEnabled"))
+        XCTAssertFalse(launchBody.contains("launchHandsFreeEnabled"))
 
         // No `.both` coercion anywhere in the launch region.
         XCTAssertFalse(
             launchBody.contains(".both"),
             "launch() must never stamp a .both literal into the snapshot/delegate handoff"
+        )
+    }
+
+    func testPresetEditorDocumentsAlternationAsBothModeDeclaration() {
+        let forceView = code(source("Sources/Features/Force/ForceView.swift"))
+        XCTAssertTrue(forceView.contains("Toggle(\"Alternate sides\", isOn: $draft.alternateSides)"))
+        // #901: the toggle is a Both-mode declaration — the UI must say a
+        // Left/Right selection overrides it. Mutation: remove/reword the
+        // caption line → this test goes red.
+        XCTAssertTrue(
+            forceView.contains(
+                "Alternation applies when you record Both sides; a Left or Right selection runs that side only."
+            ),
+            "preset editor must document that single-side selections override the Alternate sides toggle"
         )
     }
 
