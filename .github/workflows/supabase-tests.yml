@@ -43,6 +43,9 @@ jobs:
       - name: Run health-metrics precedence race SQL regression
         run: bash scripts/test-health-precedence-race.sh
 
+      - name: Run tindeq session merge SQL regression
+        run: supabase test db --local supabase/tests/merge_tindeq_sessions.sql
+
       - name: Stop disposable local Supabase
         if: always()
         run: supabase stop --no-backup

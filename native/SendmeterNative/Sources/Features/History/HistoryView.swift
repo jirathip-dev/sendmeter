@@ -12,6 +12,9 @@ struct HistoryView: View {
     @State private var creating = false
     @State private var createError: String?
     @State private var assignOpen = false
+    /// #942: the session whose "Merge with…" action is open. The sheet owns
+    /// the selection and any failure copy for the merge it performs.
+    @State private var mergeAnchor: SendmeterCore.Session?
     @State private var retryingUploads = false
     /// Lazy paging (web pages 40/batch).
     @State private var visibleCount = HistoryPaging.pageSize
@@ -224,6 +227,13 @@ struct HistoryView: View {
             .sheet(isPresented: $assignOpen) {
                 SelectionAssignSheet(recordings: selectedRecordings)
                     .sendmeterSheetPresentation()
+            }
+            .sheet(item: $mergeAnchor) { session in
+                MergeSessionsSheet(
+                    anchor: session,
+                    candidates: mergeCandidates(for: session)
+                )
+                .sendmeterSheetPresentation()
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 selectionBar
@@ -482,6 +492,34 @@ struct HistoryView: View {
             }
             .tint(SendmeterStyle.primary)
         }
+        // #942: same-day Tindeq entries can be folded into one. The action is
+        // offered only for a session the RPC could accept (uploaded, grouped,
+        // Tindeq); the sheet it opens lists exactly what would be merged.
+        .contextMenu {
+            if offersMerge(session) {
+                Button {
+                    // #656: a tap opening a sheet arms the presentation tick.
+                    Haptics.shared.tap()
+                    mergeAnchor = session
+                } label: {
+                    Label("Merge with…", systemImage: "arrow.triangle.merge")
+                }
+            }
+        }
+    }
+
+    /// True when History may offer the #942 merge action for this row.
+    private func offersMerge(_ session: SendmeterCore.Session) -> Bool {
+        session.type == "tindeq"
+            && session.groupID != nil
+            && !session.pending
+            && !session.rejected
+    }
+
+    private func mergeCandidates(
+        for session: SendmeterCore.Session
+    ) -> [SendmeterCore.Session] {
+        TindeqSessionMergePlanner.candidates(for: session, in: model.sessions)
     }
 
     private func delete(_ session: SendmeterCore.Session) {
@@ -1245,6 +1283,160 @@ private struct SelectionAssignSheet: View {
                     Button("Cancel") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+/// #942: the confirm sheet for a same-day merge. It lists exactly what will
+/// be merged — the tapped entry plus every ticked same-day sibling, the
+/// recordings that move, and the resulting duration/note — before anything is
+/// written, because the merge has no undo.
+private struct MergeSessionsSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let anchor: SendmeterCore.Session
+    let candidates: [SendmeterCore.Session]
+    @State private var selected: Set<UUID>
+    @State private var merging = false
+    @State private var mergeError: String?
+
+    init(anchor: SendmeterCore.Session, candidates: [SendmeterCore.Session]) {
+        self.anchor = anchor
+        self.candidates = candidates
+        self._selected = State(initialValue: Set(candidates.map(\.id)))
+    }
+
+    private var chosen: [SendmeterCore.Session] {
+        [anchor] + candidates.filter { selected.contains($0.id) }
+    }
+
+    /// The exact plan the merge will apply — nil while the selection is not
+    /// eligible (for example after unticking every sibling).
+    private var plan: TindeqSessionMergePlan? {
+        model.mergePreview(chosen)
+    }
+
+    private var refusalReason: String {
+        TindeqSessionMergePlanner.eligibility(chosen).refusalMessage
+            ?? "This selection can't be merged."
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Merge into one entry") {
+                    sessionLine(anchor)
+                    ForEach(candidates) { candidate in
+                        Button {
+                            toggle(candidate.id)
+                        } label: {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: selected.contains(candidate.id)
+                                    ? "checkmark.circle.fill"
+                                    : "circle")
+                                    .foregroundStyle(
+                                        selected.contains(candidate.id)
+                                            ? SendmeterStyle.primary
+                                            : .secondary
+                                    )
+                                sessionLine(candidate)
+                            }
+                        }
+                        .hapticButtonStyle(.plain)
+                        .accessibilityLabel(
+                            selected.contains(candidate.id)
+                                ? "Untick session"
+                                : "Tick session"
+                        )
+                    }
+                }
+                Section("Result") {
+                    if let plan {
+                        mergedResult(plan)
+                    } else {
+                        Text(refusalReason)
+                            .font(.subheadline)
+                            .foregroundStyle(SendmeterStyle.caution)
+                    }
+                }
+                if let mergeError {
+                    Section {
+                        Text(mergeError)
+                            .font(.subheadline)
+                            .foregroundStyle(SendmeterStyle.alert)
+                    }
+                }
+            }
+            .navigationTitle("Merge \(chosen.count) session\(chosen.count == 1 ? "" : "s")")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        Task { await merge() }
+                    } label: {
+                        if merging { ProgressView() } else { Text("Merge") }
+                    }
+                    .disabled(merging || plan == nil)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sessionLine(_ session: SendmeterCore.Session) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(
+                "\(session.durationMinutes) min · RPE "
+                    + session.rpe.formatted(.number.precision(.fractionLength(0...1)))
+            )
+            .font(.subheadline.weight(.semibold))
+            Text(session.note.isEmpty ? session.date : session.note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func mergedResult(_ plan: TindeqSessionMergePlan) -> some View {
+        LabeledContent("Recordings", value: "\(plan.recordingCount)")
+        LabeledContent("Duration", value: "\(plan.durationMinutes) min")
+        LabeledContent(
+            "RPE",
+            value: plan.rpe.formatted(.number.precision(.fractionLength(0...1)))
+                + (plan.rpeConfirmed ? " (confirmed)" : " (predicted)")
+        )
+        Text(plan.note)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        if plan.survivorID != anchor.id {
+            Text("The earliest session keeps the entry; the others move into it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func toggle(_ id: UUID) {
+        if selected.contains(id) {
+            selected.remove(id)
+        } else {
+            selected.insert(id)
+        }
+    }
+
+    private func merge() async {
+        merging = true
+        mergeError = nil
+        // #656: a confirmed destructive action fires the medium tick once.
+        Haptics.shared.playGesture(.medium)
+        let merged = await model.mergeTindeqSessions(chosen)
+        merging = false
+        if merged {
+            dismiss()
+        } else {
+            mergeError = "Couldn't merge these sessions — try again."
         }
     }
 }
