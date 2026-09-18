@@ -285,6 +285,12 @@ public enum GuidedForceHandsFreeTimingPolicy {
 public enum GuidedForceFullscreenPresentation {
     private static let epsilon = 0.000_001
 
+    /// #940: the completion line — ONE source of truth for the panel's
+    /// next-step copy (and its accessibility label). It names the inline
+    /// action and states where the gauge session's explicit end lives, because
+    /// #941 keeps that session live after the protocol ends.
+    public static let completionDetail = "Protocol complete · Done returns to your session"
+
     /// Maps a native stage to the large phase banner. Reverse Action is stored
     /// as one continuous work stage so that it persists one set per recording;
     /// the direction boundary is therefore derived from the stage-local clock
@@ -394,7 +400,7 @@ public enum GuidedForceFullscreenPresentation {
             return make(
                 phase: .complete,
                 label: "DONE",
-                detail: "Protocol complete",
+                detail: completionDetail,
                 accent: .optimal,
                 symbol: "checkmark.circle.fill",
                 progress: 1
@@ -440,7 +446,7 @@ public enum GuidedForceFullscreenPresentation {
             // is about to do — instead of the set that just ended.
             return restLine(for: stage)
         case .complete:
-            return "Protocol complete"
+            return completionDetail
         case .work:
             return side.map { "\(prefix) · \($0)" } ?? prefix
         }
