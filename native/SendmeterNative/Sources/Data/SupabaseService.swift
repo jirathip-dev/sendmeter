@@ -704,6 +704,54 @@ public struct OneOrMany<Value: Decodable>: Decodable {
     public var first: Value? { values.first }
 }
 
+/// One paged GET (#914): the decoded rows plus the server's reported window,
+/// when it sent one.
+public struct PostgRESTPage<Row: Decodable & Sendable>: Sendable {
+    public let rows: [Row]
+    public let contentRange: PostgRESTContentRange?
+
+    public init(rows: [Row], contentRange: PostgRESTContentRange?) {
+        self.rows = rows
+        self.contentRange = contentRange
+    }
+}
+
+/// The `Content-Range` window PostgREST reports for a ranged GET:
+/// `0-199/1234`, `0-199/*`, `*/1234` or `*/*`.
+///
+/// `total` is the row count matching the filter. It is the signal that a
+/// response was capped below the requested limit — without it, a short page is
+/// indistinguishable from a complete one.
+public struct PostgRESTContentRange: Equatable, Sendable {
+    public let start: Int?
+    public let end: Int?
+    public let total: Int?
+
+    public init(start: Int?, end: Int?, total: Int?) {
+        self.start = start
+        self.end = end
+        self.total = total
+    }
+
+    public static func parse(_ raw: String) -> PostgRESTContentRange? {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard let slash = trimmed.firstIndex(of: "/") else { return nil }
+        let window = String(trimmed[..<slash])
+        let totalText = String(trimmed[trimmed.index(after: slash)...])
+        let total = totalText == "*" ? nil : Int(totalText)
+        guard totalText == "*" || total != nil else { return nil }
+        guard window != "*" else {
+            return PostgRESTContentRange(start: nil, end: nil, total: total)
+        }
+        let bounds = window.split(separator: "-", maxSplits: 1)
+        guard bounds.count == 2,
+              let start = Int(bounds[0]),
+              let end = Int(bounds[1])
+        else { return nil }
+        return PostgRESTContentRange(start: start, end: end, total: total)
+    }
+}
+
 public actor PostgRESTClient {
     private let projectURL: URL
     private let apiKey: String
@@ -763,6 +811,47 @@ public actor PostgRESTClient {
         body: Data? = nil,
         prefer: String? = nil
     ) async throws -> Response {
+        let performed = try await performRequest(
+            path: path,
+            method: method,
+            queryItems: queryItems,
+            body: body,
+            prefer: prefer
+        )
+        return try decoder.decode(Response.self, from: performed.data)
+    }
+
+    /// The paged variant of `request`: same transport, auth and error handling,
+    /// plus the response's `Content-Range` window so a caller can tell a
+    /// complete page from one the server capped below the requested limit
+    /// (#914). Rows are decoded as a list, which is what a ranged GET returns.
+    public func requestPage<Row: Decodable & Sendable>(
+        path: String,
+        method: HTTPVerb,
+        queryItems: [URLQueryItem] = [],
+        prefer: String? = nil
+    ) async throws -> PostgRESTPage<Row> {
+        let performed = try await performRequest(
+            path: path,
+            method: method,
+            queryItems: queryItems,
+            body: nil,
+            prefer: prefer
+        )
+        let rows = try decoder.decode([Row].self, from: performed.data)
+        let contentRange = performed.http
+            .value(forHTTPHeaderField: "Content-Range")
+            .flatMap(PostgRESTContentRange.parse)
+        return PostgRESTPage(rows: rows, contentRange: contentRange)
+    }
+
+    private func performRequest(
+        path: String,
+        method: HTTPVerb,
+        queryItems: [URLQueryItem],
+        body: Data?,
+        prefer: String?
+    ) async throws -> (data: Data, http: HTTPURLResponse) {
         let authSession = try await sessionProvider()
         let accessToken = authSession.accessToken
         let sessionDescriptor = AuthSessionDescriptor(
@@ -844,7 +933,7 @@ public actor PostgRESTClient {
                 sessionDescriptor: sessionDescriptor
             )
         }
-        return try decoder.decode(Response.self, from: data)
+        return (data: data, http: http)
     }
 
     public func requestVoid(
