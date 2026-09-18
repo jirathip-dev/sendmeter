@@ -37,6 +37,7 @@ public struct NativeAccountScope: Equatable, Sendable {
 private enum PendingWrite: Codable, Sendable {
     case session(SessionQueuePayload)
     case sessionDelete(SessionDeleteQueuePayload)
+    case sessionMerge(SessionMergeQueuePayload)
     case recording(NewTindeqRecording)
     case recordingEdit(RecordingEdit)
     case sessionRPEEdit(RecordingEdit)
@@ -81,6 +82,7 @@ private extension DurableQueueItem where Payload == PendingWrite {
         switch payload {
         case .session: return "Session"
         case .sessionDelete: return "Session deletion"
+        case .sessionMerge: return "Session merge"
         case .recording: return "Force recording"
         case .recordingEdit: return "Force recording edit"
         case .sessionRPEEdit: return "Session RPE edit"
@@ -137,6 +139,19 @@ private struct SessionQueuePayload: Codable, Sendable {
 
 private struct SessionDeleteQueuePayload: Codable, Sendable {
     let sessionID: UUID
+}
+
+/// #942: a queued same-day Tindeq merge — the plan's identity (survivor,
+/// merged set, the recordings that move) plus the survivor's merged fields,
+/// so a relaunch can rebuild the optimistic row and the RPC can be retried
+/// verbatim. `rpeConfirmed` is part of the plan: the RPC writes it through.
+private struct SessionMergeQueuePayload: Codable, Sendable {
+    let survivorID: UUID
+    let mergedSessionIDs: [UUID]
+    let recordingIDs: [UUID]
+    let groupID: UUID
+    let draft: SessionDraft
+    let rpeConfirmed: Bool
 }
 
 /// Durable terminal delete intent. The pre-edit session value is carried in
@@ -460,6 +475,13 @@ public final class AppModel {
     @ObservationIgnored
     private nonisolated(unsafe) var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
+    /// #942: merged-away session ids whose queued merge has not uploaded yet,
+    /// mapped to the account that owns the merge. An authoritative fetch still
+    /// returns those rows (the server soft-deletes them only when the RPC
+    /// lands), so they are filtered out of every published list until the
+    /// merge is applied — otherwise a refresh would resurrect the entries the
+    /// user just merged.
+    private var pendingMergedAwaySessionIDs: [UUID: UUID] = [:]
     /// Direct WC delivery and `transferUserInfo` can overlap. The gate is
     /// claimed before the first cache write and released only after the whole
     /// adoption path returns; the cache row itself is the relaunch-safe dedupe
@@ -2299,6 +2321,21 @@ public final class AppModel {
                     entityID: deletePayload.sessionID.uuidString
                 )
             ]
+        case let .sessionMerge(mergePayload):
+            // The survivor takes the merged row; every merged-away session
+            // gets its local tombstone confirmed.
+            var identities = [mergePayload.survivorID]
+            identities.append(
+                contentsOf: mergePayload.mergedSessionIDs.filter {
+                    $0 != mergePayload.survivorID
+                }
+            )
+            return identities.map {
+                CacheEntityIdentity(
+                    entityType: .sessions,
+                    entityID: $0.uuidString
+                )
+            }
         case let .recording(recordingPayload):
             return [
                 CacheEntityIdentity(
@@ -5188,6 +5225,174 @@ public final class AppModel {
         }
     }
 
+    /// #942: the merge plan for a selection — nil when the selection is not
+    /// eligible. Uses the same cached curves as the merge itself, so the
+    /// History confirm sheet previews exactly what will be applied.
+    public func mergePreview(
+        _ sessions: [SendmeterCore.Session]
+    ) -> TindeqSessionMergePlan? {
+        mergeContext(sessions)?.plan
+    }
+
+    /// The plan plus the local recordings it owns — the two things both the
+    /// preview and the merge need.
+    private func mergeContext(
+        _ sessions: [SendmeterCore.Session]
+    ) -> (plan: TindeqSessionMergePlan, recordings: [TindeqRecording])? {
+        let selectedGroupIDs = Set(sessions.compactMap(\.groupID))
+        let selectedRecordings = recordings.filter { recording in
+            guard let groupID = recording.groupID else { return false }
+            return selectedGroupIDs.contains(groupID)
+        }
+        guard let plan = TindeqSessionMergePlanner.plan(
+            sessions: sessions,
+            recordings: recordings,
+            curves: cachedCurves(for: selectedRecordings)
+        ) else { return nil }
+        return (plan, selectedRecordings)
+    }
+
+    /// #942: merge same-day Tindeq sessions into ONE entry (History's
+    /// "Merge with…").
+    ///
+    /// The plan is pure (`TindeqSessionMergePlanner`) and the server applies
+    /// it in ONE transaction (`merge_tindeq_sessions`), so every local
+    /// mutation below is only ever an optimistic mirror of a single atomic
+    /// server write. The write goes through the same durable queue as every
+    /// other session write: offline it uploads on reconnect, and a relaunch
+    /// rebuilds the merged entry from the queue payload.
+    ///
+    /// Returns false when the selection is not eligible or could not be made
+    /// durable — nothing is left half-applied then.
+    @discardableResult
+    public func mergeTindeqSessions(_ selection: [SendmeterCore.Session]) async -> Bool {
+        guard let userID = currentUserID else { return false }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        guard let context = mergeContext(selection),
+              let survivor = selection.first(where: { $0.id == context.plan.survivorID }) else {
+            return false
+        }
+        let plan = context.plan
+        let selectedRecordings = context.recordings
+        let previousSurvivor = self.sessions.first { $0.id == plan.survivorID } ?? survivor
+        let mergedAwayIDs = plan.mergedSessionIDs.filter { $0 != plan.survivorID }
+        // Snapshots for the rollback below: the local rows before the merge.
+        let recordingsBefore = selectedRecordings
+
+        // 1. The survivor becomes the merged row (optimistically pending).
+        var optimistic = plan.merged(survivor: survivor)
+        optimistic.pending = true
+        optimistic.rejected = false
+        optimistic.accountUserID = userID
+        pendingSessions[plan.survivorID] = optimistic
+        let optimisticRevision = cacheUpsertLocal(
+            optimistic,
+            accountUserID: userID,
+            entityType: .sessions,
+            entityID: CacheEntityID.session(optimistic)
+        )
+
+        // 2. The merged-away sessions leave the list and the local cache, and
+        //    stay hidden while the merge is queued (an authoritative fetch
+        //    still returns them until the RPC lands).
+        for sessionID in mergedAwayIDs {
+            pendingSessions.removeValue(forKey: sessionID)
+            pendingMergedAwaySessionIDs[sessionID] = userID
+            _ = cacheMarkDeletedLocal(
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: sessionID.uuidString
+            )
+        }
+
+        // 3. The merged recordings move under the surviving group locally,
+        //    exactly as the RPC will move them server-side.
+        for recording in selectedRecordings {
+            guard let index = recordings.firstIndex(where: { $0.id == recording.id }) else {
+                continue
+            }
+            recordings[index].groupID = plan.groupID
+            cacheUpsertServer(
+                recordings[index],
+                accountUserID: userID,
+                entityType: .recordings,
+                entityID: CacheEntityID.recording(recordings[index])
+            )
+        }
+
+        // The survivor's pre-merge row must leave the list too: the optimistic
+        // merged row now owns that id in `pendingSessions`, and publishing the
+        // stale row through `mergeSessions(remote:)` would wipe the overlay
+        // (it drops every pending id that also appears in the remote list).
+        sessions.removeAll { $0.id == plan.survivorID || mergedAwayIDs.contains($0.id) }
+        mergeSessions(remote: sessions.filter { !$0.pending })
+
+        let item = DurableQueueItem(
+            id: plan.survivorID,
+            accountUserID: userID,
+            payload: PendingWrite.sessionMerge(
+                SessionMergeQueuePayload(
+                    survivorID: plan.survivorID,
+                    mergedSessionIDs: plan.mergedSessionIDs,
+                    recordingIDs: plan.recordingIDs,
+                    groupID: plan.groupID,
+                    draft: plan.draft,
+                    rpeConfirmed: plan.rpeConfirmed
+                )
+            )
+        )
+        let enqueued = await enqueueAndUpload(item, capturedBy: accountFetch)
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return enqueued }
+        guard enqueued else {
+            // The merge is not durable, so nothing may stay merged: restore
+            // the survivor, the merged-away rows and the recordings, and let
+            // the caller report the failure. (The cache tombstones written
+            // above are republished by the next authoritative fetch.)
+            pendingSessions.removeValue(forKey: plan.survivorID)
+            for sessionID in mergedAwayIDs {
+                pendingMergedAwaySessionIDs.removeValue(forKey: sessionID)
+            }
+            cacheConfirmServerUpsert(
+                previousSurvivor,
+                accountUserID: userID,
+                entityType: .sessions,
+                entityID: CacheEntityID.session(previousSurvivor),
+                confirmingLocalRevision: optimisticRevision
+            )
+            for recording in recordingsBefore {
+                guard let index = recordings.firstIndex(where: { $0.id == recording.id }) else {
+                    continue
+                }
+                recordings[index] = recording
+                cacheUpsertServer(
+                    recordings[index],
+                    accountUserID: userID,
+                    entityType: .recordings,
+                    entityID: CacheEntityID.recording(recordings[index])
+                )
+            }
+            // Put the pre-merge rows back exactly as they were, so the user's
+            // history is never left with a hole after a failed enqueue.
+            sessions.removeAll {
+                $0.id == plan.survivorID || mergedAwayIDs.contains($0.id)
+            }
+            sessions.append(previousSurvivor)
+            sessions.append(
+                contentsOf: selection.filter { mergedAwayIDs.contains($0.id) }
+            )
+            mergeSessions(remote: sessions.filter { !$0.pending })
+            return false
+        }
+        toastMessage = "Sessions merged."
+        return true
+    }
+
     /// #630: group ticked loose recordings under a NEW Tindeq session,
     /// mirroring the web's `HistoryView.createSessionFromSelection`: RPE 5
     /// default, date from the first recording, note summarizing count + tags,
@@ -7608,6 +7813,68 @@ public final class AppModel {
                         entityID: deletePayload.sessionID.uuidString
                     )
                 )
+            case let .sessionMerge(payload):
+                suppressSavedToast = true
+                let merged = try await self.repository.mergeTindeqSessions(
+                    sessionIDs: payload.mergedSessionIDs,
+                    survivorID: payload.survivorID,
+                    rpe: payload.draft.rpe,
+                    rpeConfirmed: payload.rpeConfirmed
+                )
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    // Leave the durable merge for its owning account.
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                // The server recomputes duration and note from the recordings
+                // it actually moved, so a row built from a stale local set
+                // reconciles here (the RPC is the authority on what the merged
+                // session contains).
+                if let merged,
+                   let base = pendingSessions[payload.survivorID]
+                       ?? self.sessions.first(where: { $0.id == payload.survivorID }) {
+                    var reconciled = base
+                    reconciled.durationMinutes = merged.durationMinutes ?? base.durationMinutes
+                    reconciled.note = merged.note ?? base.note
+                    reconciled.groupID = merged.groupID ?? base.groupID
+                    reconciled.pending = false
+                    reconciled.load = RecordingEditCoordinator.optimisticLoad(
+                        durationMinutes: reconciled.durationMinutes,
+                        rpe: reconciled.rpe
+                    )
+                    pendingSessions.removeValue(forKey: payload.survivorID)
+                    replaceSession(reconciled)
+                    cacheConfirmServerUpsert(
+                        reconciled,
+                        accountUserID: item.accountUserID,
+                        entityType: .sessions,
+                        entityID: CacheEntityID.session(reconciled),
+                        confirmingLocalRevision: cacheConfirmationRevision(
+                            cacheRevisions,
+                            entityType: .sessions,
+                            entityID: payload.survivorID.uuidString
+                        )
+                    )
+                }
+                let mergedAwayIDs = payload.mergedSessionIDs.filter {
+                    $0 != payload.survivorID
+                }
+                sessions.removeAll { mergedAwayIDs.contains($0.id) }
+                for sessionID in mergedAwayIDs {
+                    pendingMergedAwaySessionIDs.removeValue(forKey: sessionID)
+                    cacheConfirmServerDelete(
+                        accountUserID: item.accountUserID,
+                        entityType: .sessions,
+                        entityID: sessionID.uuidString,
+                        confirmingLocalRevision: cacheConfirmationRevision(
+                            cacheRevisions,
+                            entityType: .sessions,
+                            entityID: sessionID.uuidString
+                        )
+                    )
+                }
             case let .recording(recording):
                 let saved = try await self.repository.insertRecording(recording)
                 let oldKey = TagCurveKey(
@@ -9346,6 +9613,40 @@ public final class AppModel {
                 )
             case .sessionDelete:
                 continue
+            case let .sessionMerge(payload):
+                // #942: a queued merge owns the survivor's optimistic row and
+                // keeps the merged-away entries hidden until the RPC lands
+                // (the server still returns them while the merge is pending).
+                for sessionID in payload.mergedSessionIDs where sessionID != payload.survivorID {
+                    pendingMergedAwaySessionIDs[sessionID] = item.accountUserID
+                }
+                // The recordings move under the surviving group in memory, so
+                // the pending entry's detail already lists them. The cache
+                // still holds the server's (pre-merge) group until the fetch
+                // that follows the upload republishes them.
+                for recordingID in payload.recordingIDs {
+                    guard let index = recordings.firstIndex(where: { $0.id == recordingID }) else {
+                        continue
+                    }
+                    recordings[index].groupID = payload.groupID
+                }
+                let mergeReceipt = SessionLogReceipt(
+                    sessionID: payload.survivorID,
+                    accountUserID: item.accountUserID
+                )
+                guard PendingSessionDeletePolicy.shouldRestore(
+                    insert: .loggedSession(sessionID: payload.survivorID),
+                    remoteSessionIDs: remoteSessionIDs,
+                    deleteIsClaimed: routineUndo.isClaimed(mergeReceipt)
+                ) else { continue }
+                pendingSessions[payload.survivorID] = pendingSession(
+                    id: payload.survivorID,
+                    draft: payload.draft,
+                    accountUserID: currentUserID,
+                    rpeConfirmed: payload.rpeConfirmed,
+                    groupID: payload.groupID,
+                    rejected: rejected
+                )
             case .recordingDelete:
                 continue
             case let .workout(draft):
@@ -9580,6 +9881,10 @@ public final class AppModel {
                 sessionID: session.id,
                 accountUserID: currentUserID
             )
+                // #942: a queued merge keeps its merged-away rows out of the
+                // published list — the server still returns them until the
+                // RPC lands.
+                && pendingMergedAwaySessionIDs[session.id] != currentUserID
         }
         let remoteIDs = Set(visibleRemote.map(\.id))
         for id in remoteIDs { pendingSessions.removeValue(forKey: id) }
@@ -9794,6 +10099,7 @@ public final class AppModel {
         tagMetadata = []
         passkeys = []
         pendingSessions = [:]
+        pendingMergedAwaySessionIDs.removeAll()
         watchCompletionAdoption.reset()
         pendingRecordings = PendingRecordingOverlay()
         clearPendingCurveSamples()
