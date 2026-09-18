@@ -10,6 +10,12 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- History can now merge several Tindeq sessions from the same day into one
+  entry: long-press a Tindeq session, pick the same-day entries to fold in,
+  and the merged session keeps the earliest start, one duration spanning every
+  recording, a note listing them all, and the RPE you confirmed (or a fresh
+  prediction when none was). The merge runs as one atomic server operation, so
+  it queues offline and can never strand recordings.
 - Native iPhone now has a medium/large home-screen and Smart Stack readiness
   widget with today's readiness score and zone, ACWR with acute/chronic load,
   and the current training block; missing data stays an honest Apple Health or
