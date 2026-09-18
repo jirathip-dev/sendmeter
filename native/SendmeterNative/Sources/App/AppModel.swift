@@ -43,6 +43,53 @@ private enum PendingWrite: Codable, Sendable {
     case sessionRPEEdit(RecordingEdit)
     case recordingDelete(RecordingDeleteQueuePayload)
     case workout(WorkoutDraft)
+    /// #916: the direct-write replay intents. Their entity identity is the
+    /// queue item's `id`, so the queue holds exactly ONE intent per preset or
+    /// routine and a newer mutation coalesces onto it instead of racing it.
+    case preset(DirectWriteIntent<TindeqPreset>)
+    case routine(DirectWriteIntent<RoutinePreset>)
+}
+
+private extension PendingWrite {
+    /// The operation this payload replays, for the direct-write entities.
+    var directWriteOperation: DirectWriteOperation? {
+        switch self {
+        case let .preset(intent): return intent.operation
+        case let .routine(intent): return intent.operation
+        default: return nil
+        }
+    }
+
+    /// The entity identity the queue item is keyed by. Preset and routine cache
+    /// entity ids are uuid strings, so the queue id is that uuid.
+    var directWriteEntityID: UUID? {
+        switch self {
+        case let .preset(intent): return UUID(uuidString: intent.entityID)
+        case let .routine(intent): return UUID(uuidString: intent.entityID)
+        default: return nil
+        }
+    }
+
+    var directWriteCacheEntityType: LocalCacheEntityType? {
+        switch self {
+        case .preset: return .presets
+        case .routine: return .routinePresets
+        default: return nil
+        }
+    }
+
+    /// The same intent re-labelled with a coalesced operation (keeping the
+    /// newer content and the operation identity already persisted).
+    func relabeled(with operation: DirectWriteOperation) -> PendingWrite? {
+        switch self {
+        case let .preset(intent):
+            return .preset(intent.replacingOperation(operation))
+        case let .routine(intent):
+            return .routine(intent.replacingOperation(operation))
+        default:
+            return nil
+        }
+    }
 }
 
 /// #675: the Settings-facing summary of one quarantined write. A separate
@@ -88,6 +135,8 @@ private extension DurableQueueItem where Payload == PendingWrite {
         case .sessionRPEEdit: return "Session RPE edit"
         case .recordingDelete: return "Force recording deletion"
         case .workout: return "Manual workout"
+        case .preset: return "Preset"
+        case .routine: return "Routine"
         }
     }
 
@@ -509,6 +558,11 @@ public final class AppModel {
     /// re-entrant callers can each snapshot the same combined item and the
     /// older one can rewrite the stable session identity after the newer save.
     private var legacyMigrationFlights: [UUID: LegacyRecordingEditMigrationFlight] = [:]
+    /// #916: accounts whose pending cache-only preset/routine rows have been
+    /// adopted into the durable queue this process. The adoption is finite and
+    /// costs a list fetch per entity type, so it runs from the drain path once
+    /// per account rather than on every pass.
+    private var migratedDirectWriteAccounts: Set<UUID> = []
     /// The session-RPE revision and delete tombstone live in one coordinator;
     /// this keeps every async response's decision tied to current, actor-free
     /// state on the main actor rather than to a stale task closure.
@@ -2379,6 +2433,20 @@ public final class AppModel {
                 CacheEntityIdentity(
                     entityType: .sessions,
                     entityID: draft.sessionID.uuidString
+                )
+            ]
+        case let .preset(intent):
+            return [
+                CacheEntityIdentity(
+                    entityType: .presets,
+                    entityID: intent.entityID
+                )
+            ]
+        case let .routine(intent):
+            return [
+                CacheEntityIdentity(
+                    entityType: .routinePresets,
+                    entityID: intent.entityID
                 )
             ]
         }
@@ -5514,14 +5582,35 @@ public final class AppModel {
         }
     }
 
-    public func savePreset(_ preset: TindeqPreset, isNew: Bool) async {
-        guard let userID = currentUserID else { return }
+    /// Persists one preset save (#916). The intended mutation — account, entity
+    /// identity, operation and content — is durable in the existing
+    /// `DurableQueue` before this returns, so a termination between the
+    /// optimistic row and the server acknowledgement leaves a replayable intent
+    /// instead of a pending cache-only row with no intent at all. Returns false
+    /// when the intent could not be persisted: nothing is written locally and
+    /// the failure is surfaced, never reported as a saved state.
+    @discardableResult
+    public func savePreset(_ preset: TindeqPreset, isNew: Bool) async -> Bool {
+        guard let userID = currentUserID else { return false }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        let previous = presets.first { $0.id == preset.id }
-        let optimisticRevision = cacheUpsertLocal(
+        let intent = DirectWriteIntent(
+            entityID: CacheEntityID.preset(preset),
+            operation: isNew ? .create : .update,
+            mutation: preset
+        )
+        guard let item = await enqueueDirectWrite(
+            .preset(intent),
+            capturedBy: accountFetch,
+            startUpload: false
+        ) else { return false }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        cacheUpsertLocal(
             preset,
             accountUserID: userID,
             entityType: .presets,
@@ -5529,111 +5618,78 @@ public final class AppModel {
         )
         presets.removeAll { $0.id == preset.id }
         presets.insert(preset, at: 0)
-        do {
-            let saved = try await (isNew
-                ? repository.insertPreset(preset)
-                : repository.updatePreset(preset))
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            cacheConfirmServerUpsert(
-                saved,
-                accountUserID: userID,
-                entityType: .presets,
-                entityID: CacheEntityID.preset(saved),
-                confirmingLocalRevision: optimisticRevision
-            )
-            presets.removeAll { $0.id == saved.id }
-            presets.insert(saved, at: 0)
-        } catch {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            presets.removeAll { $0.id == preset.id }
-            if let previous {
-                cacheConfirmServerUpsert(
-                    previous,
-                    accountUserID: userID,
-                    entityType: .presets,
-                    entityID: CacheEntityID.preset(previous),
-                    confirmingLocalRevision: optimisticRevision
-                )
-                presets.insert(previous, at: 0)
-            } else {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .presets,
-                    entityID: CacheEntityID.preset(preset),
-                    confirmingLocalRevision: optimisticRevision
-                )
-            }
-            surface(error)
-        }
+        startQueueUpload(item, capturedBy: accountFetch)
+        return true
     }
 
-    public func deletePreset(_ preset: TindeqPreset) async {
-        guard let userID = currentUserID else { return }
+    /// Deletes one preset through the durable queue (#916): the delete intent
+    /// carries the entity identity and the pre-delete row, and it is persisted
+    /// before the row leaves the list. A termination mid-delete therefore
+    /// replays the removal instead of leaving the entity behind, and a
+    /// completed delete terminalizes the identity so no later write can
+    /// resurrect it. Returns false (nothing changed locally, failure surfaced)
+    /// when the intent could not be persisted.
+    @discardableResult
+    public func deletePreset(_ preset: TindeqPreset) async -> Bool {
+        guard let userID = currentUserID else { return false }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
         let previous = presets.first { $0.id == preset.id }
+        let intent = DirectWriteIntent(
+            entityID: CacheEntityID.preset(preset),
+            operation: .delete,
+            mutation: previous ?? preset
+        )
+        guard let item = await enqueueDirectWrite(
+            .preset(intent),
+            capturedBy: accountFetch,
+            startUpload: false
+        ) else { return false }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
         presets.removeAll { $0.id == preset.id }
-        let deleteRevision = cacheMarkDeletedLocal(
+        cacheMarkDeletedLocal(
             accountUserID: userID,
             entityType: .presets,
             entityID: CacheEntityID.preset(preset)
         )
-        do {
-            try await repository.deletePreset(id: preset.id)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            cacheConfirmServerDelete(
-                accountUserID: userID,
-                entityType: .presets,
-                entityID: CacheEntityID.preset(preset),
-                confirmingLocalRevision: deleteRevision
-            )
-        } catch {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            if let previous {
-                cacheConfirmServerUpsert(
-                    previous,
-                    accountUserID: userID,
-                    entityType: .presets,
-                    entityID: CacheEntityID.preset(previous),
-                    confirmingLocalRevision: deleteRevision
-                )
-                presets.insert(previous, at: 0)
-            } else {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .presets,
-                    entityID: CacheEntityID.preset(preset),
-                    confirmingLocalRevision: deleteRevision
-                )
-            }
-            surface(error)
-        }
+        startQueueUpload(item, capturedBy: accountFetch)
+        return true
     }
 
     // MARK: Routines
 
-    public func saveRoutine(_ routine: RoutinePreset, isNew: Bool) async {
-        guard let userID = currentUserID else { return }
+    /// Persists one routine save (#916) with the same durability contract as
+    /// `savePreset`: the intent (identity + operation + immutable content) is
+    /// queued before the optimistic row is reported as accepted, so process
+    /// death between the local row and the acknowledgement replays the write
+    /// instead of leaving an unreplayable pending row.
+    @discardableResult
+    public func saveRoutine(_ routine: RoutinePreset, isNew: Bool) async -> Bool {
+        guard let userID = currentUserID else { return false }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        let previous = routines.first { $0.id == routine.id }
-        let optimisticRevision = cacheUpsertLocal(
+        let intent = DirectWriteIntent(
+            entityID: CacheEntityID.routine(routine),
+            operation: isNew ? .create : .update,
+            mutation: routine
+        )
+        guard let item = await enqueueDirectWrite(
+            .routine(intent),
+            capturedBy: accountFetch,
+            startUpload: false
+        ) else { return false }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        cacheUpsertLocal(
             routine,
             accountUserID: userID,
             entityType: .routinePresets,
@@ -5641,99 +5697,43 @@ public final class AppModel {
         )
         routines.removeAll { $0.id == routine.id }
         routines.insert(routine, at: 0)
-        do {
-            let saved = try await (isNew
-                ? repository.insertRoutine(routine)
-                : repository.updateRoutine(routine))
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            cacheConfirmServerUpsert(
-                saved,
-                accountUserID: userID,
-                entityType: .routinePresets,
-                entityID: CacheEntityID.routine(saved),
-                confirmingLocalRevision: optimisticRevision
-            )
-            routines.removeAll { $0.id == saved.id }
-            routines.insert(saved, at: 0)
-        } catch {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            routines.removeAll { $0.id == routine.id }
-            if let previous {
-                cacheConfirmServerUpsert(
-                    previous,
-                    accountUserID: userID,
-                    entityType: .routinePresets,
-                    entityID: CacheEntityID.routine(previous),
-                    confirmingLocalRevision: optimisticRevision
-                )
-                routines.insert(previous, at: 0)
-            } else {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .routinePresets,
-                    entityID: CacheEntityID.routine(routine),
-                    confirmingLocalRevision: optimisticRevision
-                )
-            }
-            surface(error)
-        }
+        startQueueUpload(item, capturedBy: accountFetch)
+        return true
     }
 
-    public func deleteRoutine(_ routine: RoutinePreset) async {
-        guard let userID = currentUserID else { return }
+    /// Deletes one routine through the durable queue (#916), exactly as
+    /// `deletePreset` does: the removal is durable before the row leaves the
+    /// list, and it terminalizes the identity once it lands.
+    @discardableResult
+    public func deleteRoutine(_ routine: RoutinePreset) async -> Bool {
+        guard let userID = currentUserID else { return false }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
         let previous = routines.first { $0.id == routine.id }
+        let intent = DirectWriteIntent(
+            entityID: CacheEntityID.routine(routine),
+            operation: .delete,
+            mutation: previous ?? routine
+        )
+        guard let item = await enqueueDirectWrite(
+            .routine(intent),
+            capturedBy: accountFetch,
+            startUpload: false
+        ) else { return false }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
         routines.removeAll { $0.id == routine.id }
-        let deleteRevision = cacheMarkDeletedLocal(
+        cacheMarkDeletedLocal(
             accountUserID: userID,
             entityType: .routinePresets,
             entityID: CacheEntityID.routine(routine)
         )
-        do {
-            try await repository.deleteRoutine(id: routine.id)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            cacheConfirmServerDelete(
-                accountUserID: userID,
-                entityType: .routinePresets,
-                entityID: CacheEntityID.routine(routine),
-                confirmingLocalRevision: deleteRevision
-            )
-        } catch {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            if let previous {
-                cacheConfirmServerUpsert(
-                    previous,
-                    accountUserID: userID,
-                    entityType: .routinePresets,
-                    entityID: CacheEntityID.routine(previous),
-                    confirmingLocalRevision: deleteRevision
-                )
-                routines.insert(previous, at: 0)
-            } else {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .routinePresets,
-                    entityID: CacheEntityID.routine(routine),
-                    confirmingLocalRevision: deleteRevision
-                )
-            }
-            surface(error)
-        }
+        startQueueUpload(item, capturedBy: accountFetch)
+        return true
     }
 
     // MARK: Health and account
@@ -6839,6 +6839,17 @@ public final class AppModel {
                   to: currentUserID,
                   accountEpoch: accountEpoch
               ) else { return }
+        // #916 AC4: a pending cache-only preset/routine row predates the
+        // replay envelope; adopt it into this same queue before the drain
+        // snapshots the due items, so the row is no longer intent-less.
+        guard await migrateLegacyDirectWrites(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return }
         let due = await queue.items(
             for: userID,
             dueAt: mode.revalidationDueAt(now: Date())
@@ -7589,6 +7600,470 @@ public final class AppModel {
         )
     }
 
+    // MARK: Direct-write replay (#916)
+
+    /// The repository mutations one direct-write entity kind exposes, plus its
+    /// authoritative list. Keeps the replay below shared between presets and
+    /// routines (and the later direct-write slices that adopt the envelope).
+    private struct DirectWriteRemote<Value> {
+        let fetch: () async throws -> [Value]
+        let insert: (Value) async throws -> Value
+        let update: (Value) async throws -> Value
+        let delete: (UUID) async throws -> Void
+    }
+
+    /// What one replayed direct-write intent did to the server.
+    private enum DirectWriteOutcome<Value> {
+        /// The intended mutation is on the server: inserted, patched, or
+        /// already there after a lost acknowledgement (adopted as-is).
+        case saved(Value)
+        /// The entity is gone: the delete landed, or the server had provably
+        /// nothing to delete. `removedEntityID` is the identity a
+        /// server-minted row was removed by, when that differed from the
+        /// identity the intent carried.
+        case deleted(removedEntityID: String?)
+    }
+
+    /// Replays one durable direct-write intent against the server.
+    ///
+    /// `create` asks the authoritative list first: `tindeq_presets` and
+    /// `routine_presets` mint their own row id and the insert payload carries
+    /// none, so a blind retry after a lost acknowledgement would insert a
+    /// SECOND row — an active row that already carries the intended content IS
+    /// that acknowledgement. `update` is a PATCH by identity, idempotent by
+    /// construction. `delete` resolves its target the same way before removing
+    /// it, so a create that landed with a server-minted id is removed rather
+    /// than resurrected, and a delete of something the server no longer has is
+    /// provably a no-op instead of a guessed write.
+    private func applyDirectWriteIntent<Value: DirectWriteEntityValue>(
+        _ intent: DirectWriteIntent<Value>,
+        remote: DirectWriteRemote<Value>
+    ) async throws -> DirectWriteOutcome<Value> {
+        switch intent.operation {
+        case .create:
+            guard let intended = intent.mutation else {
+                // The write paths always persist the intended row, so this is
+                // reachable only from a corrupt queue file. It must not be
+                // invented from later state: the intent is parked as a failure
+                // (and quarantined after its bounded attempts) instead.
+                throw DirectWriteReplayError.missingIntendedMutation
+            }
+            if let alreadyApplied = DirectWriteReplayPolicy.alreadyApplied(
+                intended: intended,
+                serverValues: try await remote.fetch()
+            ) {
+                return .saved(alreadyApplied)
+            }
+            return .saved(try await remote.insert(intended))
+        case .update:
+            guard let intended = intent.mutation else {
+                throw DirectWriteReplayError.missingIntendedMutation
+            }
+            return .saved(try await remote.update(intended))
+        case .delete:
+            let serverValues = try await remote.fetch()
+            let target = serverValues.first {
+                $0.directWriteID.uuidString.lowercased() == intent.entityID.lowercased()
+            } ?? intent.mutation.flatMap { mutation in
+                DirectWriteReplayPolicy.alreadyApplied(
+                    intended: mutation,
+                    serverValues: serverValues
+                )
+            }
+            guard let target else {
+                // Provably nothing to delete: no row under the intended
+                // identity and none carrying the intended content.
+                return .deleted(removedEntityID: nil)
+            }
+            try await remote.delete(target.directWriteID)
+            return .deleted(removedEntityID: target.directWriteID.uuidString)
+        }
+    }
+
+    /// Reconciles one saved direct-write entity into the account cache.
+    ///
+    /// The identity is unchanged on the server, so the ordinary revision-fenced
+    /// confirmation applies: an older acknowledgement therefore cannot clear a
+    /// newer pending local revision. When the server minted a DIFFERENT row id
+    /// (an insert without a client id), the local optimistic identity can never
+    /// receive a confirmation: it is retired rather than left pending for ever,
+    /// and the server row is stored as clean server state.
+    ///
+    /// - Returns: whether this acknowledgement is still the newest local
+    ///   revision for the entity. `false` means a newer local edit replaced the
+    ///   acknowledged one while the request was in flight, so the caller must
+    ///   not publish the (older) server row over it.
+    @discardableResult
+    private func confirmDirectWriteSaved<Value: DirectWriteEntityValue>(
+        _ saved: Value,
+        intent: DirectWriteIntent<Value>,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        cacheRevisions: [CacheEntityIdentity: Int]
+    ) -> Bool {
+        let savedEntityID = saved.directWriteID.uuidString
+        if savedEntityID.lowercased() == intent.entityID.lowercased() {
+            let captured = cacheConfirmationRevision(
+                cacheRevisions,
+                entityType: entityType,
+                entityID: savedEntityID
+            )
+            let current: Int? = try? cachedWorkspace?.localRevision(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: savedEntityID
+            )
+            guard captured == current else { return false }
+            cacheConfirmServerUpsert(
+                saved,
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: savedEntityID,
+                confirmingLocalRevision: captured
+            )
+            return true
+        }
+        cacheUpsertServer(
+            saved,
+            accountUserID: accountUserID,
+            entityType: entityType,
+            entityID: savedEntityID
+        )
+        cacheConfirmServerDelete(
+            accountUserID: accountUserID,
+            entityType: entityType,
+            entityID: intent.entityID,
+            confirmingLocalRevision: cacheConfirmationRevision(
+                cacheRevisions,
+                entityType: entityType,
+                entityID: intent.entityID
+            )
+        )
+        return true
+    }
+
+    /// Retires the local rows for one completed direct-write delete: the
+    /// identity the intent carried, plus the identity a server-minted row was
+    /// removed by when the two differ (the create's row, adopted by content).
+    private func retireDirectWriteLocalRows<Value: DirectWriteEntityValue>(
+        intent: DirectWriteIntent<Value>,
+        removedEntityID: String?,
+        accountUserID: UUID,
+        entityType: LocalCacheEntityType,
+        cacheRevisions: [CacheEntityIdentity: Int]
+    ) {
+        var entityIDs = [intent.entityID]
+        if let removedEntityID,
+           removedEntityID.lowercased() != intent.entityID.lowercased() {
+            entityIDs.append(removedEntityID)
+        }
+        for entityID in entityIDs {
+            cacheConfirmServerDelete(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                entityID: entityID,
+                confirmingLocalRevision: cacheConfirmationRevision(
+                    cacheRevisions,
+                    entityType: entityType,
+                    entityID: entityID
+                )
+            )
+        }
+    }
+
+    /// Records one completed direct-write delete as terminal for its entity:
+    /// the queue item (and any other item for that identity) leaves in the same
+    /// durable transaction as the marker, so a later write for the identity
+    /// cannot enqueue and cannot resurrect what the user removed. Returns false
+    /// when a newer intent replaced the claimed one — that replacement stays
+    /// durable for a later retry.
+    @discardableResult
+    private func terminalizeDirectWrite(
+        _ item: DurableQueueItem<PendingWrite>,
+        entityID: UUID,
+        operationID: UUID,
+        reason: String,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> Bool {
+        guard let queue else { return false }
+        do {
+            return try await queue.completeTerminalDelete(
+                id: item.id,
+                accountUserID: item.accountUserID,
+                expectedRevision: item.revision,
+                terminalKey: entityID,
+                operationID: operationID,
+                reason: reason
+            )
+        } catch {
+            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
+                surface(error)
+            }
+            return false
+        }
+    }
+
+    /// Starts the single-flight upload for one freshly persisted direct-write
+    /// item. Separate from the enqueue so the optimistic local row exists
+    /// before a request can claim it: a fast acknowledgement would otherwise
+    /// have no row to confirm and would leave it pending for ever.
+    private func startQueueUpload(
+        _ item: DurableQueueItem<PendingWrite>,
+        capturedBy accountFetch: AccountScopedFetch
+    ) {
+        Task { [weak self] in
+            _ = await self?.upload(item, capturedBy: accountFetch)
+        }
+    }
+
+    /// Persists one direct-write intent for an entity, coalescing it onto the
+    /// pending intent of the same entity when there is one.
+    ///
+    /// Returns the durable queue item, or `nil` when the intent was NOT
+    /// persisted — an unavailable queue, a persistence error, an account
+    /// change, or an identity whose delete is already terminal. The caller must
+    /// then report the write as failed instead of accepted: this call is the
+    /// durability boundary, and without a persisted intent there is no replay.
+    private func enqueueDirectWrite(
+        _ payload: PendingWrite,
+        capturedBy accountFetch: AccountScopedFetch,
+        startUpload: Bool
+    ) async -> DurableQueueItem<PendingWrite>? {
+        guard let queue,
+              let entityID = payload.directWriteEntityID,
+              let incoming = payload.directWriteOperation else { return nil }
+        for _ in 0..<3 {
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return nil }
+            let existing = await queue.item(
+                id: entityID,
+                accountUserID: accountFetch.accountUserID
+            )
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return nil }
+
+            let operation: DirectWriteOperation
+            if let pendingOperation = existing?.payload.directWriteOperation {
+                guard let coalesced = DirectWriteReplayPolicy.coalesce(
+                    pending: pendingOperation,
+                    incoming: incoming
+                ) else {
+                    // The entity's removal is already the newest word for this
+                    // identity; persisting the write would resurrect it.
+                    surfaceDirectWriteNotPersisted()
+                    return nil
+                }
+                operation = coalesced
+            } else {
+                operation = incoming
+            }
+            guard let coalescedPayload = payload.relabeled(with: operation) else {
+                return nil
+            }
+            let item = DurableQueueItem(
+                id: entityID,
+                accountUserID: accountFetch.accountUserID,
+                terminalKey: entityID,
+                payload: coalescedPayload
+            )
+            do {
+                let installed = try await queue.enqueueIfCurrent(
+                    item,
+                    expectedRevision: existing?.revision
+                )
+                guard installed else {
+                    if await queue.terminalizedKeys(
+                        for: accountFetch.accountUserID
+                    ).contains(entityID) {
+                        surfaceDirectWriteNotPersisted()
+                        return nil
+                    }
+                    // A concurrent producer replaced the intent between the read
+                    // and the write: re-read and coalesce onto the newest one.
+                    continue
+                }
+            } catch {
+                if accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) {
+                    surface(error)
+                }
+                await refreshQueueCount(for: accountFetch)
+                return nil
+            }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return nil }
+            await refreshQueueCount(for: accountFetch)
+            if startUpload {
+                startQueueUpload(item, capturedBy: accountFetch)
+            }
+            return item
+        }
+        surfaceDirectWriteNotPersisted()
+        return nil
+    }
+
+    /// The user-facing failure for a write that could not become durable. The
+    /// queue is the durability boundary, so this is reported as a failure the
+    /// user can retry — never as a saved or synced state.
+    private func surfaceDirectWriteNotPersisted() {
+        surface(NSError(
+            domain: "SendmeterNative",
+            code: 2,
+            userInfo: [
+                NSLocalizedDescriptionKey: "This change couldn't be saved on this device.",
+            ]
+        ))
+    }
+
+    /// #916 AC4: adopts pending CACHE-ONLY rows for one direct-write entity
+    /// type into the durable queue.
+    ///
+    /// These rows are the pre-#916 residue: an optimistic row whose upload
+    /// never confirmed, left with no replay intent after process death. The row
+    /// itself is the evidence (`DirectWriteReplayPolicy.legacyOperation`) and
+    /// the operation it carries is resolved against the authoritative list
+    /// before anything is sent, so nothing is guessed and nothing is cleared:
+    /// a row whose payload cannot be decoded stays in the unsynced count for
+    /// the user to act on, and the row is only retired when the server's own
+    /// answer proves it is resolved.
+    private func adoptLegacyDirectWrites<Value: DirectWriteEntityValue & Codable>(
+        entityType: LocalCacheEntityType,
+        accountUserID: UUID,
+        capturedBy accountFetch: AccountScopedFetch,
+        decode: (String) -> Value?,
+        fetchServerValues: () async throws -> [Value],
+        wrap: (DirectWriteIntent<Value>) -> PendingWrite
+    ) async -> Bool {
+        guard let queue, let workspace = cachedWorkspace else { return true }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        let queuedIDs = Set(await queue.items(
+            for: accountUserID,
+            includeQuarantined: true
+        ).compactMap { $0.payload.directWriteEntityID?.uuidString.lowercased() })
+        guard let allPending = try? workspace.pendingEntityIDs(
+            accountUserID: accountUserID,
+            entityType: entityType,
+            includingDeleted: true
+        ) else { return false }
+        let livePending = (try? workspace.pendingEntityIDs(
+            accountUserID: accountUserID,
+            entityType: entityType
+        )) ?? []
+        let liveIDs = Set(livePending.map { $0.lowercased() })
+        let legacyIDs = allPending.filter { !queuedIDs.contains($0.lowercased()) }
+        guard !legacyIDs.isEmpty else { return true }
+        // Only a live legacy row needs the authoritative list (to tell an
+        // update from a create). Tombstones are resolved by the list too, so
+        // one fetch covers both; a failed fetch defers the whole migration
+        // rather than guessing an operation.
+        let serverValues: [Value]
+        do {
+            serverValues = try await fetchServerValues()
+        } catch {
+            guard !Task.isCancelled else { return false }
+            return false
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        for entityID in legacyIDs {
+            let isTombstoned = !liveIDs.contains(entityID.lowercased())
+            let decoded = isTombstoned ? nil : decode(entityID)
+            if !isTombstoned, decoded == nil {
+                // Undecodable payload: it cannot be replayed and must not be
+                // cleared. It keeps counting as unsynced (needs attention).
+                continue
+            }
+            let operation = DirectWriteReplayPolicy.legacyOperation(
+                isTombstoned: isTombstoned,
+                serverHasEntity: decoded.map { value in
+                    serverValues.contains { $0.directWriteID == value.directWriteID }
+                } ?? false
+            )
+            guard await enqueueDirectWrite(
+                wrap(
+                    DirectWriteIntent(
+                        entityID: entityID,
+                        operation: operation,
+                        mutation: decoded
+                    )
+                ),
+                capturedBy: accountFetch,
+                startUpload: false
+            ) != nil else { return false }
+        }
+        return true
+    }
+
+    /// The drain-path entry point for the #916 AC4 adoption, once per account
+    /// per process: the legacy residue is finite and adopting it costs one list
+    /// fetch per entity type, not one per drain.
+    private func migrateLegacyDirectWrites(
+        userID: UUID,
+        capturedBy capturedAccountFetch: AccountScopedFetch? = nil
+    ) async -> Bool {
+        guard queue != nil else { return true }
+        guard !migratedDirectWriteAccounts.contains(userID) else { return true }
+        let accountFetch = capturedAccountFetch ?? AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let presetsAdopted = await adoptLegacyDirectWrites(
+            entityType: .presets,
+            accountUserID: userID,
+            capturedBy: accountFetch,
+            decode: { entityID in
+                try? self.cachedWorkspace?.store.loadOne(
+                    TindeqPreset.self,
+                    accountUserID: userID,
+                    entityType: .presets,
+                    entityID: entityID
+                )
+            },
+            fetchServerValues: { [repository] in try await repository.fetchPresets() },
+            wrap: { .preset($0) }
+        )
+        guard presetsAdopted else { return false }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        let routinesAdopted = await adoptLegacyDirectWrites(
+            entityType: .routinePresets,
+            accountUserID: userID,
+            capturedBy: accountFetch,
+            decode: { entityID in
+                try? self.cachedWorkspace?.store.loadOne(
+                    RoutinePreset.self,
+                    accountUserID: userID,
+                    entityType: .routinePresets,
+                    entityID: entityID
+                )
+            },
+            fetchServerValues: { [repository] in try await repository.fetchRoutinePresets() },
+            wrap: { .routine($0) }
+        )
+        guard routinesAdopted else { return false }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        migratedDirectWriteAccounts.insert(userID)
+        return true
+    }
+
     @discardableResult
     private func upload(
         _ item: DurableQueueItem<PendingWrite>,
@@ -8299,6 +8774,104 @@ public final class AppModel {
                     guard publishedWorkout else {
                         return UploadResult(uploaded: false, failure: nil)
                     }
+                }
+            case let .preset(intent):
+                // The editor already reflects the optimistic save; the queue's
+                // generic toast would be a second, duplicate confirmation.
+                suppressSavedToast = true
+                let repository = self.repository
+                let outcome = try await applyDirectWriteIntent(
+                    intent,
+                    remote: DirectWriteRemote(
+                        fetch: { try await repository.fetchPresets() },
+                        insert: { try await repository.insertPreset($0) },
+                        update: { try await repository.updatePreset($0) },
+                        delete: { try await repository.deletePreset(id: $0) }
+                    )
+                )
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                switch outcome {
+                case let .saved(saved):
+                    guard confirmDirectWriteSaved(
+                        saved,
+                        intent: intent,
+                        accountUserID: item.accountUserID,
+                        entityType: .presets,
+                        cacheRevisions: cacheRevisions
+                    ) else { break }
+                    presets.removeAll {
+                        $0.id == saved.id
+                            || $0.id.uuidString.lowercased() == intent.entityID.lowercased()
+                    }
+                    presets.insert(saved, at: 0)
+                case let .deleted(removedEntityID):
+                    retireDirectWriteLocalRows(
+                        intent: intent,
+                        removedEntityID: removedEntityID,
+                        accountUserID: item.accountUserID,
+                        entityType: .presets,
+                        cacheRevisions: cacheRevisions
+                    )
+                    _ = await terminalizeDirectWrite(
+                        item,
+                        entityID: item.id,
+                        operationID: intent.operationID,
+                        reason: "preset-deleted",
+                        capturedBy: accountFetch
+                    )
+                }
+            case let .routine(intent):
+                suppressSavedToast = true
+                let repository = self.repository
+                let outcome = try await applyDirectWriteIntent(
+                    intent,
+                    remote: DirectWriteRemote(
+                        fetch: { try await repository.fetchRoutinePresets() },
+                        insert: { try await repository.insertRoutine($0) },
+                        update: { try await repository.updateRoutine($0) },
+                        delete: { try await repository.deleteRoutine(id: $0) }
+                    )
+                )
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                switch outcome {
+                case let .saved(saved):
+                    guard confirmDirectWriteSaved(
+                        saved,
+                        intent: intent,
+                        accountUserID: item.accountUserID,
+                        entityType: .routinePresets,
+                        cacheRevisions: cacheRevisions
+                    ) else { break }
+                    routines.removeAll {
+                        $0.id == saved.id
+                            || $0.id.uuidString.lowercased() == intent.entityID.lowercased()
+                    }
+                    routines.insert(saved, at: 0)
+                case let .deleted(removedEntityID):
+                    retireDirectWriteLocalRows(
+                        intent: intent,
+                        removedEntityID: removedEntityID,
+                        accountUserID: item.accountUserID,
+                        entityType: .routinePresets,
+                        cacheRevisions: cacheRevisions
+                    )
+                    _ = await terminalizeDirectWrite(
+                        item,
+                        entityID: item.id,
+                        operationID: intent.operationID,
+                        reason: "routine-deleted",
+                        capturedBy: accountFetch
+                    )
                 }
             }
             if let sessionReceipt, routineUndo.isClaimed(sessionReceipt) {
@@ -9701,6 +10274,12 @@ public final class AppModel {
                         )
                     )
                 }
+            case .preset, .routine:
+                // #916: a preset or routine keeps its optimistic state in its
+                // own account-scoped cache row (which this restore pass reads
+                // separately), so there is no in-memory overlay to rebuild from
+                // the queue payload. The durable intent only drives the replay.
+                continue
             }
         }
         for (sessionID, candidates) in restoredSessionRPECandidates {
