@@ -1970,18 +1970,18 @@ public final class SendmeterRepository: @unchecked Sendable {
         return response.generation
     }
 
+    /// Consumes every page of the sessions delta in `(updated_at, id)` order
+    /// (#914): the composite cursor resumes inside a timestamp tie group and a
+    /// page failure throws before a delta exists.
     public func fetchSessionDelta(
         since cursor: String?,
         accountUserID: UUID? = nil
     ) async throws -> RemoteEntityDelta<Session> {
-        let rows: [SessionRow] = try await transport.request(
+        try await pagedDelta(
             path: "rest/v1/sessions",
-            method: .get,
-            queryItems: deltaQueryItems(cursor: cursor, select: sessionColumns)
-        )
-        return makeDelta(
-            rows: rows,
-            entityID: { $0.id.uuidString },
+            select: sessionColumns,
+            since: cursor,
+            entityID: { (row: SessionRow) in row.id.uuidString },
             value: { $0.model(accountUserID: accountUserID) },
             isDeleted: { $0.deletedAt != nil },
             updatedAt: { $0.updatedAt ?? .distantPast }
@@ -2061,17 +2061,16 @@ public final class SendmeterRepository: @unchecked Sendable {
         )
     }
 
+    /// Consumes every page of the recordings delta in `(updated_at, id)` order
+    /// (#914), tombstones included.
     public func fetchRecordingDelta(
         since cursor: String?
     ) async throws -> RemoteEntityDelta<TindeqRecording> {
-        let rows: [RecordingRow] = try await transport.request(
+        try await pagedDelta(
             path: "rest/v1/tindeq_recordings",
-            method: .get,
-            queryItems: deltaQueryItems(cursor: cursor, select: recordingColumns)
-        )
-        return makeDelta(
-            rows: rows,
-            entityID: { $0.id.uuidString },
+            select: recordingColumns,
+            since: cursor,
+            entityID: { (row: RecordingRow) in row.id.uuidString },
             value: { $0.model },
             isDeleted: { $0.deletedAt != nil },
             updatedAt: { $0.updatedAt }
@@ -2200,15 +2199,58 @@ public final class SendmeterRepository: @unchecked Sendable {
         )
     }
 
+    /// One reusable bounded delta reader (#914): consumes every page of a
+    /// `(updated_at, id)`-ordered response through `transport.requestPage`,
+    /// then returns a single delta whose cursor is the composite
+    /// `(updated_at, id)` checkpoint of the last row actually read.
+    ///
+    /// A failed or cancelled page throws out of `read` before any delta
+    /// exists, so the caller can never reconcile a partial response as an
+    /// authoritative snapshot, tombstone rows it did not see, or advance a
+    /// durable checkpoint past safely reconciled work. `Prefer: count=exact`
+    /// makes the server report its matching row total, which is how a response
+    /// capped below the requested page size still continues to the next page
+    /// instead of silently ending the read.
+    private func pagedDelta<Row: Decodable & Sendable, Value: Sendable>(
+        path: String,
+        select: String,
+        since cursor: String?,
+        entityID: @escaping @Sendable (Row) -> String,
+        value: @escaping @Sendable (Row) -> Value,
+        isDeleted: @escaping @Sendable (Row) -> Bool,
+        updatedAt: @escaping @Sendable (Row) -> Date
+    ) async throws -> RemoteEntityDelta<Value> {
+        let reader = DeltaPageReader<Row, Value>(
+            select: select,
+            entityID: entityID,
+            value: value,
+            isDeleted: isDeleted,
+            updatedAt: updatedAt
+        )
+        return try await reader.read(since: cursor) { request in
+            let page: PostgRESTPage<Row> = try await self.transport.requestPage(
+                path: path,
+                method: .get,
+                queryItems: request.queryItems,
+                prefer: "count=exact"
+            )
+            return DeltaPageResponse(
+                rows: page.rows,
+                totalCount: page.contentRange?.total
+            )
+        }
+    }
+
     private func deltaQueryItems(
         cursor: String?,
         select: String,
         order: String = "updated_at.asc"
     ) -> [URLQueryItem] {
-        // The strict `gt` cursor is safe because these requests are currently
-        // unpaged: every row sharing the response's maximum updated_at is
-        // returned before that timestamp is persisted. If pagination is ever
-        // added, this must become a composite (updated_at, entity id) cursor.
+        // Still unpaged for the remaining entities (#915 adopts the paged
+        // reader). The strict `gt` cursor stays safe only because every row
+        // sharing the response's maximum updated_at is returned before that
+        // timestamp is persisted. Sessions and recordings no longer take this
+        // path: they page on the composite (updated_at, id) cursor.
         var queryItems = [
             URLQueryItem(name: "select", value: select),
             URLQueryItem(name: "order", value: order)
