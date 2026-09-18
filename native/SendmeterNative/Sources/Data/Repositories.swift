@@ -987,6 +987,23 @@ private struct LinkRecordingsRPC: Encodable {
     }
 }
 
+/// #942: PostgREST parameter body for `merge_tindeq_sessions` (keys are the
+/// function's `p_*` names). The client sends the plan's identity plus the
+/// RPE choice; duration and note are recomputed by the server from the
+/// recordings it actually moved.
+private struct MergeTindeqSessionsRPC: Encodable {
+    let sessionIDs: [UUID]
+    let survivorID: UUID
+    let rpe: Double
+    let rpeConfirmed: Bool
+    enum CodingKeys: String, CodingKey {
+        case sessionIDs = "p_session_ids"
+        case survivorID = "p_survivor_id"
+        case rpe = "p_rpe"
+        case rpeConfirmed = "p_rpe_confirmed"
+    }
+}
+
 private struct RenameTagRPC: Encodable {
     let oldName: String
     let newName: String
@@ -1025,6 +1042,26 @@ public struct LinkRecordingsResult: Decodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case groupID = "group_id"
         case durationMinutes = "duration_min"
+    }
+}
+
+/// What `merge_tindeq_sessions` returns (#942): the surviving group id plus
+/// the row values the server recomputed from the moved recordings, so the
+/// optimistic local row is reconciled with the transaction's real outcome.
+/// Optional because the function's RETURNS TABLE columns are only as
+/// trustworthy as the call that produced them (a retried, already-applied
+/// merge still reports the survivor's current state).
+public struct MergeSessionsResult: Decodable, Sendable {
+    public let groupID: UUID?
+    public let durationMinutes: Int?
+    public let recordingCount: Int?
+    public let note: String?
+
+    enum CodingKeys: String, CodingKey {
+        case groupID = "group_id"
+        case durationMinutes = "duration_min"
+        case recordingCount = "recording_count"
+        case note
     }
 }
 
@@ -1613,6 +1650,37 @@ public final class SendmeterRepository: @unchecked Sendable {
         )
         let result: OneOrMany<LinkRecordingsResult> = try await transport.request(
             path: "rest/v1/rpc/link_tindeq_recordings_to_session",
+            method: .post,
+            body: body
+        )
+        return result.first
+    }
+
+    /// #942: fold same-day Tindeq sessions into one, in ONE server
+    /// transaction — the recordings of every selected group are re-pointed to
+    /// the survivor's group, the survivor takes the merged duration/note/RPE,
+    /// and the other sessions are soft-deleted. A failure anywhere inside the
+    /// function leaves nothing changed, so a merge can never strand the
+    /// recordings under a group with no session. Nil when handed fewer than
+    /// two sessions (nothing to merge); otherwise the RPC's returned group id
+    /// plus the duration/note/count it recomputed.
+    public func mergeTindeqSessions(
+        sessionIDs: [UUID],
+        survivorID: UUID,
+        rpe: Double,
+        rpeConfirmed: Bool
+    ) async throws -> MergeSessionsResult? {
+        guard sessionIDs.count >= 2 else { return nil }
+        let body = try await transport.encode(
+            MergeTindeqSessionsRPC(
+                sessionIDs: sessionIDs,
+                survivorID: survivorID,
+                rpe: rpe,
+                rpeConfirmed: rpeConfirmed
+            )
+        )
+        let result: OneOrMany<MergeSessionsResult> = try await transport.request(
+            path: "rest/v1/rpc/merge_tindeq_sessions",
             method: .post,
             body: body
         )
