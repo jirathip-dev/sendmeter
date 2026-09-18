@@ -45,6 +45,7 @@ public enum HistoryFilters {
         selectedTag: String?,
         hiddenTagNames: Set<String> = []
     ) -> HistoryFilterOptions {
+        HistoryScanCounter.bump(.filterOptions)
         var labels: [(id: String, label: String)] = []
         var seenTypes = Set<String>()
         for session in sessions where seenTypes.insert(session.type).inserted {
