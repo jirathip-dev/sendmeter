@@ -298,10 +298,12 @@ Put that email/password in the review notes.
    recreate one empty **Unreleased** section with **Added**, **Improved**, and
    **Fixed** headings. Submit the tested build for review.
 
-For iPhone testing before promotion, use `npm run sync:local` with paired
-simulators. A physical-device build cannot reach the laptop's local Supabase
-stack and currently uses production; use a throwaway production account for
-device-only Bluetooth, HealthKit, and signing checks.
+For iPhone testing before promotion, build and run the native app on paired
+simulators (Xcode Run is the easy path; the headless equivalent is `just gen`
+then `just build-ios`) — there is no local-config web bundle any more. A
+physical-device build cannot reach a local Supabase stack and uses production;
+use a throwaway production account for device-only Bluetooth, HealthKit, and
+signing checks.
 
 - **Password reset email** (Settings → Account & Security → Send Password Reset
   Email): device-only — verify the reset email's link reopens the app into the
@@ -309,6 +311,10 @@ device-only Bluetooth, HealthKit, and signing checks.
   test covers this (email/deep-link dependent).
 
 ## App Store screenshot automation
+
+> **Historical (retired in #857).** The `screenshots` lane was removed with the
+> Capacitor host; the command below no longer exists. Regenerating App Store
+> screenshots for the native app needs its own issue.
 
 Preserve and reuse the current App Store screenshots by default. Run the
 screenshot automation only when the existing images no longer accurately
