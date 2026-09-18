@@ -515,6 +515,12 @@ public final class AppModel {
     private var refreshingOwner: AccountScopedCompletion?
     private var dataRefreshOwners = Set<UUID>()
     private var recomputeGate = ReadinessRecomputeGate()
+    /// Freshness the most recent recompute pass reported to the watch (#913):
+    /// `.fresh` when the pass wrote a new score, `.cached` when it
+    /// deliberately kept the existing one. Read after the pass by a
+    /// watch-originated request, which must report what the phone actually did
+    /// rather than claim a fresh compute.
+    @ObservationIgnored private var lastReadinessPublicationFreshness: ReadinessFreshness = .cached
     /// #661: silent foreground/appear health sync. The policy is pure Core
     /// (`HealthRefreshPolicy`, unit-tested); `lastHealthRefreshStartedAt` is
     /// the monotonic system-uptime time the most recent actual refresh started
@@ -731,6 +737,13 @@ public final class AppModel {
 
         watch.onSessionRequested = { [weak self] in
             await self?.relayValidSessionToWatch(guaranteed: true)
+        }
+        // #913: the watch's readiness ask runs on the phone's single-flight
+        // HealthKit pipeline; the closure returns the typed outcome the watch
+        // renders (the bridge owns identity, coalescing, and the fence).
+        watch.onReadinessRefresh = { [weak self] _ in
+            guard let self else { return .unsupported() }
+            return await self.performWatchReadinessRefresh()
         }
         watch.onWorkoutCompletion = { [weak self] completion in
             guard let self else { return false }
@@ -5949,6 +5962,65 @@ public final class AppModel {
         morningHealthRefreshState.release()
     }
 
+    /// One watch-originated readiness request (#913), executed on the same
+    /// single-flight pipeline a foreground or background trigger uses — so
+    /// #802's dual-source precedence and the #109 freeze remain the only write
+    /// rules, and a watch ask can never introduce a second writer.
+    ///
+    /// Every exit is a typed, user-facing outcome; the watch's own result gate
+    /// owns late/duplicate application. A pass that was coalesced behind an
+    /// in-flight owner (`nil`) still answers with the phone's current
+    /// published reading rather than an error, because the phone does have a
+    /// score to show.
+    private func performWatchReadinessRefresh() async -> ReadinessRefreshOutcome {
+        guard let userID = currentUserID else { return .authRequired() }
+        // The same authorization flag the automatic foreground/background
+        // paths gate on: without Health access the phone cannot refresh, and
+        // only opening the phone app can change that.
+        guard UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") else {
+            return .healthUnavailable()
+        }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let passTimeZone = TimeZone.current
+        do {
+            let result = try await computeAndPublishReadiness(
+                userID: userID,
+                trigger: .automatic,
+                capturedBy: accountFetch,
+                timeZone: passTimeZone
+            )
+            guard !Task.isCancelled, accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return .cancelled() }
+            if let result {
+                recordHealthSync(result.observation, capturedBy: accountFetch)
+            }
+            guard let metric = readiness else {
+                // The phone has no published reading (an empty HealthKit
+                // read, or a pass owned by another flight). Nothing is
+                // blanked: the watch keeps the score it already shows.
+                return .success(freshness: .cached, snapshot: nil)
+            }
+            return .success(
+                freshness: lastReadinessPublicationFreshness,
+                snapshot: SendLogWatchCore.ReadinessSnapshot(
+                    date: metric.date,
+                    readiness: metric.readiness,
+                    zone: metric.zone,
+                    computedAt: metric.computedAt.map(\.timeIntervalSince1970)
+                )
+            )
+        } catch is CancellationError {
+            return .cancelled()
+        } catch {
+            return .failed()
+        }
+    }
+
     /// The one recompute path, owned by `ReadinessRecomputeGate`: exactly one
     /// pass runs at a time and a concurrent trigger (foreground or
     /// background) coalesces into at most one follow-up. The gate is entered
@@ -6249,7 +6321,17 @@ public final class AppModel {
                         recomputeGate.cancel()
                         return nil
                     }
-                    watch.publishReadiness(relayMetric)
+                    // #913: the phone's readiness push is a typed result, and
+                    // the freshness it reports is this pass's own decision. The
+                    // upsert split is exactly that decision — the kept
+                    // branches re-upsert the biometrics with readiness nil.
+                    lastReadinessPublicationFreshness = plan.upserts.contains {
+                        $0.date == relayMetric.date && $0.readiness != nil
+                    } ? .fresh : .cached
+                    watch.publishReadiness(
+                        relayMetric,
+                        freshness: lastReadinessPublicationFreshness
+                    )
                 }
                 // Health reconciliation can touch the complete 28-day
                 // candidate window. Publish once after the pass, rather than
