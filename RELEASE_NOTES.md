@@ -177,6 +177,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: shortened the brief pause after Stop while your force curve recomputes, without changing any of the numbers it produces.
 - Apple Watch Force screens now match the rest of Sendmeter's visual language: the primary Start button, protocol card, and guided-run timer use the same blue/indigo accent as the rest of the app instead of a separate pink/purple identity, with connection, warning, and error states still called out in their usual colors.
 - Force's Exercise & Side card now shows a compact "Manage exercises" icon button instead of a text button, and the manager sheet it opens is titled "Manage exercises".
+- Native guided Force: a rest now tells you what is coming next — the upcoming rep or set, its hold length (including a set's ramped hold), and the hand you are about to pull with — instead of describing only the set that just finished; the same line appears on the lock screen's Live Activity card, and a rest with nothing left to hand off to says "Last set done · finishing" rather than naming a set that is not coming. (Lock-screen rendering itself is still device-only to verify.)
 
 ### Fixed
 

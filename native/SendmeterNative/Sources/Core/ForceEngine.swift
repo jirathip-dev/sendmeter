@@ -488,6 +488,39 @@ public enum ForceProtocolStageKind: String, Codable, Sendable {
     case complete
 }
 
+/// #939: the work stage a rest hands off to.
+///
+/// The guided surfaces receive a `ForceProtocolStage`, never the run, so a
+/// rest carries its hand-off on the stage itself — exactly as `prepare` and
+/// `switchSide` already carry the side they lead into. Resolving it here (the
+/// schedule is the only place that knows the run's work sides and each set's
+/// hold ramp) keeps the rest line honest; re-deriving the next stage in the
+/// view layer would be a second copy of the schedule, free to drift.
+public struct ForceProtocolWorkHandoff: Codable, Equatable, Sendable {
+    public let setNumber: Int
+    public let repetitionNumber: Int
+    public let repetitionTotal: Int
+    public let side: TindeqSide
+    public let durationSeconds: Double
+    public let mode: ForceProtocolMode
+
+    public init(
+        setNumber: Int,
+        repetitionNumber: Int,
+        repetitionTotal: Int,
+        side: TindeqSide,
+        durationSeconds: Double,
+        mode: ForceProtocolMode
+    ) {
+        self.setNumber = setNumber
+        self.repetitionNumber = repetitionNumber
+        self.repetitionTotal = repetitionTotal
+        self.side = side
+        self.durationSeconds = durationSeconds
+        self.mode = mode
+    }
+}
+
 public struct ForceProtocolStage: Codable, Equatable, Sendable, Identifiable {
     public let id: UUID
     public let kind: ForceProtocolStageKind
@@ -496,6 +529,9 @@ public struct ForceProtocolStage: Codable, Equatable, Sendable, Identifiable {
     public let side: TindeqSide
     public let durationSeconds: Double
     public let label: String
+    /// #939: set on rest stages only — the work stage this rest leads into,
+    /// or nil when nothing follows the rest (the run finishes after it).
+    public let handoff: ForceProtocolWorkHandoff?
 
     public init(
         id: UUID = UUID(),
@@ -504,7 +540,8 @@ public struct ForceProtocolStage: Codable, Equatable, Sendable, Identifiable {
         repetitionNumber: Int,
         side: TindeqSide,
         durationSeconds: Double,
-        label: String
+        label: String,
+        handoff: ForceProtocolWorkHandoff? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -513,6 +550,7 @@ public struct ForceProtocolStage: Codable, Equatable, Sendable, Identifiable {
         self.side = side
         self.durationSeconds = durationSeconds
         self.label = label
+        self.handoff = handoff
     }
 }
 
@@ -597,13 +635,16 @@ public enum ForceProtocolSchedule {
             )
         }
 
+        // #939: ONE place resolves a set's work duration — the set rest's
+        // hand-off quotes the NEXT set's, so a second copy could drift.
+        func workSeconds(forSet setNumber: Int) -> Double {
+            preset.protocolMode == .reverseAction
+                ? Double(repetitions) * (preset.cadenceOutSeconds + preset.cadenceReturnSeconds)
+                : Double(preset.holdSeconds(forSet: setNumber))
+        }
+
         for setNumber in 1...sets {
-            let workDuration: Double
-            if preset.protocolMode == .reverseAction {
-                workDuration = Double(repetitions) * (preset.cadenceOutSeconds + preset.cadenceReturnSeconds)
-            } else {
-                workDuration = Double(preset.holdSeconds(forSet: setNumber))
-            }
+            let workDuration = workSeconds(forSet: setNumber)
 
             for repetition in 1...repetitions {
                 if preset.protocolMode == .reverseAction && repetition > 1 {
@@ -648,7 +689,15 @@ public enum ForceProtocolSchedule {
                             repetitionNumber: repetition,
                             side: .unspecified,
                             durationSeconds: Double(max(0, preset.restBetweenRepetitionsSeconds)),
-                            label: "Rest"
+                            label: "Rest",
+                            handoff: ForceProtocolWorkHandoff(
+                                setNumber: setNumber,
+                                repetitionNumber: repetition + 1,
+                                repetitionTotal: repetitions,
+                                side: workSides.first ?? .unspecified,
+                                durationSeconds: workDuration,
+                                mode: preset.protocolMode
+                            )
                         )
                     )
                 }
@@ -662,7 +711,15 @@ public enum ForceProtocolSchedule {
                         repetitionNumber: repetitions,
                         side: .unspecified,
                         durationSeconds: Double(max(0, preset.restBetweenSetsSeconds)),
-                        label: "Set rest"
+                        label: "Set rest",
+                        handoff: ForceProtocolWorkHandoff(
+                            setNumber: setNumber + 1,
+                            repetitionNumber: 1,
+                            repetitionTotal: repetitions,
+                            side: workSides.first ?? .unspecified,
+                            durationSeconds: workSeconds(forSet: setNumber + 1),
+                            mode: preset.protocolMode
+                        )
                     )
                 )
             }

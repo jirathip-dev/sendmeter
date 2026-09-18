@@ -233,9 +233,17 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
         let nowEpochMs = runAnchor.anchoredAtEpochMs
         let remaining = max(0, runAnchor.remainingSeconds)
         let endEpochMs = runAnchor.isPaused ? nowEpochMs : nowEpochMs + remaining * 1_000
-        var detail = "Set \(stage.setNumber) · Rep \(stage.repetitionNumber)"
-        if stage.side != .unspecified {
-            detail += " · \(stage.side.label)"
+        // #939: during a rest the card shows the hand-off (the next set/rep
+        // and its hold) instead of the set that just ended. The string comes
+        // from the fullscreen's own rest line, so the lock screen and the
+        // phone cannot describe the same rest differently.
+        let detail: String
+        if let restDetail = GuidedForceFullscreenPresentation.restDetail(for: stage) {
+            detail = restDetail
+        } else if stage.side == .unspecified {
+            detail = "Set \(stage.setNumber) · Rep \(stage.repetitionNumber)"
+        } else {
+            detail = "Set \(stage.setNumber) · Rep \(stage.repetitionNumber) · \(stage.side.label)"
         }
         let phase = GuidedActivitySegment.Phase.from(stageKind: stage.kind)
         return Snapshot(
