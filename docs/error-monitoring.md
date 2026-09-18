@@ -1,5 +1,13 @@
 # Error monitoring (Sentry, web layer) — issue #227
 
+> **Superseded — kept for reference (#857).** This document describes the
+> WebView/React layer that was retired with the web surface
+> (`docs/architecture/857-removal-inventory.md`). The shipped app is native and
+> deliberately omits the web error-monitoring SDK — no Diagnostics data type is
+> declared (see `docs/app-store-checklist.md` → App Privacy answers). The
+> commands below (root npm scripts, Vite config, Vercel env) no longer exist in
+> this repo; nothing here is a current instruction.
+
 ## What it is for
 
 The web layer reports JS exceptions we otherwise cannot see: a crash on a phone
