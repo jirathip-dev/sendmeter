@@ -697,45 +697,53 @@ private struct GuidedForceProtocolView: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.2)) { context in
+            let stage = session.run.currentStage
+            let elapsed = session.elapsedSeconds(at: context.date)
+            let presentation = GuidedForceFullscreenPresentation.stage(
+                stage,
+                preset: session.preset,
+                elapsedSeconds: elapsed,
+                isPaused: session.run.isPaused
+            )
+            let accent = color(for: presentation.accent)
             GeometryReader { geometry in
-                let stage = session.run.currentStage
-                let elapsed = session.elapsedSeconds(at: context.date)
-                let presentation = GuidedForceFullscreenPresentation.stage(
-                    stage,
-                    preset: session.preset,
-                    elapsedSeconds: elapsed,
-                    isPaused: session.run.isPaused
-                )
                 let layout = GuidedForceLayout.resolve(
                     width: geometry.size.width,
                     height: geometry.size.height,
                     textScale: Double(textScale)
                 )
-                let accent = color(for: presentation.accent)
 
-                ZStack {
-                    Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
-                    accent.opacity(0.14).ignoresSafeArea()
-                    protocolContent(
-                        geometry: geometry,
-                        date: context.date,
-                        elapsed: elapsed,
-                        presentation: presentation,
-                        accent: accent,
-                        layout: layout
-                    )
-                }
-                .animation(
-                    reduceMotion
-                        ? nil
-                        : .spring(
-                            response: ForceMotionPolicy.phaseResponseSeconds,
-                            dampingFraction: ForceMotionPolicy.phaseDampingFraction,
-                            blendDuration: 0
-                        ),
-                    value: presentation.phase
+                protocolContent(
+                    geometry: geometry,
+                    date: context.date,
+                    elapsed: elapsed,
+                    presentation: presentation,
+                    accent: accent,
+                    layout: layout
                 )
             }
+            // #938: the cover's fills belong at the ROOT of the cover content,
+            // outside `GeometryReader` — whose frame is the cover's safe-area
+            // rect, so the `.ignoresSafeArea()` fills nested inside it stopped
+            // at a hard edge and the cover's black container showed through
+            // above them on a notch/Dynamic Island device.
+            .background {
+                ZStack {
+                    Color(uiColor: .systemGroupedBackground)
+                    accent.opacity(0.14)
+                }
+                .ignoresSafeArea()
+            }
+            .animation(
+                reduceMotion
+                    ? nil
+                    : .spring(
+                        response: ForceMotionPolicy.phaseResponseSeconds,
+                        dampingFraction: ForceMotionPolicy.phaseDampingFraction,
+                        blendDuration: 0
+                    ),
+                value: presentation.phase
+            )
         }
         .onAppear {
             // The library Run tap arms this presentation cue. Reopening the
@@ -757,7 +765,14 @@ private struct GuidedForceProtocolView: View {
         accent: Color,
         layout: GuidedForceLayout
     ) -> some View {
-        if layout.essentialContentFits {
+        // #938: ONE scroll container for both branches. The fit estimate is
+        // approximate, so a layout that claims to fit but actually overflows
+        // must still be reachable — without this the live chart's bottom edge
+        // and the controls below it sat past the screen edge and could not be
+        // scrolled into view. A layout that genuinely fits stays top-aligned
+        // in an unscrollable viewport, because the content's minimum height
+        // is the viewport height.
+        ScrollView(showsIndicators: false) {
             protocolSections(
                 geometry: geometry,
                 date: date,
@@ -765,26 +780,17 @@ private struct GuidedForceProtocolView: View {
                 presentation: presentation,
                 accent: accent,
                 layout: layout,
-                chartHeight: CGFloat(layout.flexibleChartHeight)
+                chartHeight: CGFloat(
+                    layout.essentialContentFits
+                        ? layout.flexibleChartHeight
+                        : layout.chartMinimumHeight
+                )
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        } else {
-            ScrollView(showsIndicators: false) {
-                protocolSections(
-                    geometry: geometry,
-                    date: date,
-                    elapsed: elapsed,
-                    presentation: presentation,
-                    accent: accent,
-                    layout: layout,
-                    chartHeight: CGFloat(layout.chartMinimumHeight)
-                )
-                .frame(
-                    maxWidth: .infinity,
-                    minHeight: geometry.size.height,
-                    alignment: .top
-                )
-            }
+            .frame(
+                maxWidth: .infinity,
+                minHeight: geometry.size.height,
+                alignment: .top
+            )
         }
     }
 
@@ -3549,3 +3555,145 @@ private struct ForcePresetEditor: View {
         }
     }
 }
+
+#if DEBUG
+/// #938 AC7 evidence: with `--guided-force-fixture-scrolled` the cover's
+/// scroll view is driven to its bottom (nothing else in this harness scrolls),
+/// so the capture shows the end of the guided content — the live chart's
+/// bottom edge and the pause/skip controls. Retries a few times because the
+/// scroll view is created after the cover appears.
+enum GuidedForceFixtureScroll {
+    static func scrollToBottomIfRequested() {
+        guard CommandLine.arguments.contains("--guided-force-fixture-scrolled") else { return }
+        func scroll() {
+            guard let window = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .flatMap(\.windows)
+                .first(where: \.isKeyWindow) else { return }
+            var deepest: UIScrollView?
+            var queue = window.subviews
+            while let view = queue.popLast() {
+                if let scroll = view as? UIScrollView,
+                   scroll.contentSize.height > (deepest?.contentSize.height ?? -1) {
+                    deepest = scroll
+                }
+                queue.append(contentsOf: view.subviews)
+            }
+            guard let scroll = deepest else { return }
+            let bottom = max(
+                scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom,
+                0
+            )
+            scroll.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
+        }
+        for delay in [1.0, 2.0, 3.0, 4.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { scroll() }
+        }
+    }
+}
+
+/// #938 evidence harness: presents the REAL `GuidedForceProtocolView` cover
+/// through the same `fullScreenCover` container `ForceView` uses, without a
+/// signed-in session or a connected gauge, so simulator screenshots can prove
+/// the cover paints edge-to-edge behind the status bar and that its scroll
+/// content clears the bottom controls. DEBUG-only and launch-argument gated;
+/// the app's normal signed-in flow never reaches this view.
+///
+/// `--guided-force-fixture=rest` (default) captures a SET REST stage,
+/// `--guided-force-fixture=work` a HOLD stage. The work stage is load
+/// triggered, so with no gauge attached it holds the "pull to start" state
+/// instead of counting down — deterministic for capture either way.
+struct GuidedForceFixtureView: View {
+    private let stageKind: ForceProtocolStageKind
+    @State private var presented = false
+
+    init(arguments: [String]) {
+        let flag = "--guided-force-fixture="
+        let raw = arguments.first { $0.hasPrefix(flag) }?.dropFirst(flag.count)
+        stageKind = raw == "work" ? .work : .restBetweenSets
+    }
+
+    var body: some View {
+        Color(uiColor: .systemGroupedBackground)
+            .ignoresSafeArea()
+            // The cover content takes only the constant stage: a standalone
+            // view owning its own session state, so the presented tree is
+            // built from values that cannot change between the presentation
+            // request and the content build.
+            .fullScreenCover(isPresented: $presented) {
+                GuidedForceFixtureCover(stageKind: stageKind)
+            }
+            .onAppear { presented = true }
+    }
+}
+
+/// The presented half of the #938 harness: it owns the fixture session and
+/// renders the real cover. The session is built in this view's own
+/// `onAppear`, so the guided content appears through this view's state, not
+/// through the presenter's.
+private struct GuidedForceFixtureCover: View {
+    @Environment(AppModel.self) private var model
+    let stageKind: ForceProtocolStageKind
+    @State private var session: GuidedForceProtocolSession?
+
+    var body: some View {
+        Group {
+            if let session {
+                GuidedForceProtocolView(
+                    session: session,
+                    onMinimize: {},
+                    onClose: {}
+                )
+            } else {
+                Color(uiColor: .systemGroupedBackground)
+            }
+        }
+        .onAppear {
+            GuidedForceFixtureScroll.scrollToBottomIfRequested()
+            guard session == nil else { return }
+            session = GuidedForceProtocolSession(
+                model: model,
+                preset: Self.preset,
+                targetPlan: Self.targetPlan,
+                tag: "FDP",
+                startingSide: .left,
+                fallbackSide: .left,
+                selection: .free,
+                references: nil,
+                run: Self.run(stageKind: stageKind)
+            )
+        }
+    }
+
+    private static let preset = TindeqPreset(
+        name: "Max Hangs",
+        holdSeconds: 10,
+        repetitions: 3,
+        sets: 3,
+        restBetweenRepetitionsSeconds: 120,
+        restBetweenSetsSeconds: 180,
+        prepareSeconds: 5
+    )
+
+    /// One representative reference band per set, so the live chart draws its
+    /// target band the way a resolved real plan does.
+    private static let targetPlan = ForceTargetPlan(
+        targets: Dictionary(
+            uniqueKeysWithValues: (1...3).map { setNumber in
+                (
+                    ForceTargetKey(setNumber: setNumber, side: .unspecified),
+                    ForceTargetBand(kilograms: 30, lowKilograms: 27, highKilograms: 33)
+                )
+            }
+        )
+    )
+
+    private static func run(stageKind: ForceProtocolStageKind) -> ForceProtocolRun {
+        var run = ForceProtocolRun(preset: preset, startingSide: .left, selectedSide: .left)
+        while run.currentStage.kind != stageKind, !run.isComplete {
+            run.advance()
+        }
+        return run
+    }
+}
+#endif

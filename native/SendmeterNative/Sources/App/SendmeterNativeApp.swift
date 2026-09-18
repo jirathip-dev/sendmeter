@@ -108,6 +108,10 @@ struct RootView: View {
                                 arguments: CommandLine.arguments
                             )
                         )
+                    } else if CommandLine.arguments.contains(where: { $0.hasPrefix("--guided-force-fixture") }) {
+                        // #938 evidence harness: the real guided force cover,
+                        // presented the way ForceView presents it.
+                        GuidedForceFixtureView(arguments: CommandLine.arguments)
                     } else {
                         LoginView()
                     }

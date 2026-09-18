@@ -174,6 +174,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Native Force: the guided protocol fullscreen no longer shows a black band above its content on notch/Dynamic Island iPhones — the app background and the phase accent tint now fill edge-to-edge behind the status bar, and the live chart and its axis stay fully visible above the bottom edge (nothing hidden under the pause/skip controls) when you scroll to the end.
  - Native Force: the live force chart's scale now stays anchored to your protocol's target band and the strongest pull of the current run, so the target band no longer jumps to a different height when a rep finishes (the chart window empties) or when you leave the guided fullscreen — only a genuinely bigger pull still expands the chart scale.
  - Native Force: the guided runner no longer shows the large STOP/FINISH circle — it covered the live chart on small screens and sat below the one-handed thumb zone on large ones. The top-bar End pill is now the single explicit save-and-exit (it still saves the in-flight pull through the same queue), and every guided rep starts from the pull.
  - Native Force: standalone manual Force mode is removed. Free pulls start only from the Hands-free arm (pull to start, release to save), guided protocols always wait for a pull before a work stage begins, and empty or disconnected Force surfaces route to a guided protocol or Hands-free instead of offering a manual start.
