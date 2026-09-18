@@ -37,6 +37,7 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
     private var observedStageID: UUID?
     private var hasObservedFirstStage = false
     private var hasBegun = false
+    private var hasFiredCompletionHaptic = false
     private var lastHandsFreeHaptic: HandsFreeHapticState?
     private var saveClaims = Set<GuidedForceSaveKey>()
     private var workSegment = 0
@@ -343,6 +344,18 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         }
     }
 
+    /// #940: the completion cue fires exactly once per run. The claim is
+    /// taken with the `.complete` transition, so a reopened (minimized)
+    /// presentation, a re-render of the complete stage, or any later
+    /// observation of the finished run cannot repeat it. `advance` can only
+    /// enter `.complete` once and the ticker stops observing it, so this
+    /// claim is the explicit statement of that rule.
+    private func fireCompletionHapticIfNeeded() {
+        guard !hasFiredCompletionHaptic else { return }
+        hasFiredCompletionHaptic = true
+        Haptics.shared.play(.success)
+    }
+
     private func observeStage(at date: Date) {
         guard ownsAccount, !sessionEndClaimed, !isEnded else { return }
         guard observedStageID != run.currentStage.id else { return }
@@ -412,7 +425,7 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
         run.advance(at: date)
         observedStageID = nil
         if run.currentStage.kind == .complete {
-            Haptics.shared.play(GuidedTransitionHaptics.cue(entering: .complete))
+            fireCompletionHapticIfNeeded()
             refreshActivity(at: date)
         }
         if stage.kind == .work {
@@ -493,7 +506,7 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
                 }
             }
             isAdvancing = false
-            await finishGaugeSession()
+            endGuidedProtocolOnly()
         }
         await settlement.value
     }
@@ -575,9 +588,21 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
             return
         }
         let settlement = terminalSettlement.start { [self] in
-            await finishGaugeSession()
+            endGuidedProtocolOnly()
         }
         await settlement.value
+    }
+
+    /// The guided protocol's own finish (#940/#941): the run ends and the
+    /// Force tab gets the still-live gauge session back. The protocol's
+    /// recordings were already durably queued into the ACTIVE group as each
+    /// stage advanced, so finishing neither logs a History entry nor ends the
+    /// session — that stays the explicit Finish pill (#627), a disconnect, or
+    /// account teardown. Manual pulls and a further protocol join the same
+    /// group, which is what makes one Tindeq entry per gauge session.
+    private func endGuidedProtocolOnly() {
+        guard model.accountScope == accountScope else { return }
+        model.setGuidedProtocolActive(false)
     }
 
     private func finishGaugeSession() async {
@@ -901,55 +926,124 @@ private struct GuidedForceProtocolView: View {
         }
     }
 
+    /// #940: the completed protocol is its own panel. The stage banner's dead
+    /// `00:00 · Protocol complete` line is replaced by the explicit next step
+    /// and its action, so the finish control is INSIDE the panel — above the
+    /// fold — instead of only in the bottom inset the user has to scroll to.
+    /// The action runs the same save/close path as the top-bar End
+    /// (`endSession`), and per #941 that path ends the PROTOCOL: the gauge
+    /// session stays live and its explicit end remains the Force tab's
+    /// Finish pill.
+    @ViewBuilder
     private func phaseBanner(
         _ presentation: GuidedForceStagePresentation,
         remaining: Double,
         accent: Color
     ) -> some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: presentation.symbol)
-                    .font(.title3.weight(.bold))
-                Text(presentation.label)
-                    .font(.title2.weight(.black))
-                    .tracking(2.2)
-                    .minimumScaleFactor(0.72)
-                    .lineLimit(1)
+        if presentation.phase == .complete {
+            // No combined accessibility element here: the Done action is a
+            // real control and must stay individually focusable.
+            bannerSurface(accent: accent) {
+                VStack(spacing: 8) {
+                    bannerHeader(presentation, accent: accent)
+                    completionPanel(presentation, accent: accent)
+                }
             }
-            .foregroundStyle(accent)
-
-            Text(formatCountdown(remaining))
-                .modifier(SendmeterStyle.countdownMetric(baseSize: 68))
-                .accessibilityLabel("\(formatCountdown(remaining)) remaining")
-
-            Text(handsFreeWaitingForPull ? "PULL TO START · \(presentation.detail)" : presentation.detail)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-
-            ProgressView(value: presentation.progress)
-                .tint(accent)
-                .accessibilityLabel("Phase progress")
+        } else {
+            bannerSurface(accent: accent) {
+                VStack(spacing: 8) {
+                    bannerHeader(presentation, accent: accent)
+                    stagePanel(presentation, remaining: remaining, accent: accent)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "\(presentation.label). "
+                        + (handsFreeWaitingForPull ? "Pull to start. " : "")
+                        + presentation.detail
+                )
+                .accessibilityValue(
+                    "\(formatCountdown(remaining)) remaining, "
+                        + "\(Int((presentation.progress * 100).rounded())) percent complete"
+                )
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 18)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(accent.opacity(0.72), lineWidth: 2)
+    }
+
+    private func bannerHeader(
+        _ presentation: GuidedForceStagePresentation,
+        accent: Color
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: presentation.symbol)
+                .font(.title3.weight(.bold))
+            Text(presentation.label)
+                .font(.title2.weight(.black))
+                .tracking(2.2)
+                .minimumScaleFactor(0.72)
+                .lineLimit(1)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            "\(presentation.label). "
-                + (handsFreeWaitingForPull ? "Pull to start. " : "")
-                + presentation.detail
-        )
-        .accessibilityValue(
-            "\(formatCountdown(remaining)) remaining, "
-                + "\(Int((presentation.progress * 100).rounded())) percent complete"
-        )
+        .foregroundStyle(accent)
+    }
+
+    private func bannerSurface<Content: View>(
+        accent: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .strokeBorder(accent.opacity(0.72), lineWidth: 2)
+            }
+    }
+
+    @ViewBuilder
+    private func stagePanel(
+        _ presentation: GuidedForceStagePresentation,
+        remaining: Double,
+        accent: Color
+    ) -> some View {
+        Text(formatCountdown(remaining))
+            .modifier(SendmeterStyle.countdownMetric(baseSize: 68))
+            .accessibilityLabel("\(formatCountdown(remaining)) remaining")
+
+        Text(handsFreeWaitingForPull ? "PULL TO START · \(presentation.detail)" : presentation.detail)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+
+        ProgressView(value: presentation.progress)
+            .tint(accent)
+            .accessibilityLabel("Phase progress")
+    }
+
+    @ViewBuilder
+    private func completionPanel(
+        _ presentation: GuidedForceStagePresentation,
+        accent: Color
+    ) -> some View {
+        Text(presentation.detail)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+
+        Button("Done", action: endSession)
+            .hapticButtonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(accent)
+            .disabled(session.isAdvancing || session.isPausing)
+            .accessibilityHint("Saves this protocol into the live gauge session and returns to the Force tab")
+
+        Text("Gauge session stays live — end it from the Force tab")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
     }
 
     private func statusRow(accent: Color) -> some View {
@@ -3600,9 +3694,12 @@ enum GuidedForceFixtureScroll {
 /// the app's normal signed-in flow never reaches this view.
 ///
 /// `--guided-force-fixture=rest` (default) captures a SET REST stage,
-/// `--guided-force-fixture=work` a HOLD stage. The work stage is load
-/// triggered, so with no gauge attached it holds the "pull to start" state
-/// instead of counting down — deterministic for capture either way.
+/// `--guided-force-fixture=work` a HOLD stage, and
+/// `--guided-force-fixture=complete` the finished run's DONE panel (#940:
+/// the next-step prompt and its inline Done action, which must be reachable
+/// without scrolling). The work stage is load triggered, so with no gauge
+/// attached it holds the "pull to start" state instead of counting down —
+/// deterministic for capture either way.
 struct GuidedForceFixtureView: View {
     private let stageKind: ForceProtocolStageKind
     @State private var presented = false
@@ -3610,7 +3707,11 @@ struct GuidedForceFixtureView: View {
     init(arguments: [String]) {
         let flag = "--guided-force-fixture="
         let raw = arguments.first { $0.hasPrefix(flag) }?.dropFirst(flag.count)
-        stageKind = raw == "work" ? .work : .restBetweenSets
+        switch raw {
+        case "work": stageKind = .work
+        case "complete": stageKind = .complete
+        default: stageKind = .restBetweenSets
+        }
     }
 
     var body: some View {
