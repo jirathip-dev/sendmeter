@@ -1,840 +1,312 @@
 # CLAUDE.md
 
-Guidance for Claude Code working in this repo.
+Guidance for coding agents working in this repo. (This file is read as
+repository instructions — keep it true, and fix it when the repo moves.)
 
 ## What this is
 
-**Sendmeter** — a climbing training tracker. Web app (React 19 + Vite 8 +
-TypeScript) wrapped with **Capacitor 8** into an iOS app, plus a native
-**watchOS companion** target, backed by **Supabase** (auth + Postgres + realtime).
-It's a PWA (`vite-plugin-pwa`). Core value is numbers: a daily recovery/readiness
-score (from HRV, resting HR, sleep, weight) and finger-strength force curves from
-a **Tindeq Progressor** strain gauge over Bluetooth LE.
+**Sendmeter** — a climbing training tracker. **Native-only since #857**: the
+React/Vite/Capacitor web app, the root npm package, and the Capacitor phone
+host were retired. The shipped product is the SwiftUI iPhone app plus its
+Apple Watch companion, backed by **Supabase** (auth + Postgres + realtime).
 
-> Note: the app was renamed from "Send Log" → **Sendmeter** (App Store name was
-> taken). The rename is display-name only — internal identifiers still say
+Core value is numbers: a daily recovery/readiness score (HRV, resting HR,
+sleep, weight) and finger-strength force curves from a **Tindeq Progressor**
+strain gauge over Bluetooth LE.
+
+> Note: the app was renamed from "Send Log" → **Sendmeter** (the App Store name
+> was taken). The rename is display-name only — internal identifiers still say
 > `sendlog` / `SendLog` (see "Names" below).
+
+### Repo map
+
+- **`native/SendmeterNative/`** — the phone app. `project.yml` is the XcodeGen
+  spec; `SendmeterNative.xcodeproj` is **generated, never committed**.
+  - Targets: `SendmeterNative` (app, iOS 17+, embeds `SendmeterNativeWidgets`
+    and the reused `SendLogWatch Watch App`), `SendmeterNativeTests`,
+    `SendmeterNativeUITests`, `SendmeterNativeWidgets`, `SendLogWatch Watch App`,
+    `SendLogWatchWidgets`.
+  - `Sources/Core` — pure models, metrics, force engine, guided protocol, queue
+    and state engines, account-scoped GRDB cache (`SendmeterCore` SwiftPM
+    target). `Sources/Data` — Supabase auth + typed PostgREST repositories.
+    `Sources/Platform` — CoreBluetooth, HealthKit, WatchConnectivity, weather.
+    `Sources/Features` — product screens. `Sources/Shared` + `Sources/Widgets`
+    — ActivityKit wire types and the WidgetKit appex. `Sources/App` — lifecycle,
+    `AppModel`, design system.
+  - `native/SendmeterNative/README.md` is the deep architecture read (account
+    isolation contract, cache/LWW rules, watch embedding, quality gates).
+- **`ios/App/SendLogWatchCore/`** — `SendLogWatchCore` SwiftPM package: watch
+  pure logic (attempt detection, RPE model, Tindeq protocol, hands-free force
+  control, queues, dates). Foundation-only by design so it tests on the host.
+- **`ios/App/SendLogWatch Watch App/`** + **`ios/App/SendLogWatchWidgets/`** —
+  the watch app and its complications/Smart-Stack widgets (watchOS 10+),
+  consumed by the native project rather than duplicated.
+- **`native-plugins/sendlog-health-core/`** — `SendLogHealthCore` SwiftPM
+  package: readiness/ACWR math, the write policy, and the readiness-widget
+  contract shared by the phone app and its widget.
+- **`supabase/`** — `migrations/`, `tests/` (SQL regressions), `seed.sql`,
+  `config.toml`. Migration tooling: `scripts/apply-migrations.mjs`,
+  `scripts/migration-status.mjs`.
+- **`mcp/`** — a **separate, package-local, read-only MCP server** (own
+  `package.json` + lockfile + its own CI job). It is not part of the app and has
+  no root npm wiring; all of its commands are `cd mcp`-scoped.
+- **`scripts/`** — repo gates (anti-slop, static validation, coverage,
+  generated-project assertion) and migration tooling. **`tools/anti-slop-swift/`**
+  — vendored Swift lint tool. **`fastlane/`** — the `native_beta` TestFlight
+  lane. **`docs/`** — runbooks and history (see below).
+
+### Stale guidance warning
+
+The web/Capacitor surface was retired in #857. Any instruction to run a root
+`npm` script, a Vite/Capacitor sync, or the old Capacitor `App` scheme's
+xcodeproj predates that cut and must not be followed. The full inventory of
+what was removed, and which retained surface owns each concern, is
+`docs/architecture/857-removal-inventory.md`. A bounded smoke check
+(`scripts/check-docs-stale-commands.sh`) fails this file (and the other current
+entrypoints) if a retired command name reappears — extend its explicit
+historical allowlist only for files that document the removal on purpose.
 
 ## Commands
 
-```bash
-npm run dev:local  # DEFAULT dev loop: local Supabase stack (Docker) + vite (port 5173)
-npm run dev        # vite against the HOSTED (production) Supabase — only when real data is needed
-npm run build      # tsc --noEmit && vite build
-npm run typecheck  # tsc --noEmit
-npm run lint       # eslint .
-npm run sync       # cap sync ios  (copies dist/ into the iOS app, regenerates CapApp-SPM)
-```
+Run `just --list` first — the justfile mirrors what CI actually runs and is the
+canonical gate entry point (`brew install just`). There is **no root npm
+package**; `mcp/` keeps its own package-local commands.
 
-Web tests use **Vitest** (`npm test` = `vitest run`) — pure logic, tests live
-alongside each module (`*.test.ts` in `src/lib` and `src/hooks`). The **Swift** side has tests too:
-- `cd native-plugins/sendlog-health-core && swift test` — pure readiness/ACWR math, runs on macOS.
-- `cd ios/App/SendLogWatchCore && swift test` — watch pure logic (attempt
-  detection, RPE model, Tindeq protocol, ACWR, dates). Runs on the host, no
-  simulator. The same files are still compiled into the Xcode test target, so
-  `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App"
-  -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."`
-  also runs them locally; in CI the `package-tests` job in `ios-ci.yml` runs
-  the same suite on Linux (`swift:6.3` container, #199), and the macOS `swift`
-  job runs the **`SendLogWatchTests` Xcode target** on a booted watchOS
-  simulator, unsigned (#500 — before that it was compiled and discarded, never
-  executed in any workflow). What that target *adds* over the Linux job is the
-  app-target-only tests (~77 as of #500: offline queue, pending-recording
-  queue, workout ownership, save path, Tindeq hands-free integration); the
-  rest of the target is `SendLogWatchCore` test files cross-compiled in, which
-  Linux already covers for free. Note the test target is a plain `PBXGroup`,
-  not filesystem-synced: a new test file dropped into
-  `ios/App/SendLogWatchTests/` without a pbxproj edit is **silently absent**
-  from local and CI runs alike — a green check does not prove it ran.
+| Recipe | What it actually covers |
+|---|---|
+| `just core` | PRIMARY gate: `swift test --package-path native/SendmeterNative` — the `SendmeterCore` + `SendmeterWeather` SwiftPM suites plus source-text wiring tests (~1136 tests). Host, no simulator. |
+| `just watch-core` | `swift test --package-path ios/App/SendLogWatchCore` — watch pure logic. Host, no simulator. |
+| `just health-core` | `swift test --package-path native-plugins/sendlog-health-core` — readiness/ACWR math + write policy. Host, no simulator. |
+| `just slop` | `bash scripts/validate-anti-slop.sh` — anti-slop config/wrapper/CI-wiring structural check (fast, no compiler). |
+| `just slop-cold` | Cold-build regression for the vendored anti-slop tool (cleans its build dir, rebuilds, requires the scanned-file signal). |
+| `just check-static` | `bash scripts/validate-native-static.sh` — parses every native Swift file with `swiftc -parse` and checks XcodeGen project membership. No xcodebuild. |
+| `just fast` | `slop` + the three SwiftPM suites — the fast lane after an edit. |
+| `just gen` | `cd native/SendmeterNative && xcodegen generate` — regenerates `SendmeterNative.xcodeproj` from `project.yml`. Required before any xcodebuild. |
+| `just check-watch-project` | `ruby scripts/assert-native-watch-project.rb` — generated-project ownership gate; run after any gen-affecting change. |
+| `just build-ios` | Unsigned generic iOS Simulator Debug build of the native app (needs Xcode). |
+| `just build-watch` | Unsigned generic watchOS Simulator Debug build of the watch app (needs Xcode). |
+| `just ci` | Everything CI gates on, in CI order: `slop slop-cold core watch-core health-core gen check-watch-project build-ios build-watch` (excludes simulator-only test steps). |
 
-Always run `npm run typecheck && npm run lint && npm test && npm run build` after web changes.
+`mcp/` commands (package-local, from `mcp/`): `cd mcp && npm ci` (or
+`npm install`), then `cd mcp && npm run typecheck`, `cd mcp && npm test`,
+`cd mcp && npm run build`, plus `npm run lint`, `npm run audit`, and
+`npm run dry-run` — the last one runs the built server against a dry-run config
+without touching a live service.
 
-User-facing changes must add a concise entry to `RELEASE_NOTES.md` under the
-categorized **Unreleased** section. Internal-only work does not need an entry;
-the App Store release workflow is in `docs/app-store-checklist.md`.
+After any Swift or npm step, check `git status`: SPM resolution (including
+`swift test`) has been observed rewriting
+`native/SendmeterNative/Package.resolved` — revert that churn if you did not
+intend it. Commit only intentional files.
 
-## Local dev environment (issue #95)
+## What proves what (verification ladder)
 
-**Default to this for all web work** — develop and test against the local stack;
-only touch the hosted project when a change specifically needs real data (and
-prefer read-only poking there). `npm run dev:local` is the one command: it
-starts a **local Supabase stack** (Docker; CLI is a devDependency, so
-`npx supabase …` works), writes `.env.development.local` pointing the dev server
-at it, and runs vite. Plain `npm run dev` hits the **hosted (production)
-project** unless that file exists — delete it to switch back. The file is
-dev-mode only: `npm run build` / fastlane / Vercel never read it (verified — the
-prod bundle keeps the hosted URL). Note vite reads env files **at startup**: a
-dev server started before the file existed keeps serving the hosted config until
-restarted. A login that rejects `dev@sendmeter.test` is the tell that the tab is
-on the hosted project.
+1. **Pure logic → SwiftPM tests (host, no simulator).** `just core`,
+   `just watch-core`, `just health-core`. Put new logic in a pure package first
+   (`Sources/Core`, `SendLogWatchCore`, `SendLogHealthCore`), UI wiring second.
+   Focused run: `swift test --package-path native/SendmeterNative --filter <Class>`.
+2. **App-target and widget code → xcodebuild.** `swift test` compiles only the
+   `SendmeterCore` target (`Sources/Core` + `App/ChartTheme.swift`) and
+   `SendmeterWeather`. Everything under `Sources/App`, `Sources/Data`,
+   `Sources/Platform`, `Sources/Features`, `Sources/Shared`, `Sources/Widgets`
+   is compiled by the Xcode app/widget targets only — **a green `just core`
+   does not prove an app-target change compiles.** Run `just gen` first, then
+   `just build-ios` (or `just build-watch`). Cheap pre-check for one app-target
+   file: `xcrun swiftc -parse <file>` (syntax only; the Xcode build is the
+   compile authority).
+3. **App-target tests → simulator.** `Tests/SendmeterNativeTests` compiles
+   against the application module (PostgREST/date/session recovery wiring,
+   sheet presentation, structural haptics, routine visual wiring, guided side
+   behavior, readiness widget). CI runs:
+   `xcodebuild test -project native/SendmeterNative/SendmeterNative.xcodeproj -scheme SendmeterNative -destination "id=<sim UDID>" -only-testing:SendmeterNativeTests CODE_SIGNING_ALLOWED=NO`
+4. **UI tests → simulator, local only.** `Tests/SendmeterNativeUITests`
+   (menu activation) is in the `SendmeterNative` scheme's test action, but no
+   workflow runs it — a UI-test claim is unverified unless you ran it.
+5. **Watch tests.** The watch *pure* logic is `just watch-core`, also run in
+   Linux CI (`ios-ci.yml` `package-tests`). The watch app-target suite in
+   `ios/App/SendLogWatchTests/` has no target in `project.yml` and no workflow
+   reference after #857 — **do not claim it ran.** If you need watch
+   app-target coverage, wiring that suite into a target is its own issue.
+6. **Device-only evidence — never claim it from a simulator or CI run:**
+   HealthKit runtime + background delivery, real HRV/sleep data, Bluetooth
+   (Tindeq), attempt detection from real motion, Live Activities on a signed
+   build, complications/Smart Stack, passkeys, WatchConnectivity delivery
+   between a real phone/watch pair, `BGAppRefreshTask` scheduling, and
+   signing/provisioning. Flag these as device-only instead of implying
+   verification.
 
-- **Login:** `dev@sendmeter.test` / `devpassword` (use the password toggle on
-  the login screen; magic-link emails land in Mailpit at `127.0.0.1:54324`).
-- **Seed:** `supabase/seed.sql` — the test user plus ~6 weeks of sessions,
-  35 days of health metrics, a watch workout with attempts, and Tindeq
-  recordings, all relative to `current_date`. Local-only; never runs remotely.
-  It also re-grants table access to the API roles — the current local postgres
-  image ships hardened default privileges (no auto-grants on new tables), while
-  the hosted project predates that and has them. Without the grants every
-  PostgREST query fails `permission denied` locally.
-- **Lifecycle:** `npm run db:reset` re-applies all migrations + seed (data is
-  disposable); `db:stop` shuts the stack down; `db:status` prints URLs/keys.
-  Studio: `127.0.0.1:54323`. Test a new migration here before applying it
-  to the remote DB.
-- BLE still needs `?fake-tindeq`; native/watch/HealthKit stay on the hosted
-  project (their Supabase config is compiled in) — this environment is for the
-  web app.
+## Environment and data boundaries
 
-### iOS / watch testing ladder
+- **Native builds compile in the PRODUCTION Supabase project.** The phone
+  (`native/SendmeterNative/Sources/Data/SupabaseService.swift`) and the watch
+  (`ios/App/SendLogWatch Watch App/Resources/SupabaseConfig.plist`) hardcode
+  `zznsqmcewtzlnfoiefkk.supabase.co`; a Debug device build reads and writes
+  production data. Use a throwaway account for device-only checks — never the
+  real account — and never run a destructive flow against it.
+- **The local Supabase stack is for SQL regressions and MCP e2e verification
+  only.** Start it with the Supabase CLI (`supabase start`), apply migrations
+  with `supabase db reset --local --no-seed`, run a SQL suite with
+  `supabase test db --local supabase/tests/<file>.sql` — that is exactly what
+  `supabase-tests.yml` does. It never links to, resets, or queries a hosted
+  project, and no app build points at it.
+- **Two hosted projects on two accounts:** dev/preview
+  `mjkndfhjnipomjjhgsxv`, prod `zznsqmcewtzlnfoiefkk`. One Management API token
+  (`~/.supabase/access-token`) reaches both (Developer role suffices for the
+  Management API). The dev project is free-tier and auto-pauses after ~7 idle
+  days — unpause it before it must receive a push or before verifying a
+  release.
+- **The committed Supabase URL + publishable anon key are intentional source
+  credentials** (RLS is the security boundary). They are matched byte-for-byte
+  in `.gitleaks.toml`; do not rotate, replace, or "clean up" them in unrelated
+  changes.
+- **Migrations auto-apply on merge.** `deploy-migrations.yml` runs on any push
+  touching `supabase/migrations/**`: `staging` → dev, `main` → prod. There is
+  no required-reviewer gate on this plan, so **the merge is the human gate** —
+  merging to `main` applies DDL to production.
+- **Vercel is retained but is no longer a deploy target of this repo.** The web
+  deploy workflow was removed in #857; the Vercel project, domain, and
+  credentials are untouched. Do not change them from repo work — a future
+  public site needs its own approved issue.
+- **No production writes from a lane.** No live DB migration/configuration, no
+  production data writes, no credential changes, no deployment/release work
+  unless the task explicitly says so and the owner has approved it.
 
-Work down this ladder — each rung is cheaper than the next, so push logic up it:
+## Xcode build discipline
 
-1. **Pure logic → unit tests, no simulator.** Readiness/ACWR math lives in
-   `sendlog-health-core` (`swift test` on macOS); attempt detection, RPE model,
-   Tindeq protocol, ACWR, and date logic live in the `SendLogWatchCore` SwiftPM
-   package (`cd ios/App/SendLogWatchCore && swift test`). New native logic
-   should land in one of these testable layers first, UI wiring second.
-2. **WebView UI → browser against the local stack** (`npm run dev:local` +
-   `?fake-tindeq`). Everything React is fully exercisable here.
-3. **Capacitor shell + watch UI → simulators.** `npm run sync:local` (web
-   bundle + health plugin + watch all hit the local stack), then run the App
-   scheme (paired iPhone+watch simulators for the companion); log in with
-   `dev@sendmeter.test` / `devpassword`. Good for layout, navigation,
-   WatchConnectivity relays, and the watch UI. HealthKit sample data can be
-   added by hand in the simulator's Health app, but background delivery is
-   unreliable there.
-4. **Device / TestFlight — the only truth for:** HealthKit runtime + background
-   delivery, real HRV/sleep data, Bluetooth (Tindeq), attempt detection (real
-   motion sensors), Live Activities, complications/Smart Stack, passkeys, and
-   signing. Flag these as device-only rather than claiming them verified.
+- **Never run two `xcodebuild` invocations concurrently** on this project —
+  shared DerivedData / SPM checkouts corrupt each other ("couldn't be removed /
+  File exists" resolve errors). Build serially; a failed resolve just needs a
+  rerun.
+- **One heavy Xcode build at a time on the host.** Other lanes serialize on
+  this; do not start a build while another is running, and prefer the cheap
+  gates (`just slop`, `just core`, `just check-static`) while iterating.
+- `SendmeterNative.xcodeproj` is generated: run `just gen` before any
+  xcodebuild, never commit or hand-edit the project file, and run
+  `just check-watch-project` after any gen-affecting change.
 
-**Simulator loop (rung 3), learned the hard way:**
+## CI (what each workflow really covers)
 
-```bash
-npm run sync:local        # local-config web bundle → ios/App/App/public
-# Xcode Run (App scheme, Debug) is the easy path — it installs fresh automatically.
-# Headless equivalent:
-xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
-  -destination 'generic/platform=iOS Simulator' build
-xcodebuild -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" \
-  -configuration Debug -destination 'generic/platform=watchOS Simulator' build
-# then install + launch onto the booted sims (products live under
-# ~/Library/Developer/Xcode/DerivedData/App-<hash>/Build/Products/):
-xcrun simctl install booted <...>/Debug-iphonesimulator/App.app
-xcrun simctl launch booted com.jirathip.sendlog
-xcrun simctl install booted "<...>/Debug-watchsimulator/SendLogWatch Watch App.app"
-xcrun simctl launch booted com.jirathip.sendlog.watchkitapp
-```
+`.github/workflows/` — the jobs that exist today:
 
-- **Fake Tindeq on the watch simulator (#567):** build and launch the watch
-  app in **Debug** with `-sendmeter-fake-tindeq pull`, or set
-  `SENDMETER_FAKE_TINDEQ=1` in the launch environment. Use
-  `-sendmeter-fake-tindeq mid-rep-disconnect` (or the matching environment
-  value) to exercise disconnect salvage; the simulator transport feeds the
-  normal parser, sample, recording, attempt-detection, guided, and hands-free
-  paths. The flag is ignored outside a Debug simulator build, and real BLE
-  behavior remains device-only.
-- **Never run two xcodebuilds on this project concurrently** — they corrupt
-  each other's SPM checkouts in shared DerivedData ("couldn't be removed /
-  File exists" resolve errors). Build sequentially; a failed resolve just
-  needs a rerun.
-- **Stale installs are the #1 trap.** Launching a simulator does NOT update
-  the app in it — an old install keeps the old (hosted-project) config and
-  login as `dev@sendmeter.test` fails "wrong email or password". The tell on
-  BOTH phone and watch: pre-rename "SEND LOG" branding on the sign-in screen
-  = stale build (current source says Sendmeter everywhere). When in doubt,
-  reinstall via simctl. The watch app is a
-  separate install on the watch sim: rebuilding/reinstalling the phone app
-  does NOT refresh it.
-- **Watch sign-in:** the watch gets its access token relayed from the running,
-  signed-in phone app over WatchConnectivity (works between *paired* sims —
-  `simctl pair <watch> <phone>` first; `updateApplicationContext` is delivered,
-  `transferUserInfo` was NOT observed being delivered watch-ward in the sim).
-  There is no manual sign-in on the watch any more (#265) — a watch running
-  alone waits on the "Waiting for iPhone" screen, which is expected, not a bug.
-  For a sim experiment you can mint a token directly:
-  `curl -X POST "http://127.0.0.1:54321/auth/v1/token?grant_type=password"`.
+| Workflow | Covers |
+|---|---|
+| `native-swift.yml` | `Core tests` — anti-slop structural + cold checks, advisory Swift lint, coverage helper self-test, then `scripts/swift-coverage.sh` over the three pure packages. `iOS Simulator build` — XcodeGen, generated watch-graph assertions, package resolve, boot a simulator, unsigned app build, then `-only-testing:SendmeterNativeTests`. Path-filtered to native/watch/health-core/anti-slop paths. |
+| `ios-ci.yml` | `package-tests` — `SendLogWatchCore`'s SwiftPM suite in a Linux `swift:6.3` container (no simulator). `native` — macOS: XcodeGen, unsigned native iOS app build, unsigned watch app build. |
+| `supabase-tests.yml` | `purge-sql` — disposable local stack (`supabase start`, `db reset --local --no-seed`), then `supabase test db` on `supabase/tests/purge_sync_generation.sql` and `supabase/tests/health_metrics_precedence.sql`, then `bash scripts/test-health-precedence-race.sh`. Never touches a hosted project. |
+| `mcp.yml` | `quality` — `cd mcp`-scoped `npm ci`, `npm audit --audit-level=high`, typecheck, tests, build. |
+| `secret-scan.yml` | `gitleaks` — pinned 8.30.1, allowlist self-test with disposable fixtures, then a full-tree `--no-git` scan (current files, not history). |
+| `deploy-migrations.yml` | `apply` — by-name migration apply via `scripts/apply-migrations.mjs --target dev\|prod`, gated by the `Preview`/`Production` GitHub environments. |
+| `native-testflight.yml` | `gate` + `native-beta` — dispatch-only signed Release build → TestFlight (`fastlane native_beta`). |
+| `agent-*.yml` | Scheduled agent-ops workflows, disabled in the GitHub UI (verified 2026-09-18). Not part of product CI. |
 
-**Caveat for rung 4:** device builds still have the hosted Supabase config
-**compiled in** (localhost is meaningless on a physical device) — a Debug
-device build writes to **production**. When testing native flows on-device,
-sign in with a throwaway dev account, never the real account.
+## Supabase migrations (by NAME, never by version)
 
-**Warning:** `sync:local` leaves a local-config web bundle in
-`ios/App/App/public` — run `npm run sync` (or let fastlane's lane rebuild)
-before archiving; fastlane runs its own `npm run build` so TestFlight builds
-are safe regardless.
+- `scripts/apply-migrations.mjs --target dev|prod` is the engine behind
+  `deploy-migrations.yml`. It applies pending migrations **by name** via the
+  Management API (access token only — no DB password, no `supabase link`, so
+  `supabase/config.toml`'s hardcoded ref cannot misfire) and records name +
+  version in `supabase_migrations.schema_migrations`. It is append-only: an
+  unrecorded *older* migration fails the run — backfill the ledger row by hand,
+  never re-run history.
+- Version-based diffs are wrong here: prod's ledger carries apply-time versions
+  from the MCP `apply_migration` era while local files carry file timestamps, so
+  `supabase db push` would re-apply recorded history.
+- Parity check: `node scripts/migration-status.mjs` prints the dev/prod table.
+  The ledger only records what was *reported* applied — a green table means
+  "nothing pending", not "schemas match".
+- GitHub environments: `Preview` (dev, deployable from `staging`) and
+  `Production` (prod, `main` only), plus lowercase `testflight`. Match that
+  capitalisation exactly — GitHub silently *creates* a missing environment and
+  the job then runs with no secrets. Keep `Preview` unrestricted: a
+  deployment-branch policy there previously made PR-branch deployments fail
+  with `startup_failure` (Vercel-era web integration, retired in #857).
 
-## Architecture
+## Release / TestFlight (human-only)
 
-- **Four tabs, one job each** (ViewIds in `src/types.ts`; labels in
-  `src/constants.ts` — the "tindeq" ViewId displays as **Force**):
-  - **Home** (`Dashboard.tsx`) = status: phase banner, ACWR + full load detail
-    inline (weekly bars, daily heatmap), readiness. No logging here.
-  - **Workout** (`WorkoutView.tsx`) = do: live watch mirror (`useLiveWorkout`,
-    dedicated realtime channel), phone-only fullscreen timer
-    (`PhoneWorkoutFullscreen`, reducer in `lib/phoneWorkout.ts` persisted to
-    localStorage), and the manual + Log Session sheet.
-  - **Force** (`ForceView.tsx`) = measure: global Exercise&Side card drives
-    everything below it (recording labels, zone targets, trend, curve);
-    `ForceFullscreen` auto-opens on connect and runs guided protocols.
-  - **History** (`HistoryView.tsx`) = review: the single combined timeline —
-    sessions (workouts expand to HR chart, tindeq sessions to recording
-    charts) + loose recordings interleaved with multi-select → create session.
-- **Guided protocol engine** — `src/lib/protocol.ts` (pure, vitest-covered):
-  `buildTimeline(preset, {switchS, prepareS})` expands a preset into flat
-  timed segments (prepare/hold/switch/rest/setRest, alternating L/R pairs
-  with auto-extended rests); the fullscreen countdown AND the per-rep
-  recorder in ForceView walk the same segments. Each hold saves as its own
-  recording (sliced from `samplesRef`) with the correct side.
-  `presetTargetKg` resolves %-of-PR targets with per-set ramps.
-- **Routine engine** — `src/lib/routine.ts` (pure, vitest-covered):
-  `expandRoutine(steps, {prepareS})` mirrors `protocol.ts`'s `buildTimeline`,
-  expanding a `RoutineStep[]` into flat timed segments (prepare/work/rest,
-  each step repeating ×reps with a rest between reps). `routineRun.ts` holds
-  the persisted, wall-clock-derived run state (`presetId`, `startedMs`,
-  pause bookkeeping) so `elapsedS()` can resume a run exactly after a
-  refresh/relaunch; `shouldLog()` gates logging a partial session on ≥60s
-  elapsed. Consumed by `src/components/RoutineCard.tsx` (preset CRUD + run
-  launch, on the Workout tab) and `RoutineFullscreen.tsx` (the running
-  countdown UI), wired into `WorkoutView.tsx`.
-- **Dynamometer layer** — `src/lib/dynamometer/` (#173): a device-agnostic
-  `DynamometerDriver` interface (connect/disconnect, `{us, kg}` sample stream,
-  tare, start/stop, device info, and a `capabilities` flag set for what a
-  device *lacks*) plus the Tindeq driver that implements it (`tindeq.ts` =
-  BLE transport, `tindeq-protocol.ts` = the pure packet parsing, unchanged and
-  still mirroring `SendLogWatchCore/TindeqProtocol.swift`). `registry.ts` is
-  the one place a driver is registered; `useTindeq` resolves
-  `activeDynamometerDriver()` at module load and never sees a UUID or a
-  command byte. `contract.ts` is the conformance suite a new driver must pass
-  — it runs against the real Tindeq driver (BLE mocked) *and* stub drivers, so
-  the seam is proven without hardware. Two things are honestly NOT behind the
-  seam and say so in comments: `?fake-tindeq` FAKE_MODE (a property of the
-  hook, not a driver) and the Force tab's Tindeq-specific UI copy. Adding a
-  real second device is still blocked on owning one.
-- **`src/`** — the React app. `lib/` = data/logic (`repo/` = all Supabase
-  queries, metrics.ts = ACWR/EWMA + exported `ewma()`, force-curve.ts =
-  critical-force fit + `ZONE_PROTOCOLS`, protocol.ts = guided Tindeq
-  timelines, routine.ts/routineRun.ts = guided routine-timer timelines +
-  resumable run state, healthSync.ts + watchAuthRelay.ts = native bridges).
-  `components/` = UI (`InfoDot.tsx` = the "?" explainer sheets). `hooks/` =
-  data hooks.
-- **`ios/App/App.xcodeproj`** — four product targets: the Capacitor iOS **App**,
-  the **SendLogWatch Watch App** companion (SwiftUI; workout/attempt tracking,
-  force gauge, readiness display), **SendmeterWidgets** (WidgetKit app
-  extension = the phone Live Activities), and **SendLogWatchWidgets** (WidgetKit
-  extension embedded in the watch app = watch-face complications + Smart-Stack
-  widgets). Plus a `SendLogWatchTests` unit-test target.
-  - The watch AND widget targets are `PBXFileSystemSynchronizedRootGroup`s: files
-    are included by **filesystem presence**, so add/remove Swift files by touching
-    the dir, not the pbxproj. The test target is a normal target (edit pbxproj to
-    add files there — use the `xcodeproj` Ruby gem, available via cocoapods:
-    `GEM_PATH=/opt/homebrew/Cellar/cocoapods/*/libexec /opt/homebrew/opt/ruby/bin/ruby`).
-    The widget target itself was created by `scripts/add_widget_target.rb` (same
-    gem); re-running is a no-op. `SendmeterWidgets-Info.plist` sits *outside* the
-    synced `SendmeterWidgets/` dir (watch-target convention) so it isn't compiled.
-  - **Live Activities need iOS 17** (interactive `Button(intent:)`); the widget
-    target is min iOS 17 while the App stays 16.0 (the appex is simply inert
-    below 17). `LiveActivityIntent.perform()` runs in the **App process**, so the
-    intent implementations live in `ios/App/App/LiveActivityIntents.swift` (App
-    target) and the widget only has no-op stubs so `Button(intent:)` compiles —
-    no App Group is needed (the pending-action queue is `UserDefaults.standard`,
-    shared because it's the same process).
-  - **`SendLogWatchWidgets`** (watch complications + Smart-Stack widgets) is a
-    separate process from the watch app, so it **needs an App Group**
-    (`group.com.jirathip.sendlog`) to share data. The watch app is the source of
-    truth: `WidgetBridge` writes a `WidgetSnapshot` (readiness + on-watch-computed
-    ACWR + live-workout state) to the App Group and calls
-    `WidgetCenter.reloadAllTimelines()` on sync/foreground/workout-start/boulder-
-    toggle/end. `WidgetShared.swift` is **duplicated** (watch-app copy + widget
-    copy, KEEP-IN-SYNC) since each target is its own synced group. Created by
-    `scripts/add_watch_widget_target.rb` (min watchOS 10, bundle id
-    `…watchkitapp.widgets`, `SendLogWatchWidgets-Info.plist` outside the synced
-    dir). Quick-launch complications deep-link via `sendmeter://workout|force`
-    → `RootView.onOpenURL` → the `NavigationStack` path.
-    - **One-time manual portal step (App Group):** the App Group must exist and
-      be enabled on the `…watchkitapp` **and** `…watchkitapp.widgets` App IDs in
-      developer.apple.com → Certificates, IDs & Profiles, or `fastlane beta`'s
-      `get_provisioning_profile` fails for the widget appex. The Fastfile
-      registers the widget App ID + fetches its profile but can't toggle the
-      capability. Device-only to verify (complications/Smart-Stack don't run in
-      the simulator gallery here).
-- **`native-plugins/`** — local Swift/Capacitor plugins (npm `file:` deps):
-  - `sendlog-health` + `sendlog-health-core` — HealthKit read on the **iPhone**,
-    readiness compute, `health_metrics` upsert, background delivery. `-core` is
-    pure Foundation (unit-tested); the plugin adds HealthKit + Supabase.
-  - `sendlog-auth-bridge` — relays the Supabase session from the WebView to the
-    watch over WatchConnectivity; also **receives** watch→phone live-workout
-    beats (`didReceiveMessage`) and forwards them to the WebView via
-    `notifyListeners("liveWorkout")` (the Bluetooth-fast mirror path — works even
-    while the WebView is suspended). It also records the **watch's build**
-    (#228): every watch→phone message carries `watch_app_version` /
-    `watch_app_build` (see "watch build report" below), which the plugin
-    stores in `UserDefaults` and reports via `getWatchInfo()`. It depends on
-    `ios/App/SendLogWatchCore` for that contract — same shape as
-    `sendlog-health` → `sendlog-health-core`.
-  - `sendlog-live-activity` — lock-screen **Live Activities** (ActivityKit) for
-    the phone workout (CLIMBING/RESTING timers + tappable Boulder/Stop) and the
-    Tindeq guided protocol (per-segment countdown). `LiveActivityManager` owns
-    activity start/update/end, the pending-action queue, the rest-over
-    `UNUserNotificationCenter` alert, and the Tindeq segment stepper. Timers
-    render natively via `Text(timerInterval:)` (no per-tick updates). Lock-screen
-    Boulder/Stop → App-process intents queue `{type,at}` into
-    `UserDefaults.standard`; `src/hooks/usePhoneWorkout.ts` drains + replays them
-    into the reducer (its phase guards make replay idempotent) on mount /
-    `appStateChange` / the plugin's `liveActivityAction` event.
-    `ActivityModels.swift` is **duplicated** (widget copy + plugin copy, KEEP-IN-
-    SYNC comment) — ActivityKit matches by type name + Codable shape, so drift
-    makes the card render as a placeholder. iOS-17-gated; device-only to verify.
-  - `sendlog-passkey` — runs the WebAuthn passkey ceremony natively via
-    `ASAuthorization` (Face ID). Needed because the WebView origin is
-    `capacitor://localhost`, which the browser WebAuthn API won't accept for the
-    `sendmeter.app` RP ID (and Capacitor rejects `iosScheme: "https"` — WKWebView
-    reserves that scheme — so you can't give the WebView a real https origin).
-    `src/lib/passkeys.ts` branches: web uses supabase-js's browser flow; native
-    drives the **two-step** Supabase flow itself (`passkey.startRegistration` →
-    plugin `register` → `passkey.verifyRegistration`, and the auth equivalent),
-    passing all binary fields as base64url. Relies on the already-configured
-    `webcredentials:sendmeter.app` associated domain + AASA. Device-only to verify.
-- **`supabase/migrations/`** — Tables: `sessions` (incl.
-  `workout_source` = immutable auto/phone badge that survives type edits),
-  `user_settings`, `phase_periods`, `tindeq_recordings`, `tindeq_presets`
-  (hold/reps/sets/rests + target kg or %-of-PR + per-set % step + alternate
-  sides), `routine_presets` (user-defined guided routine steps, drives the
-  Workout tab's routine timer), `climb_workouts`/`climb_attempts` (both with
-  `source` provenance), `health_metrics`, `live_workouts` (one row per user,
-  watch-heartbeat for the live workout mirror), `tindeq_tags` (per-user tag
-  registry for rename/hide metadata; tags themselves stay denormalized on
-  `tindeq_recordings.tag`). RLS scopes everything to `auth.uid()`; realtime
-  publishes the watch-writable tables + `live_workouts`.
+- TestFlight builds come from `main` only: the build uses the production
+  Supabase project and only `main` carries the migration-verified schema. Flow:
+  promote `staging` → `main`, wait for the Production migration run, then
+  dispatch the native TestFlight workflow from `main`. Promoting to `main` and
+  dispatching TestFlight are **owner actions** — agents do not do them.
+- `gh workflow run "Native TestFlight" --ref main` — `workflow_dispatch` only
+  (macOS runner minutes are the dominant CI cost, so there is no per-merge
+  build). `fastlane native_beta` runs headless through the ASC API key in the
+  `testflight` environment: it regenerates the project, registers/verifies App
+  IDs and capabilities, fetches four distribution profiles (app, watch app,
+  phone widget, watch widget), pins manual signing for those four targets at
+  archive time, and injects the build number
+  (`latest_testflight_build_number + 1`). **Never hand-bump
+  `CURRENT_PROJECT_VERSION`.** Always `bundle exec` (Ruby is pinned in
+  `.mise.toml` + `Gemfile.lock`) with `LANG=en_US.UTF-8`.
+- Watch HealthKit/App-Group capabilities are a **manual Apple Developer portal
+  prerequisite** the lane verifies but cannot enable.
+- App Store copy lives in `docs/app-store-checklist.md` (native submission
+  section) and `docs/app-review-notes.md` (reviewer notes).
 
-## Non-obvious things that will bite you
+## Non-obvious things that still bite
 
-- **This repo's most-repeated defect: a decision made from state captured in a
-  closure that outlives the render it came from.** It has been shipped and caught
-  in review three times — #295 (`endSession`'s `if (!gaugeSession) return` guard,
-  plus a recordings snapshot taken before a 4s `await`) and #296 (`onRestore` /
-  `zoneSel` / `preset` read inside a `[]`-deps effect's `.then`). Both reintroduced
-  the exact bug they were written to fix, as a race.
-
-  `setState` cannot invalidate another in-flight closure's copy of a value, so a
-  guard reading captured state is not a guard. The async paths that expose this
-  are everywhere in `ForceView` / `PresetManager`: fetch `.then` callbacks,
-  `setTimeout` defers (the 150ms disconnect defer), and multi-second `Promise.race`
-  awaits.
-
-  **Rule:** inside any async path, a guard or a snapshot must read a **ref**, not
-  a captured value, and any dedupe guard must be set **before the first `await`**.
-  Prefer extracting the logic into a pure `src/lib` module and testing concurrent
-  invocation directly — `gaugeSessionEnd.ts` ("two concurrent calls for the same
-  groupId log exactly once") is the pattern to copy.
-
-- **iOS min is 16.0**, not 15. The Supabase Swift SDK floors at 16; Capacitor
-  derives `CapApp-SPM`'s platform from the *first* `IPHONEOS_DEPLOYMENT_TARGET` in
-  the pbxproj (the **project-level** one), so it must be 16 for `cap sync` to
-  regenerate SPM correctly.
-- **`@capacitor-community/apple-sign-in`'s SPM pin is patched, not upstream.**
-  It has no Capacitor-8 release; the npm-published 7.1.0 pins
-  `capacitor-swift-pm` to `7.0.0..<8.0.0`, disjoint with
-  `native-plugins/sendlog-passkey`'s `8.0.0..<9.0.0` — with the pristine
-  package NO scheme in `ios/App/App.xcodeproj` resolves its SPM graph.
-  `patch-package` re-pins it to `from: "8.0.0"` on `postinstall` from
-  `patches/@capacitor-community+apple-sign-in+7.1.0.patch`. Never remove the
-  `postinstall` script or the patch file — a clean `npm ci` without them
-  silently reverts the pin and breaks SPM resolution project-wide.
-- **Dates must be Gregorian.** A Thai-region device defaults `Calendar.current` to
-  the Buddhist calendar (year + 543), which once corrupted every stored date. Use
-  `Calendar.gregorianLocal` / `Date.localDateString` (Swift) and the web
-  `src/lib/dates.ts`. There's a DB `check` constraint bounding dates as a backstop.
-- **Health ingestion is iPhone-only.** The iPhone is the *sole* writer of
-  `health_metrics` (it sees the merged HealthKit store incl. third-party wearables).
-  The watch only *reads* the computed score back for display — it no longer reads
-  HealthKit or writes health rows. Don't reintroduce watch-side health writes.
-- **Only supabase-js holds a refresh token. The relays carry access tokens only**
-  (#265). The web (supabase-js), the watch and the iPhone health plugin all share
-  the user's session, but the two native consumers are handed a short-lived
-  **access token** and nothing else, re-relayed on every auth event + app
-  foreground (the `useAuth` visibilitychange listener). Refresh tokens are
-  single-use with reuse detection ON: a second holder presenting one the phone
-  has since rotated makes Supabase revoke the entire session family, signing the
-  phone out too. That is not prevented by discipline any more — the credential is
-  simply not on the wire (`SendLogAuthBridge.setSession` / `SendLogHealth.setSession`
-  have no `refreshToken` field) and not on the device (both native clients are a
-  single `SupabaseClient` with an `accessToken` provider and no `AuthClient`;
-  `WatchSessionStore` / `HealthSessionStore` keep the bearer token in the Keychain
-  and purge supabase-swift's own item on every launch).
-  - **Two earlier attempts failed by convention.** #196 split each native side
-    into an `auth` + `data` client and forbade every refreshing accessor; the
-    rules were right and a twelve-hour-stale token was replayed in production
-    anyway. `src/lib/nativeAuthInvariants.test.ts` now pins the structural
-    property from vitest, because the `quality` job never compiles the Swift.
-  - **The watch cannot sign itself in, by design** — no email/password form. It
-    consumes what the phone relays; when the token expires it asks
-    (`requestSession`) and waits, staying `signedIn` with `tokenFresh: false` so
-    the offline queues keep their account stamp. Don't reintroduce a watch-native
-    login: it would create a second rotating session on the wrist.
-  - **Relayed payloads must always differ.** Verified in paired simulators
-    (2026-07-27): `updateApplicationContext` does **not** deliver a payload
-    identical to the one already set, which is why answering a watch's pull while
-    the phone's token was still valid landed nothing (#266). The plugin stamps
-    every relay with a fresh `relayId` + `relayedAt`; a pull is additionally sent
-    via `transferUserInfo`. Never relay a payload whose content could repeat.
-- **Every watch→phone WC message carries the watch's build** (#228) — the watch
-  app updates from TestFlight on its own schedule, so a phone on the fixed
-  build can be paired with a pre-#208 watch that is still revoking the session
-  family, and the phone had no way to see it. `WatchBuild.stamp(...)` adds
-  `watch_app_version` / `watch_app_build` to the live-workout beat, the
-  live-force beat and `requestSession`; **stamp any new watch→phone message
-  the same way** — the account sheet reads whatever last arrived. The phone
-  plugin `WatchBuildReport.stripped(...)`s them back off before forwarding, so
-  `LiveWorkoutMessage` / `LiveForceMessage` keep their exact shape. The verdict
-  (behind / ahead / differs / never reported) lives in `SendLogWatchCore` so
-  it's tested on Linux CI; the sheet only renders it.
-  - **…and its offline-queue depth** (#21, `watch_pending_sync`). Same channel,
-    same rules: unknown values are left off, `stripped(...)` removes all three
-    keys, the verdict (empty / pending / backed-up / never reported, plus
-    staleness) lives in Core. The non-obvious part is the *read*:
-    `OfflineQueue` / `PendingSessionQueue` are actors, so their counts can't be
-    awaited on the synchronous WC send paths — each publishes into
-    `PendingSyncCache` (sync-readable, process-wide) whenever it counts,
-    persists or drains, and `WatchBuild.stamp` reads the cached sum. **Any new
-    queue whose depth should show up on the phone has to publish there too**,
-    and nil (never counted) must keep reading as "not reported", never as an
-    empty queue. Native watch queues keep ownerless legacy rows in a separate
-    `watch_unscoped_sync` diagnostic bucket rather than treating them as the
-    current account's pending work.
-- **Native account isolation and cache conflict contract (#747).** The native
-  cache, durable queue, WatchConnectivity completion inbox, realtime slices,
-  background refreshes, and optimistic overlays are all scoped by the pair
-  `(account_user_id, accountEpoch)`. A normal sign-out/auth expiry clears the
-  visible in-memory model and advances the epoch but preserves that account's
-  valid cache, queue entries, and stamped watch completions for a later
-  same-account sign-in; another account can read none of them. Watch payloads
-  and native watch queue telemetry must carry an owner stamp. Intentionally unstamped legacy
-  completions, live beats, and queue entries are retained only as bounded
-  quarantine/diagnostics and are never attributed to the current account.
-  `live_workouts` is a realtime-only mirror and is never placed in the cache.
-  Account deletion is a separate destructive boundary: advance the epoch
-  before the first await, discard only the exact account after the server
-  deletion succeeds, and retain data when auth/network failure prevents that
-  confirmation. Local pending upserts and tombstones win over stale refreshes;
-  server acknowledgements require the matching local origin/revision; deltas
-  advance their cursor only after writes, and authoritative deltas/full
-  refreshes converge watch placeholders (with bounded tombstoning for absent
-  placeholders). This is a client LWW/ownership contract, not a substitute
-  for server-side RLS or a guarantee that background/WatchConnectivity
-  delivery occurs; the existing Capacitor/WebView watch metadata path remains
-  a separate session boundary. Device/E2E verification remains required for
-  those paths.
-- **Migrations auto-apply on merge, to BOTH remote projects (#130).** `.github/workflows/deploy-migrations.yml`
-  runs on any push touching `supabase/migrations/**`: `staging` → the **dev/preview**
-  project (`mjkndfhjnipomjjhgsxv`, issue #121 — hosted on a second Supabase account),
-  `main` → the **prod** project (`zznsqmcewtzlnfoiefkk`). It calls
-  `scripts/apply-migrations.mjs --target dev|prod`, which applies pending migrations
-  **by name** (append-only — see below) via the Management API and records the name
-  + version in `supabase_migrations.schema_migrations`. There is no required-reviewer
-  gate on this plan, so **the merge itself is the human gate**: merging to `main`
-  applies DDL to production (`deploy-migrations.yml`'s own warning comment says the
-  same). Check parity any time with `npm run migration:status`.
-  - **Manual path (fallback / verification only)**, for backfills or incident
-    response when you can't wait for a merge: `POST /v1/projects/{ref}/database/query`
-    (or `npm run migration:apply -- --target dev|prod` locally), same by-name
-    semantics as the workflow. **One Management API token reaches both projects**
-    (`~/.supabase/access-token`): the main account is only a *Developer* on the dev
-    project, but Developer is sufficient for the Management API — verified
-    2026-07-25. (The older `~/.supabase/dev-account-token` is no longer needed; the
-    token that was there had expired, which presents as `401 JWT could not be
-    decoded` — a dead token, not a rights problem.)
-  - Drift still happens if the automated flow is bypassed or a project falls behind:
-    the `health_metrics` delete policy + date-sanity constraints once sat unapplied
-    for a while (with no DELETE policy, a delete silently matches zero rows, so
-    "Clear health data" looked broken while succeeding). Run `npm run
-    migration:status` after any manual intervention to confirm dev and prod agree.
-    The dev project is free-tier and auto-pauses after ~7 idle days — unpause it
-    (second account's dashboard or its token) before it needs to receive a push or
-    before verifying a release.
-- **CI secrets live on GitHub *environments*, not the repo (#130).** The
-  two Supabase projects are on two different accounts, but **one main-account token
-  reaches both** (Developer role suffices for the Management API), so the same
-  `SUPABASE_ACCESS_TOKEN` value can go in both environments:
-
-  | GitHub environment | project ref | deployable from |
-  |---|---|---|
-  | `Preview` | `mjkndfhjnipomjjhgsxv` | `staging` only |
-  | `Production` | `zznsqmcewtzlnfoiefkk` | `main` only |
-
-  The branch restriction is the real guard: prod secrets are unreachable from any
-  branch but `main`, so a mis-wired job cannot touch prod. (Required *reviewers*
-  would be better still, but need a paid plan on a private repo.) A workflow picks
-  an environment with
-  `environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Preview' }}`.
-  **Match that capitalisation exactly** — GitHub silently *creates* an environment
-  when the name doesn't match an existing one, so a lowercase `production` would run
-  with no secrets and no error. This repo's environments are `Preview`, `Production`
-  and `testflight` (that last one lowercase).
-- **Automated migrations must apply by NAME, not version.** Prod's
-  `schema_migrations` carries apply-time versions from the MCP `apply_migration`
-  era while local files carry file timestamps, so the same migration legitimately
-  has different versions on the two projects. `supabase db push` diffs by version
-  and would re-apply recorded history. Use the Management API
-  (`POST /v1/projects/{ref}/database/query`) — access token only, no DB password,
-  no `supabase link`, so `supabase/config.toml`'s hardcoded prod ref can't misfire.
-  This repo's `scripts/apply-migrations.mjs` (append-only, fails on an unrecorded
-  *older* migration; also the engine behind `deploy-migrations.yml`) and
-  `scripts/migration-status.mjs` (dev/prod parity table; `npm run
-  migration:status`) are the reference implementations — ported from
-  `synergy-costing`, which hit this problem first. The ledger records only what
-  was *reported* applied — it is not proof the objects exist.
-
-- **`autoRefreshToken: false` does NOT stop supabase-swift refreshing.** It only
-  disables the background *timer*. Two accessors refresh anyway, and both were
-  live in shipped builds: `auth.session` (refreshes whenever the stored access
-  token is expired — the #196 finding) and **`auth.setSession(accessToken:
-  refreshToken:)`, which calls `refreshSession` outright when the access token it
-  is handed has already expired** — the #265 finding, and the one #196's guards
-  were left standing in front of. Neither native client has an `AuthClient` any
-  more (#265): each is a single `SupabaseClient` whose `accessToken` provider
-  returns the relayed bearer token, so there is nothing to refresh, recover or
-  rotate. `SupabaseClientOptions.AuthOptions` enforces argument order —
-  `autoRefreshToken` must precede `accessToken` — and the main
-  `SupabaseClientOptions` init is `(db:auth:global:functions:realtime:storage:)`,
-  so `auth:` must precede `global:`.
-- **The `Preview` GitHub environment must stay unrestricted.** Vercel's
-  integration deploys *PR branches* to it, so adding a deployment-branch policy
-  (e.g. "staging only") makes every PR-branch deployment be rejected and the
-  workflow runs on those branches fail with `startup_failure` — with no error
-  that points at the environment. Cost ~25 min of broken CI on 2026-07-25.
-  `Production` → `main` only is fine and is set, because prod only ever deploys
-  from `main`. (Required *reviewers* would be better but need a paid plan on a
-  private repo.)
-- **`public` Swift types lose implicit `Sendable`.** Swift infers it for internal
-  structs but never for public ones, so moving a value type into a package
-  (`SendLogWatchCore`, #191) silently drops the conformance — the compiler stays
-  quiet until something turns on strict concurrency checking. Declare it
-  explicitly on pure-data types when making them public.
-- **A green `quality` check says nothing about Swift.** `ci.yml` is lint /
-  typecheck / vitest / vite build — all web. Only the `swift` job in `ios-ci.yml`
-  (#178, `paths: ios/**`) compiles the watch and phone targets, and since #500
-  it also **executes** the `SendLogWatchTests` suite on a watchOS simulator
-  (before that, the suite was compiled and discarded — a green `swift` job said
-  nothing about the queue/ownership/save-path tests). An iOS-only PR
-  with `quality=SUCCESS` and no `swift` result is **unverified**; #162 reached
-  staging exactly that way, and a missing-argument-order error nearly did again
-  in #196. If the macOS runner is queued, run the suite locally rather than
-  merge (a bare `xcodebuild build` is no longer equivalent to what CI does —
-  it skips every test):
-  `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -destination "id=<sim udid>" -only-testing:SendLogWatchTests CODE_SIGNING_ALLOWED=NO`.
-  Still not covered by any CI: the phone App target has no test target of its
-  own, and HealthKit runtime / background delivery / real sensors / Live
-  Activities remain device-only (testing-ladder rung 4) — the suite runs
-  unsigned by design, so nothing in it may ever require the HealthKit
-  entitlement (tests drive seams that stop short of HealthKit, several relying
-  on `requestAuthorization()` throwing in an unsigned host).
-
-- **Tindeq capture flow (intentional).** Both the in-app gauge and the watch set
-  **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
-  prompt (in-app has an Undo; the watch hides tag/side/session controls *while
-  measuring* so the live gauge fits one screen). Ending the session (phone
-  Finish, watch, or a disconnect) **auto-logs to history with no log-time
-  review step** (#295, mirrors the watch's `TindeqManager.logSessionNow()`) — RPE is
-  the #280 W'-depletion prediction (or its fallback), always banked
-  `rpe_confirmed = false` since nobody reviewed it, and duration is the
-  recordings' actual span. Reviewing/editing RPE (or duration) happens
-  post-hoc via History's `EditSessionSheet`. Don't reintroduce the end-of-
-  session RPE prompt or an editable duration at log time. **Nuance (#588
-  review sign-off):** the watch's compact finish/disconnect controls show a
-  lightweight `watchFinishConfirmation` tap-guard first — that is an
-  accidental-tap shield for a compact destructive icon, NOT a log-time
-  review: confirming still auto-logs immediately with the predicted RPE and
-  no editable fields, so #295's substance stands.
-- **The recording queue is TWO stores, and the split is load-bearing** (#269).
-  **IndexedDB** (`src/lib/recordingDb.ts`) is the main queue — every path that
-  can await (ForceView's failed-insert handler, the drain, the manual retry)
-  uses `persistRecordingDurable`. **localStorage** keeps only a *synchronous
-  emergency lane*, written by exactly one caller: `useTindeq`'s
-  salvage-on-unmount cleanup, which is a React cleanup function and **cannot
-  await** — an async write there doesn't finish later, it loses the buffer.
-  `absorbSyncLane` moves the lane into IndexedDB on the next drain/foreground,
-  and that same function IS the one-time migration of pre-#269
-  `sendmeter:pending-recordings` entries (same shape, so no migration flag
-  exists to get out of step). The migration is **interrupt-safe by
-  construction**: the copy is one transaction, the lane is cleared only after
-  it commits, and the store's keyPath is the entry `id`, so re-copying after a
-  kill overwrites instead of duplicating. Don't collapse the two stores, and
-  don't "simplify" the salvage path onto the async one. IndexedDB unavailable
-  (private mode, storage disabled, a blocked open) degrades to the lane —
-  `openRecordingDb` resolves `null`, never throws.
-- **Sign-out is ONE function, and it is the only thing that may delete a queued
-  recording** (#273). `signOutUser` in `src/lib/signOut.ts` is the single
-  implementation behind both `useAuth().signOut` and `deleteAccount` — those
-  two used to hold a copy each of `markUserSignOut()` + `supabase.auth.signOut()`.
-  A **user-initiated** sign-out drains the offline queue first (it needs a live
-  token, so the drain must finish BEFORE `signOut()`, deadlined by
-  `DRAIN_TIMEOUT_MS` so a dead network can't hang it), clears what uploaded,
-  and asks about any remainder — never an unconditional confirm, which would
-  fire mostly on an empty queue. A **forced or revoked** sign-out (#265 —
-  it really happened) **discards nothing**: the two paths are told apart by
-  `markUserSignOut()`'s marker, and `clearRecordingQueue` is reachable only via
-  `discardQueueOnUserSignOut`, which checks it. `signOutInvariants.test.ts`
-  pins "one implementation, one deletion site" structurally, because the cost
-  of the paths drifting is the user's training data. Accepted residual, on
-  purpose: kept-but-undrainable entries live on the device until the same
-  account signs back in. Full reasoning: the "#273" section of the policy block
-  in `recordingQueue.ts`.
-- **A recording that can't be persisted is reported, never swallowed** (#264).
-  The queue's last line of defence is a storage write, and that write can
-  itself fail (quota exhausted, storage disabled) — the failure the queue
-  exists to protect against, at the one moment it can't. The decided policy
-  lives in full above `persistRecording` in `src/lib/recordingQueue.ts`; the
-  short version: **the new recording wins** (a refused write retries after
-  dropping the oldest queued entry, repeatedly, down to the new entry alone),
-  and if the lone entry still won't write, the loss is real and gets said out
-  loud — `reportPersistFailure` (`src/lib/lostRecordings.ts`) is the single
-  reporting path for both call sites, emitting a Sentry `data-loss:` event
-  plus a durable one-shot notice that `App.tsx` surfaces on the next
-  mount/foreground. `useTindeq`'s salvage-on-unmount can only report (no UI is
-  reachable from a cleanup); `ForceView` additionally holds the samples in
-  memory behind a Retry/Discard banner. **Never phrase a `persisted: false`
-  outcome as "queued" or "will sync"** — nothing is holding it. Eviction
-  survives #269 as a *backstop* (`MAX_IDB_QUEUE_BYTES` = 64 MB, ~20 heavy
-  offline sessions) and still reports to monitoring — a non-zero `evicted` on
-  the IndexedDB path is now a finding, not routine degradation.
-- **Queue depth is ambient, never an interrupt** (#269). `usePendingUploads` →
-  a muted line on the Force tab and an actionable History banner when this
-  iPhone or the watch has uploads waiting (#21/#369). Empty queues keep History
-  quiet; pairing/install/build state lives in Account. A toast
-  or alert per failed upload fires exactly when the user is mid-outage and can
-  do nothing, and then repeats per rep — don't add one. Same honest-states rule
-  as `uploadWarningPresentation`: unknown must not render as empty, and a stale
-  watch count must read as the last report rather than a current queue depth.
-- **Recording samples store `t` in milliseconds.** `tindeq_recordings.samples`
-  time is ms — charts must divide by 1000 to show seconds (a mislabeled axis once
-  showed "25152.0s").
-- **`?fake-tindeq`** query param puts the web Force view in fake mode (simulated
-  BLE + force stream) — the only way to exercise the connect→measure→save flow in
-  a browser (real Web Bluetooth needs a device).
-- **`?fake-weather[=hot|prime|bad|no-hist]`** puts Send Conditions in fake mode
-  (`src/lib/weather.ts`) — a synthesized reading + 30-day history, skipping
-  geolocation, both live Open-Meteo calls, and both localStorage caches — so
-  the card/sheet are browser-testable in local dev without a device's location.
-- **Never add `live_workouts` to `WATCHED_TABLES`** in
-  `RealtimeVersionProvider.tsx` — the watch heartbeats it every ~5s, which
-  would refetch every card in the app every 5s. The Workout tab subscribes to
-  it on its own payload-reading channel (`useLiveWorkout`).
-- **Haptics are delegated, not per-call-site** (#171). `installTapHaptics()` in
-  `main.tsx` puts ONE capture-phase pointer listener set on `document`; every
-  `<button>`, toggle label, checkbox and `.card.tappable` ticks for free, so
-  don't add a haptic call to a new button. Non-button tappables opt in with
-  `data-haptic="light" | "medium"`; `data-haptic="off"` (and `.chart-scrub`) is
-  a **mute boundary** — `closest()` nearest-match-wins, so the boundary silences
-  everything under it that isn't itself interactive. Three rules that will bite:
-  (1) the tick resolves on **pointerup** with a 10px slop, never pointerdown, or
-  every scroll that starts on a button buzzes; (2) `aria-disabled` (the #222
-  refused-but-clickable Start controls) fires the **warning** pattern, never the
-  accepted one, while a real `disabled` fires nothing — a refused tap must not
-  feel like an accepted one; (3) one tick per gesture, so a button inside a
-  tappable card, an explicit `tapHaptic()` and a sheet's mount effect on the
-  same tap collapse to one. `selectionHaptic()` is the deliberate exception —
-  unguarded, for per-value-change ticks (chart scrub, the #172 slider), which is
-  why those controls are muted for the delegated path.
-- **React-compiler lint is strict**: no `Date.now()`/impure calls in render
-  (hold `now` in state ticked by an interval), no synchronous `setState` in
-  effect bodies (derive instead, or write state only inside async callbacks —
-  see the curve auto-compute in `ForceView` for the pattern), manual
-  `useMemo` that the compiler can't preserve gets rejected (just compute).
-- **Guided protocols save PER REP** — during a protocol, `handleStop` and the
-  autosave effect in `ForceView` slice each hold out of the live buffer as
-  its own recording (side per rep when alternating); the whole-session
-  recording is only saved for free holds. Don't re-add a full-session insert
-  to the protocol path or every rep gets double-counted.
-- **InfoDot must swallow clicks** — it renders inside tappable cards
-  (ReadinessCard opens its detail sheet on card click); the
-  `display:contents` wrapper with `stopPropagation` is load-bearing, as is
-  the `textTransform: none` reset (the dot lives inside uppercase eyebrow
-  labels).
-- **Design tokens live in `index.css`**: semantic colors are deliberately
-  desaturated (no stock iOS neons), `--iris` is the shared iridescent
-  hairline gradient (cards get it via a masked `::before` ring — suppressed
-  inside `.modal-sheet`), `--shadow-card` is layered + has an inset top
-  highlight, and floating chrome (`.bottom-nav`, `.account-fab`,
-  `.glass-bar`) shares the translucent blur-glass recipe.
-- **localStorage keys** are prefixed `sendmeter:` — `phone-workout` (resumable
-  workout state machine), `rest-target-s`, `gauge-prepare`, `passkey-prompt`,
-  `theme`, `auth-events` (bounded ring of null-session diagnostics, #194/#202),
-  plus `gauge-last-tag`/`gauge-last-side` (#684: the last explicitly-picked
-  Exercise&Side, written on every explicit selection and read as the fallback
-  at the force persist boundary — never `allTags[0]`; the two fields merge
-  independently, so picking a side while the exercise field is empty never
-  wipes the remembered tag. The remembered SIDE applies only to free holds —
-  protocol reps keep their own per-hand side, so a stale remembered side can
-  never contaminate per-side curve fits).
-- **Auth diagnostics don't live in localStorage on native.** `auth-events`,
-  `auth-heartbeat` and `webview-canary` go through `authEventStore.ts`:
-  Capacitor **Preferences** (NSUserDefaults) on native,
-  `localStorage` on web — because the WebView store is exactly what may be
-  getting wiped, and evidence stored next to the session dies with it. The
-  seam is synchronous by contract (write-behind cache + serialized async
-  writes) so the auth path never awaits a disk write and a failed write can't
-  throw into it. `webview-canary` is written to BOTH stores: present in
-  Preferences but gone from `localStorage` = the WebView's data was purged.
-  The bounded 20-event ring stays on-device and is readable in the Account
-  troubleshooting section; it is never uploaded.
-- **Sentry only ever sees an allow-listed event** (#227, `src/lib/monitoring.ts`).
-  It initializes *only* when a build-time `VITE_SENTRY_DSN` is present — no DSN
-  (dev, tests, any un-configured build) and the SDK is dead-code-eliminated
-  entirely. `beforeSend`/`beforeBreadcrumb` rebuild the event from allow-lists:
-  the auth uuid as the only identity, no query strings, no console breadcrumbs,
-  and every `HealthMetric` field name/value dropped — `monitoring.test.ts`
-  proves that on an event deliberately built carrying all of them, so **add any
-  new health field to `HEALTH_TERMS`**. It catches things that *throw* (render
-  crashes, unhandled rejections); it would NOT have caught the #202 logout,
-  which fails silently — that's what the auth diagnostics above are for. Setup
-  + the device-verification checklist: `docs/error-monitoring.md`.
-- **Chrome animates transform/opacity on the compositor**, so `getComputedStyle`
-  returns the *base* value mid-animation — you can't measure a ripple's scale or a
-  hidden bar's transform from JS in the browser tools; verify animations visually
-  (screenshot) instead of by reading computed style.
-- **`.card + .card` margin leaks into grid cells.** The stacked-card sibling rule
-  (`margin-top: 10px`) makes the 2nd card in a `.grid-2` shorter than its
-  stretched row; `.grid-2 > .card + .card { margin-top: 0 }` fixes equal heights.
-- **Auto-hiding chrome must overlay, not flex.** The floating header/nav are
-  `position: absolute` with the scroll area padded to clear them — translating a
-  flex-reserved bar off-screen leaves a blank strip. See `DESIGN.md` → Floating
-  glass chrome for the shell model.
-- **`cap sync` before archiving.** The iOS archive bundles `ios/App/App/public`,
-  which only updates on `npm run build && npm run sync`. Forgetting this ships stale UI.
-- **`CapApp-SPM/Package.swift` is Capacitor-managed** — never hand-edit; it's
-  regenerated by `cap sync`.
-- **In an Orca worktree, `cap sync`/`npm run sync` can poison
-  `CapApp-SPM/Package.swift` with a SIBLING worktree's paths** (found during
-  #487's review). When a worktree's `node_modules` is a symlink into another
-  worktree (a shared/hoisted install), `cap sync` resolves plugin paths
-  through that symlink and writes `../../../../<other-worktree>/node_modules/…`
-  / `../../../../<other-worktree>/native-plugins/…` into the manifest instead
-  of this worktree's own relative paths — a silent iOS-build breaker (SPM
-  resolves fine locally, then fails for anyone else, or once the other
-  worktree is removed) with no error at sync time. Always `git diff
-  ios/App/CapApp-SPM/Package.swift` after `cap sync` in a worktree and
-  `git checkout --` it if the paths point outside the current worktree.
-- **Supabase URL + anon key are committed** (publishable key; RLS is the security
-  boundary) — in `src/lib/supabase.ts`, the plugins, and the watch's SupabaseConfig.
+- **Dates must be Gregorian.** A Thai-region device defaults `Calendar.current`
+  to the Buddhist calendar (year + 543), which once corrupted every stored date.
+  Use the repo's Gregorian helpers (`DateSupport` in `SendmeterCore`,
+  `SendLogWatchCore`, and `SendLogHealthCore`); a DB `check` constraint bounds
+  dates as a backstop.
+- **The watch never signs itself in.** The phone holds the session and relays a
+  short-lived **access token only** (no refresh token anywhere native — the
+  watch's `SupabaseClient` has an `accessToken` provider and no `AuthClient`).
+  Don't reintroduce a watch-native login or a refresh-token holder: refresh
+  tokens are single-use with reuse detection, so a second holder would revoke
+  the whole session family.
+- **A decision made from state captured in a closure that outlives the await it
+  came from is this repo's most-repeated defect.** Inside any async path, read a
+  ref/actor/current value — not a captured snapshot — and set any dedupe guard
+  **before** the first `await`. Prefer extracting the logic into a pure package
+  type and testing concurrent invocation directly.
+- **`public` Swift types lose implicit `Sendable`.** Swift infers it for
+  internal types but never for public ones, so moving a value type into a
+  package silently drops the conformance. Declare it explicitly on public
+  pure-data types.
+- **A green SwiftPM run says nothing about the app target.** See the ladder
+  above; the same trap applies to CI — check which job actually ran.
+- **Anti-slop (`tools/anti-slop-swift`, pinned upstream revision):**
+  `.anti-slop.json` disables exactly `no-any-dictionary-value` and
+  `no-any-parameters` (WatchConnectivity's system API needs them); the rest
+  stay enabled. CI's Swift lint step is advisory, but a missing path/config or
+  a tool-build failure is a real failure. When a force unwrap, cast, `try`, or
+  process-termination primitive is genuinely required, put a specific
+  `// SAFETY:` explanation in the contiguous comment block above it.
+- **Coverage floors** for the three pure packages (and the helper self-test)
+  live in `docs/testing.md`; the floors are a small margin below measured
+  baselines — don't round them up.
 
 ## Names (display vs. internal — keep the split)
 
-- **User-facing name is "Sendmeter"** (topbar, login, `CFBundleDisplayName`,
-  Capacitor `appName`, PWA manifest, privacy page). The App Store *display* name is
-  independent of the bundle ID.
+- **User-facing name is "Sendmeter"** (App Store display name, in-app copy,
+  widget display names).
 - **Internal identifiers stay `sendlog`/`SendLog`** and should NOT be renamed:
-  bundle IDs `com.jirathip.sendlog*`, Xcode target/scheme names (`SendLogWatch Watch App`),
-  plugin modules (`SendLogHealth`, `SendLogAuthBridge`), Swift file/dir names.
-
-## Deploy (TestFlight + Vercel)
-
-- **Release flow: TestFlight builds from `main`, by default.** TestFlight
-  uses the production Supabase project, so the workflow deliberately rejects
-  any other ref — staging code must never pair with a prod schema that
-  hasn't migrated yet. Flow: promote `staging` → `main` (Vercel production
-  web deploy fires on that merge), wait for the Production migration
-  workflow, then dispatch/tag the TestFlight build from `main`. Exception:
-  none — external-tester / App Store submission builds also cut from `main`,
-  same as every other build now. Note the branch is only a *code-state*
-  distinction for native builds — the compiled-in Supabase config means every
-  device build reads/writes **production** data.
-- **CI TestFlight builds are opt-in, not per-merge (#150).**
-  `.github/workflows/testflight.yml` runs `fastlane beta` on a Blacksmith
-  **6vCPU** macOS runner (`blacksmith-6vcpu-macos-26`, $0.08/min — macOS
-  minutes burn the free tier at 20x the Ubuntu rate and were the dominant CI
-  cost, ~$0.5+ per build on the old always-on 12vCPU trigger). A `main` push
-  only builds when the pushed commit message contains **`[testflight]`** (for
-  a squash-merged PR that's the PR title); untagged pushes show as skipped
-  runs. For an on-demand build use
-  `gh workflow run TestFlight --ref main` (a `runner` input overrides the
-  label, e.g. back to 12vCPU for a rush build). The workflow's `concurrency`
-  queues and never cancels — build numbers come from
-  `latest_testflight_build_number + 1`, so parallel runs would race the same
-  number. Failed uploads (Apple 500s happen) still bill the full build —
-  rerun via workflow_dispatch rather than re-pushing.
-- **`fastlane beta` runs fully headless via the ASC API key** — `cd` to repo root
-  (or `ios/`) and run `LANG=en_US.UTF-8 bundle exec fastlane beta` (always via
-  `bundle exec`, never bare `fastlane beta` — the Ruby toolchain is pinned in
-  `.mise.toml` and the fastlane version in `Gemfile.lock`; a bare invocation
-  can pick up a different globally-installed fastlane). It works from a
-  spawned/non-interactive shell, no signed-in Xcode account required. The lane
-  (`fastlane/Fastfile`) does everything: `npm run build && cap sync ios`, then
-  `get_certificates` (installs/creates the Apple Distribution cert via the API key),
-  `get_provisioning_profile force:true` for the app + `.watchkitapp` + `.widgets`
-  (regenerated so they carry the current cert; the lane first creates the
-  `.widgets` App ID via `Spaceship::ConnectAPI::BundleId.create` since sigh won't),
-  `latest_testflight_build_number + 1` (so **never hand-bump
-  `CURRENT_PROJECT_VERSION`** — the lane injects it via `xcargs` at archive time
-  into app + watch + widget), then `build_app` with **manual** signing on both
-  the archive and the export, then `upload_to_testflight`. Config lives in
-  `fastlane/.env` (`ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_PATH`) +
-  `fastlane/asc_api_key.p8` (git-ignored) — fastlane auto-loads `.env`.
-  - **The archive signs manually via a runtime pbxproj edit (#263), and
-    `-allowProvisioningUpdates` is export-only.** gym runs two xcodebuild
-    invocations and `export_options` governs only the second one; the archive
-    obeys `project.pbxproj`, where every target is `CODE_SIGN_STYLE = Automatic`
-    for local Xcode dev on a personal team. On a fresh CI runner that meant
-    automatic signing found no Development identity and — authorised by the API
-    key plus `-allowProvisioningUpdates` — **minted a new "Created via API"
-    Apple Development certificate on every run** until the account hit Apple's
-    cap. The lane now flips the four archived targets' *Release* configs to
-    Manual + `Apple Distribution` + the profile sigh just fetched
-    (`update_code_signing_settings`, reverted in an `ensure`), and the auth
-    flags moved from `xcargs` to `export_xcargs`. That split is load-bearing:
-    gym appends `xcargs` to **both** invocations but `export_xcargs` to the
-    export only, so this is the only way to keep the export's API-key access
-    (the original `exportArchive "No Accounts"` fix) while denying the archive
-    any authority to create signing assets. Putting the flags in both is what
-    trips `-authenticationKeyID may only be provided once`. **Never commit
-    Manual signing into `project.pbxproj`** — it would break local Xcode
-    builds — and never hardcode a `PROVISIONING_PROFILE_SPECIFIER` there; the
-    names come from `SharedValues::SIGH_NAME` at runtime. See
-    `ios/COMPANION_SETUP.md` → "Why the archive signs manually".
-  - **Two hard requirements:** (1) the Apple Distribution cert must be installable —
-    `get_certificates` reuses it if already in the login keychain, else creates it
-    via the API key (a key with Admin/App Manager access); (2) `LANG=en_US.UTF-8`,
-    or in a `C`-locale shell fastlane's xcpretty formatter crashes on non-ASCII output.
-  - The old "must run from an interactive Terminal / `exportArchive No Accounts`"
-    failure predates this API-key rewrite — that was manual/automatic-signing export
-    needing a signed-in Xcode account. The current lane sidesteps it. Deeper signing
-    troubleshooting still lives in `ios/COMPANION_SETUP.md`.
-- **Commit as `jirathip.ku@gmail.com`** (`git config user.email`). Pushing `main`
-  triggers the Vercel web deploy, which **rejects commits from unrecognized authors**
-  — a machine-default `user@host` email silently blocks it. Redeploy the current
-  HEAD from the Vercel dashboard if it was pushed under the wrong identity.
-- **Vercel previews (issue #121):** `vercel.json` enables git deploys only for
-  `main` (production) and `staging` (preview) — task branches never deploy.
-  Promotion PRs (staging → main) get a preview URL that must point at the **dev**
-  Supabase backend via Preview-scoped `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`
-  env vars in the Vercel project settings (`src/lib/supabase.ts` falls back to the
-  committed prod config when they're absent, so Production needs no vars). The dev
-  project's auth allow-list must include the preview wildcard **origin-only**
-  (no trailing `/**`): `https://climbing-tracker-*-jirathip-kunkanjanathorn-s-projects.vercel.app`.
-  Vercel hashes the staging branch alias to `climbing-tracker-git-ea1530-…` (the
-  literal `git-staging-…` name would exceed the 63-char DNS label limit) — that
-  alias is the stable staging-preview URL and the dev project's auth Site URL.
-  Previews sit behind Vercel SSO (fine when logged in; mint a bypass link via the
-  Vercel MCP `get_access_to_vercel_url` for curl/fetch).
+  bundle IDs `com.jirathip.sendlog*`, Xcode target/scheme names
+  (`SendLogWatch Watch App`), Swift package names (`SendLogWatchCore`,
+  `SendLogHealthCore`), and Swift file/dir names.
 
 ## Working style here
 
 - This is a solo project moving fast. Match the surrounding code's style.
-- Commit only when asked; branch off `main` first. The iPhone health-sync + rename
-  work (`feature/iphone-health-sync`) is **merged to `main`**; on-device TestFlight
-  verification of the HealthKit runtime + watch UX is still pending.
-- Backlog lives in **GitHub Issues** on this repo (migrated from Notion
-  2026-07-21; each issue title is prefixed `SL-N` carrying over the old Notion
-  auto-increment ID, so commit-message references like "SL-91" still resolve —
-  search `SL-91` in Issues). Labels mirror the old Notion schema: `type: *`
-  (bug/idea/refactor/performance/security/chore), `area: *` (dashboard,
-  tindeq-ble, watch-app, etc.), `priority: *` (urgent/high/medium/low), plus
-  `blocks-release`. Closed issues use `--reason completed` for shipped work and
-  `--reason "not planned"` for dropped ideas — the Notion reason string is
-  `"not planned"` with a space, not `not_planned` (the latter silently fails).
-  Planning docs still live in `~/.claude/plans/`. Native/HealthKit runtime
-  behavior can't be verified in the simulator — flag device-only work rather
-  than claiming it verified.
-- App Store submission state is tracked in `docs/app-store-checklist.md` and
-  `ios/COMPANION_SETUP.md` (signing troubleshooting + the health device-test checklist).
+- Branch off `staging` (not `main`); `main` is human-promoted only. Commit
+  style: `#NNN native: ...` / `#NNN <area>: ...`.
+- User-facing changes get a concise bullet under **Unreleased** in
+  `RELEASE_NOTES.md`; internal-only work does not need an entry.
+- Backlog lives in **GitHub Issues** on this repo (labels `type: *`,
+  `area: *`, `priority: *`, plus `blocks-release`). Closed issues use
+  `--reason completed` for shipped work and `--reason "not planned"` for
+  dropped ideas — the space matters.
+- Native/HealthKit/BLE behavior cannot be verified in the simulator — flag
+  device-only work rather than claiming it verified.
+
+## Historical notes
+
+- **Web/Capacitor retirement (#857).** The React app, root npm package, Vite
+  config, Capacitor iOS host project (and its old `App` scheme), and the four
+  Capacitor plugin packages were removed.
+  `docs/architecture/857-removal-inventory.md` is the ownership map that
+  decided it (what was REMOVE vs KEEP, and why), plus the
+  later #899 manual-Force removal addendum. Older docs that describe the
+  retired web layer — `docs/error-monitoring.md` (web Sentry) — are kept for
+  reference and are marked superseded at the top; do not follow them.
