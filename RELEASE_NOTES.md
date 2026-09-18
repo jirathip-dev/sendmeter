@@ -78,6 +78,11 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native Force charts are easier to read: the force duration curve's axis
+  numbers and the progress tiles' captions now follow your text size instead
+  of a tiny fixed size, and the curve thins its time labels on narrow screens
+  so they never crowd or collide.
+
 - Native error banners are now easier to dismiss and to hear: the close
   control is a full-size target with a spoken "Dismiss error" label, long
   failure messages stay fully readable at every text size (including the
