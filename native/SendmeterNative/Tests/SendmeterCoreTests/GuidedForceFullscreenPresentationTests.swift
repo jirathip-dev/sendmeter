@@ -295,6 +295,230 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
         )
         XCTAssertEqual(run.remainingSeconds(at: Date(timeIntervalSince1970: 13)), 7, accuracy: 0.000_001)
     }
+
+    // MARK: - #939 — rest lines hand off to the NEXT set/rep
+
+    private func rampedPreset(
+        mode: ForceProtocolMode = .hold,
+        repetitions: Int = 2,
+        sets: Int = 2,
+        holdSeconds: Int = 10,
+        holdSecondsBySet: [Int]? = nil,
+        restBetweenRepetitionsSeconds: Int = 30,
+        alternateSides: Bool = true,
+        prepareSeconds: Int = 5,
+        cadenceOut: Double = 3,
+        cadenceReturn: Double = 1
+    ) -> TindeqPreset {
+        TindeqPreset(
+            name: "Shape",
+            holdSeconds: holdSeconds,
+            holdSecondsBySet: holdSecondsBySet,
+            repetitions: repetitions,
+            sets: sets,
+            restBetweenRepetitionsSeconds: restBetweenRepetitionsSeconds,
+            restBetweenSetsSeconds: 60,
+            alternateSides: alternateSides,
+            protocolMode: mode,
+            cadenceOutSeconds: cadenceOut,
+            cadenceReturnSeconds: cadenceReturn,
+            prepareSeconds: prepareSeconds
+        )
+    }
+
+    func testRepRestDetailShowsTheNextRepAndItsHold() {
+        let protocolValue = preset(repetitions: 3)
+        let run = ForceProtocolRun(preset: protocolValue, startingSide: .left, selectedSide: .both)
+        let rest = run.stages.first { $0.kind == .restBetweenRepetitions }!
+
+        let presentation = GuidedForceFullscreenPresentation.stage(rest, preset: protocolValue, elapsedSeconds: 4)
+
+        XCTAssertEqual(presentation.phase, .rest)
+        XCTAssertEqual(presentation.label, "REST")
+        XCTAssertEqual(presentation.detail, "Next: Rep 2/3 · 10s hold · Left")
+    }
+
+    func testSetRestDetailShowsTheNextSetAndRep() {
+        let protocolValue = preset()
+        let run = ForceProtocolRun(preset: protocolValue, startingSide: .left, selectedSide: .both)
+        let rest = run.stages.first { $0.kind == .restBetweenSets }!
+
+        let presentation = GuidedForceFullscreenPresentation.stage(rest, preset: protocolValue, elapsedSeconds: 4)
+
+        XCTAssertEqual(presentation.phase, .setRest)
+        XCTAssertEqual(presentation.label, "SET REST")
+        XCTAssertEqual(presentation.detail, "Next: Set 2 · Rep 1 · 10s hold · Left")
+    }
+
+    func testSetRestDetailQuotesTheNextSetsRampedHold() {
+        let protocolValue = rampedPreset(holdSeconds: 10, holdSecondsBySet: [12, 18], alternateSides: false)
+        let run = ForceProtocolRun(preset: protocolValue, startingSide: .left)
+        let rest = run.stages.first { $0.kind == .restBetweenSets }!
+
+        let presentation = GuidedForceFullscreenPresentation.stage(rest, preset: protocolValue, elapsedSeconds: 4)
+
+        // The NEXT set's ramp — not the preset's base hold — and no side,
+        // because this preset's work stages stay unspecified for a Both run.
+        XCTAssertEqual(presentation.detail, "Next: Set 2 · Rep 1 · 18s hold")
+    }
+
+    func testSingleSideSelectionNamesTheSideTheRestHandsOffTo() {
+        // #901: a Left/Right selection runs that side only even when the
+        // preset alternates, so the hand-off must name it.
+        let protocolValue = preset(repetitions: 3)
+        for selectedSide: TindeqSide in [.left, .right] {
+            let run = ForceProtocolRun(
+                preset: protocolValue,
+                startingSide: selectedSide == .right ? .right : .left,
+                selectedSide: selectedSide
+            )
+            let rest = run.stages.first { $0.kind == .restBetweenRepetitions }!
+
+            let presentation = GuidedForceFullscreenPresentation.stage(rest, preset: protocolValue, elapsedSeconds: 4)
+
+            XCTAssertEqual(presentation.detail, "Next: Rep 2/3 · 10s hold · \(selectedSide.label)")
+        }
+    }
+
+    func testReverseActionSetRestQuotesTheNextSetWithoutARepIndex() {
+        let protocolValue = preset(mode: .reverseAction, repetitions: 4)
+        let run = ForceProtocolRun(preset: protocolValue, startingSide: .left, selectedSide: .both)
+        let rest = run.stages.first { $0.kind == .restBetweenSets }!
+
+        let presentation = GuidedForceFullscreenPresentation.stage(rest, preset: protocolValue, elapsedSeconds: 4)
+
+        // 4 cadence repetitions × (3s out + 1s return): the whole next set,
+        // with no rep index the user is not at yet.
+        XCTAssertEqual(presentation.detail, "Next: Set 2 · 16s reverse action · Left")
+    }
+
+    func testLastRestBeforeCompletionShowsTheCompletionCue() {
+        let protocolValue = preset()
+        // The shipped schedule only emits rests BETWEEN reps/sets, so it never
+        // rests before `.complete`; the last-rest case is built directly here. A rest
+        // with nothing to hand off to must never invent a next set.
+        let lastRest = ForceProtocolStage(
+            kind: .restBetweenSets,
+            setNumber: protocolValue.sets,
+            repetitionNumber: protocolValue.repetitions,
+            side: .unspecified,
+            durationSeconds: 60,
+            label: "Set rest"
+        )
+
+        let presentation = GuidedForceFullscreenPresentation.stage(lastRest, preset: protocolValue, elapsedSeconds: 5)
+
+        XCTAssertEqual(presentation.phase, .setRest)
+        XCTAssertEqual(presentation.detail, "Last set done · finishing")
+        XCTAssertFalse(presentation.detail.contains("Next"))
+    }
+
+    /// #939: the presentation never re-derives the schedule — the rest's
+    /// hand-off IS the run's next work stage. Prove that for every preset
+    /// variant the app can build and every side selection, so a silent index or
+    /// arithmetic drift cannot hide behind the rendered line.
+    func testRestHandoffMatchesTheRunStageItLeadsInto() {
+        struct Launch {
+            let name: String
+            let preset: TindeqPreset
+            let startingSide: TindeqSide
+            let selectedSide: TindeqSide
+        }
+
+        let launches: [Launch] = [
+            Launch(
+                name: "alternating Both, left first",
+                preset: rampedPreset(),
+                startingSide: .left,
+                selectedSide: .both
+            ),
+            Launch(
+                name: "alternating Both, right first",
+                preset: rampedPreset(),
+                startingSide: .right,
+                selectedSide: .both
+            ),
+            Launch(
+                name: "single side Left",
+                preset: rampedPreset(alternateSides: true),
+                startingSide: .left,
+                selectedSide: .left
+            ),
+            Launch(
+                name: "single side Right",
+                preset: rampedPreset(alternateSides: true),
+                startingSide: .left,
+                selectedSide: .right
+            ),
+            Launch(
+                name: "non-alternating preset, Both",
+                preset: rampedPreset(alternateSides: false),
+                startingSide: .left,
+                selectedSide: .both
+            ),
+            Launch(
+                name: "legacy unspecified selection",
+                preset: rampedPreset(alternateSides: false),
+                startingSide: .left,
+                selectedSide: .unspecified
+            ),
+            Launch(
+                name: "three sets, ramped holds",
+                preset: rampedPreset(repetitions: 3, sets: 3, holdSecondsBySet: [8, 12, 16]),
+                startingSide: .left,
+                selectedSide: .both
+            ),
+            Launch(
+                name: "no prepare stage",
+                preset: rampedPreset(prepareSeconds: 0),
+                startingSide: .left,
+                selectedSide: .both
+            ),
+            Launch(
+                name: "zero-length rests",
+                preset: rampedPreset(restBetweenRepetitionsSeconds: 0),
+                startingSide: .left,
+                selectedSide: .both
+            ),
+            Launch(
+                name: "reverse action",
+                preset: rampedPreset(mode: .reverseAction, repetitions: 4),
+                startingSide: .left,
+                selectedSide: .both
+            )
+        ]
+
+        for launch in launches {
+            let run = ForceProtocolRun(
+                preset: launch.preset,
+                startingSide: launch.startingSide,
+                selectedSide: launch.selectedSide
+            )
+            for (index, stage) in run.stages.enumerated() {
+                let isRest = stage.kind == .restBetweenRepetitions || stage.kind == .restBetweenSets
+                guard isRest else {
+                    XCTAssertNil(stage.handoff, "\(launch.name): only a rest carries a hand-off")
+                    continue
+                }
+                guard index + 1 < run.stages.count else {
+                    XCTFail("\(launch.name): a generated rest is never the terminal stage")
+                    continue
+                }
+                let next = run.stages[index + 1]
+                XCTAssertEqual(next.kind, .work, "\(launch.name): a rest must lead into work")
+                guard let handoff = stage.handoff else {
+                    XCTFail("\(launch.name): the rest at \(index) has no hand-off")
+                    continue
+                }
+                XCTAssertEqual(handoff.setNumber, next.setNumber, launch.name)
+                XCTAssertEqual(handoff.repetitionNumber, next.repetitionNumber, launch.name)
+                XCTAssertEqual(handoff.side, next.side, launch.name)
+                XCTAssertEqual(handoff.durationSeconds, next.durationSeconds, accuracy: 0.000_001)
+                XCTAssertEqual(handoff.repetitionTotal, max(1, launch.preset.repetitions), launch.name)
+                XCTAssertEqual(handoff.mode, launch.preset.protocolMode, launch.name)
+            }
+        }
+    }
 }
 
 @MainActor
