@@ -72,6 +72,13 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native error banners are now easier to dismiss and to hear: the close
+  control is a full-size target with a spoken "Dismiss error" label, long
+  failure messages stay fully readable at every text size (including the
+  largest accessibility sizes) in light and dark, and a new failure is
+  announced once to VoiceOver without taking focus away from what you were
+  doing.
+
 - Native Force: the recording-context card is redesigned around configure →
   operate. One "Movement & side" row opens a full-screen movement picker that
   shows every exercise with its side policy and offers only the sides that
