@@ -94,37 +94,44 @@ public struct DeltaCursor: Equatable, Sendable {
     }()
 }
 
-/// The PostgREST query for one page of a `(updated_at, id)`-ordered delta read.
+/// The PostgREST query for one page of a `(<timestamp>, <tie-break>)`-ordered
+/// read.
+///
+/// Delta tables order by `updated_at`; a collection that carries its own
+/// ordering timestamp (the workout attempt collection, `started_at`) passes
+/// `timestampColumn` so the same reader pages both shapes without a second
+/// cursor scheme (#915).
 public enum DeltaPageQuery {
     /// Fixed `select`, deterministic composite ordering, one bounded `limit`,
     /// and the cursor filter:
     ///
     /// - no cursor: no filter (first sync).
-    /// - composite cursor: `or=(updated_at.gt.<stamp>,and(updated_at.eq.<stamp>,id.gt.<id>))`
+    /// - composite cursor: `or=(<timestamp>.gt.<stamp>,and(<timestamp>.eq.<stamp>,<tie-break>.gt.<id>))`
     ///   — strictly greater on the pair, so a page boundary can fall inside a
     ///   timestamp tie group without skipping the rest of it.
-    /// - legacy cursor: `updated_at=gte.<stamp>` — includes the whole tie
+    /// - legacy cursor: `<timestamp>=gte.<stamp>` — includes the whole tie
     ///   group at the stamp so nothing the old cursor could not tie-break is
     ///   skipped.
     public static func queryItems(
         select: String,
         tieBreakColumn: String,
         cursor: DeltaCursor?,
-        pageSize: Int
+        pageSize: Int,
+        timestampColumn: String = "updated_at"
     ) -> [URLQueryItem] {
         var queryItems = [
             URLQueryItem(name: "select", value: select),
-            URLQueryItem(name: "order", value: "updated_at.asc,\(tieBreakColumn).asc"),
+            URLQueryItem(name: "order", value: "\(timestampColumn).asc,\(tieBreakColumn).asc"),
             URLQueryItem(name: "limit", value: String(max(1, pageSize)))
         ]
         guard let cursor else { return queryItems }
         if let entityID = cursor.entityID {
             queryItems.append(URLQueryItem(
                 name: "or",
-                value: "(updated_at.gt.\(cursor.stamp),and(updated_at.eq.\(cursor.stamp),\(tieBreakColumn).gt.\(entityID)))"
+                value: "(\(timestampColumn).gt.\(cursor.stamp),and(\(timestampColumn).eq.\(cursor.stamp),\(tieBreakColumn).gt.\(entityID)))"
             ))
         } else {
-            queryItems.append(URLQueryItem(name: "updated_at", value: "gte.\(cursor.stamp)"))
+            queryItems.append(URLQueryItem(name: timestampColumn, value: "gte.\(cursor.stamp)"))
         }
         return queryItems
     }
@@ -165,14 +172,17 @@ public enum DeltaReadError: Error, Equatable {
 
 /// One reusable bounded delta reader (#914).
 ///
-/// It consumes every page of a `(updated_at, id)`-ordered PostgREST response
-/// through an injected page fetch, so the same reader serves any entity and is
-/// unit-testable without a live transport.
+/// It consumes every page of a `(<timestamp>, <tie-break>)`-ordered PostgREST
+/// response through an injected page fetch, so the same reader serves any
+/// entity — and, since #915, any ordered collection whose ordering timestamp
+/// is not `updated_at` (`timestampColumn`) and whose page tie-break is not the
+/// row's cache identity (`tieBreakID`) — and is unit-testable without a live
+/// transport.
 ///
 /// Contract:
-/// - **Order**: the server must return rows in `(updated_at, id)` order; the
-///   reader fails closed (`outOfOrderPage`) instead of advancing a cursor it
-///   cannot trust.
+/// - **Order**: the server must return rows in `(<timestamp>, <tie-break>)`
+///   order; the reader fails closed (`outOfOrderPage`) instead of advancing a
+///   cursor it cannot trust.
 /// - **Pages**: it keeps requesting while the page came back full
 ///   (`rows.count == pageSize`) or the server's reported total for that page
 ///   exceeds what it delivered (`rows.count < totalCount`), so a server row cap
@@ -191,9 +201,16 @@ public struct DeltaPageReader<Row: Sendable, Value: Sendable>: Sendable {
 
     public let select: String
     public let tieBreakColumn: String
+    /// The column carrying the ordering timestamp: `updated_at` for every
+    /// delta table, `started_at` for the workout attempt collection.
+    public let timestampColumn: String
     public let pageSize: Int
     public let pageLimit: Int
     public let entityID: @Sendable (Row) -> String
+    /// The row's value in `tieBreakColumn`. It is `entityID` unless an entity's
+    /// cache identity is not its database tie-break (`user_settings` is cached
+    /// under one constant id while its row tie-break is `user_id`).
+    public let tieBreakID: @Sendable (Row) -> String
     public let value: @Sendable (Row) -> Value
     public let isDeleted: @Sendable (Row) -> Bool
     public let updatedAt: @Sendable (Row) -> Date
@@ -201,18 +218,22 @@ public struct DeltaPageReader<Row: Sendable, Value: Sendable>: Sendable {
     public init(
         select: String,
         tieBreakColumn: String = "id",
+        timestampColumn: String = "updated_at",
         pageSize: Int = DeltaPageReader.defaultPageSize,
         pageLimit: Int = DeltaPageReader.defaultPageLimit,
         entityID: @escaping @Sendable (Row) -> String,
+        tieBreakID: (@Sendable (Row) -> String)? = nil,
         value: @escaping @Sendable (Row) -> Value,
         isDeleted: @escaping @Sendable (Row) -> Bool,
         updatedAt: @escaping @Sendable (Row) -> Date
     ) {
         self.select = select
         self.tieBreakColumn = tieBreakColumn
+        self.timestampColumn = timestampColumn
         self.pageSize = max(1, pageSize)
         self.pageLimit = max(1, pageLimit)
         self.entityID = entityID
+        self.tieBreakID = tieBreakID ?? entityID
         self.value = value
         self.isDeleted = isDeleted
         self.updatedAt = updatedAt
@@ -237,7 +258,8 @@ public struct DeltaPageReader<Row: Sendable, Value: Sendable>: Sendable {
                     select: select,
                     tieBreakColumn: tieBreakColumn,
                     cursor: cursor,
-                    pageSize: pageSize
+                    pageSize: pageSize,
+                    timestampColumn: timestampColumn
                 ),
                 pageSize: pageSize
             ))
@@ -275,7 +297,7 @@ public struct DeltaPageReader<Row: Sendable, Value: Sendable>: Sendable {
     private func validateOrder(_ rows: [Row], after cursor: DeltaCursor?) throws {
         var previous = cursor?.orderingKey
         for row in rows {
-            let current = (DeltaCursor.microseconds(of: updatedAt(row)), entityID(row))
+            let current = (DeltaCursor.microseconds(of: updatedAt(row)), tieBreakID(row))
             if let previous {
                 if current.0 < previous.microseconds { throw DeltaReadError.outOfOrderPage }
                 if current.0 == previous.microseconds, current.1 < previous.entityID {
@@ -287,14 +309,14 @@ public struct DeltaPageReader<Row: Sendable, Value: Sendable>: Sendable {
     }
 
     /// The new checkpoint is the last row of the page — the only row the
-    /// `> (updated_at, id)` filter is guaranteed to have passed. A page whose
-    /// rows all carry an unusable stamp (the delta tables declare `updated_at`
-    /// NOT NULL, so this is a broken server) fails closed.
+    /// `> (<timestamp>, <tie-break>)` filter is guaranteed to have passed. A
+    /// page whose rows all carry an unusable stamp (the delta tables declare
+    /// `updated_at` NOT NULL, so this is a broken server) fails closed.
     private func advance(from cursor: DeltaCursor?, over rows: [Row]) throws -> DeltaCursor? {
         guard let last = rows.last(where: { updatedAt($0) > .distantPast }) else {
             throw DeltaReadError.cursorDidNotAdvance
         }
-        let next = DeltaCursor(updatedAt: updatedAt(last), entityID: entityID(last))
+        let next = DeltaCursor(updatedAt: updatedAt(last), entityID: tieBreakID(last))
         if let cursor, next.orderingKey <= cursor.orderingKey {
             throw DeltaReadError.cursorDidNotAdvance
         }
