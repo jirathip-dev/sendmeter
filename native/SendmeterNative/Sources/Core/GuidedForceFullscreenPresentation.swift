@@ -435,15 +435,49 @@ public enum GuidedForceFullscreenPresentation {
             return "\(prefix) · load the Progressor"
         case .switchSide:
             return side.map { "Next: \($0) · \(prefix)" } ?? prefix
-        case .restBetweenRepetitions:
-            return "\(prefix) · unload and breathe"
-        case .restBetweenSets:
-            return "After set \(stage.setNumber) · unload and reset"
+        case .restBetweenRepetitions, .restBetweenSets:
+            // #939: a rest describes the stage it leads INTO — what the user
+            // is about to do — instead of the set that just ended.
+            return restLine(for: stage)
         case .complete:
             return "Protocol complete"
         case .work:
             return side.map { "\(prefix) · \($0)" } ?? prefix
         }
+    }
+
+    /// #939: the rest line as a shared value. This is the ONE source of truth
+    /// for what a rest says: the fullscreen banner renders it through
+    /// `detail(for:)` and the Live Activity card renders it in
+    /// `GuidedProtocolActivityContent.snapshot(runAnchor:)`, so the lock screen
+    /// cannot describe a rest differently from the phone. Nil when the stage is
+    /// not a rest.
+    public static func restDetail(for stage: ForceProtocolStage) -> String? {
+        switch stage.kind {
+        case .restBetweenRepetitions, .restBetweenSets:
+            return restLine(for: stage)
+        default:
+            return nil
+        }
+    }
+
+    private static func restLine(for stage: ForceProtocolStage) -> String {
+        // Nothing left to hand off to: the run finishes after this rest. Never
+        // invent a next set here (#939) — the schedule emits a rest before
+        // `.complete` only if a future protocol shape asks for one.
+        guard let handoff = stage.handoff else { return "Last set done · finishing" }
+        let hold = "\(Int(handoff.durationSeconds.rounded()))s"
+        let cue = handoff.mode == .reverseAction ? "reverse action" : "hold"
+        let side = handoff.side == .unspecified ? "" : " · \(handoff.side.label)"
+        // Reverse Action repeats are cadence markers inside one continuous
+        // stage, so a set rest quotes the set and its duration, not a rep
+        // index the user is not at yet.
+        let repetition = handoff.mode == .hold ? "Rep \(handoff.repetitionNumber)" : nil
+        if stage.kind == .restBetweenRepetitions {
+            return "Next: Rep \(handoff.repetitionNumber)/\(handoff.repetitionTotal) · \(hold) \(cue)\(side)"
+        }
+        let nextRep = repetition.map { " · \($0)" } ?? ""
+        return "Next: Set \(handoff.setNumber)\(nextRep) · \(hold) \(cue)\(side)"
     }
 
     private static func reverseDetail(
