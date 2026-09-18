@@ -425,17 +425,19 @@ select is(
 );
 
 -- ===========================================================================
--- GREEN: merge A1 + A2 + A3 onto A1. One call, four returned-column
--- assertions.
+-- GREEN: merge A1 + A2 + A3 onto A1. ONE call; every assertion is its own
+-- statement and asserts one returned column or one written value.
+--
+-- Do NOT fold these back into a single `select is(...), is(...), ...`: psql
+-- prints a multi-column result set as ONE line (`ok 18 - … | ok 19 - …`), a
+-- TAP consumer reads only the first test number on a line, and the file then
+-- emits fewer tests than it plans (pg_prove: "Tests out of sequence").
 -- ===========================================================================
-select is(r.group_id, '94200000-0000-0000-0000-0000000000a1'::uuid,
-          'GREEN: the survivor keeps its own group id'),
-       is(r.duration_min, 61,
-          'GREEN: duration is the full span (10:00:00 → 11:01:00)'),
-       is(r.recording_count, 3,
-          'GREEN: the three live recordings are counted'),
-       is(r.note, '3 recordings · FDP, MWF',
-          'GREEN: the note lists every recording''s tag')
+select is(
+  r.group_id,
+  '94200000-0000-0000-0000-0000000000a1'::uuid,
+  'GREEN: the survivor keeps its own group id'
+)
 from public.merge_tindeq_sessions(
   array[
     '94200000-0000-0000-0000-000000000011'::uuid,
@@ -446,6 +448,35 @@ from public.merge_tindeq_sessions(
   7.5,
   false
 ) r;
+
+select is(
+  (
+    select duration_min
+    from public.sessions
+    where id = '94200000-0000-0000-0000-000000000011'
+  ),
+  61,
+  'GREEN: duration is the full span (10:00:00 → 11:01:00)'
+);
+select is(
+  (
+    select count(*)::integer
+    from public.tindeq_recordings
+    where group_id = '94200000-0000-0000-0000-0000000000a1'
+      and deleted_at is null
+  ),
+  3,
+  'GREEN: the three live recordings are counted'
+);
+select is(
+  (
+    select note
+    from public.sessions
+    where id = '94200000-0000-0000-0000-000000000011'
+  ),
+  '3 recordings · FDP, MWF',
+  'GREEN: the note lists every recording''s tag'
+);
 
 select is(
   (
@@ -543,12 +574,31 @@ select is(
 
 -- ===========================================================================
 -- IDEMPOTENT RETRY: the offline queue can replay the exact payload after a
--- lost response. The second call must report the applied merge, not raise.
+-- lost response. Every replay must report the applied merge, not raise — and
+-- each returned column is asserted in its own statement (see the GREEN note
+-- above: a multi-column select would emit fewer TAP tests than it plans).
+-- Replaying more than once is the point: each call is a no-op read-back.
 -- ===========================================================================
-select is(r.group_id, '94200000-0000-0000-0000-0000000000a1'::uuid,
-          'RETRY: the replayed merge reports the same surviving group'),
-       is(r.recording_count, 3,
-          'RETRY: the replayed merge reports the same recording count')
+select is(
+  r.group_id,
+  '94200000-0000-0000-0000-0000000000a1'::uuid,
+  'RETRY: the replayed merge reports the same surviving group'
+)
+from public.merge_tindeq_sessions(
+  array[
+    '94200000-0000-0000-0000-000000000011'::uuid,
+    '94200000-0000-0000-0000-000000000012'::uuid,
+    '94200000-0000-0000-0000-000000000013'::uuid
+  ],
+  '94200000-0000-0000-0000-000000000011'::uuid,
+  7.5,
+  false
+) r;
+select is(
+  r.recording_count,
+  3,
+  'RETRY: the replayed merge reports the same recording count'
+)
 from public.merge_tindeq_sessions(
   array[
     '94200000-0000-0000-0000-000000000011'::uuid,
