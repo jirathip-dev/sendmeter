@@ -15,6 +15,7 @@ struct TrainingLoadSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var mix: ActivityMix = ActivityMix(total: 0, activities: [])
     @State private var daily: [String: DailyLoad] = [:]
@@ -94,18 +95,39 @@ struct TrainingLoadSheet: View {
     private var weeklyLoadSection: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    SectionLabel("Weekly load", systemImage: "chart.bar.fill")
-                    Spacer()
-                    if let delta = currentDelta {
-                        Text(deltaLabel(delta))
-                            .font(.caption2)
-                            .monospacedDigit()
-                            .foregroundStyle(deltaColor(delta))
+                // #929: at accessibility text sizes the title and the delta
+                // chip no longer share a row — the chip squeezed the title into
+                // a hard-wrapped "WEE / KLY / LOA / D" column on the smallest
+                // phone. The chip moves to its own line instead (the same
+                // one-column adaptation the Force tiles use, #928).
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 4) {
+                        weeklyLoadTitle
+                        deltaChip
+                    }
+                } else {
+                    HStack {
+                        weeklyLoadTitle
+                        Spacer()
+                        deltaChip
                     }
                 }
                 WeeklyBarsView(weeks: weeklyLoadsForDisplay)
             }
+        }
+    }
+
+    private var weeklyLoadTitle: some View {
+        SectionLabel("Weekly load", systemImage: "chart.bar.fill")
+    }
+
+    @ViewBuilder
+    private var deltaChip: some View {
+        if let delta = currentDelta {
+            Text(deltaLabel(delta))
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(deltaColor(delta))
         }
     }
 
@@ -177,84 +199,150 @@ struct TrainingLoadSheet: View {
 
 /// Weekly bars with per-week totals + labels — the same `WeeklyLoad` array the
 /// LoadCard uses, not a recomputed one (#650 acceptance 1).
-private struct WeeklyBarsView: View {
+///
+/// #929: the two label rows (the AU total above each bar, the week caption
+/// below it) were pinned at 9 pt and shrank with `minimumScaleFactor` when the
+/// smallest phone could not fit them. Both now go through the shared Dynamic
+/// Type-aware axis rule from #928:
+///
+/// 1. Both rows draw with `ChartAxisLabelRule.font` (`caption2`), and the
+///    resolved size (`@ScaledMetric(relativeTo: .caption2)` seeded with
+///    `ChartAxisLabelRule.basePointSize`, exactly like `NativeForceCurvePlot`)
+///    feeds the layout arithmetic.
+/// 2. `ChartAxisLabelRule.columnLabelPlan` decides which bars carry a label:
+///    a label that cannot fit inside its own column is omitted (the columns
+///    span the card, so it would overhang the neighbouring bar or leave the
+///    card) and the survivors go through the shared tick-density rule, so a
+///    grown label thins the row instead of colliding with its neighbour.
+/// 3. When the value row is incomplete the exact per-week values stay readable
+///    in `valuesReadout` under the chart. Tap/scrub selection, haptics, the
+///    selected-value tooltip and the per-bar VoiceOver labels (which carry
+///    "… AU" and the week-over-week delta) are unchanged.
+///
+/// Internal (not `private`) so the app-target legibility lane can render this
+/// view directly: `TrainingLoadSheet` itself needs an `AppModel`.
+struct WeeklyBarsView: View {
     let weeks: [WeeklyLoad]
+    /// #929 evidence seam: a non-nil index opens the chart with that bar
+    /// selected, so the app-target legibility lane can render the
+    /// selected-value tooltip without touch injection (`Tests/SendmeterNativeUITests`
+    /// is outside this slice's fence). The sheet always passes nil.
+    let initialSelection: Int?
 
     @State private var selectedIndex: Int?
     /// Haptic dedupe guard: a drag can deliver many frames for the same bar,
     /// so this must track the last tick independently of the rendered state.
     @State private var tickedIndex: Int?
+    /// The chart's own width, published by a background `GeometryReader` (the
+    /// same pattern `ContributionHeatmapView` uses) so the label plan and the
+    /// values readout resolve outside the chart's fixed-height frame.
+    @State private var containerWidth: CGFloat = 0
+
+    /// The one resolved label size (#929): `caption2` at the default text
+    /// size, scaling through every Dynamic Type size.
+    @ScaledMetric(relativeTo: .caption2)
+    private var axisLabelPointSize: CGFloat = ChartAxisLabelRule.basePointSize
+
+    /// The reserve for the selected-value tooltip slot at the default text
+    /// size. Follows the resolved text size (#929): the pre-#929 slot was a
+    /// fixed 60 pt and the three-line tooltip covered the chart below it at
+    /// accessibility sizes.
+    @ScaledMetric(relativeTo: .caption2)
+    private var tooltipReserveHeight: CGFloat = WeeklyBarsView.tooltipReserveBaseHeight
+
+    /// The tooltip slot's reserve at the default text size (the shipped 60 pt).
+    static let tooltipReserveBaseHeight: CGFloat = 60
 
     private let barSpacing = CGFloat(TrainingLoadInteraction.weeklyBarSpacing)
-    /// Reserve the tooltip slot even when nothing is selected. This keeps the
-    /// chart's origin fixed while a drag changes the selected bar.
-    private let tooltipHeight: CGFloat = 60
+
+    /// The tallest bar the plot draws, the gap between a bar and its labels,
+    /// and the height the chart held before #929 — the chart's height contract
+    /// (#929). The app-target legibility lane rebuilds a column from these and
+    /// checks that `chartHeight(bandHeight:)` makes room for it.
+    static let maximumBarHeight: CGFloat = 64
+    static let columnSpacing: CGFloat = 4
+    static let minimumChartHeight: CGFloat = 108
+
+    /// The resolved height of one label band. Seeded with the `caption2` Text
+    /// box at the default text size — measured, because `Text`'s box is taller
+    /// than the font's line height and the chart's frame must hold two of them
+    /// at every Dynamic Type size (the shared rule's `estimatedLabelHeight` is
+    /// a collision estimate, not a rendered box).
+    @ScaledMetric(relativeTo: .caption2)
+    private var axisLabelBandHeight: CGFloat = WeeklyBarsView.labelBandBaseHeight
+
+    /// The default-size `caption2` Text box, measured on the smallest phone by
+    /// the app-target legibility lane (two of these plus the bar and its gaps
+    /// are exactly the chart's shipped 108 pt).
+    static let labelBandBaseHeight: CGFloat = 16
 
     private var maxW: Double { max(weeks.map(\.total).max() ?? 0, 1) }
 
+    init(weeks: [WeeklyLoad], initialSelection: Int? = nil) {
+        self.weeks = weeks
+        self.initialSelection = initialSelection
+        _selectedIndex = State(initialValue: initialSelection)
+        _tickedIndex = State(initialValue: initialSelection)
+    }
+
+    /// The per-bar AU totals and week captions, in bar order — the candidate
+    /// labels the shared rule plans for.
+    private var valueLabels: [String] { weeks.map { TrainingLoad.formatAU($0.total) } }
+    private var weekLabels: [String] { weeks.map(\.label) }
+
+    /// #929: the chart's own height follows the resolved label size. The two
+    /// label bands used to be pinned inside 108 pt, so a grown band spilled
+    /// out of the frame instead of the chart making room for it.
+    static func chartHeight(bandHeight: CGFloat) -> CGFloat {
+        max(
+            minimumChartHeight,
+            maximumBarHeight + 2 * columnSpacing + 2 * bandHeight + labelBandSlack
+        )
+    }
+
+    private var chartHeight: CGFloat { Self.chartHeight(bandHeight: axisLabelBandHeight) }
+
+    /// Half a point of slack per band: the scaled metric and the rendered Text
+    /// box can disagree by a fraction of a point, and the frame must never be
+    /// the smaller of the two.
+    private static let labelBandSlack: CGFloat = 4
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .topLeading) {
-                if let selectedIndex, let week = week(at: selectedIndex) {
-                    TrainingLoadTooltip {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(week.label)
-                                .font(.subheadline.weight(.semibold))
-                            Text("\(TrainingLoad.formatAU(week.total)) AU")
-                                .font(.caption2.monospacedDigit())
-                            if let delta = delta(for: selectedIndex) {
-                                Text(deltaLabel(delta))
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(deltaColor(delta))
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .frame(height: tooltipHeight, alignment: .topLeading)
+            tooltipSlot
 
             GeometryReader { proxy in
+                // The shared rule's decisions resolve from the REAL laid-out
+                // width inside the reader, so the labels are correct on the
+                // first pass and in offscreen renders alike, and the readout
+                // below reads the same width through `ChartWidthKey`.
+                let valuePlan = ChartAxisLabelRule.columnLabelPlan(
+                    labels: valueLabels,
+                    width: proxy.size.width,
+                    spacing: barSpacing,
+                    pointSize: axisLabelPointSize
+                )
+                let weekPlan = ChartAxisLabelRule.columnLabelPlan(
+                    labels: weekLabels,
+                    width: proxy.size.width,
+                    spacing: barSpacing,
+                    pointSize: axisLabelPointSize
+                )
+
                 ZStack(alignment: .bottomLeading) {
                     HStack(alignment: .bottom, spacing: barSpacing) {
                         ForEach(Array(weeks.enumerated()), id: \.offset) { index, week in
-                            VStack(spacing: 4) {
-                                Text(TrainingLoad.formatAU(week.total))
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: index == weeks.count - 1
-                                                ? [ChartToken.optimal.color(scheme).opacity(0.58), ChartToken.optimal.color(scheme)]
-                                                : [ChartToken.load.color(scheme).opacity(0.58), ChartToken.load.color(scheme)],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        )
-                                    )
-                                    .frame(height: max((week.total / maxW) * 64, 2))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                            .stroke(selectedIndex == index ? Color.primary : .clear, lineWidth: 1.5)
-                                    )
-                                Text(week.label)
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.7)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .opacity(selectedIndex == nil || selectedIndex == index ? 1 : 0.5)
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityLabel(accessibilityLabel(for: week, index: index))
-                            .accessibilityValue(selectedIndex == index ? "Selected" : "")
-                            .accessibilityHint(selectedIndex == index ? "Double-tap to hide details." : "Double-tap to show details.")
-                            .accessibilityAddTraits(.isButton)
-                            .accessibilityAddTraits(selectedIndex == index ? .isSelected : [])
-                            .accessibilityAction {
-                                toggleSelection(index)
-                            }
+                            column(
+                                week: week,
+                                index: index,
+                                showsValueLabel: valuePlan.labelledIndices.contains(index),
+                                showsWeekLabel: weekPlan.labelledIndices.contains(index),
+                                // A row that drew any label keeps its band in
+                                // every column, so all bars sit on one baseline
+                                // (#929).
+                                reservesValueBand: !valuePlan.labelledIndices.isEmpty,
+                                reservesWeekBand: !weekPlan.labelledIndices.isEmpty
+                            )
                         }
                     }
 
@@ -284,8 +372,18 @@ private struct WeeklyBarsView: View {
                         )
                         .accessibilityHidden(true)
                 }
+                .preference(key: ChartWidthKey.self, value: proxy.size.width)
             }
-            .frame(height: 108)
+            .frame(height: chartHeight)
+
+            if showsValuesReadout {
+                valuesReadout
+            }
+        }
+        .onPreferenceChange(ChartWidthKey.self) { width in
+            // The chart's own laid-out width, published during layout rather
+            // than on appearance so offscreen renders agree with the app.
+            containerWidth = width
         }
         .onChange(of: weeks) { _ in
             // Data replacement is passive; never buzz merely because the
@@ -296,6 +394,138 @@ private struct WeeklyBarsView: View {
         .onDisappear {
             selectedIndex = nil
             tickedIndex = nil
+        }
+    }
+
+    /// The reserved selected-value tooltip slot.
+    ///
+    /// The reserve follows the resolved text size (the pre-#929 slot was a
+    /// fixed 60 pt, which the three-line tooltip outgrew at accessibility
+    /// sizes and covered the chart below the slot). The slot measures its own
+    /// width so the tooltip's text wraps inside the card — the same
+    /// `GeometryReader` width the chart is laid out in, resolved during layout
+    /// rather than on appearance.
+    private var tooltipSlot: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                if let selectedIndex, let week = week(at: selectedIndex) {
+                    tooltipCard(week: week, index: selectedIndex, maxWidth: proxy.size.width)
+                }
+            }
+            .frame(width: proxy.size.width, alignment: .topLeading)
+        }
+        // A definite height: the slot is the reserved band, and a greedy
+        // geometry reader must not absorb the surrounding proposal.
+        .frame(height: tooltipReserveHeight, alignment: .topLeading)
+    }
+
+    private func tooltipCard(week: WeeklyLoad, index: Int, maxWidth: CGFloat) -> some View {
+        TrainingLoadTooltip {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(week.label)
+                    .font(.subheadline.weight(.semibold))
+                Text("\(TrainingLoad.formatAU(week.total)) AU")
+                    .font(.caption2.monospacedDigit())
+                if let delta = delta(for: index) {
+                    Text(deltaLabel(delta))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(deltaColor(delta))
+                }
+            }
+            .frame(maxWidth: maxWidth, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// #929 AC4: when the shared rule omits a per-bar value (the columns are
+    /// too narrow for the resolved label size), the exact values stay readable
+    /// here — on one line per week, units explicit — instead of being shrunk
+    /// into the bars or clipped. Each bar still carries its own VoiceOver
+    /// value, so this copy is hidden from VoiceOver.
+    ///
+    /// Whether a value label was omitted needs the width the chart is laid out
+    /// in; that comes from the background reader's published `containerWidth`,
+    /// which only exists once the view is on screen — until then the readout
+    /// stays hidden rather than flickering in and out.
+    private var showsValuesReadout: Bool {
+        guard containerWidth > 0, !weeks.isEmpty else { return false }
+        let plan = ChartAxisLabelRule.columnLabelPlan(
+            labels: valueLabels,
+            width: containerWidth,
+            spacing: barSpacing,
+            pointSize: axisLabelPointSize
+        )
+        return plan.labelledIndices.count < weeks.count
+    }
+
+    private var valuesReadout: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
+                Text("\(week.label) \(TrainingLoad.formatAU(week.total)) AU")
+                    .font(ChartAxisLabelRule.font)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityHidden(true)
+    }
+
+    /// One bar with its two label bands. A band is reserved in every column of
+    /// a row that drew any label, so all bars share one baseline (#929); the
+    /// labels themselves are drawn only where the shared rule planned them.
+    /// The bar, its color and its accessibility contract are unchanged.
+    @ViewBuilder
+    private func column(
+        week: WeeklyLoad,
+        index: Int,
+        showsValueLabel: Bool,
+        showsWeekLabel: Bool,
+        reservesValueBand: Bool,
+        reservesWeekBand: Bool
+    ) -> some View {
+        VStack(spacing: Self.columnSpacing) {
+            if reservesValueBand {
+                Text(TrainingLoad.formatAU(week.total))
+                    .font(ChartAxisLabelRule.font)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .opacity(showsValueLabel ? 1 : 0)
+            }
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: index == weeks.count - 1
+                            ? [ChartToken.optimal.color(scheme).opacity(0.58), ChartToken.optimal.color(scheme)]
+                            : [ChartToken.load.color(scheme).opacity(0.58), ChartToken.load.color(scheme)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .frame(height: max((week.total / maxW) * Self.maximumBarHeight, 2))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .stroke(selectedIndex == index ? Color.primary : .clear, lineWidth: 1.5)
+                )
+            if reservesWeekBand {
+                Text(week.label)
+                    .font(ChartAxisLabelRule.font)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .opacity(showsWeekLabel ? 1 : 0)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .opacity(selectedIndex == nil || selectedIndex == index ? 1 : 0.5)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel(for: week, index: index))
+        .accessibilityValue(selectedIndex == index ? "Selected" : "")
+        .accessibilityHint(selectedIndex == index ? "Double-tap to hide details." : "Double-tap to show details.")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(selectedIndex == index ? .isSelected : [])
+        .accessibilityAction {
+            toggleSelection(index)
         }
     }
 
@@ -360,5 +590,16 @@ private struct WeeklyBarsView: View {
             Haptics.shared.playGesture(.selection)
         }
         selectedIndex = index
+    }
+}
+
+/// The width the weekly chart is laid out in, published as a preference so the
+/// exact-values readout can resolve during layout (#929) rather than on the
+/// appearance lifecycle.
+private struct ChartWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

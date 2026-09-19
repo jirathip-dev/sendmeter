@@ -103,6 +103,80 @@ public enum ChartAxisLabelRule {
         }
     }
 
+    // MARK: - Flexible equal-width columns (the Training Load weekly bars, #929)
+
+    /// The label layout for a chart drawn as `count` equal, flexible columns
+    /// that fill `width` with `spacing` between neighbours — the shape the
+    /// Training Load weekly bars use, as opposed to the Force plot's canvas
+    /// with explicit `insets`.
+    public struct ColumnLabelPlan: Equatable, Sendable {
+        /// X centre of each column, in the same point space as `width`.
+        public let centers: [CGFloat]
+        /// Width of one column (the full width minus the inter-column gaps).
+        public let columnWidth: CGFloat
+        /// Indices whose label is drawn, in order.
+        public let labelledIndices: [Int]
+
+        public init(centers: [CGFloat], columnWidth: CGFloat, labelledIndices: [Int]) {
+            self.centers = centers
+            self.columnWidth = columnWidth
+            self.labelledIndices = labelledIndices
+        }
+    }
+
+    /// X centres of `count` equal columns filling `width`, with `spacing`
+    /// between neighbours.
+    ///
+    /// This is the same slot arithmetic `TrainingLoadInteraction.weeklyBarIndex`
+    /// hit-tests a finger against, so a label centred on a slot always belongs
+    /// to the column that same point selects.
+    public static func columnCenters(width: CGFloat, count: Int, spacing: CGFloat) -> [CGFloat] {
+        guard count > 0, width.isFinite, width > 0 else { return [] }
+        let safeSpacing = spacing.isFinite ? max(spacing, 0) : 0
+        let pitch = (width + safeSpacing) / CGFloat(count)
+        return (0..<count).map { (CGFloat($0) + 0.5) * pitch - safeSpacing / 2 }
+    }
+
+    /// The column tick indices a flexible equal-width column chart can label.
+    ///
+    /// `labels` are the candidate texts in column order and `width` is the
+    /// chart's full width. Unlike a canvas plot, this shape has no `insets` to
+    /// grow into, so a label is a candidate only when its own estimate plus
+    /// `minimumGap` fits inside **its own column** — a wider label would
+    /// overhang the neighbouring column or leave the card. The surviving
+    /// candidates then go through `visibleTickIndices`, the shared collision
+    /// adaptation, so a grown label thins the row instead of overlapping its
+    /// neighbour.
+    public static func columnLabelPlan(
+        labels: [String],
+        width: CGFloat,
+        spacing: CGFloat,
+        pointSize: CGFloat,
+        minimumGap: CGFloat = ChartAxisLabelRule.minimumGap
+    ) -> ColumnLabelPlan {
+        let count = labels.count
+        let centers = columnCenters(width: width, count: count, spacing: spacing)
+        guard centers.count == count, !labels.isEmpty else {
+            return ColumnLabelPlan(centers: [], columnWidth: 0, labelledIndices: [])
+        }
+        let safeSpacing = spacing.isFinite ? max(spacing, 0) : 0
+        let columnWidth = max((width + safeSpacing) / CGFloat(count) - safeSpacing, 0)
+        let fitting = labels.indices.filter {
+            estimatedLabelWidth(labels[$0], pointSize: pointSize) + minimumGap <= columnWidth
+        }
+        let kept = visibleTickIndices(
+            labels: fitting.map { labels[$0] },
+            positions: fitting.map { centers[$0] },
+            pointSize: pointSize,
+            minimumGap: minimumGap
+        )
+        return ColumnLabelPlan(
+            centers: centers,
+            columnWidth: columnWidth,
+            labelledIndices: kept.map { fitting[$0] }
+        )
+    }
+
     /// Insets for a plot whose leading column centres the y labels on
     /// `leading / 2`, whose trailing edge centres the last x label on the
     /// plot's right edge, and whose x labels sit centred in the bottom band.
