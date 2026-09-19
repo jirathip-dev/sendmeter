@@ -1,0 +1,17 @@
+--- AppModel.swift	2026-09-20 03:00:02
++++ native/SendmeterNative/Sources/App/AppModel.swift	2026-09-20 03:00:02
+@@ -7245,10 +7245,12 @@
+         // cache-only row has no durable intent, so a button that only iterated
+         // the queue could report "done" while the displayed unsynced changes
+         // were untouched.
+-        guard await adoptLegacyResidues(
++        // MUTATION PROBE B (#920): the pre-fix retry iterated the durable
++        // queue only, so a cache-only residue was never addressed.
++        guard await migrateLegacyRecordingEdits(
+             userID: userID,
+             capturedBy: accountFetch
+-        ),
++        ) != nil,
+               accountFetch.canApply(
+                   to: currentUserID,
+                   accountEpoch: accountEpoch
