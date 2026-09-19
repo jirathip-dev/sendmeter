@@ -378,6 +378,19 @@ struct WeeklyBarsView: View {
                         )
                         .accessibilityHidden(true)
                 }
+                // The width the chart's own label plan is computed from — read
+                // from the *chart's* box, not the surrounding stack's: the two
+                // are not guaranteed to agree (in the reviewed build the outer
+                // stack's reader reported 41 pt while this chart drew from
+                // 311 pt). The readout below resolves its plan from this same
+                // box, so the two plans cannot straddle a fit boundary.
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear { containerWidth = proxy.size.width }
+                            .onChange(of: proxy.size.width) { containerWidth = $0 }
+                    }
+                )
             }
             .frame(height: chartHeight)
 
@@ -385,21 +398,6 @@ struct WeeklyBarsView: View {
                 valuesReadout
             }
         }
-        // The chart's own laid-out width, read the way `ContributionHeatmapView`
-        // reads its grid width: on appearance (settled, after the first layout)
-        // and on every change. The readout below must resolve from the *same*
-        // width the chart's label plan uses — the delivered build published it
-        // through a `PreferenceKey` instead, which delivered the first layout
-        // pass's width (41 pt, the pre-settle placeholder) and never updated,
-        // so the readout rendered while every value label was still drawn
-        // (#929 review, blocker 2).
-        .background(
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { containerWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { containerWidth = $0 }
-            }
-        )
         .onChange(of: weeks) { _ in
             // Data replacement is passive; never buzz merely because the
             // sheet rebuilt while a sync was in flight.

@@ -31,11 +31,24 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
     private static let screenPadding: CGFloat = 16
     private static let cardInnerWidth: CGFloat = phoneWidth - 4 * screenPadding
 
-    /// The largest accessibility text size, and the `caption2` size it
-    /// resolves to (measured below and printed, the same value the #928 lane
-    /// measured on this simulator).
+    /// The largest accessibility text size the sheet is checked at.
     private static let accessibilitySize = DynamicTypeSize.accessibility5
-    private static let accessibilityPointSize: CGFloat = 40.5
+
+    /// The `caption2` size at `.accessibility5` **for this simulator**, resolved
+    /// from the same `UIFontMetrics` source the view's `@ScaledMetric` reads, so
+    /// every expectation below is environment-independent. The resolved value is
+    /// display-scale dependent: 40.5 pt on a 2× device, 40.66… pt on the 3×
+    /// device hosted CI runs on (the original literal 40.5 failed there).
+    private static let accessibilityPointSize: CGFloat = UIFontMetrics(forTextStyle: .caption2)
+        .scaledValue(for: ChartAxisLabelRule.basePointSize, compatibleWith: accessibilityTraits)
+
+    /// The size the #929 arithmetic was written against. Asserted *near* the
+    /// resolved value, not equal to it: the closest decision boundary at
+    /// `.accessibility5` is "Now" against its 71.75 pt column (6 + 3 × 0.62 ×
+    /// size), which carries 9.65 pt of margin, so a ±0.5 pt display-scale drift
+    /// cannot flip a decision — a larger drift means the arithmetic and its
+    /// printed evidence need a re-check, not a rescale.
+    private static let accessibilityPointSizeAnchor: CGFloat = 40.5
     private static let accessibilityTraits = UITraitCollection(
         preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge
     )
@@ -58,18 +71,18 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
 
     func testAccessibilitySizesThinTheWeeklyLabelsInsteadOfClippingThem() {
         XCTAssertEqual(
-            UIFontMetrics(forTextStyle: .caption2).scaledValue(
-                for: ChartAxisLabelRule.basePointSize,
-                compatibleWith: Self.accessibilityTraits
-            ),
             Self.accessibilityPointSize,
-            "the pinned accessibility caption2 size must match this simulator"
+            Self.accessibilityPointSizeAnchor,
+            accuracy: 0.5,
+            "the resolved accessibility caption2 size must stay near the 40.5 pt the #929 "
+                + "arithmetic was written against; got \(Self.accessibilityPointSize) pt "
+                + "(the resolved value is display-scale dependent)"
         )
 
         let values = Self.valuePlan(for: Self.populatedWeeks, pointSize: Self.accessibilityPointSize)
         XCTAssertTrue(
             values.labelledIndices.isEmpty,
-            "no 3-character AU total fits its 72 pt column at 40.5 pt — the row is "
+            "no 3-character AU total fits its 72 pt column at \(Self.accessibilityPointSize) pt — the row is "
                 + "omitted and the exact values move to the readout under the chart"
         )
         XCTAssertLessThan(
@@ -83,14 +96,14 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
             sparseValues.labelledIndices,
             [0, 1],
             "the density adaptation follows the DATA too: the sparse set's "
-                + "1-character '0' totals still fit their column at 40.5 pt"
+                + "1-character '0' totals still fit their column at \(Self.accessibilityPointSize) pt"
         )
 
         let captions = Self.weekPlan(for: Self.populatedWeeks, pointSize: Self.accessibilityPointSize)
         XCTAssertEqual(
             captions.labelledIndices,
             [0, 1, 2],
-            "the 2-character week captions survive at 40.5 pt; 'Now' (3 characters) "
+            "the 2-character week captions survive at \(Self.accessibilityPointSize) pt; 'Now' (3 characters) "
                 + "does not fit and is omitted rather than overhanging its column"
         )
     }
@@ -402,8 +415,9 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
         let borderCounts: [Int]
         /// Rows with dark or strongly coloured glyph pixels.
         let textCounts: [Int]
-        /// Rows with saturated fill pixels (the bars).
-        let saturatedCounts: [Int]
+        /// Rows with coloured (non-grey) pixels: the bar fills, but also any
+        /// coloured glyph. The bar band is the *wide* run of these rows.
+        let coloredCounts: [Int]
     }
 
     private static func tooltipCardMetrics(
@@ -459,9 +473,42 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
         scale: CGFloat
     ) throws -> ChartBandMetrics {
         let scan = try rowScan(of: image)
-        let barRows = scan.saturatedCounts.enumerated().filter { $0.element >= 200 }.map(\.offset)
-        guard let firstBar = barRows.first, let lastBar = barRows.last else {
-            throw RenderError.noImage
+        let width = image.cgImage?.width ?? 1
+        // Anchor the chart on its own bars: rows whose coloured pixels cover at
+        // least 30% of the rendered width. The column fills do (77% at four
+        // bars, both scales); text — the accessibility delta chip included —
+        // tops out near 18%.
+        let solidRows = scan.coloredCounts.enumerated()
+            .filter { Double($0.element) >= 0.30 * Double(width) }
+            .map(\.offset)
+        // The bars are one contiguous band; the longest run is the chart.
+        var bands: [[Int]] = []
+        for row in solidRows {
+            if var last = bands.last, row - (last.last ?? row) <= 4 {
+                last.append(row)
+                bands[bands.count - 1] = last
+            } else {
+                bands.append([row])
+            }
+        }
+        guard let barBand = bands.max(by: { $0.count < $1.count }),
+              let firstBar = barBand.first,
+              let lastBar = barBand.last else {
+            throw RenderError.chartNotFound
+        }
+        // A bar band is bar-shaped: the tallest bar is `maximumBarHeight`. Much
+        // taller than that means the anchor is wrong, and every assertion built
+        // on it would be meaningless — fail loudly here instead (this is what
+        // the delivered detector did not do when it anchored on the delta
+        // chip's glyphs and reported `labels true` from the header).
+        let detectedHeight = CGFloat(lastBar - firstBar + 1) / scale
+        let tallestBar = WeeklyBarsView.maximumBarHeight * 1.5
+        guard detectedHeight <= tallestBar else {
+            throw RenderError.barBandMisdetected(
+                rows: "\(firstBar)-\(lastBar)",
+                points: detectedHeight,
+                limit: tallestBar
+            )
         }
         let band = bandHeight(for: traits) * scale
         // A value label is drawn in its reserved band above the bar; the
@@ -505,13 +552,13 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
         var cardCounts = [Int](repeating: 0, count: height)
         var borderCounts = [Int](repeating: 0, count: height)
         var textCounts = [Int](repeating: 0, count: height)
-        var saturatedCounts = [Int](repeating: 0, count: height)
+        var coloredCounts = [Int](repeating: 0, count: height)
         for row in 0 ..< height {
             let rowOffset = row * width * 4
             var card = 0
             var border = 0
             var text = 0
-            var saturated = 0
+            var colored = 0
             for column in 0 ..< width {
                 let index = rowOffset + column * 4
                 let red = Int(pixels[index])
@@ -529,21 +576,23 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
                 if luminance < 150 {
                     text += 1
                 }
+                // 15 leaves the grey card/backdrop out while catching the
+                // bars' lightest gradient rows.
                 let spread = max(red, green, blue) - min(red, green, blue)
-                if spread > 30 {
-                    saturated += 1
+                if spread > 15 {
+                    colored += 1
                 }
             }
             cardCounts[row] = card
             borderCounts[row] = border
             textCounts[row] = text
-            saturatedCounts[row] = saturated
+            coloredCounts[row] = colored
         }
         return RowScan(
             cardCounts: cardCounts,
             borderCounts: borderCounts,
             textCounts: textCounts,
-            saturatedCounts: saturatedCounts
+            coloredCounts: coloredCounts
         )
     }
 
@@ -828,8 +877,24 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
         return image.size
     }
 
-    private enum RenderError: Error {
+    private enum RenderError: Error, CustomStringConvertible {
         case noImage
+        case chartNotFound
+        case barBandMisdetected(rows: String, points: CGFloat, limit: CGFloat)
+
+        var description: String {
+            switch self {
+            case .noImage:
+                return "the render produced no image"
+            case .chartNotFound:
+                return "no bar band was found in the render — the detector cannot anchor the "
+                    + "chart, so the assertion would be meaningless"
+            case let .barBandMisdetected(rows, points, limit):
+                return "the detected bar band (rows \(rows), \(points) pt) is not bar-shaped "
+                    + "(the tallest bar is \(WeeklyBarsView.maximumBarHeight) pt, limit \(limit) pt): "
+                    + "the detector anchored on something that is not the chart"
+            }
+        }
     }
 
     private static func evidenceDirectory() throws -> URL {
