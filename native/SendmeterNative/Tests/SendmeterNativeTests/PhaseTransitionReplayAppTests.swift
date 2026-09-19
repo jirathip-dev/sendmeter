@@ -510,41 +510,90 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
 
     // MARK: - Harness
 
+    /// #970: every wait below is bounded by a WALL-CLOCK deadline, never by a
+    /// fixed iteration budget. The old shape (600 × 5 ms ≈ 3 s) expired on a
+    /// contended runner while the durable write was legitimately still in
+    /// flight: the hosted runs that failed executed this test in 4.370 s inside
+    /// a 54.4 s suite, against 1.180 s inside 33.4 s on the passing neighbour.
+    /// 60 s is ~14× that worst observed leg; the deadline decides only how long
+    /// a wait may take — what is asserted never changes. On expiry the state
+    /// actually observed and the elapsed time are reported, so a real
+    /// durability/replay regression still fails and stays distinguishable from
+    /// slowness.
+    private static let waitDeadline: Duration = .seconds(60)
+
+    /// Polls `isSatisfied` until it holds or `timeout` elapses, then fails the
+    /// test with the elapsed time and the state `observed`.
     @MainActor
-    private func waitForQueueCount(_ model: AppModel, expected: Int) async throws {
-        for _ in 0..<600 {
-            if model.queuedWriteCount == expected { return }
+    private func waitUntil(
+        _ expectation: String,
+        timeout: Duration = PhaseTransitionReplayAppTests.waitDeadline,
+        isSatisfied: @MainActor () -> Bool,
+        observed: @MainActor () -> String
+    ) async throws {
+        let started = ContinuousClock.now
+        while ContinuousClock.now - started < timeout {
+            if isSatisfied() { return }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        XCTFail("queue never reached \(expected); last observed \(model.queuedWriteCount)")
+        guard isSatisfied() else {
+            XCTFail(
+                "timed out after \(ContinuousClock.now - started) waiting for \(expectation); observed \(observed())"
+            )
+            return
+        }
+    }
+
+    @MainActor
+    private func waitForQueueCount(_ model: AppModel, expected: Int) async throws {
+        try await waitUntil(
+            "the durable queue to reach \(expected) item(s)",
+            isSatisfied: { model.queuedWriteCount == expected },
+            observed: { Self.durableQueueState(model) }
+        )
     }
 
     @MainActor
     private func waitForRecordedAttempt(_ model: AppModel) async throws {
-        for _ in 0..<600 {
-            if (model.queuedWriteDiagnostics.first?.attempts ?? 0) >= 1 { return }
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-        XCTFail("the queue item never recorded an attempt")
+        try await waitUntil(
+            "the queue item to record an upload attempt",
+            isSatisfied: { (model.queuedWriteDiagnostics.first?.attempts ?? 0) >= 1 },
+            observed: { Self.durableQueueState(model) }
+        )
     }
 
     @MainActor
     private func waitForFailureClass(_ model: AppModel, expected: RejectionClass) async throws {
-        for _ in 0..<600 {
-            if model.queuedWriteDiagnostics.first?.rejectionClass == expected { return }
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-        XCTFail(
-            "the queue item never reported \(expected); last \(String(describing: model.queuedWriteDiagnostics.first?.rejectionClass))"
+        try await waitUntil(
+            "the queue item to report \(expected)",
+            isSatisfied: { model.queuedWriteDiagnostics.first?.rejectionClass == expected },
+            observed: { Self.durableQueueState(model) }
         )
     }
 
+    @MainActor
     private func waitForHeldRequest(_ server: FakePhasePostgREST) async throws {
-        for _ in 0..<600 {
-            if server.isHoldingRequest { return }
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-        XCTFail("the stubbed server never held the expected request")
+        try await waitUntil(
+            "the stubbed server to hold the expected request",
+            isSatisfied: { server.isHoldingRequest },
+            observed: { server.holdState }
+        )
+    }
+
+    /// The durable queue as this test can see it: the model's published counts
+    /// and per-item diagnostics, plus the queue file a relaunch would read —
+    /// together the state that tells a slow/stalled runner apart from a write
+    /// that never became durable.
+    @MainActor
+    private static func durableQueueState(_ model: AppModel) -> String {
+        let items = model.queuedWriteDiagnostics
+            .map { "\($0.kind) (attempts: \($0.attempts), reject: \(String(describing: $0.rejectionClass)))" }
+            .joined(separator: "; ")
+        return "queuedWriteCount=\(model.queuedWriteCount), "
+            + "pendingCacheWriteCount=\(model.pendingCacheWriteCount), "
+            + "account=\(model.currentUserID?.uuidString ?? "none"), "
+            + "diagnostics=[\(items)], "
+            + "pending-writes.json=\(queueFileState())"
     }
 
     @MainActor
@@ -659,6 +708,20 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
     private static func queueFileContents() throws -> String {
         let url = supportDirectory().appendingPathComponent("pending-writes.json", isDirectory: false)
         return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// The queue file itself — size and last write — for the #970 diagnostics:
+    /// it is the state a relaunch would read, and it separates "never persisted"
+    /// from "persisted but not published".
+    private static func queueFileState() -> String {
+        let url = supportDirectory().appendingPathComponent("pending-writes.json", isDirectory: false)
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return "absent"
+        }
+        let size = (attributes[.size] as? NSNumber)?.intValue ?? -1
+        let modified = (attributes[.modificationDate] as? Date)
+            .map { ISO8601DateFormatter().string(from: $0) } ?? "unknown"
+        return "\(size) bytes, modified \(modified)"
     }
 }
 
@@ -790,6 +853,14 @@ private final class FakePhasePostgREST: @unchecked Sendable {
         condition.lock()
         defer { condition.unlock() }
         return holding
+    }
+
+    /// #970 diagnostic: what the hold control was doing when a wait for
+    /// `isHoldingRequest` expired.
+    var holdState: String {
+        condition.lock()
+        defer { condition.unlock() }
+        return "holding=\(holding) pendingHolds=\(pendingHolds) releaseGeneration=\(releaseGeneration)"
     }
 
     // MARK: Seeds / reads
