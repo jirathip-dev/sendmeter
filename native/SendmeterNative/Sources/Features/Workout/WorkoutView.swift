@@ -25,6 +25,11 @@ struct WorkoutView: View {
     @State private var isSaving = false
     @State private var activeSaveID: UUID?
     @State private var showManualWorkout = false
+    /// #926: the refused-End explanation that the full-screen workout is
+    /// showing. It lives here because the End control and the workout's
+    /// lifecycle both belong to this view — and because the app-level banner
+    /// is not visible behind the cover.
+    @State private var endRefusal: ManualWorkoutEndRefusal?
     @State private var hasResolvedPersistedRun = false
     @AppStorage(ManualWorkoutRest.restTargetKey)
     private var storedRestTarget = ManualWorkoutRest.defaultRestTarget
@@ -108,12 +113,19 @@ struct WorkoutView: View {
             .fullScreenCover(isPresented: $showManualWorkout, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 ManualWorkoutFullscreen(
                     engine: $engine,
+                    endRefusal: $endRefusal,
                     isSaving: isSaving,
                     restTarget: restTarget,
                     onRestTargetChange: { target in
                         storedRestTarget = ManualWorkoutRest.validatedTarget(target)
                     },
-                    onMinimize: { showManualWorkout = false },
+                    onMinimize: {
+                        // #926: minimizing leaves the workout intact but does
+                        // not carry an obsolete explanation back into the tab
+                        // (or into the next full-screen presentation).
+                        endRefusal = nil
+                        showManualWorkout = false
+                    },
                     onEnd: finishWorkout
                 )
                 .environment(model)
@@ -127,6 +139,9 @@ struct WorkoutView: View {
             .onAppear {
                 drainManualWorkoutActions()
                 model.manualWorkoutRest.update(engine: engine, restTarget: restTarget)
+                #if DEBUG
+                armManualWorkoutFixtureIfNeeded()
+                #endif
             }
             .onChange(of: engine) { newEngine in
                 model.manualWorkoutRest.update(engine: newEngine, restTarget: restTarget)
@@ -252,6 +267,8 @@ struct WorkoutView: View {
             startedAt: Date()
         )
         engine = newEngine
+        // #926: a fresh workout never inherits the previous one's explanation.
+        endRefusal = nil
         model.manualWorkoutActivity.start(engine: newEngine, restTarget: restTarget)
         model.manualWorkoutRest.update(engine: newEngine, restTarget: restTarget)
         showManualWorkout = true
@@ -278,6 +295,7 @@ struct WorkoutView: View {
             model.manualWorkoutActivity.end(immediate: true)
             model.manualWorkoutActivity.discardPendingEvents()
             showManualWorkout = false
+            endRefusal = nil
             self.engine = nil
             let saveID = UUID()
             activeSaveID = saveID
@@ -289,13 +307,25 @@ struct WorkoutView: View {
                 isSaving = false
             }
         } catch WorkoutEngineError.emptyWorkout {
-            model.errorMessage = UserFacingError.message(for: .missingAttempt)
+            presentEndRefusal(UserFacingError.message(for: .missingAttempt))
             // #222: the Finish button is deliberately kept clickable so the
             // tap can say why — a refused finish must not feel accepted.
             Haptics.shared.playGesture(RefusedActionHaptics.cue(tappableAndRefused: true))
         } catch {
-            model.errorMessage = UserFacingError.message(for: error)
+            presentEndRefusal(UserFacingError.message(for: error))
         }
+    }
+
+    /// #926: a refusal must be readable where the tap happened. While the
+    /// full-screen workout is up it covers the root error banner, so the
+    /// explanation is presented inside that screen; from the Workout tab the
+    /// existing app-level banner is the visible surface and keeps its role.
+    private func presentEndRefusal(_ message: String) {
+        guard showManualWorkout else {
+            model.errorMessage = message
+            return
+        }
+        endRefusal = ManualWorkoutEndRefusal(message: message)
     }
 
     private var restTarget: Int {
@@ -316,6 +346,35 @@ struct WorkoutView: View {
         self.engine = current
         model.manualWorkoutActivity.refresh(engine: current, restTarget: restTarget)
     }
+
+    #if DEBUG
+    /// #926 UI-test/evidence harness: the signed-out simulator lanes cannot
+    /// sign in, so `--manual-workout-fixture` arms the REAL manual workout —
+    /// the production engine, full-screen presentation, End control and
+    /// refusal surface. `--manual-workout-fixture=refused` additionally taps
+    /// End once, through the production path, so host captures can photograph
+    /// the refusal. DEBUG-only and launch-argument-gated: the signed-in
+    /// product path never reads it.
+    @State private var hasArmedManualWorkoutFixture = false
+
+    private func armManualWorkoutFixtureIfNeeded() {
+        guard !hasArmedManualWorkoutFixture,
+              let flag = CommandLine.arguments.first(where: {
+                  $0.hasPrefix("--manual-workout-fixture")
+              })
+        else { return }
+        hasArmedManualWorkoutFixture = true
+        engine = PhoneWorkoutEngine(
+            accountUserID: UUID(),
+            phase: model.settings.currentPhase,
+            startedAt: Date()
+        )
+        endRefusal = nil
+        showManualWorkout = true
+        guard flag.hasSuffix("=refused") else { return }
+        finishWorkout()
+    }
+    #endif
 }
 
 @MainActor
