@@ -32,8 +32,8 @@ the artifacts. All sizes are gzipped originals; `hashes.txt` carries the sha256 
 | File | What it is |
 | --- | --- |
 | `spm-lock-demo-state.txt.gz` | the first (missed-overlap) lock demo |
-| `spm-lock-demo2-state.txt.gz` | the second demo's state |
-| `spm-lock-holder2.log.gz`, `spm-lock-second2.log.gz` | the long holder and the blocked second invocation, with the `Another instance of SwiftPM …` line |
+| `spm-lock-demo-state.txt.gz` | the second demo's state |
+| `spm-lock-holder.log.gz`, `spm-lock-second.log.gz` | the long holder and the blocked second invocation, with the `Another instance of SwiftPM …` line |
 
 ## Concurrency leg (another worktree's cold suite alongside the lane)
 
@@ -42,7 +42,7 @@ the artifacts. All sizes are gzipped originals; `hashes.txt` carries the sha256 
 | `concurrency-leg-state.txt.gz` | the three lane runs under load + the sibling suite's result |
 | `concurrency-scratch-worktree-suite.log.gz` | the sibling worktree's own suite (1344/0, exit 0) |
 | `conc-lane-1.log.gz` … `conc-lane-3.log.gz` | the lane runs (run 1 hung under load; run 2 is the self-inflicted exit-1 artifact; run 3 green) |
-| `conc-hang-capture.txt.gz` | the live capture of the load-conditioned hang (process table + runner sample + log tail) |
+| `concurrency-hang-capture.txt.gz` | the live capture of the load-conditioned hang (process table + runner sample + log tail) |
 
 ## The `Gate` fix (demonstrated in a scratch clone, NOT applied here)
 
