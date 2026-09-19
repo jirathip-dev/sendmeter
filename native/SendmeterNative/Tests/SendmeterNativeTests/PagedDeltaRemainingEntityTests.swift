@@ -412,7 +412,13 @@ final class PagedDeltaRemainingEntityTests: XCTestCase {
             }
             let repository = makeRepository(server: server)
 
-            let (ids, cursor) = try await readDelta(entity.path, repository: repository, since: nil)
+            // `health_metrics` and `climb_workouts` answer `since: nil` with
+            // their historical first-sync display window — one bounded
+            // newest-first request, no pages, no composite checkpoint — so a
+            // retry for them resumes from a checkpoint; the other four page
+            // from `nil`.
+            let since: String? = Self.firstSyncWindowPaths.contains(entity.path) ? legacyCursor : nil
+            let (ids, cursor) = try await readDelta(entity.path, repository: repository, since: since)
 
             XCTAssertEqual(
                 server.servedIDs.filter { $0 == entity.keys[1] }.count,
@@ -515,6 +521,14 @@ final class PagedDeltaRemainingEntityTests: XCTestCase {
         "climb_workouts",
         "tindeq_tags"
     ]
+
+    /// The two entities whose `since: nil` read is the historical first-sync
+    /// display window — one bounded newest-first request, no pages and no
+    /// composite checkpoint
+    /// (`testFirstSyncWindowsKeepTheHistoricalRowLimitsAndOrdering` pins that
+    /// product decision, #915 AC5). A re-served row only exists on the
+    /// cursor-bounded read, so a retry for these two starts from a checkpoint.
+    private static let firstSyncWindowPaths: Set<String> = ["health_metrics", "climb_workouts"]
 
     /// Calls the entity's real repository entrypoint and reports the delta's
     /// reconciled entity ids and persisted checkpoint.
