@@ -32,3 +32,4 @@ ff3ad13572bf954c87a0079092529d0b6ed3935e9c9c0b572757bcf27d1df592  docs/evidence/
 fd28eec9dbeba76759f131c56f77ff89fb66ea00aa4eb4e197431f3ff111acbe  docs/evidence/issue-918/probe-d-ordering-splice.diff
 da1fe258fb9842a8f1981adfe45f68b0bb8cebdcc384da0f30084a5c721035c6  docs/evidence/issue-918/slop.log
 26e9826425733d756c08726ec1bca9343469c05b09b6eaf21eb82293938bf606  docs/evidence/issue-918/watch-core.log.gz
+606bba6fa2226c7cce054e2d0ed5c8b98219afb47f0702cae6976284476ad54a  docs/evidence/issue-918/just-list.log.gz
