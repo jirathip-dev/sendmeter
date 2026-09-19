@@ -1,0 +1,11 @@
+--- a/native/SendmeterNative/Sources/App/AppModel.swift	2026-09-19 08:42:24
++++ b/native/SendmeterNative/Sources/App/AppModel.swift	2026-09-19 08:55:27
+@@ -8296,7 +8296,7 @@
+         userID: UUID
+     ) async throws -> PhaseTransitionOutcome {
+         let serverPeriods = try await repository.fetchPhasePeriods()
+-        if PhaseTransitionReplayPolicy.isApplied(
++        if false, PhaseTransitionReplayPolicy.isApplied(
+             intent: intent,
+             serverPeriods: serverPeriods
+         ) {

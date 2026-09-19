@@ -48,6 +48,10 @@ private enum PendingWrite: Codable, Sendable {
     /// routine and a newer mutation coalesces onto it instead of racing it.
     case preset(DirectWriteIntent<TindeqPreset>)
     case routine(DirectWriteIntent<RoutinePreset>)
+    /// #917: one training-block transition (phase periods + settings) as a
+    /// single intent. The settings row and the periods are written together,
+    /// so they are persisted together too.
+    case phaseTransition(PhaseTransitionIntent)
 }
 
 private extension PendingWrite {
@@ -61,12 +65,27 @@ private extension PendingWrite {
     }
 
     /// The entity identity the queue item is keyed by. Preset and routine cache
-    /// entity ids are uuid strings, so the queue id is that uuid.
+    /// entity ids are uuid strings, so the queue id is that uuid. The phase
+    /// transition is an account-wide singleton: every transition for one
+    /// account shares `PhaseTransitionIntent.queueItemID`, so a newer switch
+    /// replaces the pending one instead of racing it.
     var directWriteEntityID: UUID? {
         switch self {
         case let .preset(intent): return UUID(uuidString: intent.entityID)
         case let .routine(intent): return UUID(uuidString: intent.entityID)
+        case .phaseTransition: return PhaseTransitionIntent.queueItemID
         default: return nil
+        }
+    }
+
+    /// Whether a newer mutation of this payload REPLACES the pending one
+    /// wholesale (no create/update/delete coalescing): the phase transition
+    /// carries its whole intended end state, so the newest intent is the
+    /// account's only pending transition.
+    var replacesPendingWithNewest: Bool {
+        switch self {
+        case .phaseTransition: return true
+        default: return false
         }
     }
 
@@ -74,6 +93,9 @@ private extension PendingWrite {
         switch self {
         case .preset: return .presets
         case .routine: return .routinePresets
+        // The transition writes TWO entity types; a single cache identity does
+        // not describe it. Its confirmation enumerates them separately (and
+        // every other payload is not a direct write at all).
         default: return nil
         }
     }
@@ -137,6 +159,7 @@ private extension DurableQueueItem where Payload == PendingWrite {
         case .workout: return "Manual workout"
         case .preset: return "Preset"
         case .routine: return "Routine"
+        case .phaseTransition: return "Training block change"
         }
     }
 
@@ -563,6 +586,9 @@ public final class AppModel {
     /// costs a list fetch per entity type, so it runs from the drain path once
     /// per account rather than on every pass.
     private var migratedDirectWriteAccounts: Set<UUID> = []
+    /// #917 AC4: accounts whose pre-#917 phase/settings residue was already
+    /// resolved (or proven free of residue) in this process.
+    private var recoveredPhaseResidueAccounts: Set<UUID> = []
     /// The session-RPE revision and delete tombstone live in one coordinator;
     /// this keeps every async response's decision tied to current, actor-free
     /// state on the main actor rather than to a stale task closure.
@@ -2449,6 +2475,12 @@ public final class AppModel {
                     entityID: intent.entityID
                 )
             ]
+        case .phaseTransition:
+            // A transition writes TWO entity types and its periods include
+            // identities it did not name (the server mints a created period's
+            // id). The revisions are therefore read from the account cache
+            // itself at capture time — see `cacheConfirmationRevisions`.
+            return []
         }
     }
 
@@ -2457,6 +2489,9 @@ public final class AppModel {
         accountUserID: UUID
     ) -> [CacheEntityIdentity: Int] {
         guard let cachedWorkspace else { return [:] }
+        if case .phaseTransition = payload {
+            return phaseTransitionRevisions(accountUserID: accountUserID)
+        }
         var revisions: [CacheEntityIdentity: Int] = [:]
         for target in cacheConfirmationTargets(for: payload) {
             if let revision = try? cachedWorkspace.localRevision(
@@ -2465,6 +2500,42 @@ public final class AppModel {
                 entityID: target.entityID
             ) {
                 revisions[target] = revision
+            }
+        }
+        return revisions
+    }
+
+    /// The local revisions of every pending settings/phase row, captured before
+    /// a phase transition's first network await (and re-read by the
+    /// confirmation to check the same rows).
+    ///
+    /// The two entity types have exactly one writer (`switchPhase`), so the
+    /// pending rows ARE the transition's optimistic state. A row that appears
+    /// after this snapshot was written by a newer local transition: it is not
+    /// in the captured map, so this (older) acknowledgement can never clear it.
+    private func phaseTransitionRevisions(
+        accountUserID: UUID
+    ) -> [CacheEntityIdentity: Int] {
+        guard let cachedWorkspace else { return [:] }
+        var revisions: [CacheEntityIdentity: Int] = [:]
+        for entityType in [LocalCacheEntityType.settings, .phasePeriods] {
+            let entityIDs = (try? cachedWorkspace.pendingEntityIDs(
+                accountUserID: accountUserID,
+                entityType: entityType,
+                includingDeleted: true
+            )) ?? []
+            for entityID in entityIDs {
+                let identity = CacheEntityIdentity(
+                    entityType: entityType,
+                    entityID: entityID
+                )
+                if let revision = try? cachedWorkspace.localRevision(
+                    accountUserID: accountUserID,
+                    entityType: entityType,
+                    entityID: entityID
+                ) {
+                    revisions[identity] = revision
+                }
             }
         }
         return revisions
@@ -3348,6 +3419,20 @@ public final class AppModel {
 
     // MARK: Phase
 
+    /// Switches the training block (#917).
+    ///
+    /// A transition is not one row: it writes the phase periods AND the
+    /// `user_settings` row that has to keep pointing at the canonical open
+    /// period. The whole transition is therefore persisted as ONE
+    /// account-scoped intent BEFORE anything is presented as accepted, so a
+    /// termination before the request, between the related writes, or after the
+    /// server's write but before the local acknowledgement leaves a replayable
+    /// intent instead of a partly-applied block history.
+    ///
+    /// When the intent cannot be persisted nothing local changes and the
+    /// failure is surfaced (retryable, never reported as saved). Every later
+    /// failure keeps the optimistic state and the durable intent: it is
+    /// retried, and stays visible as queued/unsynced work.
     public func switchPhase(to phase: PhaseID) async {
         guard let userID = currentUserID else { return }
         let accountFetch = AccountScopedFetch(
@@ -3355,134 +3440,61 @@ public final class AppModel {
             accountEpoch: accountEpoch
         )
         let previousPeriods = phasePeriods
-        let previousSettings = settings
         let today = LocalDateSupport.string(from: Date())
         let preview = localPhaseTransition(
             periods: previousPeriods,
             newPhase: phase,
             today: today
         )
-        var periodUpsertRevisions: [UUID: Int] = [:]
-        var periodDeleteRevisions: [UUID: Int] = [:]
-        var settingsRevision: Int?
+        let intent = PhaseTransitionIntent(
+            targetPhase: phase,
+            intendedToday: today,
+            previousPeriods: previousPeriods,
+            settings: preview.settings
+        )
+        guard let item = await enqueueDirectWrite(
+            .phaseTransition(intent),
+            capturedBy: accountFetch,
+            startUpload: false
+        ) else {
+            // Nothing was written locally: this transition is not accepted, so
+            // it must not be presented as one.
+            surfaceDirectWriteNotPersisted()
+            return
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
         phasePeriods = preview.periods
         settings = preview.settings
         publishReadinessWidgetSnapshot()
         let previewIDs = Set(preview.periods.map(\.id))
         for period in previousPeriods where !previewIDs.contains(period.id) {
-            if let revision = cacheMarkDeletedLocal(
+            cacheMarkDeletedLocal(
                 accountUserID: userID,
                 entityType: .phasePeriods,
                 entityID: period.id.uuidString
-            ) {
-                periodDeleteRevisions[period.id] = revision
-            }
+            )
         }
         for period in preview.periods {
-            if let revision = cacheUpsertLocal(
+            cacheUpsertLocal(
                 period,
                 accountUserID: userID,
                 entityType: .phasePeriods,
                 entityID: period.id.uuidString
-            ) {
-                periodUpsertRevisions[period.id] = revision
-            }
+            )
         }
-        settingsRevision = cacheUpsertLocal(
+        cacheUpsertLocal(
             preview.settings,
             accountUserID: userID,
             entityType: .settings,
             entityID: CacheEntityID.settings
         )
-        do {
-            let result = try await repository.switchPhase(
-                to: phase,
-                currentPeriods: previousPeriods,
-                today: today,
-                userID: userID
-            )
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            let serverIDs = Set(result.periods.map(\.id))
-            // A same-day switch back deletes the open period from the preview,
-            // so it is not in `preview.periods`; confirm its pending tombstone
-            // from the server response too, otherwise it stays counted as an
-            // unconfirmed local change forever.
-            for period in previousPeriods where !serverIDs.contains(period.id) {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .phasePeriods,
-                    entityID: period.id.uuidString,
-                    confirmingLocalRevision: periodDeleteRevisions[period.id]
-                        ?? periodUpsertRevisions[period.id]
-                )
-            }
-            for period in preview.periods where !serverIDs.contains(period.id) {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .phasePeriods,
-                    entityID: period.id.uuidString,
-                    confirmingLocalRevision: periodUpsertRevisions[period.id]
-                )
-            }
-            for period in result.periods {
-                cacheConfirmServerUpsert(
-                    period,
-                    accountUserID: userID,
-                    entityType: .phasePeriods,
-                    entityID: CacheEntityID.phasePeriod(period),
-                    confirmingLocalRevision: periodUpsertRevisions[period.id]
-                )
-            }
-            cacheConfirmServerUpsert(
-                result.settings,
-                accountUserID: userID,
-                entityType: .settings,
-                entityID: CacheEntityID.settings,
-                confirmingLocalRevision: settingsRevision
-            )
-            phasePeriods = result.periods
-            settings = result.settings
-            publishReadinessWidgetSnapshot()
-            toastMessage = "Training Block changed to \(PhaseCatalog.definition(for: phase).name)."
-        } catch {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            for period in preview.periods where !previousPeriods.contains(where: { $0.id == period.id }) {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .phasePeriods,
-                    entityID: period.id.uuidString,
-                    confirmingLocalRevision: periodUpsertRevisions[period.id]
-                )
-            }
-            for period in previousPeriods {
-                cacheConfirmServerUpsert(
-                    period,
-                    accountUserID: userID,
-                    entityType: .phasePeriods,
-                    entityID: CacheEntityID.phasePeriod(period),
-                    confirmingLocalRevision: periodUpsertRevisions[period.id]
-                        ?? periodDeleteRevisions[period.id]
-                )
-            }
-            cacheConfirmServerUpsert(
-                previousSettings,
-                accountUserID: userID,
-                entityType: .settings,
-                entityID: CacheEntityID.settings,
-                confirmingLocalRevision: settingsRevision
-            )
-            phasePeriods = previousPeriods
-            settings = previousSettings
-            publishReadinessWidgetSnapshot()
-            surface(error)
-        }
+        refreshPendingCacheWriteCount(accountUserID: userID)
+        startQueueUpload(item, capturedBy: accountFetch)
     }
+
 
     private func localPhaseTransition(
         periods: [PhasePeriod],
@@ -6850,6 +6862,16 @@ public final class AppModel {
                   to: currentUserID,
                   accountEpoch: accountEpoch
               ) else { return }
+        // #917 AC4: the phase/settings residue gets the same once-per-account
+        // treatment on the drain path (its only writer is a transition).
+        guard await recoverLegacyPhaseResidues(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return }
         let due = await queue.items(
             for: userID,
             dueAt: mode.revalidationDueAt(now: Date())
@@ -7830,8 +7852,7 @@ public final class AppModel {
         startUpload: Bool
     ) async -> DurableQueueItem<PendingWrite>? {
         guard let queue,
-              let entityID = payload.directWriteEntityID,
-              let incoming = payload.directWriteOperation else { return nil }
+              let entityID = payload.directWriteEntityID else { return nil }
         for _ in 0..<3 {
             guard accountFetch.canApply(
                 to: currentUserID,
@@ -7846,29 +7867,40 @@ public final class AppModel {
                 accountEpoch: accountEpoch
             ) else { return nil }
 
-            let operation: DirectWriteOperation
-            if let pendingOperation = existing?.payload.directWriteOperation {
-                guard let coalesced = DirectWriteReplayPolicy.coalesce(
-                    pending: pendingOperation,
-                    incoming: incoming
-                ) else {
-                    // The entity's removal is already the newest word for this
-                    // identity; persisting the write would resurrect it.
-                    surfaceDirectWriteNotPersisted()
+            let queuedPayload: PendingWrite
+            if payload.replacesPendingWithNewest {
+                // #917: the phase transition's plan already carries the older
+                // transition's local effects, so the newest intent replaces the
+                // pending one wholesale — there is no create/update/delete
+                // vocabulary to coalesce.
+                queuedPayload = payload
+            } else {
+                guard let incoming = payload.directWriteOperation else { return nil }
+                let operation: DirectWriteOperation
+                if let pendingOperation = existing?.payload.directWriteOperation {
+                    guard let coalesced = DirectWriteReplayPolicy.coalesce(
+                        pending: pendingOperation,
+                        incoming: incoming
+                    ) else {
+                        // The entity's removal is already the newest word for this
+                        // identity; persisting the write would resurrect it.
+                        surfaceDirectWriteNotPersisted()
+                        return nil
+                    }
+                    operation = coalesced
+                } else {
+                    operation = incoming
+                }
+                guard let relabeled = payload.relabeled(with: operation) else {
                     return nil
                 }
-                operation = coalesced
-            } else {
-                operation = incoming
-            }
-            guard let coalescedPayload = payload.relabeled(with: operation) else {
-                return nil
+                queuedPayload = relabeled
             }
             let item = DurableQueueItem(
                 id: entityID,
                 accountUserID: accountFetch.accountUserID,
                 terminalKey: entityID,
-                payload: coalescedPayload
+                payload: queuedPayload
             )
             do {
                 let installed = try await queue.enqueueIfCurrent(
@@ -8062,6 +8094,411 @@ public final class AppModel {
         ) else { return false }
         migratedDirectWriteAccounts.insert(userID)
         return true
+    }
+
+    /// #917 AC4: resolves the pre-#917 phase/settings residue — pending
+    /// cache-only rows for the two entity types a transition writes, left with
+    /// no replay intent at all by an interrupted older build.
+    ///
+    /// Only PROVABLE outcomes are resolved, and nothing is reconstructed from a
+    /// local row alone (a period is only ever written through a transition, and
+    /// a locally created period's id is never the server's):
+    ///
+    /// * a live pending row the server already serves with the same content IS
+    ///   the write, so the server row is adopted and the optimistic identity
+    ///   retired;
+    /// * a pending tombstone whose identity the server no longer serves is a
+    ///   delete that is already effective — there is nothing left to remove;
+    /// * the settings row, a per-account singleton upserted by user id, is
+    ///   retired when the server already serves exactly the pending value.
+    ///
+    /// Everything else stays exactly where it is and keeps counting as unsynced
+    /// (the Settings "unsynced" surface): no local change is lost, and none is
+    /// invented.
+    private func recoverLegacyPhaseResidues(
+        userID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> Bool {
+        guard let queue, let workspace = cachedWorkspace else { return true }
+        guard !recoveredPhaseResidueAccounts.contains(userID) else { return true }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        let queued = await queue.items(for: userID, includeQuarantined: true)
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        guard !queued.contains(where: { $0.id == PhaseTransitionIntent.queueItemID }) else {
+            // A durable transition owns both entity types: there is no
+            // intent-less residue to resolve, and the intent is the account's
+            // newest word for them.
+            recoveredPhaseResidueAccounts.insert(userID)
+            return true
+        }
+        let pendingPeriodIDs = (try? workspace.pendingEntityIDs(
+            accountUserID: userID,
+            entityType: .phasePeriods,
+            includingDeleted: true
+        )) ?? []
+        let livePeriodIDs = Set((try? workspace.pendingEntityIDs(
+            accountUserID: userID,
+            entityType: .phasePeriods
+        )) ?? [])
+        let pendingSettingsIDs = (try? workspace.pendingEntityIDs(
+            accountUserID: userID,
+            entityType: .settings,
+            includingDeleted: true
+        )) ?? []
+        guard !pendingPeriodIDs.isEmpty || !pendingSettingsIDs.isEmpty else {
+            recoveredPhaseResidueAccounts.insert(userID)
+            return true
+        }
+        let periods: [PhasePeriod]
+        let settings: UserSettings?
+        do {
+            periods = try await repository.fetchPhasePeriods()
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return false }
+            settings = try await repository.fetchSettingsDelta(since: nil)
+                .activeValues
+                .first
+        } catch {
+            // A failed authoritative read defers the whole sweep rather than
+            // resolving anything on a guess.
+            return false
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        let serverIDs = Set(periods.map { $0.id.uuidString.lowercased() })
+        for entityID in pendingPeriodIDs {
+            guard let revision = try? workspace.localRevision(
+                accountUserID: userID,
+                entityType: .phasePeriods,
+                entityID: entityID
+            ) else { continue }
+            if !livePeriodIDs.contains(entityID) {
+                // A tombstone. When the server no longer serves the identity,
+                // the removal the user asked for is already effective. When it
+                // still does, removing a period needs a transition (and a
+                // target block), so it keeps counting as unsynced.
+                guard !serverIDs.contains(entityID.lowercased()) else { continue }
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    entityID: entityID,
+                    confirmingLocalRevision: revision
+                )
+                continue
+            }
+            guard let local = try? workspace.store.loadOne(
+                PhasePeriod.self,
+                accountUserID: userID,
+                entityType: .phasePeriods,
+                entityID: entityID
+            ), let adopted = periods.first(where: {
+                $0.phase == local.phase
+                    && $0.startedOn == local.startedOn
+                    && $0.endedOn == local.endedOn
+            }) else { continue }
+            if adopted.id.uuidString.lowercased() == entityID.lowercased() {
+                // The server serves the identical row under the same id: the
+                // write is confirmed, not retired.
+                cacheConfirmServerUpsert(
+                    adopted,
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    entityID: entityID,
+                    confirmingLocalRevision: revision
+                )
+            } else {
+                // The server minted its own id for the period this row
+                // created: adopt the server row and retire the local identity.
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    entityID: entityID,
+                    confirmingLocalRevision: revision
+                )
+                cacheUpsertServer(
+                    adopted,
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    entityID: adopted.id.uuidString
+                )
+            }
+        }
+        for entityID in pendingSettingsIDs {
+            guard let revision = try? workspace.localRevision(
+                accountUserID: userID,
+                entityType: .settings,
+                entityID: entityID
+            ), let local = try? workspace.store.loadOne(
+                UserSettings.self,
+                accountUserID: userID,
+                entityType: .settings,
+                entityID: entityID
+            ) else { continue }
+            // The settings row is the same singleton (`user_id` upsert) the
+            // transition writes, so the server serving exactly the pending
+            // value is proof that the write landed. A settings row that
+            // DISAGREES with the authoritative periods cannot be replayed
+            // without inventing a transition — it stays counted as unsynced.
+            guard local == settings else { continue }
+            cacheConfirmServerUpsert(
+                local,
+                accountUserID: userID,
+                entityType: .settings,
+                entityID: entityID,
+                confirmingLocalRevision: revision
+            )
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        recoveredPhaseResidueAccounts.insert(userID)
+        refreshPendingCacheWriteCount(accountUserID: userID)
+        return true
+    }
+
+    // MARK: Phase transition replay (#917)
+
+    /// The authoritative state one replayed phase transition ended in.
+    private struct PhaseTransitionOutcome {
+        let periods: [PhasePeriod]
+        let settings: UserSettings
+    }
+
+    /// Replays one durable phase transition intent against the server (#917).
+    ///
+    /// The transition's two halves are the phase periods and the
+    /// `user_settings` row that must point at the canonical open period, and
+    /// this is the single place they are settled together:
+    ///
+    /// * the server's own state is read first. When it already leaves the
+    ///   intended block open (a `create` that landed, or a transition that was
+    ///   a no-op) the mutation must NOT be re-sent — `phase_periods` mints its
+    ///   own row id, so "apply it again" would insert a SECOND open period.
+    ///   Only the settings half is completed if it is the one that was lost.
+    /// * otherwise the planner re-derives the transition from the state it was
+    ///   authored against (or, when that view is no longer anchored on the
+    ///   server's rows, from the server's own authoritative state), and the
+    ///   result has to show the intended open block before the transition is
+    ///   allowed to confirm.
+    private func applyPhaseTransitionIntent(
+        _ intent: PhaseTransitionIntent,
+        userID: UUID
+    ) async throws -> PhaseTransitionOutcome {
+        let serverPeriods = try await repository.fetchPhasePeriods()
+        if PhaseTransitionReplayPolicy.isApplied(
+            intent: intent,
+            serverPeriods: serverPeriods
+        ) {
+            let serverSettings = try await repository.fetchSettingsDelta(since: nil)
+                .activeValues
+                .first
+            if serverSettings != intent.settings {
+                try await repository.updateSettings(intent.settings, userID: userID)
+            }
+            return PhaseTransitionOutcome(
+                periods: serverPeriods,
+                settings: intent.settings
+            )
+        }
+        let result = try await repository.switchPhase(
+            to: intent.targetPhase,
+            currentPeriods: PhaseTransitionReplayPolicy.planInput(
+                intent: intent,
+                serverPeriods: serverPeriods
+            ),
+            today: intent.intendedToday,
+            userID: userID
+        )
+        guard PhaseTransitionReplayPolicy.isComplete(
+            intent: intent,
+            resultPeriods: result.periods
+        ) else {
+            // The writes ran but the server does not show the intended open
+            // block. Keep the intent (retryable; surfaced as needs-attention
+            // once the bounded attempts run out) instead of confirming a
+            // transition that did not complete.
+            throw PhaseTransitionReplayError.incompleteTransition
+        }
+        if result.settings != intent.settings {
+            // Completeness is the two halves agreeing: the periods say the
+            // intended block is open, so the settings row has to point at it
+            // even when its own write is the one that was lost.
+            try await repository.updateSettings(intent.settings, userID: userID)
+        }
+        return PhaseTransitionOutcome(periods: result.periods, settings: intent.settings)
+    }
+
+    /// Settles one completed phase transition into the account cache and the
+    /// published block state — the settings/phase analogue of
+    /// `confirmDirectWriteSaved`.
+    ///
+    /// Every row is revision-fenced against the snapshot taken before the first
+    /// network await: a newer local transition that bumped a row while this
+    /// (older) request was in flight owns that row, so this acknowledgement
+    /// must neither clear it nor publish its own older values over it. A local
+    /// period identity the server never minted is retired only once the
+    /// server's own row for it is identifiable by content — otherwise it stays
+    /// pending and keeps counting as unsynced.
+    ///
+    /// - Returns: whether this acknowledgement is still the newest local state
+    ///   for the transition.
+    @discardableResult
+    private func confirmPhaseTransition(
+        _ outcome: PhaseTransitionOutcome,
+        intent: PhaseTransitionIntent,
+        accountUserID: UUID,
+        cacheRevisions: [CacheEntityIdentity: Int]
+    ) -> Bool {
+        guard let workspace = cachedWorkspace else { return true }
+        var isNewest = true
+        let serverIDs = Set(outcome.periods.map { $0.id.uuidString.lowercased() })
+        let pendingIDs = (try? workspace.pendingEntityIDs(
+            accountUserID: accountUserID,
+            entityType: .phasePeriods,
+            includingDeleted: true
+        )) ?? []
+        let liveIDs = Set((try? workspace.pendingEntityIDs(
+            accountUserID: accountUserID,
+            entityType: .phasePeriods
+        )) ?? [])
+        for entityID in pendingIDs where !serverIDs.contains(entityID.lowercased()) {
+            let captured = cacheConfirmationRevision(
+                cacheRevisions,
+                entityType: .phasePeriods,
+                entityID: entityID
+            )
+            let current = try? workspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: .phasePeriods,
+                entityID: entityID
+            )
+            guard captured == current else {
+                // A newer local transition owns this row.
+                isNewest = false
+                continue
+            }
+            if !liveIDs.contains(entityID) {
+                // A tombstone: the transition's own plan removed this identity
+                // (a same-day switch-back deletes the period it just created),
+                // so the removal is confirmed rather than left counted as
+                // unsynced for ever.
+                cacheConfirmServerDelete(
+                    accountUserID: accountUserID,
+                    entityType: .phasePeriods,
+                    entityID: entityID,
+                    confirmingLocalRevision: captured ?? 0
+                )
+                continue
+            }
+            guard let local = try? workspace.store.loadOne(
+                PhasePeriod.self,
+                accountUserID: accountUserID,
+                entityType: .phasePeriods,
+                entityID: entityID
+            ), let adopted = outcome.periods.first(where: {
+                $0.phase == local.phase
+                    && $0.startedOn == local.startedOn
+                    && $0.endedOn == local.endedOn
+            }) else {
+                // No provable server row for this optimistic identity: it stays
+                // pending (still counted as unsynced) instead of being cleared
+                // on a guess.
+                isNewest = false
+                continue
+            }
+            // The server minted its own row id for the period this local row
+            // created: adopt the server row under its own identity and retire
+            // the optimistic one.
+            cacheConfirmServerDelete(
+                accountUserID: accountUserID,
+                entityType: .phasePeriods,
+                entityID: entityID,
+                confirmingLocalRevision: captured ?? 0
+            )
+            cacheUpsertServer(
+                adopted,
+                accountUserID: accountUserID,
+                entityType: .phasePeriods,
+                entityID: adopted.id.uuidString
+            )
+        }
+        for period in outcome.periods {
+            let entityID = period.id.uuidString
+            if pendingIDs.contains(entityID) && !liveIDs.contains(entityID) {
+                // The server still serves a row this account deleted locally:
+                // the local delete is the newer word and is replayed by its own
+                // transition, so the row is never resurrected here.
+                isNewest = false
+                continue
+            }
+            guard let captured = cacheConfirmationRevision(
+                cacheRevisions,
+                entityType: .phasePeriods,
+                entityID: entityID
+            ) else {
+                // A server row with no local counterpart (the period the
+                // previous block closed): stored as clean server state.
+                cacheUpsertServer(
+                    period,
+                    accountUserID: accountUserID,
+                    entityType: .phasePeriods,
+                    entityID: entityID
+                )
+                continue
+            }
+            let current = try? workspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: .phasePeriods,
+                entityID: entityID
+            )
+            guard captured == current else {
+                isNewest = false
+                continue
+            }
+            cacheConfirmServerUpsert(
+                period,
+                accountUserID: accountUserID,
+                entityType: .phasePeriods,
+                entityID: entityID,
+                confirmingLocalRevision: captured
+            )
+        }
+        // The settings row last: it is the half that has to point at whatever
+        // open period the transition actually left behind.
+        let settingsID = CacheEntityID.settings
+        let settingsCaptured = cacheConfirmationRevision(
+            cacheRevisions,
+            entityType: .settings,
+            entityID: settingsID
+        )
+        let settingsCurrent = try? workspace.localRevision(
+            accountUserID: accountUserID,
+            entityType: .settings,
+            entityID: settingsID
+        )
+        if settingsCaptured == settingsCurrent {
+            cacheConfirmServerUpsert(
+                outcome.settings,
+                accountUserID: accountUserID,
+                entityType: .settings,
+                entityID: settingsID,
+                confirmingLocalRevision: settingsCaptured ?? 0
+            )
+        } else {
+            isNewest = false
+        }
+        return isNewest
     }
 
     @discardableResult
@@ -8873,6 +9310,33 @@ public final class AppModel {
                         capturedBy: accountFetch
                     )
                 }
+            case let .phaseTransition(intent):
+                // The transition reports its own completion (the new block's
+                // name); the queue's generic toast would be a second,
+                // duplicate confirmation.
+                suppressSavedToast = true
+                let outcome = try await applyPhaseTransitionIntent(
+                    intent,
+                    userID: item.accountUserID
+                )
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                if confirmPhaseTransition(
+                    outcome,
+                    intent: intent,
+                    accountUserID: item.accountUserID,
+                    cacheRevisions: cacheRevisions
+                ) {
+                    phasePeriods = outcome.periods
+                    settings = outcome.settings
+                    publishReadinessWidgetSnapshot()
+                    toastMessage = "Training Block changed to \(PhaseCatalog.definition(for: intent.targetPhase).name)."
+                }
+                refreshPendingCacheWriteCount(accountUserID: item.accountUserID)
             }
             if let sessionReceipt, routineUndo.isClaimed(sessionReceipt) {
                 suppressSavedToast = true
@@ -10274,11 +10738,12 @@ public final class AppModel {
                         )
                     )
                 }
-            case .preset, .routine:
-                // #916: a preset or routine keeps its optimistic state in its
-                // own account-scoped cache row (which this restore pass reads
-                // separately), so there is no in-memory overlay to rebuild from
-                // the queue payload. The durable intent only drives the replay.
+            case .preset, .routine, .phaseTransition:
+                // #916/#917: a preset, routine or phase transition keeps its
+                // optimistic state in its own account-scoped cache row (which
+                // this restore pass reads separately), so there is no in-memory
+                // overlay to rebuild from the queue payload. The durable intent
+                // only drives the replay.
                 continue
             }
         }

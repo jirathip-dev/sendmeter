@@ -1,0 +1,44 @@
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -8378,11 +8378,7 @@
+                 entityType: .phasePeriods,
+                 entityID: entityID
+             )
+-            let current = try? workspace.localRevision(
+-                accountUserID: accountUserID,
+-                entityType: .phasePeriods,
+-                entityID: entityID
+-            )
++            let current = captured
+             guard captured == current else {
+                 // A newer local transition owns this row.
+                 isNewest = false
+@@ -8457,11 +8453,7 @@
+                 )
+                 continue
+             }
+-            let current = try? workspace.localRevision(
+-                accountUserID: accountUserID,
+-                entityType: .phasePeriods,
+-                entityID: entityID
+-            )
++            let current = captured
+             guard captured == current else {
+                 isNewest = false
+                 continue
+@@ -8479,14 +8471,10 @@
+         let settingsID = CacheEntityID.settings
+         let settingsCaptured = cacheConfirmationRevision(
+             cacheRevisions,
+-            entityType: .settings,
+-            entityID: settingsID
+-        )
+-        let settingsCurrent = try? workspace.localRevision(
+-            accountUserID: accountUserID,
+             entityType: .settings,
+             entityID: settingsID
+         )
++        let settingsCurrent = settingsCaptured
+         if settingsCaptured == settingsCurrent {
+             cacheConfirmServerUpsert(
+                 outcome.settings,
