@@ -78,6 +78,12 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native Training Load charts are easier to read: the weekly load bars' AU
+  totals and week labels now follow your text size instead of a tiny fixed
+  size, they thin out on narrow screens or at large text sizes instead of
+  crowding or clipping, and when the bars can no longer carry their numbers an
+  exact per-week values list appears under the chart.
+
 - Native Force charts are easier to read: the force duration curve's axis
   numbers and the progress tiles' captions now follow your text size instead
   of a tiny fixed size, and the curve thins its time labels on narrow screens
