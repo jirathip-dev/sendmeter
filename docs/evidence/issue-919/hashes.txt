@@ -1,6 +1,7 @@
 # #919 evidence hashes (sha256 of each committed artifact; this file excluded)
 
 app-class-green-inside-full-run.log.gz                  b0f22ffebd16acbf87849e4ddd561b273db2456ea3c109fe83eb72b0955ca40d
+app-full-attempt0-account-key-defect.log.gz             e733707a0e9c575bf8bbca97da43df3e96d334a5a7c3a92a9156ae1bb0e97050
 app-full-attempt1-guided-protocol-precheck.log.gz       6270049f0b265e75c4000f10573c0433adae704f67c642223099642ec6fc2743
 app-full-attempt2-own-test-fail-fixed.log.gz            a215968c0782d2519fa6e98f6e3b99e2df1a09ec3cd41e11caf8a4367d84307a
 app-full-attempt3-runner-hang.log.gz                    6c76045eb62e84f9a4a96878cb67bf91f80ec473d7eb704e7e65a4ee939e6a0d
