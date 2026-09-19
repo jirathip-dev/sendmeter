@@ -1,0 +1,32 @@
+Application, 0x102a6f200, pid: 6751, label: 'Sendmeter' <App element pid: 6751>
+  Window (Main), 0x102a6f340, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4326017024.4>
+    Other, 0x102a6f480, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4350305280.5>
+      Other, 0x102a6f5c0, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4351656576.6>
+        Other, 0x102a6f700, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4326016000.7>
+          Other, 0x102a6f840, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4349668736.8>
+            Other, 0x102a6f980, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4328149376.9>
+              Other, 0x102a6fac0, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4328155648.10>
+                Other, 0x102a6fc00, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4349644736.12>
+                  Other, 0x102a6fd40, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4326096896.14>
+                    Other, 0x102a6fe80, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4349676160.15>
+                      ScrollView, 0x112df4000, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4351246336.16>
+                        Other, 0x112df4140, {{0.0, 20.0}, {375.0, 797.0}} <AX element pid: 6751, elementOrHash.elementID: 4456008192.17>
+                          StaticText, 0x112df4280, {{100.0, 224.0}, {175.0, 49.0}}, label: 'Sendmeter' <AX element pid: 6751, elementOrHash.elementID: 4349669632.19>
+                          StaticText, 0x112df43c0, {{21.2, 285.0}, {332.5, 44.0}}, label: 'Training load, readiness, climbing workouts, and force measurement in one native app.' <AX element pid: 6751, elementOrHash.elementID: 4349670080.20>
+                          SegmentedControl, 0x112df4500, {{32.0, 369.0}, {311.0, 31.0}} <AX element pid: 6751, elementOrHash.elementID: 4326004736.21>
+                            Button, 0x112df4640, {{32.0, 369.0}, {155.0, 32.0}}, label: 'Sign In', Selected <AX element pid: 6751, elementOrHash.elementID: 4326005504.29>
+                            Button, 0x112df4780, {{187.0, 369.0}, {156.0, 32.0}}, label: 'Create Account' <AX element pid: 6751, elementOrHash.elementID: 4326006272.30>
+                          TextField, 0x112df48c0, {{44.0, 428.0}, {287.0, 25.0}}, placeholderValue: 'Email' <AX element pid: 6751, elementOrHash.elementID: 4327378688.22>
+                          SecureTextField, 0x112df4a00, {{44.0, 493.0}, {287.0, 25.0}}, placeholderValue: 'Password' <AX element pid: 6751, elementOrHash.elementID: 4327381248.23>
+                          Button, 0x112df4b40, {{32.0, 546.0}, {311.0, 48.0}}, label: 'Sign In', Disabled <AX element pid: 6751, elementOrHash.elementID: 4349672768.24>
+                          Button, 0x112df4c80, {{32.0, 626.5}, {311.0, 58.0}}, label: 'Sign in with Passkey' <AX element pid: 6751, elementOrHash.elementID: 4349674368.25>
+                            Image, 0x112df4dc0, {{99.5, 648.5}, {18.5, 18.5}}, identifier: 'person.badge.key.fill', label: 'person.badge.key.fill' <AX element pid: 6751, elementOrHash.elementID: 4349673472.31>
+                            StaticText, 0x112df4f00, {{32.0, 626.5}, {311.0, 58.0}}, label: 'Sign in with Passkey' <AX element pid: 6751, elementOrHash.elementID: 4349673920.32>
+                          Button, 0x112df5040, {{32.0, 700.5}, {311.0, 44.0}}, label: 'Sign in with Apple' <AX element pid: 6751, elementOrHash.elementID: 4456020992.26>
+                          Button, 0x112df5180, {{106.0, 760.5}, {163.0, 24.5}}, label: 'Email me a magic link', Disabled <AX element pid: 6751, elementOrHash.elementID: 4349675264.27>
+                        Other, 0x112df52c0, {{342.0, 20.0}, {30.0, 647.0}}, label: 'Vertical scroll bar, 2 pages', value: 0% <AX element pid: 6751, elementOrHash.elementID: 4680910336.18>
+                          Other, 0x112df5400, {{369.0, 23.0}, {3.0, 523.5}} <AX element pid: 6751, elementOrHash.elementID: 4349651008.28>
+                        Other, 0x112df5540, {{342.0, 20.0}, {30.0, 647.0}}, label: 'Vertical scroll bar, 2 pages', value: 0% <AX element pid: 6751, elementOrHash.elementID: 4680910336.18>
+                          Other, 0x112df5680, {{369.0, 23.0}, {3.0, 523.5}} <AX element pid: 6751, elementOrHash.elementID: 4349651008.28>
+              Other, 0x112df57c0, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4456009216.11>
+                Other, 0x112df5900, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 6751, elementOrHash.elementID: 4456011776.13>
