@@ -229,6 +229,35 @@ final class GuidedActivityContentTests: XCTestCase {
         XCTAssertEqual(snapshot.detailLabel, "Set 1 · Rep 1 · Left")
     }
 
+    // MARK: #939 — a rest card shows the hand-off, not the set that just ended
+
+    func testRestSnapshotDetailMatchesTheFullscreenRestLine() throws {
+        let preset = preset(repetitions: 3, sets: 2, restBetweenRepetitionsSeconds: 60)
+        let content = content(preset: preset, startEpochMs: 1_000_000)
+        var run = ForceProtocolRun(preset: preset, startingSide: .left)
+        run.start(at: Date(timeIntervalSince1970: 0))
+        let restIndex = try XCTUnwrap(run.stages.firstIndex { $0.kind == .restBetweenRepetitions })
+        while run.stageIndex < restIndex {
+            run.advance(at: Date(timeIntervalSince1970: 0))
+        }
+        XCTAssertEqual(run.currentStage.kind, .restBetweenRepetitions)
+
+        let at = Date(timeIntervalSince1970: 1_005)
+        let snapshot = content.snapshot(
+            runAnchor: GuidedProtocolActivityContent.RunAnchor(run: run, at: at)
+        )
+        let fullscreen = GuidedForceFullscreenPresentation.stage(
+            run.currentStage,
+            preset: preset,
+            elapsedSeconds: 5
+        )
+
+        XCTAssertEqual(snapshot.phaseToken, "rest")
+        XCTAssertEqual(snapshot.detailLabel, fullscreen.detail)
+        // The hand-off, never the set/rep that just ended (#939).
+        XCTAssertEqual(snapshot.detailLabel, "Next: Rep 2/3 · 10s hold · Left")
+    }
+
     // MARK: #674 review N1 — the mirror derives from the LIVE run, never a copy
 
     func testMirrorTracksRunAcrossStageTransitions() {

@@ -10,6 +10,12 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- History can now merge several Tindeq sessions from the same day into one
+  entry: long-press a Tindeq session, pick the same-day entries to fold in,
+  and the merged session keeps the earliest start, one duration spanning every
+  recording, a note listing them all, and the RPE you confirmed (or a fresh
+  prediction when none was). The merge runs as one atomic server operation, so
+  it queues offline and can never strand recordings.
 - Native iPhone now has a medium/large home-screen and Smart Stack readiness
   widget with today's readiness score and zone, ACWR with acute/chronic load,
   and the current training block; missing data stays an honest Apple Health or
@@ -71,6 +77,24 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native Workout: tapping a routine now opens a read-only preview of its steps — name and detail, work seconds, repetitions, rest, plus the total duration to expect — and starting a routine is explicit from that preview's Start button. Nothing starts on tap anymore.
 
 ### Improved
+
+- Native Training Load charts are easier to read: the weekly load bars' AU
+  totals and week labels now follow your text size instead of a tiny fixed
+  size, they thin out on narrow screens or at large text sizes instead of
+  crowding or clipping, and when the bars can no longer carry their numbers an
+  exact per-week values list appears under the chart.
+
+- Native Force charts are easier to read: the force duration curve's axis
+  numbers and the progress tiles' captions now follow your text size instead
+  of a tiny fixed size, and the curve thins its time labels on narrow screens
+  so they never crowd or collide.
+
+- Native error banners are now easier to dismiss and to hear: the close
+  control is a full-size target with a spoken "Dismiss error" label, long
+  failure messages stay fully readable at every text size (including the
+  largest accessibility sizes) in light and dark, and a new failure is
+  announced once to VoiceOver without taking focus away from what you were
+  doing.
 
 - Native Force: the recording-context card is redesigned around configure →
   operate. One "Movement & side" row opens a full-screen movement picker that
@@ -170,9 +194,14 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: shortened the brief pause after Stop while your force curve recomputes, without changing any of the numbers it produces.
 - Apple Watch Force screens now match the rest of Sendmeter's visual language: the primary Start button, protocol card, and guided-run timer use the same blue/indigo accent as the rest of the app instead of a separate pink/purple identity, with connection, warning, and error states still called out in their usual colors.
 - Force's Exercise & Side card now shows a compact "Manage exercises" icon button instead of a text button, and the manager sheet it opens is titled "Manage exercises".
+- Native guided Force: a rest now tells you what is coming next — the upcoming rep or set, its hold length (including a set's ramped hold), and the hand you are about to pull with — instead of describing only the set that just finished; the same line appears on the lock screen's Live Activity card, and a rest with nothing left to hand off to says "Last set done · finishing" rather than naming a set that is not coming. (Lock-screen rendering itself is still device-only to verify.)
 
 ### Fixed
 
+- Native Training Block: switching your block (or changing its start date) is no longer lost when the app is killed mid-change. The whole switch — the phase periods and the settings row that points at the open block — is written to the on-device queue first, so restarting the app completes it: the old block is closed, exactly one new block opens on the day you chose, and your settings stay in step with the block history. A switch that already reached the server before the app died is recognised instead of creating a second block, and a leftover unconfirmed block change from an older version is either recovered from the server's own answer or kept visible as unsynced — never silently dropped.
+- Native Force/Workout: saving or deleting a preset or routine while offline is no longer lost. The change is written to the on-device queue first, so killing or restarting the app still completes it once you are back online — exactly once, and a delete can never be undone by a queued edit. A save that already reached the server before the app died is recognised instead of being sent twice, and a leftover "unsynced" preset or routine from an older version is picked up and replayed instead of sitting there forever.
+- Native Apple Watch: readiness sync with your iPhone works end to end again — the watch's refresh request now reaches the iPhone and comes back as a real score (or an explicit "open Sendmeter on your iPhone" / "could not refresh" message instead of silence), and an iPhone-side Apple Health refresh now publishes that same typed result to the watch, which had been discarding every phone-published score. Until a result arrives the watch keeps showing its last known reading.
+- Native Force: the guided protocol fullscreen no longer shows a black band above its content on notch/Dynamic Island iPhones — the app background and the phase accent tint now fill edge-to-edge behind the status bar, and the live chart and its axis stay fully visible above the bottom edge (nothing hidden under the pause/skip controls) when you scroll to the end.
  - Native Force: the live force chart's scale now stays anchored to your protocol's target band and the strongest pull of the current run, so the target band no longer jumps to a different height when a rep finishes (the chart window empties) or when you leave the guided fullscreen — only a genuinely bigger pull still expands the chart scale.
  - Native Force: the guided runner no longer shows the large STOP/FINISH circle — it covered the live chart on small screens and sat below the one-handed thumb zone on large ones. The top-bar End pill is now the single explicit save-and-exit (it still saves the in-flight pull through the same queue), and every guided rep starts from the pull.
  - Native Force: standalone manual Force mode is removed. Free pulls start only from the Hands-free arm (pull to start, release to save), guided protocols always wait for a pull before a work stage begins, and empty or disconnected Force surfaces route to a guided protocol or Hands-free instead of offering a manual start.
@@ -206,6 +235,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native guided routine labels and completion copy now remain readable across every phase color and translucent control surface.
 - Native Send Conditions now keeps the current score when climate history is temporarily unavailable, uses the same UTC history window as the web app, and avoids unnecessary weather requests for 30 minutes.
 - Native History now keeps recordings from hidden Force tags in the timeline while continuing to omit those tags from quick-filter chips.
+- Native Force: finishing a guided protocol no longer ends the gauge session — one finger-strength session now logs ONE Tindeq entry in History (with a note and RPE built from every recording in it) instead of one entry per protocol, and a further protocol or a free pull joins that same session. The DONE panel now shows the next step with an inline Done action that is visible without scrolling and returns you to the still-live session (the completion buzz fires once per protocol, not again when you reopen it), while ending the session stays the explicit Finish action on the Force tab.
 - iPhone: the readiness score now updates when the app opens and when you bring it back to the foreground, instead of only after a fresh install — newer Apple Health or Apple Watch data is picked up on open. The refresh is silent and shows a "Syncing" pill while in flight; if the sync fails, or Apple Health briefly returns no data (for example before the watch has written overnight values), your last score stays on screen instead of being blanked, and a pull-to-refresh still forces an update.
 - Force: an untagged free hold (no exercise picked, e.g. in hands-free) now saves the rep with no exercise stamped on it instead of silently filing it under an arbitrary exercise from your list — and the last exercise and side you picked are remembered, so the next free hold keeps your choice rather than leaving it empty.
 - Force: you can now start a free hold without picking an exercise first — the rep saves untagged instead of silently being filed under an arbitrary exercise from your list. The last exercise and side you picked are remembered, so an untagged free hold keeps your previous choice (a remembered side only applies to free holds, never to protocol reps, which keep their own per-hand side).

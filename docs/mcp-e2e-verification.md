@@ -1,17 +1,21 @@
 # sendmeter-mcp e2e verification (issue #644)
 
-Recorded 2026-08-18 against the **local Supabase stack only** (`npx supabase
+Recorded 2026-08-18 against the **local Supabase stack only** (`supabase
 start` — never the hosted project). Verifies acceptance criteria 1, 2 and 4 of
 issue #644 end-to-end through the real stdio server, exactly as an MCP client
-would drive it (`scripts/e2e.mjs` does a full initialize → listTools →
+would drive it (`mcp/scripts/e2e.mjs` does a full initialize → listTools →
 callTool session).
 
 ## Setup
 
 ```bash
-npx supabase start            # local stack; seed.sql applies dev@sendmeter.test
+supabase start                # local stack; seed.sql applies dev@sendmeter.test
 cd mcp && npm run build
 ```
+
+The Supabase CLI is no longer a repo devDependency (the root npm package was
+retired in #857) — install it yourself (Homebrew, or `supabase/setup-cli` in
+CI) so the version is pinned deliberately.
 
 Local publishable anon key and project URL come from `supabase status`.
 
@@ -20,7 +24,7 @@ Local publishable anon key and project URL come from `supabase status`.
 ```bash
 MCP_URL=http://127.0.0.1:54321 MCP_ANON=<local anon key> \
   MCP_EMAIL=dev@sendmeter.test MCP_PASSWORD=devpassword \
-  LABEL=login node scripts/e2e.mjs
+  LABEL=login node mcp/scripts/e2e.mjs
 ```
 
 ```
@@ -45,7 +49,7 @@ curl -s -X POST "http://127.0.0.1:54321/auth/v1/signup" \
 
 MCP_URL=http://127.0.0.1:54321 MCP_ANON=<local anon key> \
   MCP_EMAIL=second@user.test MCP_PASSWORD=secondpassword \
-  LABEL=second-user node scripts/e2e.mjs
+  LABEL=second-user node mcp/scripts/e2e.mjs
 ```
 
 ```

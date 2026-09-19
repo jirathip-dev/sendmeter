@@ -44,6 +44,7 @@ public enum HistoryTimeline {
         _ recordings: [TindeqRecording],
         in sessions: [Session]
     ) -> [TindeqRecording] {
+        HistoryScanCounter.bump(.looseRecordings)
         let sessionGroupIDs = Set(sessions.compactMap(\.groupID))
         return recordings.filter { recording in
             guard let groupID = recording.groupID else { return true }
@@ -60,6 +61,7 @@ public enum HistoryTimeline {
         recordings: [TindeqRecording],
         timeZone: TimeZone = .current
     ) -> [HistoryTimelineItem] {
+        HistoryScanCounter.bump(.combinedItems)
         let sessionItems: [HistoryTimelineItem] = sessions.map { .session($0) }
         let recordingItems: [HistoryTimelineItem] = looseRecordings(recordings, in: sessions)
             .map { .recording($0) }

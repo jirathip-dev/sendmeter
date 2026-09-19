@@ -1,0 +1,57 @@
+# sha256 hashes — impl-929-fix (review-929-r1 fix round)
+# generated 2026-09-19T02:26:06Z at the fix head (see .report-2.md)
+
+## fixed-head captures and renders (docs/evidence/issue-929-fix/)
+9a5a80f5fb911831394f7653fbff8eb1be811568944e481a9b8dd3376036e39a  diagnostic-app-width-probe.png
+79aff176121a950489c39798c641e158f22240861492185bd7d600e9186d11a9  diagnostic-marker-chart-reader-width-311.png
+52f8d9f3a967a39a4b5d349d717817101a03d670ae37630c6ad9d2b234f08657  diagnostic-marker-published-width-41.png
+d9001bc7ad2ea920c9eec1959e188d339f979fb6f8421bed4bc114131424b2c0  fix-readout-ax5-hosted.png
+dbf3fc3b392b4f7cb1264bac28c46a2e875100995da9652fea4bbfc3004ea11f  fix-readout-default-hosted.png
+56ae295f9dbd4faf630abd40718b0b490362263a122c59e1acde81b07bfcab30  fix-tooltip-card-ax5-section.png
+a16c5e8033f5c34f5dc9c74a51b3e96bedaae9da318b7ab2172e98b39835fd40  fix-tooltip-card-ax5.png
+73cfa497578668a40b212c6a8ad62573f4d201de617ccc46d34ae273a25560b7  fix-tooltip-card-default.png
+bf1469db12a28298a9e805a0ea25c900149d3e20b0848014067c3bded867e996  fix-tooltip-chrome-ax5.png
+76c2bd2549693d36c76f7e238fd3e82c2aa76d4c616d768b0309685d5c775491  fix-tooltip-chrome-default.png
+06ca798eb5ce39bf4bf1ea4c5318d9c7ce7bacc337645411b8aff79bd0eeb47b  fixed-emptywindow-ax5-light.png
+cc73f45f028650b3da4d9819e457356b75e858f110de49afde6b7ed4f31a5ca1  fixed-emptywindow-normal-light.png
+2f72f091935b894758755abf4e9fd09b3871bcbea6eae828470052a3624126ab  fixed-populated-ax5-dark.png
+314fd76a7019feaa3f08db8c7add025a104f74b5f07b0e5eb249fa2a0ebf5348  fixed-populated-ax5-light.png
+e75cd01b5b5a01721dd0910d0292dafb250f66f580602d0178757ef327889821  fixed-populated-normal-dark.png
+1f22703bc6d2245c57af39fcaac279c412727eeb5a0cdfc7d39bee475016675b  fixed-populated-normal-light.png
+f9af719e7709cc4442c6255d0e09254c1cf064d9798ff9f2b5ae94c132fa6ace  training-load-axis-929-populated-ax5-dark.png
+e3b5c7c7951fc5b29e8a7ae48b0008ac87de675bf9a96bbd15278d3ee4b4cf28  training-load-axis-929-populated-ax5-light-selected.png
+cc7fc8d65484e304fe95acf3da92a9573ca8ddcd47e1186d1c017ff5d5f7e8ff  training-load-axis-929-populated-ax5-light.png
+409c16dcd685a304e0809767aaff994a47349c7d0d6737cf442272900fa32bb8  training-load-axis-929-populated-normal-dark-selected.png
+f5c535ce40bb4b25d408465304bb80e7a6f42269d24ed6c26dd4f6ebbd36703c  training-load-axis-929-populated-normal-dark.png
+7d28bfb4588b1b91ac48770c331c341fd8b178b4ae696e9163c4e718444dd1d9  training-load-axis-929-populated-normal-light.png
+f96dc47c04368de7afcc382874a4a6bb3146712bd2e03fdb561f937721f4012d  training-load-axis-929-sparse-ax5-dark.png
+f857f9e096105cb827a2bfed7bd298e4ed46982aaa01f8e773c5e3d5019e766f  training-load-axis-929-sparse-ax5-light.png
+f57ff287906866f8b4e9cf9a6a84aa6a84667fea603addebf243b3f1fbda66f7  training-load-axis-929-sparse-normal-dark.png
+368972aa82715801079ddb5d572af43c8ff3e8586e3cf88511f3829cae89e9e2  training-load-axis-929-sparse-normal-light.png
+
+## fix-round logs (gzipped, docs/evidence/issue-929-fix/)
+a2bc098a43e4f4b72407cd675094b0c3b39a0fb7856659f5a81b4d02b5a49877  green-app-suite.log.gz
+b222f07b8f64db3fc0978c2a2e3c453999a7a393bdb52228c9d6bc3b3cf90783  green-host-focused.log.gz
+f2b26c4e65355a6c43d3c91cb4a5d7d653fa84b7d4fb696b488bc08d69fbcd1f  green-newtests.log.gz
+0952aaadd0bd2bb38497c92e0a7e919184bc6c82a4baab1cff678899ab1d256a  green2-newtests.log.gz
+d3dc5e9848150f8b47481049f7b520aadb2139df2e2bfd6e830851361000b9e5  instr-build.log.gz
+63129a6672fd049d5daa4fd113e0d02e8a377cdb89ab7b0e7f32ad853ec2e655  instr2-build.log.gz
+f3e5bb2fe7e5139878fe742666bb9a1c89e346a4a766ccee692886b6cf6277d4  just-fast-fix.log.gz
+f23b3b03299ea8723e62e04d727623325f18b8c8b0fc5bc9644701b3a3a84079  red-newtests.log.gz
+9d8a5d15d85732a30b44bd8f581078234b583f6aeb3b6b0b41520210af25b191  red2-newtests.log.gz
+f29b9a79884bdbf08f8aa65864de44b5b17b5f11a9ed337f65ca538bd6efa0c8  red3-newtests.log.gz
+
+## changed sources at the fix head
+ebef2150f2b3ad4dffb54cdbc43a26e08d26174e80287f7a90b6a1a6f9b1b71b  native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift
+6a5df049eb840258fbbef5cd949ec445817a943e5ee26689158468c212184866  native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift
+58349c416027509f3099d1e144b99b550a566578aeb91ff70cdf16dc924dfdc2  native/SendmeterNative/Tests/SendmeterNativeTests/TrainingLoadAxisLegibilityTests.swift
+f5b3190001c447b6bb0fd4c958585855bec11937131d041290aa3eb88360bd9f  native/SendmeterNative/Tests/SendmeterCoreTests/TrainingLoadSheetAxisWiringTests.swift
+
+## evidence the retractions rest on (reviewed head, superseded)
+185de29ab28502691172e2792373f37f520d5c1a6b36225f61548f89e9377c3c  training-load-axis-929-populated-ax5-light-selected.png
+b4d5d2acde43fa1538faedc901adb7de669984327558b02af36598022237d6b0  simulation-929-populated-normal-light.png
+d9ea9bd63601f87eb4573e0b704aa4c874629147e6f5037979f9345a925cccbf  simulation-929-populated-normal-dark.png
+
+## reviewed-head source blobs (pre-fix)
+581ece17473597430a3753fd80e8af2094f1dc1ce4421523169f6601db1cd0c8  TrainingLoadSheet.swift (delivered blob, sha256 — matches review-929-r1)
+67060ebf404a0802eedbf7a77910aeac98eb3705  TrainingLoadTooltip.swift (git blob at the reviewed head f171745)

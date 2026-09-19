@@ -381,6 +381,67 @@ public struct StatusPill: View {
     }
 }
 
+/// #927: the shared error banner's accessibility contract.
+///
+/// The banner is the app's single failure surface, so its two accessibility
+/// obligations live in one place a test can read:
+///
+/// - the dismiss control is a real target (44×44 pt) with an explicit,
+///   user-facing label — never a bare caption-sized glyph;
+/// - a NEW failure is announced exactly once, and an unchanged one is silent.
+///   The announcement channel speaks the text without moving VoiceOver focus,
+///   so an in-progress workout control keeps focus while the failure is heard.
+public enum ErrorBannerAccessibility {
+    /// The dismiss target's minimum edge (Apple's 44×44 pt guidance).
+    public static let dismissTarget: CGFloat = 44
+    /// Explicit user-facing action label (not an SF Symbol name).
+    public static let dismissLabel = "Dismiss error"
+    /// Stable identifiers for the two banner controls the tests address.
+    public static let dismissIdentifier = "error-banner-dismiss"
+    public static let messageIdentifier = "error-banner-message"
+
+    /// A new, non-empty message announces; the same message re-rendered
+    /// (theme switch, layout pass, animation frame) does not, and a cleared
+    /// banner is silent.
+    public static func shouldAnnounce(previous: String?, next: String?) -> Bool {
+        guard let next, !next.isEmpty else { return false }
+        return next != previous
+    }
+
+    /// Posts one VoiceOver announcement through SwiftUI's accessibility API.
+    public static func post(_ message: String) {
+        AccessibilityNotification.Announcement(message).post()
+    }
+}
+
+/// #927: attaches the once-per-new-message announcement to whichever view
+/// hosts the banner. The policy tracks the MESSAGE identity, not render
+/// passes, so a banner that is re-rendered (or animated in) cannot spam
+/// announcements. `post` is injectable so app-target tests can count exactly
+/// how many announcements a message and its rerenders produce.
+struct ErrorBannerAnnouncementModifier: ViewModifier {
+    let message: String?
+    var post: (String) -> Void = ErrorBannerAccessibility.post
+
+    func body(content: Content) -> some View {
+        content.onChange(of: message) { previous, next in
+            guard ErrorBannerAccessibility.shouldAnnounce(previous: previous, next: next),
+                  let next
+            else { return }
+            post(next)
+        }
+    }
+}
+
+extension View {
+    func errorBannerAnnouncement(
+        message: String?,
+        post: @escaping (String) -> Void = ErrorBannerAccessibility.post
+    ) -> some View {
+        modifier(ErrorBannerAnnouncementModifier(message: message, post: post))
+    }
+}
+
 public struct ErrorBanner: View {
     let message: String
     let dismiss: () -> Void
@@ -389,17 +450,34 @@ public struct ErrorBanner: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(SendmeterStyle.alert)
+                // Decorative: VoiceOver reads the message itself, not the glyph.
+                .accessibilityHidden(true)
             Text(message)
                 .font(.subheadline)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Wrap to the message's full height at every text size instead
+                // of letting a compressed proposal clip the copy (#927).
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(ErrorBannerAccessibility.messageIdentifier)
             Button {
                 Haptics.shared.playGesture(.light)
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.bold))
+                    // The glyph keeps its top-trailing seat; the surrounding
+                    // space is spent on a 44 pt target that stays inside the
+                    // banner and clear of the message column.
+                    .frame(
+                        width: ErrorBannerAccessibility.dismissTarget,
+                        height: ErrorBannerAccessibility.dismissTarget,
+                        alignment: .topTrailing
+                    )
+                    .contentShape(.rect)
             }
             .hapticButtonStyle(.plain)
+            .accessibilityLabel(ErrorBannerAccessibility.dismissLabel)
+            .accessibilityIdentifier(ErrorBannerAccessibility.dismissIdentifier)
         }
         .padding(12)
         .background(SendmeterStyle.alert.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))

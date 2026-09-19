@@ -219,6 +219,25 @@ public enum ChartToken: String, CaseIterable, Sendable {
     }
 }
 
+/// The shared Dynamic Type-aware axis/metric label style for the Force charts
+/// (#928), declared next to `ChartToken.axis` because it is part of the same
+/// chart contract: labels read the axis token for colour and this rule for
+/// size.
+///
+/// `caption2` is the smallest system text style and scales through every
+/// Dynamic Type size, so regular SwiftUI text (the Force progress tiles) never
+/// pins a point size. The curve's Canvas cannot read a text style back as a
+/// number, so `NativeForceCurvePlot` seeds
+/// `@ScaledMetric(relativeTo: .caption2)` with `ChartAxisLabelRule.basePointSize`
+/// — the same 11 pt this style resolves to at the default size — and feeds the
+/// one resolved size to both the drawn text and `ChartAxisLabelRule`'s
+/// tick-density/inset math.
+public extension ChartAxisLabelRule {
+    /// The one axis-label text style: `.caption2`, monospaced digits so
+    /// neighbouring tick numbers keep a stable width.
+    static let font: Font = .caption2.monospacedDigit()
+}
+
 /// Per-activity-type hues (`--chart-activity-*`, index.css) for the training-
 /// load activity mix and heatmaps. Every hue has a distinct dark-mode value
 /// (index.css `.dark` override block) — `auto` and `custom` included (#649

@@ -43,9 +43,21 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     /// mirror cursor and reduces WC beats through the same run/sequence state
     /// machine as realtime rows, so the service stays a dumb transport.
     public var onLiveWorkoutMessage: (([String: Any]) -> Void)?
+    /// One watch-originated readiness request, executed on the phone (#913).
+    /// AppModel owns the single-flight HealthKit pipeline; the service owns
+    /// the transport and the typed answer.
+    public var onReadinessRefresh: ((ReadinessRefreshRequest) async -> ReadinessRefreshOutcome)?
 
     private let session: WCSession?
+    /// The last merged latest-state context this bridge would transmit. The
+    /// auth relay and the readiness result are merged by the shared
+    /// `ReadinessApplicationContext` rules, never one replacing the other.
     private var outgoingContext: [String: Any] = [:]
+    private var applicationContext = ReadinessApplicationContext()
+    /// Request identity, duplicate coalescing, and the account fence for
+    /// watch-originated readiness asks (#913). Built on first use because it
+    /// is created through `self` on the main actor.
+    private lazy var readinessRequests = ReadinessWatchBridge()
     private let completionStoreKey = "sendmeter.native.workout-completions"
     private let completionStoreLimit = 8
     private var completionInbox = WatchCompletionInbox()
@@ -80,6 +92,10 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     public func setAccountScope(_ accountUserID: UUID?) {
         let changed = activeAccountUserID != accountUserID
         activeAccountUserID = accountUserID
+        // Readiness flights and their replay cache are account-scoped too: an
+        // answer produced for the previous owner is never replayed to the
+        // replacement account (#913).
+        readinessRequests.setAccountScope(accountUserID)
         if changed {
             clearAccountTransientState()
         } else {
@@ -101,35 +117,58 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
 
     public func relaySession(_ authSession: Auth.Session?, guaranteed: Bool = false) {
         if let authSession {
-            outgoingContext.merge([
-                "event": "signedIn",
-                "accessToken": authSession.accessToken,
-                "expiresAt": authSession.expiresAt,
-                "userId": authSession.user.id.uuidString,
-                "ack_capable": true,
-                "refreshToken": SessionRelay.legacyRefreshTokenSentinel
-            ]) { _, new in new }
+            transmit(
+                applicationContext.update([
+                    "event": "signedIn",
+                    "accessToken": authSession.accessToken,
+                    "expiresAt": authSession.expiresAt,
+                    "userId": authSession.user.id.uuidString,
+                    "ack_capable": true,
+                    "refreshToken": SessionRelay.legacyRefreshTokenSentinel
+                ]),
+                guaranteed: guaranteed
+            )
         } else {
-            outgoingContext = ["event": "signedOut"]
+            transmit(
+                applicationContext.update(["event": "signedOut"]),
+                guaranteed: guaranteed
+            )
         }
-        transmitContext(guaranteed: guaranteed)
     }
 
-    public func publishReadiness(_ metric: HealthMetric) {
-        var result: [String: Any] = [
-            "kind": "readinessResult",
-            "date": metric.date
-        ]
-        // computed_at omitted when a kept score carries no fresh timestamp
-        // (#661) — the watch's ReadinessSnapshot.computedAt is optional and
-        // tolerates absence.
-        if let computedAt = metric.computedAt {
-            result["computed_at"] = computedAt.timeIntervalSince1970
-        }
-        if let readiness = metric.readiness { result["readiness"] = readiness }
-        if let zone = metric.zone { result["zone"] = zone }
-        outgoingContext.merge(result) { _, new in new }
-        transmitContext(guaranteed: false)
+    /// Pushes the phone's authoritative readiness as a typed
+    /// `ReadinessRefreshResult` (#913).
+    ///
+    /// The pre-#913 push was a flat dictionary (`kind` + `date` + optional
+    /// `computed_at`/`readiness`/`zone`) with no `requestId`, `status`, or
+    /// account stamp, so the watch's result decoder rejected every one of
+    /// them. A push has no watch request behind it, so the publication
+    /// synthesizes the request identity and stamps the account that owns it.
+    /// `freshness` is the recompute pass's own verdict: `.fresh` when it wrote
+    /// a new score, `.cached` when it kept the existing one.
+    public func publishReadiness(
+        _ metric: HealthMetric,
+        freshness: ReadinessFreshness
+    ) {
+        guard let activeAccountUserID else { return }
+        publishReadiness(
+            ReadinessPhonePublication.result(
+                date: metric.date,
+                readiness: metric.readiness,
+                zone: metric.zone,
+                computedAt: metric.computedAt.map(\.timeIntervalSince1970),
+                freshness: freshness,
+                accountUserId: activeAccountUserID
+            )
+        )
+    }
+
+    /// Stores one typed result as the latest-state application context (and,
+    /// for a reachable ask, the caller has already answered the direct reply):
+    /// a watch that was unreachable or cold when the phone produced the result
+    /// still receives it on its next activation.
+    private func publishReadiness(_ result: ReadinessRefreshResult) {
+        transmit(applicationContext.update(result.message()), guaranteed: false)
     }
 
     /// Returns a snapshot without acknowledging anything. The caller must
@@ -181,6 +220,22 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
         reachable = session.isReachable
     }
 
+    /// The merged latest-state context this bridge would transmit. Internal so
+    /// app-target tests can assert what the phone publishes: a simulator
+    /// cannot pair a watch, so `updateApplicationContext` has no observable
+    /// effect there.
+    var pendingApplicationContext: [String: Any] { outgoingContext }
+
+    /// Applies one logical update to the merged context and sends the result.
+    /// An empty payload means this bridge knows neither an account nor a
+    /// result yet; sending it would replace a previously persisted context
+    /// with nothing.
+    private func transmit(_ payload: [String: Any], guaranteed: Bool) {
+        outgoingContext = payload
+        guard !payload.isEmpty else { return }
+        transmitContext(guaranteed: guaranteed)
+    }
+
     private func transmitContext(guaranteed: Bool) {
         guard let session, session.activationState == .activated else { return }
         var payload = outgoingContext
@@ -190,7 +245,10 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
         if guaranteed { session.transferUserInfo(payload) }
     }
 
-    private func handle(
+    /// One watch→phone dictionary, dispatched by its `kind`. Internal rather
+    /// than private so app-target tests can drive the real dispatch path; the
+    /// WatchConnectivity delegate callbacks are its only production callers.
+    func handle(
         _ message: [String: Any],
         replyHandler: (([String: Any]) -> Void)?
     ) {
@@ -249,6 +307,35 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
             // the watch sends with no reply handler, so an empty ack is the
             // full response.
             replyHandler?([:])
+        case ReadinessRefreshRequest.kind:
+            // #913: a watch-originated readiness ask (immediate `sendMessage`
+            // or the queued `transferUserInfo` fallback — both land here).
+            // The bridge owns request identity, duplicate coalescing, and the
+            // account fence; the answer is a typed result, never an empty ack.
+            let accountStamp = WatchMetadata.parse(message).accountUserID
+            Task { @MainActor in
+                let result = await readinessRequests.handle(
+                    message,
+                    accountStamp: accountStamp,
+                    perform: { request in
+                        guard let handler = self.onReadinessRefresh else {
+                            return .unsupported()
+                        }
+                        return await handler(request)
+                    }
+                )
+                guard let result else {
+                    // Not a usable request (no request identity): the watch
+                    // would have no in-flight ask to match any answer to.
+                    replyHandler?([:])
+                    return
+                }
+                // A reachable ask is answered directly here; the typed result
+                // is also the latest application context, so a cold or
+                // unreachable watch recovers it on its next activation.
+                replyHandler?(result.message())
+                publishReadiness(result)
+            }
         default:
             replyHandler?([:])
         }

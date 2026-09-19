@@ -1,5 +1,12 @@
 # Sendmeter Native — Parity Gauntlet brief (batch 2)
 
+> **Historical — completed batch.** This brief drove the native/web parity
+> gauntlet that ended when the web surface was retired (#857 —
+> `docs/architecture/857-removal-inventory.md`). The web-parity items below are
+> moot, and the gate commands it names (root npm scripts) no longer exist; the
+> current gates are `just --list` and the verification ladder in `CLAUDE.md`.
+> Kept as a record of the batch's decisions.
+
 Owner: orch-sendmeter (all-DeepSeek/opencode, gauntlet protocol).
 Goal: close the remaining native/web parity gaps so the SwiftUI target can
 reach the physical iPhone/watch soak gate (docs/native-swift-rewrite.md) while

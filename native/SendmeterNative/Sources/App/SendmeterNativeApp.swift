@@ -108,6 +108,14 @@ struct RootView: View {
                                 arguments: CommandLine.arguments
                             )
                         )
+                    } else if CommandLine.arguments.contains(where: { $0.hasPrefix("--guided-force-fixture") }) {
+                        // #938 evidence harness: the real guided force cover,
+                        // presented the way ForceView presents it.
+                        GuidedForceFixtureView(arguments: CommandLine.arguments)
+                    } else if CommandLine.arguments.contains("--error-banner-fixture") {
+                        // #927 evidence harness: the real banner over the real
+                        // signed-out screen (see ErrorBannerFixtureView).
+                        ErrorBannerFixtureView(arguments: CommandLine.arguments)
                     } else {
                         LoginView()
                     }
@@ -166,6 +174,11 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: model.errorMessage)
         .animation(.easeInOut(duration: 0.2), value: model.toast?.id)
+        // #927: a NEW failure is announced exactly once. The announcement
+        // channel speaks without moving VoiceOver focus, so an active workout
+        // control keeps focus while the failure is heard, and rerenders of an
+        // unchanged banner stay silent.
+        .errorBannerAnnouncement(message: model.errorMessage)
         .preferredColorScheme(theme.resolvedScheme(prefersDark: systemScheme == .dark))
     }
 }
@@ -516,6 +529,59 @@ private struct TrainingLoadFixtureView: View {
                 phase: .capacity
             )
         ]
+    }
+}
+#endif
+
+#if DEBUG
+/// #927 evidence harness: renders the REAL shared `ErrorBanner` in the same
+/// top-overlay stack `RootView` builds (same VStack spacing, horizontal/top
+/// padding, and transition) over the real signed-out screen. The production
+/// banner needs an actual failed request to appear, so this is what a
+/// simulator capture can drive without a backend: it shows the dismiss
+/// target, the wrapped copy at accessibility text sizes, and light/dark
+/// rendering. `--error-banner-fixture short|long`; DEBUG-only, and the app's
+/// normal signed-out flow never reaches this view.
+private struct ErrorBannerFixtureView: View {
+    /// A short failure — one line at normal text sizes (real `FriendlyError`
+    /// copy for a failed save).
+    static let shortMessage = "Couldn't save this. Try again."
+    /// The longest real failure copy in `FriendlyError` (the device-clock
+    /// nudge) — the honest "long error" case that must wrap without
+    /// truncating on the smallest supported phone.
+    static let longMessage = """
+    Your iPhone's date and time may be wrong. Turn on Set Automatically in \
+    Settings → General → Date & Time, then try again.
+    """
+
+    private let message: String
+    @State private var isPresented = true
+
+    init(arguments: [String]) {
+        let nameIndex = arguments.firstIndex(of: "--error-banner-fixture")
+        let name = nameIndex.flatMap { index in
+            arguments.indices.contains(index + 1) ? arguments[index + 1] : nil
+        }
+        message = name == "short" ? Self.shortMessage : Self.longMessage
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            LoginView()
+        }
+        .overlay(alignment: .top) {
+            // The production RootView overlay stack, unchanged.
+            VStack(spacing: 4) {
+                if isPresented {
+                    ErrorBanner(message: message) { isPresented = false }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(10)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.top, 8)
+        }
+        .animation(.easeInOut(duration: 0.2), value: isPresented)
     }
 }
 #endif

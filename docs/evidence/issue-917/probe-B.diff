@@ -1,0 +1,13 @@
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -8303,9 +8303,7 @@
+             let serverSettings = try await repository.fetchSettingsDelta(since: nil)
+                 .activeValues
+                 .first
+-            if serverSettings != intent.settings {
+-                try await repository.updateSettings(intent.settings, userID: userID)
+-            }
++            _ = serverSettings
+             return PhaseTransitionOutcome(
+                 periods: serverPeriods,
+                 settings: intent.settings
