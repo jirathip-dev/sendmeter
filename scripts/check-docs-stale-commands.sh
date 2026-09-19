@@ -46,6 +46,13 @@ CURRENT_FILES = [
     "docs/mcp-e2e-verification.md",
     "docs/app-review-notes.md",
     "docs/native-touch-latency-ab.md",
+    # #945: the four stale-guidance surfaces outside the #931 fence
+    # (re-verified and corrected at the #945 head; scanned so they cannot
+    # silently regress).
+    "native/SendmeterNative/README.md",
+    ".agent/config.yaml",
+    ".claude/launch.json",
+    "ios/debug.xcconfig",
 ]
 
 # --- explicit historical allowlist: reported, never failed --------------
