@@ -68,6 +68,12 @@ build-watch:
 watch-app-tests:
     cd native/SendmeterNative && UDID=$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries[] | select(.key | contains("watchOS")) | .value[]] | first | .udid') && xcrun simctl bootstatus "$UDID" -b && xcodebuild test -project SendmeterNative.xcodeproj -scheme 'SendLogWatch Watch App' -configuration Debug -destination "id=$UDID" -only-testing:SendLogWatchTests CODE_SIGNING_ALLOWED=NO
 
+# --- UI smoke suite (simulator-only; mirrors native-swift.yml) -----------
+
+# Bounded native UI smoke suite: menu activation + manual-workout End/refusal/minimize (CI: native-swift.yml)
+ui-tests:
+    cd native/SendmeterNative && UDID=$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[]] | first | .udid') && xcrun simctl bootstatus "$UDID" -b && xcodebuild test -project SendmeterNative.xcodeproj -scheme SendmeterNative -configuration Debug -destination "id=$UDID" -only-testing:SendmeterNativeUITests/MenuActivationUITests -only-testing:SendmeterNativeUITests/ManualWorkoutEndRefusalUITests CODE_SIGNING_ALLOWED=NO
+
 # --- full parity with native-swift.yml Core tests -----------------------
 
 # Everything CI gates on, in CI order (excludes simulator-only steps)
