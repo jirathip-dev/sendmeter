@@ -185,6 +185,137 @@ final class ChartAxisLabelRuleTests: XCTestCase {
         XCTAssertGreaterThan(large.bottom, small.bottom)
     }
 
+    // MARK: - Flexible equal-width columns (the Training Load weekly bars, #929)
+
+    /// The Training Load sheet's weekly-bar geometry: four flexible columns in
+    /// the 311 pt the smallest phone's card leaves (375 − 2 × 16 sheet padding
+    /// − 2 × 16 card padding), 8 pt apart — the same slots
+    /// `TrainingLoadInteraction.weeklyBarIndex` hit-tests a finger against.
+    private static let weeklyBarsWidth: CGFloat = 375 - 4 * 16
+    private static let weeklyBarSpacing: CGFloat = CGFloat(TrainingLoadInteraction.weeklyBarSpacing)
+    private static let weeklyValueLabels = ["630", "1,050", "600", "1,232"]
+    private static let weeklyWeekLabels = ["3w", "2w", "1w", "Now"]
+
+    func testColumnCentresMatchTheBarHitTestSlots() {
+        let centers = ChartAxisLabelRule.columnCenters(
+            width: Self.weeklyBarsWidth,
+            count: Self.weeklyValueLabels.count,
+            spacing: Self.weeklyBarSpacing
+        )
+        XCTAssertEqual(centers.count, Self.weeklyValueLabels.count)
+        for (index, center) in centers.enumerated() {
+            XCTAssertEqual(
+                TrainingLoadInteraction.weeklyBarIndex(
+                    x: Double(center),
+                    width: Double(Self.weeklyBarsWidth),
+                    count: Self.weeklyValueLabels.count
+                ),
+                index,
+                "the label centred on slot \(index) must belong to the bar that point selects"
+            )
+        }
+        let columnWidth = (Self.weeklyBarsWidth - 3 * Self.weeklyBarSpacing) / 4
+        XCTAssertEqual(centers.first ?? 0, columnWidth / 2, accuracy: 0.0001)
+        XCTAssertEqual(centers.last ?? 0, Self.weeklyBarsWidth - columnWidth / 2, accuracy: 0.0001)
+    }
+
+    func testColumnPlanKeepsEveryWeeklyLabelAtTheDefaultSize() {
+        let values = ChartAxisLabelRule.columnLabelPlan(
+            labels: Self.weeklyValueLabels,
+            width: Self.weeklyBarsWidth,
+            spacing: Self.weeklyBarSpacing,
+            pointSize: ChartAxisLabelRule.basePointSize
+        )
+        XCTAssertEqual(
+            values.labelledIndices,
+            Array(Self.weeklyValueLabels.indices),
+            "the default text size keeps every weekly value label"
+        )
+        XCTAssertEqual(values.columnWidth, 71.75, accuracy: 0.0001, "311 − 3 × 8, over four columns")
+        let weeks = ChartAxisLabelRule.columnLabelPlan(
+            labels: Self.weeklyWeekLabels,
+            width: Self.weeklyBarsWidth,
+            spacing: Self.weeklyBarSpacing,
+            pointSize: ChartAxisLabelRule.basePointSize
+        )
+        XCTAssertEqual(weeks.labelledIndices, Array(Self.weeklyWeekLabels.indices))
+    }
+
+    func testAccessibilitySizesThinTheWeeklyLabelsInsteadOfClippingThem() {
+        let pointSize = Self.accessibilityPointSize
+        let values = ChartAxisLabelRule.columnLabelPlan(
+            labels: Self.weeklyValueLabels,
+            width: Self.weeklyBarsWidth,
+            spacing: Self.weeklyBarSpacing,
+            pointSize: pointSize
+        )
+        XCTAssertTrue(
+            values.labelledIndices.isEmpty,
+            "no 3-character AU total fits a 72 pt column at 40.5 pt — the row is "
+                + "omitted (the sheet keeps the exact values readable below the chart) "
+                + "instead of overhanging the neighbouring bar or the card"
+        )
+        let weeks = ChartAxisLabelRule.columnLabelPlan(
+            labels: Self.weeklyWeekLabels,
+            width: Self.weeklyBarsWidth,
+            spacing: Self.weeklyBarSpacing,
+            pointSize: pointSize
+        )
+        XCTAssertEqual(
+            weeks.labelledIndices,
+            [0, 1, 2],
+            "the 2-character week captions survive at 40.5 pt; the 3-character "
+                + "'Now' no longer fits its column and is omitted"
+        )
+    }
+
+    func testEveryDrawnColumnLabelStaysInsideItsColumnAndClearsItsNeighbour() {
+        for pointSize in stride(from: ChartAxisLabelRule.basePointSize, through: Self.accessibilityPointSize, by: 1) {
+            for labels in [Self.weeklyValueLabels, Self.weeklyWeekLabels] {
+                let plan = ChartAxisLabelRule.columnLabelPlan(
+                    labels: labels,
+                    width: Self.weeklyBarsWidth,
+                    spacing: Self.weeklyBarSpacing,
+                    pointSize: pointSize
+                )
+                func width(_ index: Int) -> CGFloat {
+                    ChartAxisLabelRule.estimatedLabelWidth(labels[index], pointSize: pointSize)
+                }
+                for index in plan.labelledIndices {
+                    XCTAssertLessThanOrEqual(
+                        width(index) / 2,
+                        plan.columnWidth / 2,
+                        "a drawn label must fit inside its own column at \(pointSize) pt"
+                    )
+                    XCTAssertGreaterThanOrEqual(plan.centers[index] - width(index) / 2, 0)
+                    XCTAssertLessThanOrEqual(plan.centers[index] + width(index) / 2, Self.weeklyBarsWidth)
+                }
+                for (previous, next) in zip(plan.labelledIndices, plan.labelledIndices.dropFirst()) {
+                    let clearance = plan.centers[next] - plan.centers[previous]
+                        - (width(previous) + width(next)) / 2
+                    XCTAssertGreaterThanOrEqual(
+                        clearance,
+                        ChartAxisLabelRule.minimumGap - 0.0001,
+                        "labels at \(pointSize) pt must not collide"
+                    )
+                }
+            }
+        }
+    }
+
+    func testColumnPlanHandlesDegenerateInputs() {
+        XCTAssertEqual(
+            ChartAxisLabelRule.columnLabelPlan(labels: ["1"], width: 0, spacing: 8, pointSize: 11).labelledIndices,
+            [],
+            "a zero-width chart labels nothing instead of dividing by zero"
+        )
+        XCTAssertEqual(ChartAxisLabelRule.columnCenters(width: 311, count: 0, spacing: 8), [])
+        XCTAssertEqual(
+            ChartAxisLabelRule.columnLabelPlan(labels: [], width: 311, spacing: 8, pointSize: 11).labelledIndices,
+            []
+        )
+    }
+
     // MARK: - Helpers
 
     /// Mirrors `NativeForceCurvePlot`'s layout for the fixture curve: the
