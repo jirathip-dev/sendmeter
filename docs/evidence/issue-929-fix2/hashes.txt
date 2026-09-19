@@ -1,5 +1,5 @@
 # sha256 hashes — impl-929-fix2 (round 2: hosted CI RED on PR #959)
-# generated 2026-09-19T05:19:59Z
+# generated 2026-09-19T05:20:37Z
 
 ## renders (docs/evidence/issue-929-fix2/)
 8cf786832d2beea97f98dea72acac69cd98adceafa5587ae1f1da65460fcca93  diagnostic-old-anchor-row1352.png
@@ -18,6 +18,7 @@ cffa323cce3fd5aeb223d6527cefb883b4133950eee5d4b2bbb8afdc7606df0f  green-class-se
 6e7248f396816b58f9748d627f311145f9d203570db1439e8a55dd42a322e314  green-full-85-clean-17.log.gz
 9a438e22453b49823038bd95d979136e9e2e035622f199d5bd480f0cf12ec8b0  green2-class-17.log.gz
 5edab6e8d994b3e8eb9d1d27d888382e1e61359dc95757414477ab60480c6a42  infra-builddb-lock-attempt.log.gz
+676eca71faa0a461f916dd14a0182fabd403cb79a72c61921e80cbef507d392b  infra-runner-hung-attempt.log.gz
 14eb62b28e38234791734072f6760e0dc3c65febe9636ba06e16252e61ae5197  just-fast-fix2.log.gz
 14f546f4aadb6d1518a68fb0ccbb97ebde2f150a76b542670bdeec83be9b5729  red-pristine-17-ci-shape.log.gz
 
