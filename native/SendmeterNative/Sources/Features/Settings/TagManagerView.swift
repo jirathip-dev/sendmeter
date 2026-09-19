@@ -35,6 +35,9 @@ struct TagManagerView: View {
                 } header: {
                     Text("Rename updates every recording with that exercise. Hiding keeps the data but drops the exercise from the pickers.")
                 }
+                if pendingTagChanges > 0 {
+                    pendingChangesSection
+                }
             }
             .navigationTitle("Manage Exercises")
             .navigationBarTitleDisplayMode(.inline)
@@ -43,6 +46,63 @@ struct TagManagerView: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+
+    /// #920: this editor writes the tag registry, so it is the one surface that
+    /// can name the registry's own unsynced changes. The wording and the retry
+    /// availability come from the shared `MutationSyncStatus` — never from a
+    /// local count that can disagree with Settings.
+    private var pendingTagChanges: Int { model.pendingTagWriteCount }
+
+    private var syncStatus: MutationSyncStatus { model.mutationSyncStatus }
+
+    @ViewBuilder
+    private var pendingChangesSection: some View {
+        Section {
+            Text(pendingChangesSummary)
+                .font(.subheadline)
+                .accessibilityIdentifier("tag-pending-status")
+            switch syncStatus.retry {
+            case .ready, .inFlight:
+                Button {
+                    Task { await model.retryAllQueuedWrites() }
+                } label: {
+                    HStack {
+                        Label("Retry Now", systemImage: "arrow.clockwise")
+                        Spacer()
+                        if case .inFlight = syncStatus.retry { ProgressView() }
+                    }
+                }
+                .disabled(syncStatus.retry != .ready)
+                .accessibilityIdentifier("tag-pending-retry")
+            case .unavailable(.noUploadPath):
+                // #920 AC2: a residue a retry cannot move explains itself here
+                // instead of offering a button that does nothing.
+                Text(syncStatus.retryUnavailableExplanation ?? "")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("tag-pending-blocked")
+            case .hidden, .unavailable(.nothingPending):
+                // The queue has not been read yet (or has nothing this retry
+                // reaches): no control until the answer exists.
+                EmptyView()
+            }
+        } header: {
+            Text("Not uploaded yet")
+        }
+    }
+
+    private var pendingChangesSummary: String {
+        let noun = "exercise change\(pendingTagChanges == 1 ? "" : "s")"
+        if case .unavailable(.noUploadPath) = syncStatus.retry {
+            return "\(pendingTagChanges) \(noun) can’t be uploaded by this app version."
+        }
+        switch syncStatus.state {
+        case .notLoaded:
+            return "\(pendingTagChanges) \(noun) on this iPhone — checking whether the server has them."
+        default:
+            return "\(pendingTagChanges) \(noun) saved on this iPhone and not uploaded yet."
         }
     }
 

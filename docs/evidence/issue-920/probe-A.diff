@@ -1,0 +1,22 @@
+--- MutationSyncStatus.swift	2026-09-20 02:47:57
++++ native/SendmeterNative/Sources/Core/MutationSyncStatus.swift	2026-09-20 02:47:57
+@@ -135,16 +135,9 @@
+     public static func resolve(_ inputs: MutationSyncStatusInputs) -> MutationSyncStatus {
+         // `quarantinedCount == nil` means the queue's quarantine list has not
+         // been read: the honest state is "not loaded", never "Synced".
+-        guard inputs.hasLoadedPendingWrites, let quarantined = inputs.quarantinedCount else {
+-            return MutationSyncStatus(
+-                state: .notLoaded,
+-                queuedCount: inputs.queuedCount,
+-                unsyncedCount: inputs.unsyncedCacheCount,
+-                quarantinedCount: nil,
+-                retry: .hidden,
+-                unresolvedResidueCount: 0
+-            )
+-        }
++        // MUTATION PROBE A (#920): the pre-fix derivation treated an unread
++        // queue as a synced zero instead of an unknown state.
++        let quarantined = inputs.quarantinedCount ?? 0
+         let residue = inputs.lastRetryOutcome?.unresolvedResidueCount ?? 0
+         let state: MutationSyncState
+         if quarantined > 0 || residue > 0 {

@@ -405,6 +405,23 @@ public final class AppModel {
     /// Kept separate from `queuedWriteCount` so Settings can label them as
     /// unsynced rather than as automatically retried queue work.
     public private(set) var pendingCacheWriteCount = 0
+    /// #920: true once this session has read the account's durable queue and
+    /// its quarantine list at least once. Before that, a zero
+    /// `queuedWriteCount`/`pendingCacheWriteCount` means "not read yet" and
+    /// MUST NOT render as "Synced" (#269 honest-states rule).
+    public private(set) var hasLoadedPendingWrites = false
+    /// #920: the measured outcome of the account's last "Retry Now" pass, so
+    /// the sync surface can tell work the button really retries from a residue
+    /// the pass proved it cannot upload.
+    public private(set) var lastRetryOutcome: MutationRetryOutcome?
+    /// #920 AC4: true while a retry pass owns the account's queue. A second
+    /// tap coalesces onto the running pass instead of racing a second drain,
+    /// and the flag is published once per account so a switch cannot light up
+    /// the wrong screen's progress.
+    public private(set) var isRetryingQueuedWrites = false
+    /// #920 AC4: the identity of the retry pass allowed to clear
+    /// `isRetryingQueuedWrites` (account + epoch + token).
+    private var queuedWritesRetryOwner: AccountScopedCompletion?
     public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
     /// #675: entries the server has permanently rejected — retained on device,
     /// excluded from every automatic retry, and recoverable only by the
@@ -421,6 +438,11 @@ public final class AppModel {
     /// set by the refresh funnel and only cleared by a refresh that actually
     /// succeeds (or an account reset), so it can never outlive its cause.
     public private(set) var dashboardLoadFailureClass: FriendlyErrorClass?
+    /// #923: the scoped failure of the most recent refresh that published some
+    /// consistency groups and failed others. A partial failure is not a
+    /// blackout, so this — not the global banner — is where its retry lives.
+    /// Cleared by a pass where every slice reconciled (or by an account reset).
+    public private(set) var lastPartialRefreshFailure: RefreshFailureSummary?
     /// #964: true while the Dashboard should lead with its load-failure state:
     /// the last account-data load failed AND the account has no authoritative
     /// snapshot to render (`hasLoadedSessions` / `hasLoadedRecordings` are the
@@ -1184,6 +1206,42 @@ public final class AppModel {
                 }
                 return $0.id.uuidString < $1.id.uuidString
             }
+    }
+
+    /// #920: the one derivation of the pending/sync status every sync surface
+    /// reads. It is built only from acknowledged answers — the queue's own
+    /// read (`queuedWriteCount` / `quarantinedWrites`), the cache's pending
+    /// row count, and the measured result of the last retry pass — so a local
+    /// optimistic write is never presented as a remote sync, and a zero count
+    /// that has not been read yet is "not loaded", never "Synced".
+    public var mutationSyncStatus: MutationSyncStatus {
+        MutationSyncStatus.resolve(
+            MutationSyncStatusInputs(
+                hasLoadedPendingWrites: hasLoadedPendingWrites,
+                queuedCount: queuedWriteCount,
+                unsyncedCacheCount: pendingCacheWriteCount,
+                quarantinedCount: quarantinedWrites?.count,
+                isRetrying: isRetryingQueuedWrites,
+                lastRetryOutcome: lastRetryOutcome
+            )
+        )
+    }
+
+    /// #920: the tag-registry identities on this device that the server has
+    /// not confirmed. Every tag mutation — a queued intent or a cache-only
+    /// residue from an older app version — writes its optimistic row with the
+    /// (trimmed) tag name as the cache identity, so this one set covers both
+    /// without counting the same change twice. Manage Exercises names them.
+    public var pendingTagWriteCount: Int {
+        guard let userID = currentUserID, let workspace = cachedWorkspace else {
+            return 0
+        }
+        let ids = (try? workspace.pendingEntityIDs(
+            accountUserID: userID,
+            entityType: .tagMetadata,
+            includingDeleted: true
+        )) ?? []
+        return ids.count
     }
 
     // MARK: Tag registry (#631)
@@ -2578,6 +2636,111 @@ public final class AppModel {
 
     // MARK: Loading
 
+    /// #923: the outcome of one slice fetch. The error travels as data so an
+    /// independent entity's failure cannot cancel a sibling slice, and so a
+    /// cancellation stays distinguishable from a failure.
+    private struct SliceFetch<Value> {
+        let value: Value?
+        let error: Error?
+
+        static func success(_ value: Value) -> SliceFetch<Value> {
+            SliceFetch(value: value, error: nil)
+        }
+
+        static func failure(_ error: Error) -> SliceFetch<Value> {
+            SliceFetch(value: nil, error: error)
+        }
+    }
+
+    private func fetchSlice<Value>(
+        _ operation: () async throws -> Value
+    ) async -> SliceFetch<Value> {
+        do {
+            return .success(try await operation())
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// The settings slice (#747). The whole first-sync create-default path is
+    /// part of the slice, not a step after it: it writes `user_settings` and
+    /// re-reads the stamped timestamp, so a failure anywhere in it must keep
+    /// the settings/phase group's last-good rows rather than publish half of
+    /// the pair (#923 AC2).
+    private func fetchSettingsSlice(
+        userID: UUID,
+        cursor: String?,
+        today: String
+    ) async throws -> RemoteEntityDelta<UserSettings> {
+        let fetched = try await repository.fetchSettingsDelta(since: cursor)
+        guard cursor == nil, fetched.activeValues.isEmpty else { return fetched }
+        // First sync with no settings row: keep the historical create-default
+        // behavior, then read the stamped timestamp so the next refresh can go
+        // incremental.
+        _ = try await repository.fetchSettings(userID: userID, today: today)
+        let afterUpsert = try await repository.fetchSettingsDelta(since: nil)
+        guard afterUpsert.activeValues.isEmpty else { return afterUpsert }
+        return RemoteEntityDelta(
+            changes: [],
+            activeValues: [UserSettings(currentPhase: .capacity, phaseStartDate: today)],
+            cursor: nil
+        )
+    }
+
+    /// #923: a pass that reconciled some groups and failed others. It records
+    /// the scoped failure an explicit refresh can retry, keeps auth recovery on
+    /// every rejected slice, and escalates to the global banner only when
+    /// nothing published and the #842 matrix allows it.
+    private func recordPartialRefresh(
+        outcomes: RefreshSliceOutcomes,
+        failures: [RefreshSlice: Error],
+        source: ErrorSurfaceSource,
+        capturedBy accountFetch: AccountScopedFetch
+    ) {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        let orderedFailures = outcomes.failedSlicesInOrder.compactMap { slice in
+            failures[slice].map { (slice, $0) }
+        }
+        guard let representative = orderedFailures.first else { return }
+        let representativeSlice = representative.0
+        let representativeError = representative.1
+        // #964: the account's last load failure, recorded even when the banner
+        // is suppressed so the Dashboard can still explain an empty screen.
+        dashboardLoadFailureClass = UserFacingError.classification(for: representativeError)
+        let willSurface = errorSurfacePolicy.shouldSurface(
+            source: source,
+            hasLastGoodData: hasLoadedSessions && forceModel.hasLoadedRecordings,
+            publishedAnySlice: outcomes.didPublishAnyGroup
+        )
+        if willSurface {
+            surface(representativeError)
+        }
+        // #923 AC4: a rejected bearer heals whether or not its slice produced
+        // the banner — a suppressed or non-representative 401 must not leave
+        // the session poisoned (#842's rule, applied per slice). `surface(_:)`
+        // already ran the recovery for the representative error.
+        for (slice, error) in orderedFailures
+        where !(willSurface && slice == representativeSlice) {
+            recoverAuthFrom(error)
+        }
+        let summary = RefreshFailureSummary(
+            accountUserID: accountFetch.accountUserID,
+            groups: outcomes.failedGroups,
+            reason: UserFacingError.message(for: representativeError),
+            source: source,
+            occurredAt: Date()
+        )
+        _ = accountFetch.publishIfCurrent(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) {
+            lastPartialRefreshFailure = summary
+        }
+    }
+
     public func refreshAll(showSpinner: Bool = true) async {
         await refreshAll(
             showSpinner: showSpinner,
@@ -2662,140 +2825,202 @@ public final class AppModel {
             let workoutCursor = cacheCursor(accountUserID: userID, entityType: .workoutsAndAttempts)
             let tagCursor = cacheCursor(accountUserID: userID, entityType: .tagMetadata)
             let today = LocalDateSupport.string(from: Date())
-            async let remoteSessions = repository.fetchSessionDelta(
-                since: sessionCursor,
-                accountUserID: userID
-            )
-            async let remoteSettings = repository.fetchSettingsDelta(since: settingsCursor)
-            async let remotePeriods = repository.fetchPhasePeriodDelta(since: phaseCursor)
-            async let remoteHealth = repository.fetchHealthMetricDelta(since: healthCursor)
-            async let remoteRecordings = repository.fetchRecordingDelta(since: recordingCursor)
-            async let remotePresets = repository.fetchPresetDelta(since: presetCursor)
-            async let remoteRoutines = repository.fetchRoutineDelta(since: routineCursor)
-            async let remoteWorkouts = repository.fetchWorkoutDelta(since: workoutCursor)
-            async let remoteTags = repository.fetchTagMetadataDelta(since: tagCursor)
+            // #923: each slice captures its own outcome instead of throwing
+            // into the shared pass. `try await`-ing them in sequence is
+            // exactly how an unrelated entity's failure used to cancel a
+            // sibling page that had already come back.
+            async let sessionsFetch = fetchSlice {
+                try await repository.fetchSessionDelta(
+                    since: sessionCursor,
+                    accountUserID: userID
+                )
+            }
+            async let settingsFetch = fetchSlice {
+                try await fetchSettingsSlice(
+                    userID: userID,
+                    cursor: settingsCursor,
+                    today: today
+                )
+            }
+            async let periodsFetch = fetchSlice {
+                try await repository.fetchPhasePeriodDelta(since: phaseCursor)
+            }
+            async let healthFetch = fetchSlice {
+                try await repository.fetchHealthMetricDelta(since: healthCursor)
+            }
+            async let recordingsFetch = fetchSlice {
+                try await repository.fetchRecordingDelta(since: recordingCursor)
+            }
+            async let presetsFetch = fetchSlice {
+                try await repository.fetchPresetDelta(since: presetCursor)
+            }
+            async let routinesFetch = fetchSlice {
+                try await repository.fetchRoutineDelta(since: routineCursor)
+            }
+            async let workoutsFetch = fetchSlice {
+                try await repository.fetchWorkoutDelta(since: workoutCursor)
+            }
+            async let tagsFetch = fetchSlice {
+                try await repository.fetchTagMetadataDelta(since: tagCursor)
+            }
 
-            let fetchedSessions = try await remoteSessions
-            let fetchedRecordings = try await remoteRecordings
-            var fetchedSettings = try await remoteSettings
-            if settingsCursor == nil, fetchedSettings.activeValues.isEmpty {
-                // First sync with no settings row: keep the historical
-                // create-default behavior, then read the stamped timestamp so
-                // the next refresh can go incremental.
-                guard accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
-                ) else { return }
-                _ = try await repository.fetchSettings(userID: userID, today: today)
-                guard accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
-                ) else { return }
-                let settingsAfterUpsert = try await repository.fetchSettingsDelta(since: nil)
-                guard accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
-                ) else { return }
-                if settingsAfterUpsert.activeValues.isEmpty {
-                    fetchedSettings = RemoteEntityDelta(
-                        changes: [],
-                        activeValues: [UserSettings(currentPhase: .capacity, phaseStartDate: today)],
-                        cursor: nil
-                    )
-                } else {
-                    fetchedSettings = settingsAfterUpsert
+            let sessionsSlice = await sessionsFetch
+            let settingsSlice = await settingsFetch
+            let periodsSlice = await periodsFetch
+            let healthSlice = await healthFetch
+            let recordingsSlice = await recordingsFetch
+            let presetsSlice = await presetsFetch
+            let routinesSlice = await routinesFetch
+            let workoutsSlice = await workoutsFetch
+            let tagsSlice = await tagsFetch
+
+            var outcomes = RefreshSliceOutcomes()
+            var sliceFailures: [RefreshSlice: Error] = [:]
+            let sliceResults: [(RefreshSlice, Error?)] = [
+                (.sessions, sessionsSlice.error),
+                (.recordings, recordingsSlice.error),
+                (.settings, settingsSlice.error),
+                (.phasePeriods, periodsSlice.error),
+                (.healthMetrics, healthSlice.error),
+                (.presets, presetsSlice.error),
+                (.routinePresets, routinesSlice.error),
+                (.workoutsAndAttempts, workoutsSlice.error),
+                (.tagMetadata, tagsSlice.error),
+            ]
+            for (slice, error) in sliceResults {
+                guard let error else {
+                    outcomes.record(slice: slice, failed: false)
+                    continue
                 }
+                if error is CancellationError || Task.isCancelled {
+                    // A cancelled pass is not a verdict: it publishes nothing,
+                    // advances no cursor and reports no failure.
+                    outcomes.markCancelled()
+                    continue
+                }
+                outcomes.record(slice: slice, failed: true)
+                sliceFailures[slice] = error
             }
-            let fetchedPeriods = try await remotePeriods
-            let fetchedHealth = try await remoteHealth
-            let fetchedPresets = try await remotePresets
-            let fetchedRoutines = try await remoteRoutines
-            let fetchedWorkouts = try await remoteWorkouts
-            let fetchedTags = try await remoteTags
+            if outcomes.wasCancelled { return }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
 
-            guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
-                return
+            // #923 AC1/AC2: apply only the groups whose every slice fetched
+            // successfully. A failed slice keeps its last-good cache rows
+            // (its reconcile never runs, so nothing is overwritten), and a
+            // broken pair is not applied at all — a partially authoritative
+            // group is never exposed.
+            if outcomes.publishes(.sessionsAndRecordings),
+               let fetchedSessions = sessionsSlice.value,
+               let fetchedRecordings = recordingsSlice.value {
+                reconcileEntityRefresh(
+                    fetchedSessions,
+                    accountUserID: userID,
+                    entityType: .sessions,
+                    fullSnapshot: sessionCursor == nil
+                        ? CachedWorkspaceSnapshot(sessions: fetchedSessions.activeValues)
+                        : nil,
+                    purgeGeneration: remotePurgeGeneration
+                )
+                reconcileEntityRefresh(
+                    fetchedRecordings,
+                    accountUserID: userID,
+                    entityType: .recordings,
+                    fullSnapshot: recordingCursor == nil
+                        ? CachedWorkspaceSnapshot(recordings: fetchedRecordings.activeValues)
+                        : nil,
+                    purgeGeneration: remotePurgeGeneration
+                )
             }
-            reconcileEntityRefresh(
-                fetchedSessions,
-                accountUserID: userID,
-                entityType: .sessions,
-                fullSnapshot: sessionCursor == nil
-                    ? CachedWorkspaceSnapshot(sessions: fetchedSessions.activeValues)
-                    : nil,
-                purgeGeneration: remotePurgeGeneration
-            )
-            reconcileEntityRefresh(
-                fetchedSettings,
-                accountUserID: userID,
-                entityType: .settings,
-                fullSnapshot: settingsCursor == nil
-                    ? CachedWorkspaceSnapshot(settings: fetchedSettings.activeValues.first)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedPeriods,
-                accountUserID: userID,
-                entityType: .phasePeriods,
-                fullSnapshot: phaseCursor == nil
-                    ? CachedWorkspaceSnapshot(phasePeriods: fetchedPeriods.activeValues)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedHealth,
-                accountUserID: userID,
-                entityType: .healthMetrics,
-                fullSnapshot: healthCursor == nil
-                    ? CachedWorkspaceSnapshot(healthMetrics: fetchedHealth.activeValues)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedRecordings,
-                accountUserID: userID,
-                entityType: .recordings,
-                fullSnapshot: recordingCursor == nil
-                    ? CachedWorkspaceSnapshot(recordings: fetchedRecordings.activeValues)
-                    : nil,
-                purgeGeneration: remotePurgeGeneration
-            )
-            reconcileEntityRefresh(
-                fetchedPresets,
-                accountUserID: userID,
-                entityType: .presets,
-                fullSnapshot: presetCursor == nil
-                    ? CachedWorkspaceSnapshot(presets: fetchedPresets.activeValues)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedRoutines,
-                accountUserID: userID,
-                entityType: .routinePresets,
-                fullSnapshot: routineCursor == nil
-                    ? CachedWorkspaceSnapshot(routines: fetchedRoutines.activeValues)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedWorkouts,
-                accountUserID: userID,
-                entityType: .workoutsAndAttempts,
-                fullSnapshot: workoutCursor == nil
-                    ? CachedWorkspaceSnapshot(workouts: fetchedWorkouts.activeValues)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedTags,
-                accountUserID: userID,
-                entityType: .tagMetadata,
-                fullSnapshot: tagCursor == nil
-                    ? CachedWorkspaceSnapshot(tagMetadata: fetchedTags.activeValues)
-                    : nil
-            )
+            if outcomes.publishes(.settingsAndPhase),
+               let fetchedSettings = settingsSlice.value,
+               let fetchedPeriods = periodsSlice.value {
+                reconcileEntityRefresh(
+                    fetchedSettings,
+                    accountUserID: userID,
+                    entityType: .settings,
+                    fullSnapshot: settingsCursor == nil
+                        ? CachedWorkspaceSnapshot(settings: fetchedSettings.activeValues.first)
+                        : nil
+                )
+                reconcileEntityRefresh(
+                    fetchedPeriods,
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    fullSnapshot: phaseCursor == nil
+                        ? CachedWorkspaceSnapshot(phasePeriods: fetchedPeriods.activeValues)
+                        : nil
+                )
+            }
+            if outcomes.publishes(.healthMetrics),
+               let fetchedHealth = healthSlice.value {
+                reconcileEntityRefresh(
+                    fetchedHealth,
+                    accountUserID: userID,
+                    entityType: .healthMetrics,
+                    fullSnapshot: healthCursor == nil
+                        ? CachedWorkspaceSnapshot(healthMetrics: fetchedHealth.activeValues)
+                        : nil
+                )
+            }
+            if outcomes.publishes(.presets),
+               let fetchedPresets = presetsSlice.value {
+                reconcileEntityRefresh(
+                    fetchedPresets,
+                    accountUserID: userID,
+                    entityType: .presets,
+                    fullSnapshot: presetCursor == nil
+                        ? CachedWorkspaceSnapshot(presets: fetchedPresets.activeValues)
+                        : nil
+                )
+            }
+            if outcomes.publishes(.routinePresets),
+               let fetchedRoutines = routinesSlice.value {
+                reconcileEntityRefresh(
+                    fetchedRoutines,
+                    accountUserID: userID,
+                    entityType: .routinePresets,
+                    fullSnapshot: routineCursor == nil
+                        ? CachedWorkspaceSnapshot(routines: fetchedRoutines.activeValues)
+                        : nil
+                )
+            }
+            if outcomes.publishes(.workoutsAndAttempts),
+               let fetchedWorkouts = workoutsSlice.value {
+                reconcileEntityRefresh(
+                    fetchedWorkouts,
+                    accountUserID: userID,
+                    entityType: .workoutsAndAttempts,
+                    fullSnapshot: workoutCursor == nil
+                        ? CachedWorkspaceSnapshot(workouts: fetchedWorkouts.activeValues)
+                        : nil
+                )
+            }
+            if outcomes.publishes(.tagMetadata),
+               let fetchedTags = tagsSlice.value {
+                reconcileEntityRefresh(
+                    fetchedTags,
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    fullSnapshot: tagCursor == nil
+                        ? CachedWorkspaceSnapshot(tagMetadata: fetchedTags.activeValues)
+                        : nil
+                )
+            }
 
             let publishedSnapshot = try? cachedWorkspace?.load(accountUserID: userID)
+            // #923: a failed slice's published list is its last-good value —
+            // the untouched cache row, or the in-memory list with its pending
+            // local overlays still on top.
+            let sessionsGroupPublished = outcomes.publishes(.sessionsAndRecordings)
             let publishedSessions = publishedSnapshot?.sessions
-                ?? fetchedSessions.activeValues
+                ?? sessionsSlice.value?.activeValues
+                ?? sessions.filter { !$0.pending }
             let publishedRecordings = publishedSnapshot?.recordings
-                ?? fetchedRecordings.activeValues
+                ?? recordingsSlice.value?.activeValues
+                ?? recordings
             let publishedSessionIDs = Set(publishedSessions.map(\.id))
             let publishedRecordingIDs = Set(publishedRecordings.map(\.id))
             await restorePendingWrites(
@@ -2812,38 +3037,64 @@ public final class AppModel {
                 // delta refresh: re-adopt it so a pending local
                 // preset/routine/settings/tag row is not hidden by the remote
                 // snapshot in the published collections (sessions/recordings
-                // keep their richer overlays below).
+                // keep their richer overlays below). A group whose slices
+                // failed was never reconciled, so its cache rows are still the
+                // last-good ones.
                 applyCachedNonOverlayLists(accountUserID: userID)
-                mergeSessions(remote: publishedSessions)
-                // This is the explicit authoritative refresh boundary. A
-                // server sample blob can change without metadata changing, so
-                // refreshAll is allowed to invalidate every fit; realtime
-                // rep reconciliation below stays key-scoped.
-                invalidateTagCurveCache()
-                mergeRecordings(remote: publishedRecordings)
-                // The sample rows are fetched later by the curve request and
-                // may have changed without any recording metadata change.
-                // Publish this authoritative refresh boundary so a scoped
-                // progress task restarts even when the metadata snapshot is
-                // equal.
-                publishForceProgressInputMutation(.recordings)
-                markRecordingsLoaded()
+                // #923: the successful slices publish ONCE, in this one
+                // MainActor publication. A failed group publishes nothing, so
+                // its sessions/recordings keep last-good data and their
+                // pending local overlays instead of being replaced by a
+                // half-authoritative pair.
+                if sessionsGroupPublished {
+                    mergeSessions(remote: publishedSessions)
+                    // This is the explicit authoritative refresh boundary. A
+                    // server sample blob can change without metadata changing,
+                    // so refreshAll is allowed to invalidate every fit;
+                    // realtime rep reconciliation below stays key-scoped.
+                    invalidateTagCurveCache()
+                    mergeRecordings(remote: publishedRecordings)
+                    // The sample rows are fetched later by the curve request
+                    // and may have changed without any recording metadata
+                    // change. Publish this authoritative refresh boundary so a
+                    // scoped progress task restarts even when the metadata
+                    // snapshot is equal.
+                    publishForceProgressInputMutation(.recordings)
+                    markRecordingsLoaded()
+                }
             }
             guard publishedLists else { return }
             await refreshQueueCount(for: accountFetch)
             guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
                 return
             }
-            // #673: the authoritative sweep succeeded AND is still for the
-            // current account — this is the freshness timestamp the
-            // foreground gate reasons over. Bumped only here (not by the
-            // realtime slice reconciler, which is a targeted refresh that
-            // intentionally leaves the non-watched tables untouched).
-            lastListRefreshAt = ProcessInfo.processInfo.systemUptime
-            // #964: a refresh that actually succeeded retires the Dashboard's
-            // load-failure state — the screen has authoritative data again.
-            dashboardLoadFailureClass = nil
-            warmTagCurvesIfMissing(capturedBy: accountFetch)
+            if outcomes.didFullyRefresh {
+                // #673: the authoritative sweep succeeded AND is still for the
+                // current account — this is the freshness timestamp the
+                // foreground gate reasons over. Bumped only here (not by the
+                // realtime slice reconciler, which is a targeted refresh that
+                // intentionally leaves the non-watched tables untouched).
+                //
+                // #923 AC3: it is also bumped only for a pass where EVERY
+                // slice reconciled. A partial pass leaves the account-wide
+                // stamp stale (so the next foreground retries the sweep)
+                // while the slices that did reconcile keep their own cursor,
+                // and no surface can read this stamp as "everything is fresh".
+                lastListRefreshAt = ProcessInfo.processInfo.systemUptime
+                // #964: a refresh that actually succeeded retires the
+                // Dashboard's load-failure state — the screen has
+                // authoritative data again.
+                dashboardLoadFailureClass = nil
+                lastPartialRefreshFailure = nil
+                warmTagCurvesIfMissing(capturedBy: accountFetch)
+            } else {
+                recordPartialRefresh(
+                    outcomes: outcomes,
+                    failures: sliceFailures,
+                    source: errorSurfaceSource,
+                    capturedBy: accountFetch
+                )
+            }
             // This is deliberately inside the private refresh path so cold
             // bootstrap, foreground refresh, and mutation follow-ups all
             // have one guaranteed publication point after authoritative data
@@ -6872,51 +7123,7 @@ public final class AppModel {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        guard await migrateLegacyRecordingEdits(
-            userID: userID,
-            capturedBy: accountFetch
-        ) != nil,
-              accountFetch.canApply(
-                  to: currentUserID,
-                  accountEpoch: accountEpoch
-              ) else { return }
-        // #916 AC4: a pending cache-only preset/routine row predates the
-        // replay envelope; adopt it into this same queue before the drain
-        // snapshots the due items, so the row is no longer intent-less.
-        guard await migrateLegacyDirectWrites(
-            userID: userID,
-            capturedBy: accountFetch
-        ),
-              accountFetch.canApply(
-                  to: currentUserID,
-                  accountEpoch: accountEpoch
-              ) else { return }
-        // #917 AC4: the phase/settings residue gets the same once-per-account
-        // treatment on the drain path (its only writer is a transition).
-        guard await recoverLegacyPhaseResidues(
-            userID: userID,
-            capturedBy: accountFetch
-        ),
-              accountFetch.canApply(
-                  to: currentUserID,
-                  accountEpoch: accountEpoch
-              ) else { return }
-        // #918 AC5: tag-registry residue (pending cache-only rows with no
-        // intent) is resolved the same way — by the server's own answer only.
-        guard await recoverLegacyTagResidues(
-            userID: userID,
-            capturedBy: accountFetch
-        ),
-              accountFetch.canApply(
-                  to: currentUserID,
-                  accountEpoch: accountEpoch
-              ) else { return }
-        // #919: a pending cache-only health row predates the health replay
-        // envelope. It is adopted into this same queue only when the server's
-        // own answer leaves it provably writable (and the recovery revalidates
-        // the payload again before anything is sent); anything else stays
-        // visibly unsynced instead of being cleared on a guess.
-        guard await recoverLegacyHealthResidues(
+        guard await adoptLegacyResidues(
             userID: userID,
             capturedBy: accountFetch
         ),
@@ -6934,16 +7141,114 @@ public final class AppModel {
         await refreshQueueCount(for: accountFetch)
     }
 
-    public func retryAllQueuedWrites() async {
-        guard let userID = currentUserID, let queue else { return }
-        let accountFetch = AccountScopedFetch(
-            accountUserID: userID,
-            accountEpoch: accountEpoch
-        )
+    /// #920 AC2: the residue adopters, in the drain's load-bearing order. A
+    /// cache-only row from an older app version carries no replay intent, so
+    /// iterating the durable queue alone could never address it — which is
+    /// exactly why the visible "Retry Now" has to run the same adopters the
+    /// drain does. Extracted verbatim from `drainQueue` so both entry points
+    /// share one implementation instead of two that can drift.
+    private func adoptLegacyResidues(
+        userID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> Bool {
         guard await migrateLegacyRecordingEdits(
             userID: userID,
             capturedBy: accountFetch
         ) != nil,
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return false }
+        // #916 AC4: a pending cache-only preset/routine row predates the
+        // replay envelope; adopt it into this same queue before the pass
+        // snapshots the due items, so the row is no longer intent-less.
+        guard await migrateLegacyDirectWrites(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return false }
+        // #917 AC4: the phase/settings residue gets the same once-per-account
+        // treatment (its only writer is a transition).
+        guard await recoverLegacyPhaseResidues(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return false }
+        // #918 AC5: tag-registry residue (pending cache-only rows with no
+        // intent) is resolved the same way — by the server's own answer only.
+        guard await recoverLegacyTagResidues(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return false }
+        // #919: a pending cache-only health row predates the health replay
+        // envelope. It is adopted into this same queue only when the server's
+        // own answer leaves it provably writable (and the recovery revalidates
+        // the payload again before anything is sent); anything else stays
+        // visibly unsynced instead of being cleared on a guess.
+        guard await recoverLegacyHealthResidues(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return false }
+        return true
+    }
+
+    public func retryAllQueuedWrites() async {
+        guard let userID = currentUserID, let queue else { return }
+        // #920 AC4: one retry pass per account. A second tap while a pass is in
+        // flight coalesces onto it (the pass's progress is already published)
+        // instead of racing a second drain against the same queue.
+        guard queuedWritesRetryOwner == nil else { return }
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let owner = AccountScopedCompletion(fetch: accountFetch)
+        queuedWritesRetryOwner = owner
+        isRetryingQueuedWrites = true
+        defer {
+            // Only the pass that owns the flag may clear it, and only while its
+            // account/epoch is still live: an account switch cannot finish the
+            // next account's progress (#920 AC4).
+            if owner.owns(
+                currentUserID: currentUserID,
+                accountEpoch: accountEpoch,
+                activeOwner: queuedWritesRetryOwner
+            ) {
+                isRetryingQueuedWrites = false
+                queuedWritesRetryOwner = nil
+            }
+        }
+        // Measure both acknowledged answers BEFORE the pass so the published
+        // outcome is a real before/after rather than a guess.
+        refreshPendingCacheWriteCount(accountUserID: userID)
+        let unsyncedBefore = pendingCacheWriteCount
+        let queuedBefore = (await queue.items(for: userID)).count
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        // #920 AC2: Retry Now addresses the SAME residue set the drain does. A
+        // cache-only row has no durable intent, so a button that only iterated
+        // the queue could report "done" while the displayed unsynced changes
+        // were untouched.
+        guard await adoptLegacyResidues(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
               accountFetch.canApply(
                   to: currentUserID,
                   accountEpoch: accountEpoch
@@ -6956,7 +7261,25 @@ public final class AppModel {
                 capturedBy: accountFetch
             )
         }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
         await refreshQueueCount(for: accountFetch)
+        let outcome = MutationRetryOutcome(
+            accountUserID: userID,
+            queuedBefore: queuedBefore,
+            queuedAfter: queuedWriteCount,
+            unsyncedBefore: unsyncedBefore,
+            unsyncedAfter: pendingCacheWriteCount,
+            quarantinedAfter: quarantinedWrites?.count
+        )
+        _ = accountFetch.publishIfCurrent(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) {
+            lastRetryOutcome = outcome
+        }
     }
 
     /// Force one manual pass for a queue identity. A foreground drain may
@@ -10645,6 +10968,10 @@ public final class AppModel {
             queuedWriteDiagnostics = []
             queueBreadcrumbs = []
             quarantinedWrites = nil
+            // #920: no signed-in account means nothing has been read — the
+            // status must stay "not loaded" rather than reading as Synced.
+            hasLoadedPendingWrites = false
+            lastRetryOutcome = nil
             return
         }
         let fetch = accountFetch ?? AccountScopedFetch(
@@ -10677,6 +11004,11 @@ public final class AppModel {
             queuedWriteDiagnostics = activeItems.map { $0.diagnostic() }
             queueBreadcrumbs = breadcrumbs
             quarantinedWrites = quarantined
+            // #920: this is the boundary where the app has actually read the
+            // account's durable answers. Without a queue handle the quarantine
+            // list is unknown (`nil`), so the status honestly stays "not
+            // loaded" instead of reporting an unread zero.
+            hasLoadedPendingWrites = quarantined != nil
         }
     }
 
@@ -11904,6 +12236,13 @@ public final class AppModel {
         // failure — the Dashboard failure state is account-scoped like the
         // rest of the reset snapshot.
         dashboardLoadFailureClass = nil
+        // #920/#923: the previous account's measured retry outcome, its retry
+        // progress and its partial-refresh failure never carry into the next
+        // account's screens (account-scoped like the rest of the snapshot).
+        lastRetryOutcome = nil
+        isRetryingQueuedWrites = false
+        queuedWritesRetryOwner = nil
+        lastPartialRefreshFailure = nil
         publishForceProgressInputMutation(.accountReset)
         refreshingOwner = nil
         isRefreshing = false
@@ -11957,6 +12296,8 @@ public final class AppModel {
         pendingCacheWriteCount = 0
         queueBreadcrumbs = []
         quarantinedWrites = nil
+        // #920: the new account's pending-write state has not been read yet.
+        hasLoadedPendingWrites = false
         gaugeSessionTracker.reset()
         handsFreeSaveInFlight = false
         forceModel.guidedProtocolActive = false

@@ -16,7 +16,6 @@ struct SettingsView: View {
     @State private var syncingHealth = false
     @State private var registeringPasskey = false
     @State private var sendingReset = false
-    @State private var retryingQueue = false
     @State private var retryingQuarantined = false
     @State private var discardConfirmation: QuarantinedWrite?
     /// #712: the passkey awaiting removal confirmation (server-side delete).
@@ -503,30 +502,50 @@ struct SettingsView: View {
         }
     }
 
-    private var cacheSyncStatusText: String {
-        if model.queuedWriteCount + model.pendingCacheWriteCount == 0 {
-            return "Synced"
+    /// #920: status text, explanation, and retry availability all come from ONE
+    /// derivation (`MutationSyncStatus`) instead of this view counting
+    /// `queuedWriteCount + pendingCacheWriteCount` itself. The old count read
+    /// "Synced" before the account's queue had ever been read, and offered
+    /// "Retry Now" for work the button did not retry.
+    private var syncStatus: MutationSyncStatus { model.mutationSyncStatus }
+
+    private var syncStatusColor: Color {
+        switch syncStatus.state {
+        case .notLoaded:
+            return SendmeterStyle.paused
+        case .synced:
+            return SendmeterStyle.optimal
+        case .awaitingUpload:
+            return SendmeterStyle.caution
+        case .needsAttention:
+            return SendmeterStyle.alert
         }
-        if model.queuedWriteCount == 0 {
-            return "\(model.pendingCacheWriteCount) unsynced"
-        }
-        if model.pendingCacheWriteCount == 0 {
-            return "\(model.queuedWriteCount) queued"
-        }
-        return "\(model.queuedWriteCount) queued, \(model.pendingCacheWriteCount) unsynced"
     }
 
-    private var cacheSyncExplanation: String {
-        if model.pendingCacheWriteCount == 0 {
-            let verb = model.queuedWriteCount == 1 ? "is" : "are"
-            return "\(model.queuedWriteCount) queued upload\(model.queuedWriteCount == 1 ? "" : "s") \(verb) kept on this iPhone and will retry automatically."
+    /// #920 AC4: the pass's progress lives on the model, so a second Settings
+    /// instance (or a re-created view) cannot start a competing pass and a
+    /// double tap coalesces onto the first.
+    private var isRetryingQueue: Bool { model.isRetryingQueuedWrites }
+
+    /// A visible retry is enabled only for work it actually retries. The
+    /// `noUploadPath` residue keeps the control on screen — disabled, with the
+    /// reason below it — instead of a silent no-op (#920 AC2).
+    private var showsSyncRetry: Bool {
+        switch syncStatus.retry {
+        case .hidden, .unavailable(.nothingPending):
+            return false
+        case .ready, .inFlight, .unavailable(.noUploadPath):
+            return true
         }
-        let changes = "\(model.pendingCacheWriteCount) unconfirmed local change\(model.pendingCacheWriteCount == 1 ? "" : "s")"
-        if model.queuedWriteCount == 0 {
-            return "\(changes) is kept on this iPhone and preserved on the next refresh rather than being hidden as clean."
+    }
+
+    private var syncRetryEnabled: Bool {
+        switch syncStatus.retry {
+        case .ready:
+            return true
+        case .hidden, .inFlight, .unavailable:
+            return false
         }
-        let uploads = "\(model.queuedWriteCount) queued upload\(model.queuedWriteCount == 1 ? " is" : "s are")"
-        return "\(changes) and \(uploads) kept on this iPhone. Queue entries retry automatically; cache-only changes are preserved on the next refresh rather than being hidden as clean."
     }
 
     private var activeQueueFailureExplanation: String? {
@@ -539,7 +558,10 @@ struct SettingsView: View {
 
     // MARK: About & Support
 
-    private var aboutSupportSection: some View {
+    /// Internal (not `private`) so the #920/#923 render-evidence test can
+    /// capture THIS section — the sync surface both issues change — instead of
+    /// a copy of its copy.
+    var aboutSupportSection: some View {
         Section("About & Support") {
             healthSubheader("Version", systemImage: "info.circle")
             LabeledContent("Version", value: appVersion)
@@ -548,36 +570,64 @@ struct SettingsView: View {
             HStack {
                 Label("Pending uploads", systemImage: "externaldrive.badge.icloud")
                 Spacer()
-                StatusPill(
-                    cacheSyncStatusText,
-                    color: model.queuedWriteCount + model.pendingCacheWriteCount == 0
-                        ? SendmeterStyle.optimal
-                        : SendmeterStyle.caution
-                )
+                StatusPill(syncStatus.statusLabel, color: syncStatusColor)
+                    .accessibilityIdentifier("sync-status-pill")
+                    // #920 AC6: VoiceOver reads the row as a labelled value
+                    // rather than an unlabelled pill.
+                    .accessibilityLabel("Upload status")
+                    .accessibilityValue(syncStatus.statusLabel)
             }
-            if model.queuedWriteCount + model.pendingCacheWriteCount > 0 {
-                Text(cacheSyncExplanation)
+            Text(syncStatus.explanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("sync-status-explanation")
+            if let activeQueueFailureExplanation {
+                Text(activeQueueFailureExplanation)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let activeQueueFailureExplanation {
-                    Text(activeQueueFailureExplanation)
-                        .font(.caption)
-                        .foregroundStyle(SendmeterStyle.alert)
-                }
+                    .foregroundStyle(SendmeterStyle.alert)
+            }
+            if showsSyncRetry {
                 Button {
-                    retryingQueue = true
-                    Task {
-                        await model.retryAllQueuedWrites()
-                        retryingQueue = false
-                    }
+                    Task { await model.retryAllQueuedWrites() }
                 } label: {
                     HStack {
                         Label("Retry Now", systemImage: "arrow.clockwise")
                         Spacer()
-                        if retryingQueue { ProgressView() }
+                        if isRetryingQueue { ProgressView() }
                     }
                 }
-                .disabled(retryingQueue)
+                .disabled(!syncRetryEnabled)
+                .accessibilityIdentifier("sync-retry-now")
+                if let unavailable = syncStatus.retryUnavailableExplanation {
+                    // #920 AC2: a residue this app version cannot upload gets
+                    // the honest explanation, not a button that silently
+                    // retries nothing.
+                    Text(unavailable)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("sync-retry-unavailable")
+                }
+            }
+            // #923: an explicit refresh that published some slices and failed
+            // others reports the failed groups HERE, scoped, instead of the
+            // global "couldn't reach Sendmeter" banner.
+            if let refreshFailure = model.lastPartialRefreshFailure,
+               refreshFailure.accountUserID == model.currentUserID {
+                Text(refreshFailure.message)
+                    .font(.caption)
+                    .foregroundStyle(SendmeterStyle.caution)
+                    .accessibilityIdentifier("refresh-partial-failure")
+                Button {
+                    Task { await model.refreshAll() }
+                } label: {
+                    HStack {
+                        Label("Retry refresh", systemImage: "arrow.clockwise")
+                        Spacer()
+                        if model.isRefreshing { ProgressView() }
+                    }
+                }
+                .disabled(model.isRefreshing)
+                .accessibilityIdentifier("refresh-retry")
             }
             if let breadcrumb = model.queueBreadcrumbs.first {
                 LabeledContent("Most recent recovery", value: breadcrumb.leftQueueAt.formatted(date: .abbreviated, time: .shortened))
