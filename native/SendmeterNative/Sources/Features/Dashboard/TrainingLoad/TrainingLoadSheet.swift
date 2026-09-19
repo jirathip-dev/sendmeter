@@ -233,9 +233,10 @@ struct WeeklyBarsView: View {
     /// Haptic dedupe guard: a drag can deliver many frames for the same bar,
     /// so this must track the last tick independently of the rendered state.
     @State private var tickedIndex: Int?
-    /// The chart's own width, published by a background `GeometryReader` (the
-    /// same pattern `ContributionHeatmapView` uses) so the label plan and the
-    /// values readout resolve outside the chart's fixed-height frame.
+    /// The chart's own width, read by a background `GeometryReader` (the same
+    /// pattern `ContributionHeatmapView` reads its grid width with) so the
+    /// values readout resolves against the same width the chart's own plan
+    /// uses outside the chart's fixed-height frame.
     @State private var containerWidth: CGFloat = 0
 
     /// The one resolved label size (#929): `caption2` at the default text
@@ -246,12 +247,17 @@ struct WeeklyBarsView: View {
     /// The reserve for the selected-value tooltip slot at the default text
     /// size. Follows the resolved text size (#929): the pre-#929 slot was a
     /// fixed 60 pt and the three-line tooltip covered the chart below it at
-    /// accessibility sizes.
+    /// accessibility sizes. The base grew from the shipped 60 pt in the #929
+    /// review round: with the tooltip's card finally sized to its *wrapped*
+    /// content, the largest size wraps the delta line to a second line and the
+    /// measured tooltip is 258.5 pt there, which a 60 pt base under-reserved
+    /// (221.5 pt). The reserve test walks every Dynamic Type size against the
+    /// measured tooltip.
     @ScaledMetric(relativeTo: .caption2)
     private var tooltipReserveHeight: CGFloat = WeeklyBarsView.tooltipReserveBaseHeight
 
-    /// The tooltip slot's reserve at the default text size (the shipped 60 pt).
-    static let tooltipReserveBaseHeight: CGFloat = 60
+    /// The tooltip slot's reserve at the default text size.
+    static let tooltipReserveBaseHeight: CGFloat = 72
 
     private let barSpacing = CGFloat(TrainingLoadInteraction.weeklyBarSpacing)
 
@@ -315,7 +321,7 @@ struct WeeklyBarsView: View {
                 // The shared rule's decisions resolve from the REAL laid-out
                 // width inside the reader, so the labels are correct on the
                 // first pass and in offscreen renders alike, and the readout
-                // below reads the same width through `ChartWidthKey`.
+                // below reads the same width from the background reader.
                 let valuePlan = ChartAxisLabelRule.columnLabelPlan(
                     labels: valueLabels,
                     width: proxy.size.width,
@@ -372,7 +378,6 @@ struct WeeklyBarsView: View {
                         )
                         .accessibilityHidden(true)
                 }
-                .preference(key: ChartWidthKey.self, value: proxy.size.width)
             }
             .frame(height: chartHeight)
 
@@ -380,11 +385,21 @@ struct WeeklyBarsView: View {
                 valuesReadout
             }
         }
-        .onPreferenceChange(ChartWidthKey.self) { width in
-            // The chart's own laid-out width, published during layout rather
-            // than on appearance so offscreen renders agree with the app.
-            containerWidth = width
-        }
+        // The chart's own laid-out width, read the way `ContributionHeatmapView`
+        // reads its grid width: on appearance (settled, after the first layout)
+        // and on every change. The readout below must resolve from the *same*
+        // width the chart's label plan uses — the delivered build published it
+        // through a `PreferenceKey` instead, which delivered the first layout
+        // pass's width (41 pt, the pre-settle placeholder) and never updated,
+        // so the readout rendered while every value label was still drawn
+        // (#929 review, blocker 2).
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { containerWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { containerWidth = $0 }
+            }
+        )
         .onChange(of: weeks) { _ in
             // Data replacement is passive; never buzz merely because the
             // sheet rebuilt while a sync was in flight.
@@ -590,16 +605,5 @@ struct WeeklyBarsView: View {
             Haptics.shared.playGesture(.selection)
         }
         selectedIndex = index
-    }
-}
-
-/// The width the weekly chart is laid out in, published as a preference so the
-/// exact-values readout can resolve during layout (#929) rather than on the
-/// appearance lifecycle.
-private struct ChartWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }

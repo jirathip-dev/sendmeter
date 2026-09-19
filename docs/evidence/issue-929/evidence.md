@@ -85,3 +85,44 @@ xcrun simctl io <udid> screenshot simulation-929-<name>.png
 * The tooltip's *interaction* (tap/scrub/haptics) is unchanged code with its
   existing tests; the selected-state captures come from the
   `WeeklyBarsView(initialSelection:)` evidence seam rather than from a touch.
+
+## Corrections (review-929-r1 fix round, `.report-2.md`)
+
+The independent review (`review-929-r1`) reproduced two blockers from this
+file's own captures. Both claims below are **RETRACTED**; the originals stay
+visible above, and the corrected behaviour is evidenced in
+`docs/evidence/issue-929-fix/` from the fixed head.
+
+1. **RETRACTED — "the tooltip wraps inside the card (its left/right edges stay
+   inside the card border)" (the `…populated-ax5-light-selected.png` row
+   above).** The horizontal containment was real, the *vertical* containment
+   was not: the card's background was sized to the tooltip's *unwrapped* ideal
+   (three lines) while the delta line wraps to a fourth line at
+   `.accessibility5`, so the card's bottom border cut through the `prior wk`
+   glyphs. Measured on that capture: last text row **1000**, card's last border
+   row **991**. Corrected in `TrainingLoadTooltip`: the chrome now takes the
+   height its *wrapped* content needs (`.fixedSize(horizontal: false,
+   vertical: true)`); the fix-round section render measures border **1094** ≥
+   text **1059**.
+2. **RETRACTED — "the reserved tooltip slot is 60 pt / ≈221 pt … against a
+   measured three-line tooltip of 199.5 pt" (the measurement paragraph
+   above).** The 199.5 pt measurement came from a layout probe at the card
+   width, not from the *drawn* tooltip: with the card finally sized to its
+   wrapped content, `WeeklyBarsView` measures the tooltip it composes as
+   **258.5 pt** at `.accessibility5` — larger than the ≈221 pt the shipped
+   60 pt base reserved. The base is now **72 pt** (265.8 pt at
+   `.accessibility5`), and the reserve test walks all twelve Dynamic Type
+   sizes against the measured tooltip (tightest slack 4.0 pt at the default
+   size).
+3. **RETRACTED — "and **no** values list (no label is omitted at this size)"
+   (the `simulation-929-populated-normal-light.png` row above).** The
+   committed pixels show the opposite: the default-size app frame carried the
+   exact-values list *and* all four per-bar labels at once. That state came
+   from the readout resolving its plan against a width of **41 pt** (the first
+   layout pass, published through a `PreferenceKey` that never delivered the
+   settled 311 pt) while the chart's own reader drew from 311 pt. The width is
+   now read by a background `GeometryReader` (`onAppear` / `onChange(of:
+   proxy.size.width)`, the same pattern `ContributionHeatmapView` uses), so
+   the readout and the labels resolve from the same number; the re-captured
+   default-size frame in `docs/evidence/issue-929-fix/` shows the four labels
+   with no list.

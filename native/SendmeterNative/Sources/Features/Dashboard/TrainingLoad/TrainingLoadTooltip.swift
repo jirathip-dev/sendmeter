@@ -24,7 +24,12 @@ struct TrainingLoadTooltip<Content: View>: View {
                     .stroke(ChartToken.tooltipBorder.color(scheme), lineWidth: 1)
             )
             .shadow(radius: 4, y: 2)
-            .fixedSize()
+            // Wrap at the proposed width, take the height the wrap needs.
+            // A plain `.fixedSize()` measures the *unwrapped* ideal: at
+            // accessibility sizes a long delta line wraps to a second line and
+            // the card's background — sized to the one-line ideal — cut
+            // through the wrapped line's glyphs (#929 review, blocker 1).
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityHidden(true)
     }
 }

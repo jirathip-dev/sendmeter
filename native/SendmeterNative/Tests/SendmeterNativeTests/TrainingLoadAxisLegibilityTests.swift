@@ -181,8 +181,11 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
         )
     }
 
-    func testTheTooltipWrapsInsideTheCardAndTheSlotIsReserved() throws {
-        let tooltip = TrainingLoadTooltip {
+    /// The tooltip exactly as `WeeklyBarsView.tooltipCard` composes it: the
+    /// shared chrome around the label / total / delta stack, bounded by the
+    /// card's inner width.
+    private static func tooltip(dynamicType: DynamicTypeSize) -> some View {
+        TrainingLoadTooltip {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Now")
                     .font(.subheadline.weight(.semibold))
@@ -193,29 +196,44 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
             }
             .frame(maxWidth: Self.cardInnerWidth, alignment: .leading)
         }
-        .environment(\.dynamicTypeSize, Self.accessibilitySize)
+        .environment(\.dynamicTypeSize, dynamicType)
+    }
 
-        let size = try Self.measure(tooltip, width: Self.cardInnerWidth)
-        XCTAssertLessThanOrEqual(
-            size.width,
-            Self.cardInnerWidth + 0.5,
-            "the tooltip must wrap inside the card instead of overhanging it"
-        )
-        XCTAssertGreaterThan(
-            size.height,
-            WeeklyBarsView.labelBandBaseHeight,
-            "the three-line tooltip is taller than one label band at this size"
-        )
-        let reserve = UIFontMetrics(forTextStyle: .caption2).scaledValue(
-            for: WeeklyBarsView.tooltipReserveBaseHeight,
-            compatibleWith: Self.accessibilityTraits
-        )
-        XCTAssertGreaterThanOrEqual(
-            reserve,
-            size.height,
-            "the reserved tooltip slot must fit the three-line tooltip at this size "
-                + "(it was a fixed 60 pt before #929)"
-        )
+    func testTheTooltipWrapsInsideTheCardAndTheSlotIsReserved() throws {
+        // #929 fix round: the reserve has to hold the *wrapped* tooltip at
+        // every Dynamic Type size. With the card finally sized to its wrapped
+        // content, the largest size wraps the delta to a second line (measured
+        // 258.5 pt) and the shipped 60 pt base under-reserved it (221.5 pt), so
+        // the base grew to 72 pt — and this loop is what keeps the two numbers
+        // honest at every size, not just at the one the lane happened to look
+        // at.
+        var tightest = (size: DynamicTypeSize.large, deficit: -CGFloat.greatestFiniteMagnitude)
+        for dynamicType in Self.dynamicTypeSizes {
+            let tooltip = Self.tooltip(dynamicType: dynamicType)
+            let size = try Self.measure(tooltip, width: Self.cardInnerWidth)
+            XCTAssertLessThanOrEqual(
+                size.width,
+                Self.cardInnerWidth + 0.5,
+                "at \(dynamicType) the tooltip must wrap inside the card instead of overhanging it"
+            )
+            XCTAssertGreaterThan(
+                size.height,
+                WeeklyBarsView.labelBandBaseHeight,
+                "at \(dynamicType) the tooltip is taller than one label band"
+            )
+            let reserve = Self.tooltipReserve(for: Self.traits(for: dynamicType))
+            XCTAssertGreaterThanOrEqual(
+                reserve,
+                size.height,
+                "at \(dynamicType) the reserved tooltip slot must fit the wrapped tooltip "
+                    + "(measured \(size.height) pt, reserve \(reserve) pt)"
+            )
+            let deficit = size.height - reserve
+            if deficit > tightest.deficit {
+                tightest = (dynamicType, deficit)
+            }
+        }
+        print("impl929 fix tooltip reserve tightest at \(tightest.size): deficit \(tightest.deficit) pt")
 
         // The reserved slot must fit that tooltip: the chart below it may not
         // move when a selection appears.
@@ -230,6 +248,373 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
             unselected.size.height,
             accuracy: 0.5,
             "showing the selected-value tooltip must not move the chart"
+        )
+    }
+
+    // MARK: - #929 fix round (review-929-r1 blockers 1 and 2)
+
+    /// **Blocker 1.** The tooltip's own card (pure white in the light scheme)
+    /// must contain the whole wrapped content.
+    ///
+    /// The #929 test measured the *slot reserve* against the content and never
+    /// the *card background* against the text it wraps, so a card sized to the
+    /// unwrapped ideal (three lines) could clip a wrapped fourth line with
+    /// every test green. Layer: **rendered measurement** — a real
+    /// `ImageRenderer` render classified row by row (pure-white rows = the
+    /// card, the border token `#D8D8DC` = the card's edge, dark or coloured
+    /// rows = text).
+    func testTheTooltipCardBackgroundContainsTheWrappedText() throws {
+        // The chrome on its own, at both ends of the Dynamic Type range.
+        for dynamicType in [DynamicTypeSize.large, .accessibility5] {
+            let name = dynamicType.isAccessibilitySize ? "ax5" : "default"
+            let image = try Self.render(Self.tooltip(dynamicType: dynamicType), flatten: Self.backdrop)
+            let card = try Self.tooltipCardMetrics(in: image, traits: Self.traits(for: dynamicType))
+            try Self.writeFixRoundCapture(image, named: "fix-tooltip-chrome-\(name)")
+            print("impl929 fix tooltip chrome \(name) — \(card)")
+            XCTAssertGreaterThan(card.cardRows, 8, "\(name): the tooltip card must be drawn")
+            XCTAssertGreaterThan(card.textRows, 8, "\(name): the tooltip's text must be drawn")
+            XCTAssertNotNil(card.lastBorderRow, "\(name): the tooltip card's border must be drawn")
+            XCTAssertLessThanOrEqual(
+                card.lastTextRow ?? 0,
+                card.lastBorderRow ?? 0,
+                "\(name): the tooltip card's background must contain its wrapped text — the text "
+                    + "ends at row \(card.lastTextRow.map(String.init) ?? "?") but the card's "
+                    + "border is at row \(card.lastBorderRow.map(String.init) ?? "?") (\(card))"
+            )
+        }
+        // …and inside the real weekly card, at the size where the delta wraps
+        // to a second line.
+        let section = try Self.render(
+            Self.section(
+                weeks: Self.populatedWeeks,
+                selection: 3,
+                dynamicType: .accessibility5,
+                colorScheme: .light
+            ),
+            flatten: Self.backdrop
+        )
+        let sectionCard = try Self.tooltipCardMetrics(
+            in: section,
+            traits: Self.traits(for: .accessibility5)
+        )
+        try Self.writeFixRoundCapture(section, named: "fix-tooltip-card-ax5-section")
+        print("impl929 fix tooltip in section ax5 — \(sectionCard)")
+        XCTAssertLessThanOrEqual(
+            sectionCard.lastTextRow ?? 0,
+            sectionCard.lastBorderRow ?? 0,
+            "ax5: the selected-value tooltip's card must contain its text inside the weekly "
+                + "card too (\(sectionCard))"
+        )
+    }
+
+    /// **Blocker 2.** The exact-values readout exists for the sizes where the
+    /// shared rule omits a value label, so it must never be drawn while every
+    /// bar still carries its own label — the state the delivered build
+    /// rendered, because the readout resolved from a width (41) the chart's
+    /// own in-reader plan never saw (311).
+    ///
+    /// Layer: **rendered measurement in a hosted layout** — `ImageRenderer`
+    /// leaves the width state at zero, so this leg renders through
+    /// `UIHostingController` where the layout callbacks settle the way they do
+    /// in the app.
+    func testTheValuesReadoutNeverDuplicatesTheValueLabels() throws {
+        for (dynamicType, name) in [(DynamicTypeSize.large, "default"), (.accessibility5, "ax5")] {
+            let image = try Self.hostedImage(
+                Self.section(
+                    weeks: Self.populatedWeeks,
+                    selection: nil,
+                    dynamicType: dynamicType,
+                    colorScheme: .light,
+                    pinWidth: false
+                ),
+                dynamicType: dynamicType,
+                startWidth: Self.placeholderWidth
+            )
+            let bands = try Self.chartBandMetrics(in: image, traits: Self.traits(for: dynamicType), scale: image.scale)
+            try Self.writeFixRoundCapture(image, named: "fix-readout-\(name)-hosted")
+            print("impl929 fix readout \(name) — \(bands)")
+            XCTAssertFalse(
+                bands.labelsDrawn && bands.readoutDrawn,
+                "\(name): the readout must not duplicate the drawn value labels "
+                    + "(labels \(bands.labelsDrawn), readout \(bands.readoutDrawn): \(bands))"
+            )
+            XCTAssertTrue(
+                bands.labelsDrawn || bands.readoutDrawn,
+                "\(name): the weekly values must stay readable — the per-bar labels or the "
+                    + "readout must be drawn (\(bands))"
+            )
+        }
+    }
+
+    // MARK: - Pixel probes for the fix-round tests
+
+    /// The backdrop the probes flatten a transparent canvas onto: light enough
+    /// not to read as text, deliberately not white (the card's own token).
+    private static let backdrop = UIColor(white: 0.92, alpha: 1)
+
+    /// The width the delivered build laid the weekly section out at before it
+    /// settled on the card's real width: the readout resolved its plan from
+    /// this number (41 pt) while the chart's own reader used 311 pt.
+    private static let placeholderWidth: CGFloat = 41
+
+    /// Where the tooltip card's background starts, where its bottom border is
+    /// and where its text ends, in image pixels. Everything inside the
+    /// reserved slot belongs to the tooltip, so no chart markup can be
+    /// mistaken for it.
+    struct TooltipCardMetrics: CustomStringConvertible {
+        let firstCardRow: Int
+        let slotBottomRow: Int
+        let lastBorderRow: Int?
+        let lastTextRow: Int?
+        let cardRows: Int
+        let textRows: Int
+
+        var contained: Bool {
+            guard let lastBorderRow, let lastTextRow else { return false }
+            return lastTextRow <= lastBorderRow
+        }
+
+        var description: String {
+            "card rows from \(firstCardRow) (\(cardRows) white rows), slot ends \(slotBottomRow), "
+                + "last border row \(lastBorderRow.map(String.init) ?? "none"), "
+                + "last text row \(lastTextRow.map(String.init) ?? "none") (\(textRows) text rows), "
+                + "contained \(contained)"
+        }
+    }
+
+    /// Where the chart's bars are, whether a value label is drawn above them
+    /// and whether the readout is drawn below the chart.
+    struct ChartBandMetrics: CustomStringConvertible {
+        let firstBarRow: Int
+        let lastBarRow: Int
+        let labelsDrawn: Bool
+        let readoutDrawn: Bool
+
+        var description: String {
+            "bars \(firstBarRow)-\(lastBarRow), value labels \(labelsDrawn), readout \(readoutDrawn)"
+        }
+    }
+
+    struct RowScan {
+        /// Rows that are mostly the tooltip's pure-white background.
+        let cardCounts: [Int]
+        /// Rows with the tooltip border's colour (`#D8D8DC` light scheme).
+        let borderCounts: [Int]
+        /// Rows with dark or strongly coloured glyph pixels.
+        let textCounts: [Int]
+        /// Rows with saturated fill pixels (the bars).
+        let saturatedCounts: [Int]
+    }
+
+    private static func tooltipCardMetrics(
+        in image: UIImage,
+        traits: UITraitCollection,
+        slack: CGFloat = 40
+    ) throws -> TooltipCardMetrics {
+        let scan = try rowScan(of: image)
+        guard let firstCard = scan.cardCounts.firstIndex(where: { $0 >= 8 }) else {
+            throw RenderError.noImage
+        }
+        // The tooltip is top-aligned in its reserved slot, so the slot's band
+        // (plus a little slack for a card that overflows it) holds the whole
+        // tooltip and nothing else of the weekly card.
+        let slotBottom = min(
+            firstCard + Int((tooltipReserve(for: traits) * image.scale).rounded()) + Int(slack),
+            scan.cardCounts.count - 1
+        )
+        var lastBorder: Int?
+        var lastText: Int?
+        var textRows = 0
+        for row in firstCard ... slotBottom {
+            if scan.borderCounts[row] >= 20 {
+                lastBorder = row
+            }
+            if scan.textCounts[row] >= 4 {
+                lastText = row
+                textRows += 1
+            }
+        }
+        return TooltipCardMetrics(
+            firstCardRow: firstCard,
+            slotBottomRow: slotBottom,
+            lastBorderRow: lastBorder,
+            lastTextRow: lastText,
+            cardRows: scan.cardCounts[firstCard ... slotBottom].filter { $0 >= 8 }.count,
+            textRows: textRows
+        )
+    }
+
+    /// The tooltip slot reserve at `traits`, the same scaled metric the view
+    /// lays the slot out with.
+    private static func tooltipReserve(for traits: UITraitCollection) -> CGFloat {
+        UIFontMetrics(forTextStyle: .caption2).scaledValue(
+            for: WeeklyBarsView.tooltipReserveBaseHeight,
+            compatibleWith: traits
+        )
+    }
+
+    private static func chartBandMetrics(
+        in image: UIImage,
+        traits: UITraitCollection,
+        scale: CGFloat
+    ) throws -> ChartBandMetrics {
+        let scan = try rowScan(of: image)
+        let barRows = scan.saturatedCounts.enumerated().filter { $0.element >= 200 }.map(\.offset)
+        guard let firstBar = barRows.first, let lastBar = barRows.last else {
+            throw RenderError.noImage
+        }
+        let band = bandHeight(for: traits) * scale
+        // A value label is drawn in its reserved band above the bar; the
+        // readout, when it is drawn at all, starts below the chart's own frame
+        // — one week-caption band plus the chart's spacing — and its first
+        // line begins at the card's leading edge.
+        let labelWindow = max(firstBar - Int(band.rounded()) - 8, 0)
+        let labelsDrawn = labelWindow < firstBar
+            && scan.textCounts[labelWindow ..< firstBar].contains { $0 >= 4 }
+        let readoutStart = min(lastBar + Int(band.rounded()) + 8, scan.textCounts.count)
+        let readoutDrawn = readoutStart < scan.textCounts.count
+            && scan.textCounts[readoutStart...].contains { $0 >= 4 }
+        return ChartBandMetrics(
+            firstBarRow: firstBar,
+            lastBarRow: lastBar,
+            labelsDrawn: labelsDrawn,
+            readoutDrawn: readoutDrawn
+        )
+    }
+
+    /// Per-row pixel counts: pure-white rows (the tooltip background token),
+    /// glyph rows (dark or strongly coloured) and fill rows (the bars).
+    private static func rowScan(of image: UIImage) throws -> RowScan {
+        guard let cg = image.cgImage else { throw RenderError.noImage }
+        let width = cg.width
+        let height = cg.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            throw RenderError.noImage
+        }
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var cardCounts = [Int](repeating: 0, count: height)
+        var borderCounts = [Int](repeating: 0, count: height)
+        var textCounts = [Int](repeating: 0, count: height)
+        var saturatedCounts = [Int](repeating: 0, count: height)
+        for row in 0 ..< height {
+            let rowOffset = row * width * 4
+            var card = 0
+            var border = 0
+            var text = 0
+            var saturated = 0
+            for column in 0 ..< width {
+                let index = rowOffset + column * 4
+                let red = Int(pixels[index])
+                let green = Int(pixels[index + 1])
+                let blue = Int(pixels[index + 2])
+                if red >= 252, green >= 252, blue >= 252 {
+                    card += 1
+                    continue
+                }
+                // The tooltip border token is #D8D8DC in the light scheme.
+                if abs(red - 216) <= 6, abs(green - 216) <= 6, abs(blue - 220) <= 6 {
+                    border += 1
+                }
+                let luminance = 0.299 * Double(red) + 0.587 * Double(green) + 0.114 * Double(blue)
+                if luminance < 150 {
+                    text += 1
+                }
+                let spread = max(red, green, blue) - min(red, green, blue)
+                if spread > 30 {
+                    saturated += 1
+                }
+            }
+            cardCounts[row] = card
+            borderCounts[row] = border
+            textCounts[row] = text
+            saturatedCounts[row] = saturated
+        }
+        return RowScan(
+            cardCounts: cardCounts,
+            borderCounts: borderCounts,
+            textCounts: textCounts,
+            saturatedCounts: saturatedCounts
+        )
+    }
+
+    /// Renders `content` in a real host window: `ImageRenderer` never runs the
+    /// width state to its settled value, a hosted layout does. `startWidth`
+    /// reproduces the app's own geometry history — the sheet is laid out at a
+    /// placeholder width first (the delivered build published 41 pt) and only
+    /// then settles on the card's real width.
+    private static func hostedImage(
+        _ content: some View,
+        dynamicType: DynamicTypeSize,
+        startWidth: CGFloat? = nil
+    ) throws -> UIImage {
+        let host = UIHostingController(rootView: content)
+        let width = startWidth ?? phoneWidth
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1_400))
+        window.traitOverrides.preferredContentSizeCategory = Self.contentSizeCategory(for: dynamicType)
+        window.rootViewController = host
+        window.isHidden = false
+        host.view.frame = window.bounds
+        window.layoutIfNeeded()
+        if let startWidth, startWidth != phoneWidth {
+            window.frame = CGRect(x: 0, y: 0, width: phoneWidth, height: 1_400)
+            host.view.frame = window.bounds
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        let bounds = CGRect(x: 0, y: 0, width: phoneWidth, height: host.view.bounds.height)
+        let image = UIGraphicsImageRenderer(bounds: bounds).image { context in
+            backdrop.setFill()
+            context.fill(bounds)
+            host.view.layer.render(in: context.cgContext)
+        }
+        return try croppedToContent(image)
+    }
+
+    private static func traits(for dynamicType: DynamicTypeSize) -> UITraitCollection {
+        UITraitCollection(preferredContentSizeCategory: contentSizeCategory(for: dynamicType))
+    }
+
+    /// The exact category `@ScaledMetric` resolves `dynamicType` to, so the
+    /// test's reserve arithmetic reads the same number the view lays out with.
+    private static func contentSizeCategory(for dynamicType: DynamicTypeSize) -> UIContentSizeCategory {
+        switch dynamicType {
+        case .xSmall: return .extraSmall
+        case .small: return .small
+        case .medium: return .medium
+        case .large: return .large
+        case .xLarge: return .extraLarge
+        case .xxLarge: return .extraExtraLarge
+        case .xxxLarge: return .extraExtraExtraLarge
+        case .accessibility1: return .accessibilityMedium
+        case .accessibility2: return .accessibilityLarge
+        case .accessibility3: return .accessibilityExtraLarge
+        case .accessibility4: return .accessibilityExtraExtraLarge
+        case .accessibility5: return .accessibilityExtraExtraExtraLarge
+        @unknown default: return .large
+        }
+    }
+
+    /// Every Dynamic Type size the reserve has to hold the tooltip at.
+    private static let dynamicTypeSizes: [DynamicTypeSize] = [
+        .xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge,
+        .accessibility1, .accessibility2, .accessibility3, .accessibility4, .accessibility5
+    ]
+
+    private static func bandHeight(for traits: UITraitCollection) -> CGFloat {
+        UIFontMetrics(forTextStyle: .caption2).scaledValue(
+            for: WeeklyBarsView.labelBandBaseHeight,
+            compatibleWith: traits
         )
     }
 
@@ -318,7 +703,8 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
         weeks: [WeeklyLoad],
         selection: Int?,
         dynamicType: DynamicTypeSize,
-        colorScheme: ColorScheme
+        colorScheme: ColorScheme,
+        pinWidth: Bool = true
     ) -> some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 12) {
@@ -338,7 +724,7 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
             }
         }
         .padding(Self.screenPadding)
-        .frame(width: Self.phoneWidth)
+        .frame(width: pinWidth ? Self.phoneWidth : nil)
         .background(Color(uiColor: .systemGroupedBackground))
         .environment(\.dynamicTypeSize, dynamicType)
         .environment(\.colorScheme, colorScheme)
@@ -355,7 +741,7 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
             .foregroundStyle(.blue)
     }
 
-    private static func render(_ content: some View) throws -> UIImage {
+    private static func render(_ content: some View, flatten: UIColor = .white) throws -> UIImage {
         // A definite, generous canvas with the content anchored to its top,
         // then cropped to what was actually drawn: ImageRenderer measures the
         // canvas from the layout pass that runs before `WeeklyBarsView`'s width
@@ -371,10 +757,12 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
         guard let image = renderer.uiImage else {
             throw RenderError.noImage
         }
-        // The canvas outside the content is transparent; flatten it onto white
-        // so a blank row reads as white rather than as an unset pixel.
+        // The canvas outside the content is transparent; flatten it so a blank
+        // row reads as one known colour rather than as an unset pixel. The
+        // tooltip probes pass `backdrop`, which is deliberately not white:
+        // white is the tooltip card's own background token.
         let opaque = UIGraphicsImageRenderer(size: image.size).image { context in
-            UIColor.white.setFill()
+            flatten.setFill()
             context.fill(CGRect(origin: .zero, size: image.size))
             image.draw(at: .zero)
         }
@@ -454,6 +842,17 @@ final class TrainingLoadAxisLegibilityTests: XCTestCase {
         let directory = documents.appendingPathComponent("impl929-evidence", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    /// Writes one fix-round render into the evidence directory so the lane
+    /// report can carry the pixels the assertions ran against.
+    private static func writeFixRoundCapture(_ image: UIImage, named name: String) throws {
+        guard let data = image.pngData() else {
+            throw RenderError.noImage
+        }
+        let url = try evidenceDirectory().appendingPathComponent("\(name).png")
+        try data.write(to: url)
+        print("impl929 fix capture \(name) \(url.path) \(image.size.width)x\(image.size.height)pt")
     }
 
     // MARK: - Fixtures

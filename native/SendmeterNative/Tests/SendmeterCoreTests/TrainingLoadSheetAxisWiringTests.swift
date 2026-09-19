@@ -60,8 +60,8 @@ final class TrainingLoadSheetAxisWiringTests: XCTestCase {
         XCTAssertEqual(
             countOccurrences("tooltipReserveBaseHeight", in: sheet),
             2,
-            "the reserved tooltip slot follows the resolved text size from the "
-                + "shipped 60 pt base instead of staying fixed"
+            "the reserved tooltip slot follows the resolved text size from a base "
+                + "instead of staying fixed"
         )
         XCTAssertEqual(
             countOccurrences("maxWidth: proxy.size.width", in: sheet),
