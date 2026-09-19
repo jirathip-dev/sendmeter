@@ -1,5 +1,5 @@
 # sha256 hashes — impl-929-fix (review-929-r1 fix round)
-# generated 2026-09-19T02:23:39Z at the fix head (see .report-2.md)
+# generated 2026-09-19T02:25:28Z at the fix head (see .report-2.md)
 
 ## fixed-head captures and renders (docs/evidence/issue-929-fix/)
 9a5a80f5fb911831394f7653fbff8eb1be811568944e481a9b8dd3376036e39a  diagnostic-app-width-probe.png
@@ -36,6 +36,8 @@ b222f07b8f64db3fc0978c2a2e3c453999a7a393bdb52228c9d6bc3b3cf90783  green-host-foc
 d3dc5e9848150f8b47481049f7b520aadb2139df2e2bfd6e830851361000b9e5  instr-build.log.gz
 63129a6672fd049d5daa4fd113e0d02e8a377cdb89ab7b0e7f32ad853ec2e655  instr2-build.log.gz
 f3e5bb2fe7e5139878fe742666bb9a1c89e346a4a766ccee692886b6cf6277d4  just-fast-fix.log.gz
+f23b3b03299ea8723e62e04d727623325f18b8c8b0fc5bc9644701b3a3a84079  red-newtests.log.gz
+9d8a5d15d85732a30b44bd8f581078234b583f6aeb3b6b0b41520210af25b191  red2-newtests.log.gz
 f29b9a79884bdbf08f8aa65864de44b5b17b5f11a9ed337f65ca538bd6efa0c8  red3-newtests.log.gz
 
 ## changed sources at the fix head
