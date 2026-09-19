@@ -11,6 +11,20 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 16) {
+                    // #964: the Dashboard must not sit blank behind the
+                    // dismissible error banner. While the account has no
+                    // authoritative snapshot and the last load attempt failed,
+                    // the screen leads with the truthful failure (classified
+                    // copy, never the raw error) and a retry that re-runs the
+                    // exact refresh that failed; the state survives dismissing
+                    // the banner because it lives on the model, not on
+                    // `errorMessage`.
+                    if model.showsDashboardLoadFailure,
+                       let failureClass = model.dashboardLoadFailureClass {
+                        DashboardLoadFailureCard(failureClass: failureClass) {
+                            Task { await model.refreshAll() }
+                        }
+                    }
                     TodayDecisionCard(showRecovery: $showRecovery)
                     ReadinessTrendCard()
                     // #704: reserve the largest Send Conditions state before
@@ -58,6 +72,29 @@ struct DashboardView: View {
                 RecoveryInputsSheet()
                     .sendmeterSheetPresentation()
             }
+        }
+    }
+}
+
+/// #964: the Dashboard's honest load-failure state. Rendered while the
+/// account has no authoritative snapshot to show and the last account-data
+/// load failed — the classified, user-safe copy plus a retry that re-runs the
+/// failed refresh. It takes the classification and the retry as parameters
+/// (rather than reading the model) so the component can be rendered and
+/// measured on its own.
+struct DashboardLoadFailureCard: View {
+    let failureClass: FriendlyErrorClass
+    let retry: () -> Void
+
+    var body: some View {
+        SurfaceCard {
+            ProductEmptyState(
+                title: "Couldn\u{2019}t load your dashboard",
+                message: UserFacingError.message(for: failureClass),
+                actionTitle: "Try again",
+                compact: true,
+                action: retry
+            )
         }
     }
 }
