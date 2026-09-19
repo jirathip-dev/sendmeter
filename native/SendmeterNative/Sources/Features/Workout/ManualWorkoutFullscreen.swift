@@ -9,6 +9,12 @@ struct ManualWorkoutFullscreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var engine: PhoneWorkoutEngine?
+    /// #926: the explanation for a refused End. It must be presented HERE —
+    /// the app-level error banner renders behind this cover, so a refusal
+    /// routed there is invisible while the workout is up. The parent clears
+    /// it when the workout progresses or is minimized, so a stale
+    /// explanation never outlives the tap that produced it.
+    @Binding var endRefusal: ManualWorkoutEndRefusal?
     let isSaving: Bool
     let restTarget: Int
     let onRestTargetChange: (Int) -> Void
@@ -36,6 +42,13 @@ struct ManualWorkoutFullscreen: View {
             // workout stays silent because there is no fresh gesture to claim.
             Haptics.shared.sheetPresented()
         }
+        // #926: each refusal explains itself once. A repeat End tap presents
+        // a new token, so the explanation is spoken again instead of being
+        // silently re-rendered.
+        .onChange(of: endRefusal) { _, refusal in
+            guard let refusal else { return }
+            ErrorBannerAccessibility.post(refusal.message)
+        }
     }
 
     @ViewBuilder
@@ -51,6 +64,9 @@ struct ManualWorkoutFullscreen: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 16) {
                         topBar(snapshot: snapshot)
+                        if let endRefusal {
+                            endRefusalBanner(endRefusal)
+                        }
                         phasePanel(snapshot: snapshot)
                         actionButton(
                             snapshot: snapshot,
@@ -125,6 +141,33 @@ struct ManualWorkoutFullscreen: View {
             .accessibilityLabel("End manual workout")
             .accessibilityHint("Saves the completed workout and opens it in History")
         }
+    }
+
+    /// #926: a refused End answers inside this screen, in the same visual
+    /// language as the app's error banner but with its own identifier — the
+    /// root banner's element lies behind the cover and its explanation would
+    /// never be read.
+    private func endRefusalBanner(_ refusal: ManualWorkoutEndRefusal) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(SendmeterStyle.alert)
+                // Decorative: VoiceOver reads the message itself.
+                .accessibilityHidden(true)
+            Text(refusal.message)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Wrap to the copy's full height at every text size instead of
+                // letting a compressed proposal clip it.
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(ManualWorkoutEndRefusal.messageIdentifier)
+        }
+        .padding(12)
+        .background(SendmeterStyle.alert.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(SendmeterStyle.alert.opacity(0.28), lineWidth: 1)
+        )
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     private func phasePanel(snapshot: ManualWorkoutSnapshot) -> some View {
@@ -258,6 +301,9 @@ struct ManualWorkoutFullscreen: View {
                 _ = try copy.endAttempt(at: Date())
             }
             engine = copy
+            // #926: the workout moved on, so the refusal that was on screen
+            // now describes a state the user has left.
+            endRefusal = nil
             // The structural style arms the default light tap. This claims
             // that same tracked gesture, so the action does not add a second
             // cue.
@@ -308,6 +354,22 @@ struct ManualWorkoutFullscreen: View {
 
     private func attemptCountLabel(_ count: Int) -> String {
         "\(count) attempt\(count == 1 ? "" : "s")"
+    }
+}
+
+/// #926: a refused End as presented at the active full-screen workout. The
+/// token changes on every refusal, so a repeat tap re-announces an
+/// explanation that is already on screen instead of silently re-rendering.
+struct ManualWorkoutEndRefusal: Equatable {
+    /// The identifier the UI-test lane addresses the on-screen explanation by.
+    static let messageIdentifier = "manual-workout-end-refusal"
+
+    let message: String
+    let token: UUID
+
+    init(message: String) {
+        self.message = message
+        self.token = UUID()
     }
 }
 
