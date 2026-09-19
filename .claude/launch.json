@@ -1,5 +1,11 @@
 {
   "version": "0.0.1",
-  "configurations": [],
-  "note": "Historical: the only configuration this file ever held started the retired web app's dev server (Vite on port 5173) for the web/Capacitor client removed in #857. No launch configuration is current; see docs/architecture/857-removal-inventory.md."
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "zsh",
+      "runtimeArgs": ["-c", "export PATH=$HOME/.nvm/versions/node/v24.18.0/bin:$PATH && npm run dev"],
+      "port": 5173
+    }
+  ]
 }
