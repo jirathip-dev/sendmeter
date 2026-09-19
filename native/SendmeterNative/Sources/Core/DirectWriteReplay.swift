@@ -1,5 +1,7 @@
 import CryptoKit
 import Foundation
+import SendLogHealthCore
+import SendLogWatchCore
 
 /// #916: how one "direct write" entity is mutated on the server.
 ///
@@ -676,5 +678,315 @@ public enum TagMutationReplayError: Error, Equatable, Sendable {
 }
 
 extension TagMutationReplayError: ServerRejectionClassifying {
+    public var rejectionClass: RejectionClass { .retryable }
+}
+
+// MARK: - Health metrics (#919)
+
+/// #919: the queue identity of one health row's write intent.
+///
+/// A health row's identity is its `(user_id, date)` key — `CacheEntityID
+/// .healthMetric` IS the date string — while the durable queue keys its items
+/// by `UUID`. The two have to map deterministically for the same reason the tag
+/// registry's does (#918): a relaunch resolves the pending intent from the row
+/// key alone, and a newer pass for the same date replaces the pending one
+/// instead of racing it.
+///
+/// The account is part of the KEY, not just of the queue item: the scheduled
+/// date is the same for every account on the device, and the queue is one
+/// shared file whose item ids must be unique ACROSS accounts (an id already
+/// held by another account's item can never be replaced or re-enqueued). The
+/// queue item's own `accountUserID` remains the only scope authority for
+/// replay; the account here only makes the identity collision-free.
+///
+/// The mapping is RFC 4122 §4.3 UUIDv5 over the account and the trimmed date
+/// under this namespace, so it is stable for every process and every future
+/// build.
+public enum HealthWriteIdentity {
+    // SAFETY: fixed canonical 32-hex UUID string; UUID(uuidString:) always
+    // parses it.
+    public static let namespace = UUID(uuidString: "91900000-0000-4000-8000-000000000919")!
+
+    private static let namespaceBytes: [UInt8] = {
+        var uuid = namespace.uuid
+        return withUnsafeBytes(of: &uuid) { Array($0) }
+    }()
+
+    public static func queueItemID(for date: String, accountUserID: UUID) -> UUID {
+        let trimmed = date.trimmingCharacters(in: .whitespacesAndNewlines)
+        var bytes = namespaceBytes
+        bytes.append(contentsOf: Array(
+            "\(accountUserID.uuidString.lowercased()):\(trimmed)".utf8
+        ))
+        var digest = Array(Insecure.SHA1.hash(data: Data(bytes)).prefix(16))
+        digest[6] = (digest[6] & 0x0F) | 0x50
+        digest[8] = (digest[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            digest[0], digest[1], digest[2], digest[3],
+            digest[4], digest[5], digest[6], digest[7],
+            digest[8], digest[9], digest[10], digest[11],
+            digest[12], digest[13], digest[14], digest[15]
+        ))
+    }
+}
+
+/// #919: the trigger a health pass was authored under, as a durable value.
+///
+/// The trigger is part of the intent because it is an INPUT to the write
+/// policy the recovery must re-check: a manual sync is authoritative (#109),
+/// while an automatic pass after noon keeps an existing score. Re-deciding at
+/// recovery time with the wrong trigger would either lose an authoritative
+/// write or overwrite a frozen one.
+public enum HealthWriteTrigger: String, Codable, Sendable, Equatable, CaseIterable {
+    case automatic
+    case manual
+
+    public init(_ trigger: SyncTrigger) {
+        self = trigger == .manual ? .manual : .automatic
+    }
+
+    public var syncTrigger: SyncTrigger {
+        self == .manual ? .manual : .automatic
+    }
+}
+
+/// #919: the durable intent of one interrupted health-metric write.
+///
+/// Health is the one direct-write family where blind replay is *worse* than
+/// dropping the write: a queued readiness score re-sent after the server (or
+/// the watch) already moved that day on would overwrite fresher data, and
+/// re-running the biometric read to "re-create" evidence is forbidden. So the
+/// intent records the exact payload the pass intended — the biometric columns
+/// plus, when the pass was allowed to score, the readiness/zone/computedAt the
+/// write would have sent — and the recovery REVALIDATES it against the server's
+/// current row instead of replaying it (see `HealthWriteReplayPolicy`).
+///
+/// The mutation is captured before the first server attempt and is never
+/// re-derived from later local state: a fresh `HealthKit` read is not part of
+/// recovery, so the replayed write is provably the user's own interrupted write
+/// and not newly invented evidence.
+public struct HealthWriteIntent: Codable, Sendable, Equatable {
+    /// The row's date key (`CacheEntityID.healthMetric`), YYYY-MM-DD.
+    public let date: String
+    /// The exact payload the pass intended to upsert.
+    public let payload: HealthMetric
+    /// The trigger the pass was authored under (#109/#802 re-check input).
+    public let trigger: HealthWriteTrigger
+    /// Stable identity of THIS operation, independent of the queue item's
+    /// replacement revision: a later pass for the same date replaces the
+    /// pending intent with the newer content and a newer operation id.
+    public let operationID: UUID
+    public let intendedAt: Date
+
+    public init(
+        date: String,
+        payload: HealthMetric,
+        trigger: HealthWriteTrigger,
+        operationID: UUID = UUID(),
+        intendedAt: Date = Date()
+    ) {
+        self.date = date
+        self.payload = payload
+        self.trigger = trigger
+        self.operationID = operationID
+        self.intendedAt = intendedAt
+    }
+
+    /// The queue item identity this intent must be filed under for one
+    /// account. The account is a parameter (not a stored field) because the
+    /// owning `DurableQueueItem` is the single account authority — the intent
+    /// itself must never carry a scope it could be replayed under.
+    public func queueIdentity(accountUserID: UUID) -> UUID {
+        HealthWriteIdentity.queueItemID(
+            for: date,
+            accountUserID: accountUserID
+        )
+    }
+
+    /// Whether `serverRow` already carries everything this intent's payload
+    /// intends to write.
+    ///
+    /// Only the fields the payload actually carries are compared — a nil
+    /// readiness/zone means the pass deliberately left the existing score alone
+    /// (#109 keep-score branch), and a nil biometric column is one the payload
+    /// does not write. `computed_at` is deliberately NOT compared: the DB
+    /// stamps `now()` for a fresh insert that carried none, so a lost
+    /// acknowledgement can legitimately come back with a different timestamp
+    /// while the score and biometrics are exactly the ones that were sent.
+    ///
+    /// The biometric columns are `real` (float4) in Postgres, so a
+    /// round-tripped row differs from a Double payload in the low bits: the
+    /// comparison is made at the server's own precision.
+    public func isSatisfied(by serverRow: HealthMetric) -> Bool {
+        Self.isPayload(payload, satisfiedBy: serverRow)
+    }
+
+    /// Whether `serverRow` already carries everything `payload` intends to
+    /// write.
+    ///
+    /// Only the fields the payload actually carries are compared — a nil
+    /// readiness/zone means the pass deliberately left the existing score alone
+    /// (#109 keep-score branch), and a nil biometric column is one the payload
+    /// does not write. `computed_at` is deliberately NOT compared: the DB
+    /// stamps `now()` for a fresh insert that carried none, so a lost
+    /// acknowledgement can legitimately come back with a different timestamp
+    /// while the score and biometrics are exactly the ones that were sent.
+    ///
+    /// Asked of the RE-DERIVED payload too (see `HealthWriteReplayPolicy`):
+    /// "does the row the server already serves make this write a no-op?" is the
+    /// same question whether the payload came off the wire or out of the write
+    /// policy.
+    ///
+    /// The biometric columns are `real` (float4) in Postgres, so a
+    /// round-tripped row differs from a Double payload in the low bits: the
+    /// comparison is made at the server's own precision.
+    public static func isPayload(
+        _ payload: HealthMetric,
+        satisfiedBy serverRow: HealthMetric
+    ) -> Bool {
+        guard serverRow.date == payload.date else { return false }
+        guard matches(payload.readiness, serverRow.readiness) else { return false }
+        guard matches(payload.zone, serverRow.zone) else { return false }
+        return matches(payload.hrvSDNNMilliseconds, serverRow.hrvSDNNMilliseconds)
+            && matches(payload.restingHeartRate, serverRow.restingHeartRate)
+            && matches(payload.sleepHours, serverRow.sleepHours)
+            && matches(payload.sleepDeepHours, serverRow.sleepDeepHours)
+            && matches(payload.sleepREMHours, serverRow.sleepREMHours)
+            && matches(payload.bodyMassKilograms, serverRow.bodyMassKilograms)
+            && matches(payload.respiratoryRate, serverRow.respiratoryRate)
+    }
+
+    /// Whether the payload would overwrite a NEWER score: the server's own row
+    /// for this date carries a timestamp later than the payload's own, so the
+    /// queued score is stale data. Never true for a payload that carries no
+    /// score at all (a keep-score biometric refresh cannot clobber one), and
+    /// true for a score with no timestamp of its own that faces a row the
+    /// server CAN date — an undatable queued score is never allowed to
+    /// overwrite a dated one.
+    public func isSupersededByNewerScore(of serverRow: HealthMetric) -> Bool {
+        guard payload.readiness != nil else { return false }
+        guard let serverComputedAt = serverRow.computedAt else { return false }
+        guard let payloadComputedAt = payload.computedAt else { return true }
+        return payloadComputedAt < serverComputedAt
+    }
+
+    /// One payload field against the server's row at the server's precision.
+    /// A nil payload value is a column this write does not touch.
+    private static func matches(_ payloadValue: Double?, _ serverValue: Double?) -> Bool {
+        guard let payloadValue else { return true }
+        guard let serverValue else { return false }
+        return Float(payloadValue) == Float(serverValue)
+    }
+
+    private static func matches(_ payloadValue: Int?, _ serverValue: Int?) -> Bool {
+        guard let payloadValue else { return true }
+        return payloadValue == serverValue
+    }
+
+    private static func matches(_ payloadValue: String?, _ serverValue: String?) -> Bool {
+        guard let payloadValue else { return true }
+        return payloadValue == serverValue
+    }
+}
+
+/// The recovery decision for one durable health write intent.
+public enum HealthWriteReplayDecision: Equatable, Sendable {
+    /// The server's row already IS this write (a lost acknowledgement), so the
+    /// recovery must send nothing and confirm the local row from the server's.
+    case alreadyApplied(serverRow: HealthMetric)
+    /// The queued payload must NOT be sent: the server's row for the date is
+    /// newer (or the date is historical and already immutable). The local row
+    /// is confirmed from the server's row — the user's fresher data wins and
+    /// the stale queued score is never written.
+    case superseded(serverRow: HealthMetric)
+    /// The re-derived write the recovery must send, under the CURRENT write
+    /// policy (today's date, the server's live row, the intent's own trigger).
+    case send(payload: HealthMetric, operation: HealthMetricWriteOperation)
+}
+
+/// The replay decisions for a health-metric write (#919). Pure: every input is
+/// passed in, so the rules are unit-testable without a server — and the tests
+/// that matter run them against a REAL `AppModel` (see
+/// `HealthWriteRecoveryAppTests`).
+public enum HealthWriteReplayPolicy {
+    /// Resolves one interrupted health write against the server's CURRENT row.
+    ///
+    /// Every clause reads the server's own answer:
+    ///
+    /// * no row for the date — the write never landed, so it is sent (today
+    ///   through the #802 precedence RPC, a past date through the atomic
+    ///   insert-if-missing that cannot rewrite an existing immutable row);
+    /// * a row that already carries the payload's own fields — the
+    ///   acknowledgement was lost, so nothing is sent;
+    /// * a PAST date that already has a row — historical rows are immutable,
+    ///   so the queued payload can never land and must not rewrite it;
+    /// * a row whose score is newer than the queued payload's — the queued
+    ///   score is stale and must never overwrite fresh data;
+    /// * otherwise the write is re-derived exactly as a live pass would: the
+    ///   #109 readiness-freeze decision is re-run against the server's LIVE row
+    ///   with the intent's own trigger, and the #802 precedence/`ReadinessSync`
+    ///   split decides what (if anything) is still missing.
+    ///
+    /// `timeZone` is the caller's local calendar: "today" — the one date whose
+    /// row may still be merged — is derived from it, never from the queued
+    /// date, so an intent authored yesterday becomes a historical
+    /// insert-if-missing after midnight instead of a blind merge.
+    public static func decide(
+        intent: HealthWriteIntent,
+        serverRow: HealthMetric?,
+        now: Date,
+        timeZone: TimeZone = .current
+    ) -> HealthWriteReplayDecision {
+        let calendar = LocalDateSupport.calendar(timeZone: timeZone)
+        let today = LocalDateSupport.string(from: now, timeZone: timeZone)
+        let operation = HealthMetricWritePolicy.operation(
+            for: intent.date,
+            today: today
+        )
+        guard let serverRow else {
+            return .send(payload: intent.payload, operation: operation)
+        }
+        if intent.isSatisfied(by: serverRow) {
+            return .alreadyApplied(serverRow: serverRow)
+        }
+        // Historical rows are immutable after they exist: an interrupted past
+        // write can only ever be an insert, and one is already there.
+        if operation == .historicalInsert {
+            return .superseded(serverRow: serverRow)
+        }
+        if intent.isSupersededByNewerScore(of: serverRow) {
+            return .superseded(serverRow: serverRow)
+        }
+        let allowReadinessOverwrite = ReadinessWritePolicy.shouldOverwriteReadiness(
+            existingReadiness: serverRow.readiness,
+            existingRowDate: serverRow.date,
+            now: now,
+            trigger: intent.trigger.syncTrigger,
+            calendar: calendar
+        )
+        let plan = ReadinessSyncPolicy.plan(
+            existingToday: serverRow,
+            freshlyComputed: intent.payload,
+            allowReadinessOverwrite: allowReadinessOverwrite
+        )
+        if HealthWriteIntent.isPayload(plan.upsertMetric, satisfiedBy: serverRow) {
+            return .alreadyApplied(serverRow: serverRow)
+        }
+        return .send(payload: plan.upsertMetric, operation: operation)
+    }
+}
+
+/// A health write whose replay could not be confirmed by the server's own
+/// answer.
+///
+/// Only thrown after the write ran and the authoritative read-back still does
+/// not serve a row for the date. Classified `retryable`: the next attempt
+/// re-reads the server state, and a state that can never converge reaches the
+/// bounded quarantine — visible, retryable, never silently cleared.
+public enum HealthWriteReplayError: Error, Equatable, Sendable {
+    case unconfirmedWrite
+}
+
+extension HealthWriteReplayError: ServerRejectionClassifying {
     public var rejectionClass: RejectionClass { .retryable }
 }
