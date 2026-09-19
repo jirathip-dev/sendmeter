@@ -32,81 +32,42 @@ struct HistoryView: View {
 
     // MARK: Derived data
 
-    private var recordingsByGroup: [UUID: [TindeqRecording]] {
-        var result: [UUID: [TindeqRecording]] = [:]
-        for recording in model.recordings {
-            guard let groupID = recording.groupID else { continue }
-            result[groupID, default: []].append(recording)
-        }
-        return result
-    }
+    /// #924: one whole-history snapshot per input revision. The group map,
+    /// the filter options and the filtered projections are built once inside
+    /// `HistoryDerivedData` and reused by the predicates and rows — no
+    /// whole-history scan runs inside a per-item loop any more, and growing
+    /// the visible page re-reads the same snapshot instead of rebuilding it.
+    @State private var derivedCache = HistoryDerivedDataCache()
 
-    private var looseRecordings: [TindeqRecording] {
-        HistoryTimeline.looseRecordings(model.recordings, in: model.sessions)
-    }
-
-    private var filterOptions: HistoryFilterOptions {
-        HistoryFilters.options(
+    private var derived: HistoryDerivedData {
+        derivedCache.data(
             sessions: model.sessions,
-            looseRecordings: looseRecordings,
-            groupedRecordings: model.recordings.filter { $0.groupID != nil },
+            recordings: model.recordings,
+            hiddenTagNames: model.hiddenTagNames,
+            query: query,
             selectedType: selectedType,
-            selectedTag: selectedTag,
-            hiddenTagNames: model.hiddenTagNames
+            selectedTag: selectedTag
         )
     }
 
-    private var queryFilteredSessions: [SendmeterCore.Session] {
-        guard !query.isEmpty else { return model.sessions }
-        return model.sessions.filter {
-            $0.typeLabel.localizedCaseInsensitiveContains(query)
-                || $0.note.localizedCaseInsensitiveContains(query)
-                || $0.date.localizedCaseInsensitiveContains(query)
-        }
-    }
+    private var recordingsByGroup: [UUID: [TindeqRecording]] { derived.recordingsByGroup }
 
-    private var queryFilteredRecordings: [TindeqRecording] {
-        // #647 (SL-92): hiding a tag removes its chip, not its timeline rows.
-        return HistoryFilters.recordingsMatchingQuery(model.recordings, query: query)
-    }
+    private var filterOptions: HistoryFilterOptions { derived.options }
 
-    private var filteredSessions: [SendmeterCore.Session] {
-        queryFilteredSessions.filter { session in
-            HistoryFilters.sessionMatches(
-                session,
-                groupRecordings: session.groupID.flatMap { recordingsByGroup[$0] } ?? [],
-                type: filterOptions.activeType,
-                tag: filterOptions.activeTag
-            )
-        }
-    }
+    private var filteredSessions: [SendmeterCore.Session] { derived.filteredSessions }
 
-    private var filteredLooseRecordings: [TindeqRecording] {
-        HistoryTimeline.looseRecordings(queryFilteredRecordings, in: model.sessions).filter {
-            HistoryFilters.looseRecordingMatches($0, type: filterOptions.activeType, tag: filterOptions.activeTag)
-        }
-    }
+    private var filteredLooseRecordings: [TindeqRecording] { derived.filteredLooseRecordings }
 
     /// Force mode shows every recording (grouped + loose), filtered.
-    private var filteredForceRecordings: [TindeqRecording] {
-        queryFilteredRecordings.filter {
-            HistoryFilters.looseRecordingMatches($0, type: filterOptions.activeType, tag: filterOptions.activeTag)
-        }
-    }
+    private var filteredForceRecordings: [TindeqRecording] { derived.filteredForceRecordings }
 
-    private var timelineItems: [HistoryTimelineItem] {
-        HistoryTimeline.combinedItems(sessions: filteredSessions, recordings: filteredLooseRecordings)
-    }
+    private var timelineItems: [HistoryTimelineItem] { derived.timelineItems }
 
     private var remainingCount: Int { timelineItems.count - visibleCount }
 
-    private var tindeqSessions: [SendmeterCore.Session] {
-        model.sessions.filter { $0.type == "tindeq" && $0.groupID != nil && !$0.pending }
-    }
+    private var tindeqSessions: [SendmeterCore.Session] { derived.tindeqSessions }
 
-    private var sessionGroupIDs: Set<UUID> {
-        Set(model.sessions.compactMap(\.groupID))
-    }
+    private var sessionGroupIDs: Set<UUID> { derived.sessionGroupIDs }
 
     private var searchPrompt: String {
         switch mode {

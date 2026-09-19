@@ -78,6 +78,11 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Native Force charts are easier to read: the force duration curve's axis
+  numbers and the progress tiles' captions now follow your text size instead
+  of a tiny fixed size, and the curve thins its time labels on narrow screens
+  so they never crowd or collide.
+
 - Native error banners are now easier to dismiss and to hear: the close
   control is a full-size target with a spoken "Dismiss error" label, long
   failure messages stay fully readable at every text size (including the
@@ -223,6 +228,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Native guided routine labels and completion copy now remain readable across every phase color and translucent control surface.
 - Native Send Conditions now keeps the current score when climate history is temporarily unavailable, uses the same UTC history window as the web app, and avoids unnecessary weather requests for 30 minutes.
 - Native History now keeps recordings from hidden Force tags in the timeline while continuing to omit those tags from quick-filter chips.
+- Native Force: finishing a guided protocol no longer ends the gauge session — one finger-strength session now logs ONE Tindeq entry in History (with a note and RPE built from every recording in it) instead of one entry per protocol, and a further protocol or a free pull joins that same session. The DONE panel now shows the next step with an inline Done action that is visible without scrolling and returns you to the still-live session (the completion buzz fires once per protocol, not again when you reopen it), while ending the session stays the explicit Finish action on the Force tab.
 - iPhone: the readiness score now updates when the app opens and when you bring it back to the foreground, instead of only after a fresh install — newer Apple Health or Apple Watch data is picked up on open. The refresh is silent and shows a "Syncing" pill while in flight; if the sync fails, or Apple Health briefly returns no data (for example before the watch has written overnight values), your last score stays on screen instead of being blanked, and a pull-to-refresh still forces an update.
 - Force: an untagged free hold (no exercise picked, e.g. in hands-free) now saves the rep with no exercise stamped on it instead of silently filing it under an arbitrary exercise from your list — and the last exercise and side you picked are remembered, so the next free hold keeps your choice rather than leaving it empty.
 - Force: you can now start a free hold without picking an exercise first — the rep saves untagged instead of silently being filed under an arbitrary exercise from your list. The last exercise and side you picked are remembered, so an untagged free hold keeps your previous choice (a remembered side only applies to free holds, never to protocol reps, which keep their own per-hand side).

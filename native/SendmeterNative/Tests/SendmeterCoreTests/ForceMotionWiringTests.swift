@@ -127,6 +127,27 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertTrue(guidedSections.contains("controls(date: date)"))
     }
 
+    /// #940: completion is an explicit prompt with its own inline action, and
+    /// that action runs the SAME save/close path as the top-bar End
+    /// (`endSession`) — never a second finish mechanism, and never a bottom
+    /// inset the user has to scroll to. The cue is the success notification,
+    /// claimed once per run.
+    func testGuidedCompletionPanelCarriesTheInlineDoneAction() {
+        let force = code(source("Sources/Features/Force/ForceView.swift"))
+        let guidedView = exactType(force, startingWith: "private struct GuidedForceProtocolView: View")
+        let completionPanel = exactFunction(guidedView, startingWith: "private func completionPanel(")
+        let session = exactType(force, startingWith: "final class GuidedForceProtocolSession")
+        let completionHaptic = exactFunction(session, startingWith: "private func fireCompletionHapticIfNeeded()")
+
+        XCTAssertTrue(guidedView.contains("presentation.phase == .complete"))
+        XCTAssertTrue(completionPanel.contains("Text(presentation.detail)"))
+        XCTAssertTrue(completionPanel.contains("Button(\"Done\", action: endSession)"))
+        XCTAssertFalse(completionPanel.contains("formatCountdown"))
+        XCTAssertFalse(guidedView.contains(".safeAreaInset(edge: .bottom"))
+        XCTAssertTrue(completionHaptic.contains("guard !hasFiredCompletionHaptic else { return }"))
+        XCTAssertTrue(completionHaptic.contains("Haptics.shared.play(.success)"))
+    }
+
     // #899 AC2/decision 2: every guided rep starts from the pull — the
     // runner must never auto-start a work stage without load.
     func testGuidedRunnerWorkStagesAreAlwaysLoadTriggeredHandsFree() {

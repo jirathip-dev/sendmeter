@@ -413,6 +413,31 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
         XCTAssertFalse(presentation.detail.contains("Next"))
     }
 
+    /// #940: the completed run is an explicit next step, not a dead
+    /// countdown. The DONE panel's line is ONE shared string (so the banner
+    /// and the detail path cannot drift) and it names the inline action while
+    /// stating that the gauge session stays live (#941).
+    func testCompleteStageCarriesTheNextStepPrompt() {
+        let stage = ForceProtocolStage(
+            kind: .complete,
+            setNumber: 1,
+            repetitionNumber: 1,
+            side: .unspecified,
+            durationSeconds: 0,
+            label: "Complete"
+        )
+
+        let presentation = GuidedForceFullscreenPresentation.stage(stage, preset: preset(), elapsedSeconds: 0)
+
+        XCTAssertEqual(presentation.phase, .complete)
+        XCTAssertEqual(presentation.label, "DONE")
+        XCTAssertEqual(presentation.accent, .optimal)
+        XCTAssertEqual(presentation.detail, GuidedForceFullscreenPresentation.completionDetail)
+        XCTAssertEqual(presentation.detail, "Protocol complete · Done returns to your session")
+        XCTAssertFalse(presentation.detail.contains("00:00"))
+        XCTAssertTrue(presentation.detail.contains("Done"))
+    }
+
     /// #939: the presentation never re-derives the schedule — the rest's
     /// hand-off IS the run's next work stage. Prove that for every preset
     /// variant the app can build and every side selection, so a silent index or

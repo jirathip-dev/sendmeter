@@ -60,6 +60,7 @@ struct ForceProgressCard: View {
     let connectionPending: Bool
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var detail: Detail?
 
     private enum Detail: String, Identifiable {
@@ -93,6 +94,15 @@ struct ForceProgressCard: View {
                     Text("No saved pulls match this exercise and side. Record one above or choose another view.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                }
+            } else if dynamicTypeSize.isAccessibilitySize {
+                // #928: side by side, an accessibility-sized tile caption and
+                // value truncate to stubs on the smallest phone — at
+                // accessibility text sizes the two tiles read as one
+                // full-width column instead.
+                VStack(alignment: .leading, spacing: 10) {
+                    staticTile(staticProgress)
+                    movementTile(movementProgress)
                 }
             } else {
                 HStack(alignment: .top, spacing: 10) {
@@ -294,7 +304,9 @@ struct ForceProgressCard: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
             Text(label)
-                .font(.system(size: 9))
+                // #928: the shared Dynamic Type-aware chart label style — the
+                // tile captions used to be pinned at 9 pt.
+                .font(ChartAxisLabelRule.font)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .minimumScaleFactor(0.7)
