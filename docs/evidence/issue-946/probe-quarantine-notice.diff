@@ -1,0 +1,11 @@
+--- a/ios/App/SendLogWatchTests/QuarantineTrimNoticeTests.swift
++++ b/ios/App/SendLogWatchTests/QuarantineTrimNoticeTests.swift
+@@ -21,7 +21,7 @@
+         QuarantineTrimNotice.record()
+ 
+         XCTAssertTrue(QuarantineTrimNotice.consume())
+-        XCTAssertFalse(QuarantineTrimNotice.consume())
++        XCTAssertTrue(QuarantineTrimNotice.consume())
+     }
+ 
+     func testRepeatedReclaimsCoalesceIntoOneDurableNotice() {
