@@ -1,0 +1,35 @@
+# #918 evidence hashes (sha256)
+
+## source blobs at the green head (git hash-object)
+AppModel.swift 3ccab61c89b8a43cbe16eaa495404d4ad2972a6a
+DirectWriteReplay.swift a885abbc3f1bdb60a73258f2f4f25d828ba53c87
+TagMutationReplayAppTests.swift 733cd6b0d79370861a75db80b87759e0b0eda336
+TagMutationReplayTests.swift e530262345eb467c2e58cb05b85a9fb89e691f9f
+
+## evidence files
+d561780ba2637fcd4c0fd1edc2697df54d4c88eef983d618bace48473b8b9b92  docs/evidence/issue-918/app-class-green-13-tests.log.gz
+7cb898489e66abb141ba20b57da02ff1ac6fbcc9a60eeaf84d0ec4753d0f7ee5  docs/evidence/issue-918/app-focused-attempt2-runner-hang.log.gz
+422e5bd765b4559a901dc7cc93659baeb1c5abdfa25b2ece98df28b7427b02c4  docs/evidence/issue-918/app-full-attempt1-3-test-failures.log.gz
+4989a7d29c5a610ad7dad1a4822097b55f1a329ee4a54b754008b46c3bacd8b2  docs/evidence/issue-918/app-full-green-99-tests-ci-shape.log.gz
+32c84ce9283422f1f181190361e99d6db334230bc9deaa23bfb71ddb3f90d4da  docs/evidence/issue-918/core-force-tag-chips-6-tests.log.gz
+f8faec2f9d8a5ea78c2bf807eccbc132185773452b14bd5559a3869ff3bca1ab  docs/evidence/issue-918/core-history-derived-data-9-tests.log.gz
+b65b00a4bb9dd1598e95502b89b112163ace7c73f3784946c485898a00c5fb92  docs/evidence/issue-918/core-history-filters-14-tests.log.gz
+1c2449c3c02cc75ce9243d8e470cf4b6cc98aae1ec907510f45eec1c8bd11472  docs/evidence/issue-918/core-idle-hang-sample.txt.gz
+7f90a00bc5c515a4d79f465c319845838fbda77841d967d3cf531a21c9970652  docs/evidence/issue-918/core-just-core-attempt1-hang.log.gz
+39c07ee89c7b57585bafe8b63791b66590927f46a5665205582696939c1f70af  docs/evidence/issue-918/core-just-core-attempt2-hang.log.gz
+41b3f9beff07b4849baf4e41de4a0f9ed5aada98b55ce950868b41c9390163d2  docs/evidence/issue-918/core-just-fast-attempt1-hang.log.gz
+939a75e634742c64b68f868cb1c5c7caa106e1bc9b29f67206102b2e255f3b68  docs/evidence/issue-918/core-just-fast-attempt2-hang.log.gz
+7015594c6cca71820ebb4b98f31d1a00bbcab4e7016e0f1a03250a2b5df771ea  docs/evidence/issue-918/core-tag-catalog-12-tests.log.gz
+2f2da61a1be63fcb5600346539a743e5814e1f5a08706b097c3a55b3afa2411a  docs/evidence/issue-918/core-tag-mutation-replay-20-tests.log.gz
+669fcb5db4823f6c4bdfeb254e1a400cb82760396c6789cb9d18a4bd892f7f0d  docs/evidence/issue-918/health-core.log.gz
+1d0a31bb3d2988dc8365556401ceb7eb1f7cd3191ba07ee88eeb139f0c80b0f3  docs/evidence/issue-918/probe-abc-green-after-restore.log.gz
+95fd21cb4c5aa4b89a2ee11548d8591cb0ffcab89f3eb3a2f82edac73d444cba  docs/evidence/issue-918/probe-abc-red-10-failures.log.gz
+da3c2e417f90d16bbc12a16d7dbe5c8ad7d190a1e21f5fed1a9667a77d5c54b6  docs/evidence/issue-918/probe-abc-red-attempt1-runner-hang.log.gz
+04d35048ed0226a79fdc0d0d7f34d862e1d745eaa7bf20a7708339f6cfbec273  docs/evidence/issue-918/probe-abc-splice.diff
+0b873aca3177dca460e04f1b2d5b5827f93083f5522db9d53b8359b912dfab0d  docs/evidence/issue-918/probe-d-ordering-green-after-restore.log.gz
+ff3ad13572bf954c87a0079092529d0b6ed3935e9c9c0b572757bcf27d1df592  docs/evidence/issue-918/probe-d-ordering-red.log.gz
+fd28eec9dbeba76759f131c56f77ff89fb66ea00aa4eb4e197431f3ff111acbe  docs/evidence/issue-918/probe-d-ordering-splice.diff
+26e9826425733d756c08726ec1bca9343469c05b09b6eaf21eb82293938bf606  docs/evidence/issue-918/watch-core.log.gz
+606bba6fa2226c7cce054e2d0ed5c8b98219afb47f0702cae6976284476ad54a  docs/evidence/issue-918/just-list.log.gz
+7db5c3fdf8408fe7a246e2ce96cfe38c44ec68069983c2f3efc8c6090c78093c  docs/evidence/issue-918/build-ios-host-blocked.log.gz
+9444d672071630037dd7810827cb04e3b7248058fb0518bceac30e8d205edd43  docs/evidence/issue-918/slop.log.gz

@@ -52,6 +52,12 @@ private enum PendingWrite: Codable, Sendable {
     /// single intent. The settings row and the periods are written together,
     /// so they are persisted together too.
     case phaseTransition(PhaseTransitionIntent)
+    /// #918: one durable tag-registry mutation (rename / hide / unhide). A tag
+    /// is a name, so its queue identity is the stable hash of that name and the
+    /// queue holds at most ONE intent per tag: a newer mutation replaces the
+    /// pending one and keeps the identity it continues (see
+    /// `TagMutationReplayPolicy.replacing`).
+    case tagMutation(TagMutationIntent)
 }
 
 private extension PendingWrite {
@@ -73,6 +79,10 @@ private extension PendingWrite {
         switch self {
         case let .preset(intent): return UUID(uuidString: intent.entityID)
         case let .routine(intent): return UUID(uuidString: intent.entityID)
+        // A tag's registry identity IS its name, and the queue key is that
+        // name's stable hash, so a relaunch (or a newer mutation for the same
+        // tag) recovers the pending intent from the name alone.
+        case let .tagMutation(intent): return intent.queueIdentity
         case .phaseTransition: return PhaseTransitionIntent.queueItemID
         default: return nil
         }
@@ -160,6 +170,7 @@ private extension DurableQueueItem where Payload == PendingWrite {
         case .preset: return "Preset"
         case .routine: return "Routine"
         case .phaseTransition: return "Training block change"
+        case .tagMutation: return "Tag change"
         }
     }
 
@@ -589,6 +600,9 @@ public final class AppModel {
     /// #917 AC4: accounts whose pre-#917 phase/settings residue was already
     /// resolved (or proven free of residue) in this process.
     private var recoveredPhaseResidueAccounts: Set<UUID> = []
+    /// #918 AC5: accounts whose pre-#918 tag-registry residue was already
+    /// resolved (or proven free of residue) in this process.
+    private var recoveredTagResidueAccounts: Set<UUID> = []
     /// The session-RPE revision and delete tombstone live in one coordinator;
     /// this keeps every async response's decision tied to current, actor-free
     /// state on the main actor rather than to a stale task closure.
@@ -1146,64 +1160,50 @@ public final class AppModel {
         TagCatalog.visibleNames(tagEntries)
     }
 
+    /// Hide or unhide a tag (#918).
+    ///
+    /// The visibility change is persisted as a durable intent BEFORE the
+    /// optimistic registry row is published: a termination between the local
+    /// write and the server's answer then replays the same mutation instead of
+    /// leaving a cache-only pending row with no intent behind it. The intent
+    /// carries only `name` and `hidden` — the device-local side mode is not part
+    /// of it (see `setTagSideMode`), so nothing but the visibility flag can
+    /// reach `tindeq_tags` from here.
     public func setTagHidden(name: String, hidden: Bool) async {
         guard let userID = currentUserID else { return }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        let previous = tagMetadata.first { $0.name == name }
-        let optimistic = TagMetadata(name: name, hidden: hidden)
-        if let index = tagMetadata.firstIndex(where: { $0.name == name }) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let intent = TagMutationIntent(
+            knownNames: [trimmed],
+            hidden: hidden
+        )
+        guard let item = await enqueueDirectWrite(
+            .tagMutation(intent),
+            capturedBy: accountFetch,
+            startUpload: false
+        ) else { return }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        let optimistic = TagMetadata(name: trimmed, hidden: hidden)
+        if let index = tagMetadata.firstIndex(where: { $0.name == trimmed }) {
             tagMetadata[index] = optimistic
         } else {
             tagMetadata.append(optimistic)
         }
-        let optimisticRevision = cacheUpsertLocal(
+        cacheUpsertLocal(
             optimistic,
             accountUserID: userID,
             entityType: .tagMetadata,
             entityID: CacheEntityID.tagMetadata(optimistic)
         )
-        do {
-            try await repository.setTagHidden(name: name, hidden: hidden)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            cacheConfirmServerUpsert(
-                optimistic,
-                accountUserID: userID,
-                entityType: .tagMetadata,
-                entityID: CacheEntityID.tagMetadata(optimistic),
-                confirmingLocalRevision: optimisticRevision
-            )
-            toastMessage = hidden ? "Hid “\(name)”" : "Showing “\(name)”"
-        } catch {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            tagMetadata.removeAll { $0.name == name }
-            if let previous {
-                cacheConfirmServerUpsert(
-                    previous,
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: CacheEntityID.tagMetadata(previous),
-                    confirmingLocalRevision: optimisticRevision
-                )
-                tagMetadata.append(previous)
-            } else {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: CacheEntityID.tagMetadata(optimistic),
-                    confirmingLocalRevision: optimisticRevision
-                )
-            }
-            surface(error)
-        }
+        toastMessage = hidden ? "Hid “\(trimmed)”" : "Showing “\(trimmed)”"
+        startQueueUpload(item, capturedBy: accountFetch)
     }
 
     /// The side-applicability mode for a tag. A tag with no stored mode (or an
@@ -1227,6 +1227,18 @@ public final class AppModel {
     /// Rename a tag EVERYWHERE — the DB repoints every recording carrying
     /// the old name; the recording list is refetched after (its tags are
     /// the source of truth for counts).
+    ///
+    /// #918: the rename is persisted as a durable intent BEFORE anything local
+    /// moves, and its two halves are settled together by the replay. A
+    /// termination between the optimistic repoint and the server's
+    /// acknowledgement therefore leaves a replayable rename instead of
+    /// recordings repointed in the cache with nothing to finish the job, and the
+    /// intent keeps the name it has to repoint FROM — a later rename of the new
+    /// name either replaces this intent (still pending) or replays after it.
+    ///
+    /// The device-local side mode moves with the tag locally and is never part
+    /// of the intent: `tindeq_tags` is only ever written with the visibility flag
+    /// (the DB function carries `side_mode` across a rename on its own).
     public func renameTag(oldName: String, newName: String) async {
         guard let userID = currentUserID else { return }
         let accountFetch = AccountScopedFetch(
@@ -1236,7 +1248,6 @@ public final class AppModel {
         let old = oldName.trimmingCharacters(in: .whitespacesAndNewlines)
         let next = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !old.isEmpty, !next.isEmpty else { return }
-        let previousRecordings = recordings
         let previousMetadata = tagMetadata
         let merged = tagEntries.contains { $0.name == next }
         let nextMetadata = previousMetadata.first { $0.name == next }
@@ -1248,36 +1259,47 @@ public final class AppModel {
             }
             return updated
         }
+        // The references this rename carries: every recording the user will see
+        // under the new name once the repoint lands. They are the evidence the
+        // replay proves the rename against before it confirms anything.
+        let repointedRecordings = optimisticRecordings.filter { $0.tag == next }
+        let intent = TagMutationIntent(
+            knownNames: [old],
+            renamedTo: next,
+            recordingIDs: repointedRecordings.map(\.id)
+        )
+        guard let item = await enqueueDirectWrite(
+            .tagMutation(intent),
+            capturedBy: accountFetch,
+            startUpload: false
+        ) else { return }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
         let optimisticMetadata = previousMetadata
             .filter { $0.name != old }
             .filter { $0.name != next } + [nextMetadata]
-        var recordingRevisions: [UUID: Int] = [:]
-        var metadataRevisions: [String: Int] = [:]
-        var oldMetadataDeleteRevision: Int?
         recordings = optimisticRecordings
         tagMetadata = optimisticMetadata
-        for recording in optimisticRecordings where recording.tag == next {
-            if let revision = cacheUpsertLocal(
+        for recording in repointedRecordings {
+            cacheUpsertLocal(
                 recording,
                 accountUserID: userID,
                 entityType: .recordings,
                 entityID: CacheEntityID.recording(recording)
-            ) {
-                recordingRevisions[recording.id] = revision
-            }
+            )
         }
         for metadata in optimisticMetadata {
-            if let revision = cacheUpsertLocal(
+            cacheUpsertLocal(
                 metadata,
                 accountUserID: userID,
                 entityType: .tagMetadata,
                 entityID: CacheEntityID.tagMetadata(metadata)
-            ) {
-                metadataRevisions[metadata.name] = revision
-            }
+            )
         }
         if old != next {
-            oldMetadataDeleteRevision = cacheMarkDeletedLocal(
+            cacheMarkDeletedLocal(
                 accountUserID: userID,
                 entityType: .tagMetadata,
                 entityID: old
@@ -1292,121 +1314,10 @@ public final class AppModel {
             tagSideModes.removeValue(forKey: old)
             TagSideModeStore.remove(for: old)
         }
-        do {
-            try await repository.renameTag(oldName: old, newName: next)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            // The server is authoritative, but confirming the optimistic copy
-            // first lets the follow-up refresh adopt the returned state even if
-            // the network drops before that fetch completes.
-            for recording in optimisticRecordings where recording.tag == next {
-                cacheConfirmServerUpsert(
-                    recording,
-                    accountUserID: userID,
-                    entityType: .recordings,
-                    entityID: CacheEntityID.recording(recording),
-                    confirmingLocalRevision: recordingRevisions[recording.id]
-                )
-            }
-            for metadata in optimisticMetadata {
-                let revision = metadataRevisions[metadata.name]
-                cacheConfirmServerUpsert(
-                    metadata,
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: CacheEntityID.tagMetadata(metadata),
-                    confirmingLocalRevision: revision
-                )
-            }
-            if old != next {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: old,
-                    confirmingLocalRevision: oldMetadataDeleteRevision
-                )
-            }
-            // The rename RPC hard-deletes the stale registry row and does not
-            // create the new one unless it already existed. Deltas cannot
-            // observe that, so force a full tag reconcile before refreshing.
-            if let cachedWorkspace {
-                do {
-                    try cachedWorkspace.resetCursor(
-                        accountUserID: userID,
-                        entityType: .tagMetadata
-                    )
-                } catch {
-                    recordCacheFailure("cache cursor reset", error)
-                }
-            }
-            await refreshAllSilently()
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            toastMessage = merged
-                ? "Merged into “\(next)”"
-                : "Renamed to “\(next)”"
-        } catch {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            recordings = previousRecordings
-            tagMetadata = previousMetadata
-            for recording in previousRecordings where recordingRevisions[recording.id] != nil {
-                cacheConfirmServerUpsert(
-                    recording,
-                    accountUserID: userID,
-                    entityType: .recordings,
-                    entityID: CacheEntityID.recording(recording),
-                    confirmingLocalRevision: recordingRevisions[recording.id]
-                )
-            }
-            for metadata in previousMetadata where metadataRevisions[metadata.name] != nil {
-                cacheConfirmServerUpsert(
-                    metadata,
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: CacheEntityID.tagMetadata(metadata),
-                    confirmingLocalRevision: metadataRevisions[metadata.name]
-                )
-            }
-            if let oldMetadataDeleteRevision {
-                if let oldMetadata = previousMetadata.first(where: { $0.name == old }) {
-                    cacheConfirmServerUpsert(
-                        oldMetadata,
-                        accountUserID: userID,
-                        entityType: .tagMetadata,
-                        entityID: CacheEntityID.tagMetadata(oldMetadata),
-                        confirmingLocalRevision: oldMetadataDeleteRevision
-                    )
-                } else {
-                    cacheConfirmServerDelete(
-                        accountUserID: userID,
-                        entityType: .tagMetadata,
-                        entityID: old,
-                        confirmingLocalRevision: oldMetadataDeleteRevision
-                    )
-                }
-            }
-            if !previousMetadata.contains(where: { $0.name == next }),
-               let newMetadataRevision = metadataRevisions[next] {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: next,
-                    confirmingLocalRevision: newMetadataRevision
-                )
-            }
-            if let mode = previousSideMode {
-                tagSideModes[old] = mode
-                TagSideModeStore.store(mode, for: old)
-            }
-            surface(error)
-        }
+        toastMessage = merged
+            ? "Merged into “\(next)”"
+            : "Renamed to “\(next)”"
+        startQueueUpload(item, capturedBy: accountFetch)
     }
 
     // MARK: Auth
@@ -2481,6 +2392,21 @@ public final class AppModel {
             // id). The revisions are therefore read from the account cache
             // itself at capture time — see `cacheConfirmationRevisions`.
             return []
+        case let .tagMutation(intent):
+            // The tag NAME is the registry row's cache identity (both the name
+            // a rename retires and the one it leaves behind), and the repointed
+            // recordings carry their own ids. Capturing all of them before the
+            // first network await is what keeps an older acknowledgement from
+            // clearing a newer local revision of any of them.
+            var names = [intent.finalName]
+            names.append(contentsOf: intent.knownNames.sorted())
+            var targets = names.map {
+                CacheEntityIdentity(entityType: .tagMetadata, entityID: $0)
+            }
+            targets.append(contentsOf: intent.recordingIDs.map {
+                CacheEntityIdentity(entityType: .recordings, entityID: $0.uuidString)
+            })
+            return targets
         }
     }
 
@@ -6872,6 +6798,16 @@ public final class AppModel {
                   to: currentUserID,
                   accountEpoch: accountEpoch
               ) else { return }
+        // #918 AC5: tag-registry residue (pending cache-only rows with no
+        // intent) is resolved the same way — by the server's own answer only.
+        guard await recoverLegacyTagResidues(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return }
         let due = await queue.items(
             for: userID,
             dueAt: mode.revalidationDueAt(now: Date())
@@ -7852,16 +7788,28 @@ public final class AppModel {
         startUpload: Bool
     ) async -> DurableQueueItem<PendingWrite>? {
         guard let queue,
-              let entityID = payload.directWriteEntityID else { return nil }
+              let incomingEntityID = payload.directWriteEntityID else { return nil }
         for _ in 0..<3 {
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return nil }
-            let existing = await queue.item(
-                id: entityID,
-                accountUserID: accountFetch.accountUserID
-            )
+            // #918: a tag's pending intent is resolved by the NAME the mutation
+            // is authored against — its own, or the one a still-pending rename
+            // moved the tag to — because that is the identity the newer mutation
+            // has to replace. Every other payload is keyed by its own identity.
+            let existing: DurableQueueItem<PendingWrite>?
+            if case let .tagMutation(intent) = payload {
+                existing = await pendingTagMutation(
+                    named: intent.tagName,
+                    accountUserID: accountFetch.accountUserID
+                )
+            } else {
+                existing = await queue.item(
+                    id: incomingEntityID,
+                    accountUserID: accountFetch.accountUserID
+                )
+            }
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
@@ -7874,6 +7822,22 @@ public final class AppModel {
                 // pending one wholesale — there is no create/update/delete
                 // vocabulary to coalesce.
                 queuedPayload = payload
+            } else if case let .tagMutation(incoming) = payload {
+                // #918: the pending tag intent keeps the names it may still have
+                // to repoint from and the rename it carries; the newest mutation
+                // contributes its own name and its visibility. The composed
+                // intent keeps the ORIGIN name's queue identity, so it replaces
+                // the pending item instead of racing it.
+                if case let .tagMutation(pending)? = existing?.payload {
+                    queuedPayload = .tagMutation(
+                        TagMutationReplayPolicy.replacing(
+                            pending: pending,
+                            incoming: incoming
+                        )
+                    )
+                } else {
+                    queuedPayload = payload
+                }
             } else {
                 guard let incoming = payload.directWriteOperation else { return nil }
                 let operation: DirectWriteOperation
@@ -7896,6 +7860,7 @@ public final class AppModel {
                 }
                 queuedPayload = relabeled
             }
+            guard let entityID = queuedPayload.directWriteEntityID else { return nil }
             let item = DurableQueueItem(
                 id: entityID,
                 accountUserID: accountFetch.accountUserID,
@@ -7940,6 +7905,35 @@ public final class AppModel {
         }
         surfaceDirectWriteNotPersisted()
         return nil
+    }
+
+    /// The still-pending tag intent a newer mutation for `name` has to replace:
+    /// the intent authored against that name, or the one a still-pending rename
+    /// moved the tag to (#918). The queue holds at most ONE intent per tag, so
+    /// this is the only lookup the tag write path needs.
+    private func pendingTagMutation(
+        named name: String,
+        accountUserID: UUID
+    ) async -> DurableQueueItem<PendingWrite>? {
+        guard let queue else { return nil }
+        let queued = await queue.items(for: accountUserID, includeQuarantined: true)
+        return queued.first { item in
+            guard case let .tagMutation(intent) = item.payload else { return false }
+            // The user's next mutation is authored against the name the tag has
+            // LOCALLY — which is a still-pending rename's target until it lands.
+            return intent.tagName == name || intent.renamedTo == name
+        }
+    }
+
+    /// The tag names with a durable intent in the queue — any state, including
+    /// quarantined, because a quarantined intent is still the user's own unsynced
+    /// data and the residue sweep must not resolve the row it owns (#918).
+    private func queueItemsTagNames(userID: UUID) async -> [String] {
+        guard let queue else { return [] }
+        return await queue.items(for: userID, includeQuarantined: true).compactMap { item in
+            guard case let .tagMutation(intent) = item.payload else { return nil }
+            return intent.tagName
+        }
     }
 
     /// The user-facing failure for a write that could not become durable. The
@@ -8267,6 +8261,100 @@ public final class AppModel {
         return true
     }
 
+    /// #918 AC5: resolves the pre-#918 tag residue — pending cache-only
+    /// `.tagMetadata` rows left by an interrupted older build, with no replay
+    /// intent behind them.
+    ///
+    /// A registry row is `name` + `hidden` and nothing else, so a rename can
+    /// never be reconstructed from one and nothing is invented here. Only the
+    /// server's own answer resolves a row:
+    ///
+    /// * a live pending row the server already serves with the same flag IS the
+    ///   write, so it is confirmed;
+    /// * a pending tombstone whose name the server no longer serves is a removal
+    ///   that already took effect (that is exactly what a rename leaves behind).
+    ///
+    /// Everything else stays where it is and keeps counting as unsynced — the
+    /// Settings surface shows it and the user's next action on that tag (a new
+    /// hide/rename intent) is what resolves it. Nothing is dropped on a guess.
+    private func recoverLegacyTagResidues(
+        userID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> Bool {
+        guard queue != nil, let workspace = cachedWorkspace else { return true }
+        guard !recoveredTagResidueAccounts.contains(userID) else { return true }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        let pendingIDs = (try? workspace.pendingEntityIDs(
+            accountUserID: userID,
+            entityType: .tagMetadata,
+            includingDeleted: true
+        )) ?? []
+        guard !pendingIDs.isEmpty else {
+            recoveredTagResidueAccounts.insert(userID)
+            return true
+        }
+        let queuedNames = Set(await queueItemsTagNames(userID: userID))
+        let residueIDs = pendingIDs.filter { !queuedNames.contains($0) }
+        guard !residueIDs.isEmpty else {
+            recoveredTagResidueAccounts.insert(userID)
+            return true
+        }
+        let serverTags: [TagMetadata]
+        do {
+            serverTags = try await repository.fetchTagMetadata()
+        } catch {
+            // A failed authoritative read defers the whole sweep rather than
+            // resolving anything on a guess.
+            return false
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        for entityID in residueIDs {
+            guard let revision = try? workspace.localRevision(
+                accountUserID: userID,
+                entityType: .tagMetadata,
+                entityID: entityID
+            ) else { continue }
+            if let local = try? workspace.store.loadOne(
+                TagMetadata.self,
+                accountUserID: userID,
+                entityType: .tagMetadata,
+                entityID: entityID
+            ) {
+                guard serverTags.contains(where: {
+                    $0.name == local.name && $0.hidden == local.hidden
+                }) else { continue }
+                cacheConfirmServerUpsert(
+                    local,
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    entityID: entityID,
+                    confirmingLocalRevision: revision
+                )
+            } else {
+                guard !serverTags.contains(where: { $0.name == entityID }) else { continue }
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    entityID: entityID,
+                    confirmingLocalRevision: revision
+                )
+            }
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        recoveredTagResidueAccounts.insert(userID)
+        refreshPendingCacheWriteCount(accountUserID: userID)
+        return true
+    }
+
     // MARK: Phase transition replay (#917)
 
     /// The authoritative state one replayed phase transition ended in.
@@ -8499,6 +8587,211 @@ public final class AppModel {
             isNewest = false
         }
         return isNewest
+    }
+
+    // MARK: Tag registry replay (#918)
+
+    /// The authoritative state one replayed tag mutation ended in.
+    private struct TagMutationOutcome {
+        let tags: [TagMetadata]
+        let recordings: [TindeqRecording]
+    }
+
+    /// Replays one durable tag-registry mutation against the server (#918).
+    ///
+    /// The mutation's two halves are the recording repoint and the registry row,
+    /// and this is the single place they are settled together:
+    ///
+    /// * the server's own state is read first. When it already shows the
+    ///   intended end state — a rename whose acknowledgement was lost, a
+    ///   visibility flag that landed, a rename that was a no-op — nothing is
+    ///   re-sent.
+    /// * otherwise the rename is re-anchored on whichever name the server still
+    ///   serves (the older name while the rename has not run, a newer one when
+    ///   an earlier arrow of a chained rename already landed), and the
+    ///   visibility upsert is applied last. That upsert carries `name` and
+    ///   `hidden` and nothing else: the device-local side mode is never uploaded
+    ///   and no other setting is read or written here.
+    /// * the result has to show the intended end state before the mutation is
+    ///   allowed to confirm — a rename that would leave one of the user's
+    ///   recording references behind keeps its durable intent (and stays
+    ///   retryable) instead of being reported as done.
+    private func applyTagMutationIntent(
+        _ intent: TagMutationIntent
+    ) async throws -> TagMutationOutcome {
+        // A visibility-only mutation never looks at the recordings: the upsert
+        // carries `name` + `hidden` and nothing else.
+        let needsRecordings = intent.renamedTo != nil || !intent.recordingIDs.isEmpty
+        var tags = try await repository.fetchTagMetadata()
+        var recordings = needsRecordings ? try await repository.fetchRecordings() : []
+        if TagMutationReplayPolicy.isApplied(
+            intent: intent,
+            serverTags: tags,
+            serverRecordings: recordings
+        ) {
+            return TagMutationOutcome(tags: tags, recordings: recordings)
+        }
+        if let finalName = intent.renamedTo,
+           let source = TagMutationReplayPolicy.repointSource(
+               intent: intent,
+               serverTags: tags,
+               serverRecordings: recordings
+           ),
+           source != finalName {
+            try await repository.renameTag(oldName: source, newName: finalName)
+            tags = try await repository.fetchTagMetadata()
+            recordings = try await repository.fetchRecordings()
+        }
+        if let hidden = intent.hidden {
+            try await repository.setTagHidden(name: intent.finalName, hidden: hidden)
+            tags = try await repository.fetchTagMetadata()
+        }
+        guard TagMutationReplayPolicy.isComplete(
+            intent: intent,
+            serverTags: tags,
+            serverRecordings: recordings
+        ) else {
+            throw TagMutationReplayError.incompleteTagMutation
+        }
+        return TagMutationOutcome(tags: tags, recordings: recordings)
+    }
+
+    /// Settles one completed tag mutation into the account cache and the
+    /// published tag/recording state — the registry analogue of
+    /// `confirmDirectWriteSaved`.
+    ///
+    /// Every row is revision-fenced against the snapshot taken before the first
+    /// network await: a newer mutation that bumped a row while this (older)
+    /// request was in flight owns that row, so this acknowledgement may neither
+    /// clear it nor publish its own older values over it. Two rules keep the
+    /// registry exact: every name the mutation retires is confirmed-removed
+    /// locally, and a final name the server does not serve gets NO local row —
+    /// the optimistic row was a guess (a rename only carries a registry row
+    /// across when the old name had one) and leaving it pending would count as
+    /// unsynced for ever.
+    ///
+    /// - Returns: whether this acknowledgement is still the newest local state
+    ///   for the tag.
+    @discardableResult
+    private func settleTagMutation(
+        _ outcome: TagMutationOutcome,
+        intent: TagMutationIntent,
+        accountUserID: UUID,
+        cacheRevisions: [CacheEntityIdentity: Int]
+    ) -> Bool {
+        guard let workspace = cachedWorkspace else { return true }
+        var isNewest = true
+        for name in intent.retiredNames.sorted() {
+            guard let captured = cacheConfirmationRevision(
+                cacheRevisions,
+                entityType: .tagMetadata,
+                entityID: name
+            ) else { continue }
+            let current = try? workspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: .tagMetadata,
+                entityID: name
+            )
+            guard captured == current else {
+                // A newer local mutation owns this name.
+                isNewest = false
+                continue
+            }
+            cacheConfirmServerDelete(
+                accountUserID: accountUserID,
+                entityType: .tagMetadata,
+                entityID: name,
+                confirmingLocalRevision: captured
+            )
+            tagMetadata.removeAll { $0.name == name }
+        }
+        let finalName = intent.finalName
+        if let capturedFinal = cacheConfirmationRevision(
+            cacheRevisions,
+            entityType: .tagMetadata,
+            entityID: finalName
+        ) {
+            let currentFinal = try? workspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: .tagMetadata,
+                entityID: finalName
+            )
+            if capturedFinal == currentFinal {
+                if let row = outcome.tags.first(where: { $0.name == finalName }) {
+                    cacheConfirmServerUpsert(
+                        row,
+                        accountUserID: accountUserID,
+                        entityType: .tagMetadata,
+                        entityID: finalName,
+                        confirmingLocalRevision: capturedFinal
+                    )
+                    publishTagMetadata(row)
+                } else {
+                    cacheConfirmServerDelete(
+                        accountUserID: accountUserID,
+                        entityType: .tagMetadata,
+                        entityID: finalName,
+                        confirmingLocalRevision: capturedFinal
+                    )
+                    tagMetadata.removeAll { $0.name == finalName }
+                }
+            } else {
+                isNewest = false
+            }
+        }
+        for recording in outcome.recordings where intent.recordingIDs.contains(recording.id) {
+            let entityID = recording.id.uuidString
+            guard let captured = cacheConfirmationRevision(
+                cacheRevisions,
+                entityType: .recordings,
+                entityID: entityID
+            ) else { continue }
+            let current = try? workspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: .recordings,
+                entityID: entityID
+            )
+            guard captured == current else {
+                isNewest = false
+                continue
+            }
+            cacheConfirmServerUpsert(
+                recording,
+                accountUserID: accountUserID,
+                entityType: .recordings,
+                entityID: entityID,
+                confirmingLocalRevision: captured
+            )
+            if let index = recordings.firstIndex(where: { $0.id == recording.id }),
+               recordings[index].tag != recording.tag {
+                recordings[index].tag = recording.tag
+            }
+        }
+        if intent.renamedTo != nil {
+            // The rename RPC hard-deletes the stale registry row (and only
+            // creates the new one when the old name had one). Deltas cannot
+            // observe either, so the tag cursor is reset and the next reconcile
+            // re-reads the whole registry.
+            do {
+                try workspace.resetCursor(
+                    accountUserID: accountUserID,
+                    entityType: .tagMetadata
+                )
+            } catch {
+                recordCacheFailure("cache cursor reset", error)
+            }
+        }
+        return isNewest
+    }
+
+    /// Publishes one registry row into the account's tag list, replacing the
+    /// row for the same name (the name IS the identity).
+    private func publishTagMetadata(_ row: TagMetadata) {
+        if let index = tagMetadata.firstIndex(where: { $0.name == row.name }) {
+            tagMetadata[index] = row
+        } else {
+            tagMetadata.append(row)
+        }
     }
 
     @discardableResult
@@ -9336,6 +9629,25 @@ public final class AppModel {
                     publishReadinessWidgetSnapshot()
                     toastMessage = "Training Block changed to \(PhaseCatalog.definition(for: intent.targetPhase).name)."
                 }
+                refreshPendingCacheWriteCount(accountUserID: item.accountUserID)
+            case let .tagMutation(intent):
+                // The rename/hide reports itself locally (the tag list and its
+                // toast); the queue's generic "Saved" toast would be a second,
+                // duplicate confirmation.
+                suppressSavedToast = true
+                let outcome = try await applyTagMutationIntent(intent)
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                settleTagMutation(
+                    outcome,
+                    intent: intent,
+                    accountUserID: item.accountUserID,
+                    cacheRevisions: cacheRevisions
+                )
                 refreshPendingCacheWriteCount(accountUserID: item.accountUserID)
             }
             if let sessionReceipt, routineUndo.isClaimed(sessionReceipt) {
@@ -10738,12 +11050,12 @@ public final class AppModel {
                         )
                     )
                 }
-            case .preset, .routine, .phaseTransition:
-                // #916/#917: a preset, routine or phase transition keeps its
-                // optimistic state in its own account-scoped cache row (which
-                // this restore pass reads separately), so there is no in-memory
-                // overlay to rebuild from the queue payload. The durable intent
-                // only drives the replay.
+            case .preset, .routine, .phaseTransition, .tagMutation:
+                // #916/#917/#918: a preset, routine, phase transition or tag
+                // mutation keeps its optimistic state in its own account-scoped
+                // cache row (which this restore pass reads separately), so there
+                // is no in-memory overlay to rebuild from the queue payload. The
+                // durable intent only drives the replay.
                 continue
             }
         }

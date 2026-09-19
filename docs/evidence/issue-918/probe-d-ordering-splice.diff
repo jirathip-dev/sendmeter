@@ -1,0 +1,29 @@
+--- /tmp/impl918-AppModel.green.swift	2026-09-19 15:12:54
++++ native/SendmeterNative/Sources/App/AppModel.swift	2026-09-19 15:34:59
+@@ -7828,16 +7828,7 @@
+                 // contributes its own name and its visibility. The composed
+                 // intent keeps the ORIGIN name's queue identity, so it replaces
+                 // the pending item instead of racing it.
+-                if case let .tagMutation(pending)? = existing?.payload {
+-                    queuedPayload = .tagMutation(
+-                        TagMutationReplayPolicy.replacing(
+-                            pending: pending,
+-                            incoming: incoming
+-                        )
+-                    )
+-                } else {
+-                    queuedPayload = payload
+-                }
++                queuedPayload = payload
+             } else {
+                 guard let incoming = payload.directWriteOperation else { return nil }
+                 let operation: DirectWriteOperation
+@@ -7921,7 +7912,7 @@
+             guard case let .tagMutation(intent) = item.payload else { return false }
+             // The user's next mutation is authored against the name the tag has
+             // LOCALLY — which is a still-pending rename's target until it lands.
+-            return intent.tagName == name || intent.renamedTo == name
++            return intent.tagName == name
+         }
+     }
+ 
