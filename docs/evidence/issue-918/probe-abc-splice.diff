@@ -1,0 +1,94 @@
+--- /tmp/impl918-AppModel.green.swift	2026-09-19 15:12:54
++++ native/SendmeterNative/Sources/App/AppModel.swift	2026-09-19 15:12:54
+@@ -1305,15 +1305,6 @@
+                 entityID: old
+             )
+         }
+-        let previousSideMode = tagSideModes[old]
+-        if let mode = previousSideMode, old != next {
+-            if tagSideModes[next] == nil {
+-                tagSideModes[next] = mode
+-                TagSideModeStore.store(mode, for: next)
+-            }
+-            tagSideModes.removeValue(forKey: old)
+-            TagSideModeStore.remove(for: old)
+-        }
+         toastMessage = merged
+             ? "Merged into “\(next)”"
+             : "Renamed to “\(next)”"
+@@ -8646,13 +8637,6 @@
+             try await repository.setTagHidden(name: intent.finalName, hidden: hidden)
+             tags = try await repository.fetchTagMetadata()
+         }
+-        guard TagMutationReplayPolicy.isComplete(
+-            intent: intent,
+-            serverTags: tags,
+-            serverRecordings: recordings
+-        ) else {
+-            throw TagMutationReplayError.incompleteTagMutation
+-        }
+         return TagMutationOutcome(tags: tags, recordings: recordings)
+     }
+ 
+@@ -8692,16 +8676,11 @@
+                 entityType: .tagMetadata,
+                 entityID: name
+             )
+-            guard captured == current else {
+-                // A newer local mutation owns this name.
+-                isNewest = false
+-                continue
+-            }
+             cacheConfirmServerDelete(
+                 accountUserID: accountUserID,
+                 entityType: .tagMetadata,
+                 entityID: name,
+-                confirmingLocalRevision: captured
++                confirmingLocalRevision: current
+             )
+             tagMetadata.removeAll { $0.name == name }
+         }
+@@ -8716,14 +8695,14 @@
+                 entityType: .tagMetadata,
+                 entityID: finalName
+             )
+-            if capturedFinal == currentFinal {
++            if true {
+                 if let row = outcome.tags.first(where: { $0.name == finalName }) {
+                     cacheConfirmServerUpsert(
+                         row,
+                         accountUserID: accountUserID,
+                         entityType: .tagMetadata,
+                         entityID: finalName,
+-                        confirmingLocalRevision: capturedFinal
++                        confirmingLocalRevision: currentFinal
+                     )
+                     publishTagMetadata(row)
+                 } else {
+@@ -8731,7 +8710,7 @@
+                         accountUserID: accountUserID,
+                         entityType: .tagMetadata,
+                         entityID: finalName,
+-                        confirmingLocalRevision: capturedFinal
++                        confirmingLocalRevision: currentFinal
+                     )
+                     tagMetadata.removeAll { $0.name == finalName }
+                 }
+@@ -8751,16 +8730,12 @@
+                 entityType: .recordings,
+                 entityID: entityID
+             )
+-            guard captured == current else {
+-                isNewest = false
+-                continue
+-            }
+             cacheConfirmServerUpsert(
+                 recording,
+                 accountUserID: accountUserID,
+                 entityType: .recordings,
+                 entityID: entityID,
+-                confirmingLocalRevision: captured
++                confirmingLocalRevision: current
+             )
+             if let index = recordings.firstIndex(where: { $0.id == recording.id }),
+                recordings[index].tag != recording.tag {

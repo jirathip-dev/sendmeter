@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// #916: how one "direct write" entity is mutated on the server.
@@ -423,4 +424,257 @@ extension RoutinePreset: DirectWriteEntityValue {
             && steps.count == other.steps.count
             && zip(steps, other.steps).allSatisfy { $0.hasSameMutationContent(as: $1) }
     }
+}
+
+// MARK: - Tag registry (#918)
+
+/// #918: the queue identity of one tag name.
+///
+/// The tag registry's identity is the tag NAME — denormalized into
+/// `tindeq_recordings.tag` and used as `CacheEntityID.tagMetadata` — while the
+/// durable queue keys its items by `UUID`. The two have to map deterministically
+/// for the queue to hold ONE intent per tag: a relaunch (or a second mutation
+/// for the same tag) recovers the pending item from the name alone, and a rename
+/// that is still pending is replaced under the identity it continues instead of
+/// racing it.
+///
+/// The mapping is RFC 4122 §4.3 UUIDv5 over the trimmed name under this
+/// namespace, so it is stable for every process and every future build.
+public enum TagMutationIdentity {
+    // SAFETY: fixed canonical 32-hex UUID string; UUID(uuidString:) always
+    // parses it.
+    public static let namespace = UUID(uuidString: "91800000-0000-4000-8000-000000000918")!
+
+    private static let namespaceBytes: [UInt8] = {
+        var uuid = namespace.uuid
+        return withUnsafeBytes(of: &uuid) { Array($0) }
+    }()
+
+    public static func queueItemID(for tagName: String) -> UUID {
+        let trimmed = tagName.trimmingCharacters(in: .whitespacesAndNewlines)
+        var bytes = namespaceBytes
+        bytes.append(contentsOf: Array(trimmed.utf8))
+        var digest = Array(Insecure.SHA1.hash(data: Data(bytes)).prefix(16))
+        digest[6] = (digest[6] & 0x0F) | 0x50
+        digest[8] = (digest[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            digest[0], digest[1], digest[2], digest[3],
+            digest[4], digest[5], digest[6], digest[7],
+            digest[8], digest[9], digest[10], digest[11],
+            digest[12], digest[13], digest[14], digest[15]
+        ))
+    }
+}
+
+/// #918: the durable intent of one tag-registry mutation (rename / hide /
+/// unhide).
+///
+/// The registry row's identity is the tag NAME (`CacheEntityID.tagMetadata`),
+/// and a rename MOVES that identity: `rename_tindeq_tag` repoints every
+/// recording carrying the old name and drops the old row, and it only carries a
+/// registry row across when the old name had one. An intent that is still
+/// pending has to keep both halves of that move:
+///
+/// * every name its recordings may still be served under, so a replay repoints
+///   from the name the server actually has (a rename whose acknowledgement was
+///   lost leaves the recordings under the older name), and
+/// * the rename itself, so a later mutation authored against the moved name
+///   still repoints the recordings the user renamed in the first place.
+public struct TagMutationIntent: Codable, Sendable, Equatable {
+    /// The names this tag has been known by while this intent was pending,
+    /// oldest first. The last one is the name the user sees (and authors a
+    /// later mutation against).
+    public let knownNames: [String]
+    /// The name the tag must end up carrying, or `nil` for a visibility-only
+    /// mutation.
+    public let renamedTo: String?
+    /// The visibility the mutation intends. `false` is a real value (unhide);
+    /// `nil` means the mutation does not touch it.
+    public let hidden: Bool?
+    /// The recordings that carried the tag when the mutation was authored. The
+    /// replay proves the end state against them: a rename that would leave one
+    /// of the user's references behind is never confirmed — the intent stays
+    /// durable and retryable instead.
+    public let recordingIDs: [UUID]
+    /// Stable identity of THIS operation, independent of the queue item's
+    /// replacement revision. A replacement keeps the identity of the operation
+    /// that first persisted it, so a completed replay can never be confused
+    /// with a newer one.
+    public let operationID: UUID
+    public let intendedAt: Date
+
+    public init(
+        knownNames: [String],
+        renamedTo: String? = nil,
+        hidden: Bool? = nil,
+        recordingIDs: [UUID] = [],
+        operationID: UUID = UUID(),
+        intendedAt: Date = Date()
+    ) {
+        self.knownNames = knownNames
+        self.renamedTo = renamedTo
+        self.hidden = hidden
+        self.recordingIDs = recordingIDs
+        self.operationID = operationID
+        self.intendedAt = intendedAt
+    }
+
+    /// The name the tag currently carries — the one a user-facing mutation is
+    /// authored against, and the one the queue item is looked up by.
+    public var tagName: String { knownNames.last ?? "" }
+
+    /// The name the intent must leave the tag under.
+    public var finalName: String { renamedTo ?? tagName }
+
+    /// The name the tag started this intent's chain under. The queue identity is
+    /// derived from this name, so a chained rename replaces the still-pending
+    /// intent it continues rather than filing a second one.
+    public var originName: String { knownNames.first ?? "" }
+
+    /// The queue item identity this intent must be filed under.
+    public var queueIdentity: UUID { TagMutationIdentity.queueItemID(for: originName) }
+
+    /// The names this intent's rename retires (everything but the final name).
+    public var retiredNames: Set<String> {
+        guard renamedTo != nil else { return [] }
+        return Set(knownNames).subtracting([finalName])
+    }
+}
+
+/// The replay decisions for a tag mutation (#918). Pure: every input is passed
+/// in, so the rules are unit-testable without a server.
+public enum TagMutationReplayPolicy {
+    /// Whether the server's own state already IS the intended end state.
+    ///
+    /// This is the single guard that keeps a retry from either duplicating work
+    /// or claiming a mutation it did not perform. Every clause is read off the
+    /// server's answer, never off local state:
+    ///
+    /// * every recording the user saw under an older name carries the intended
+    ///   name (or is gone from the server — a removal is a later word than this
+    ///   rename), so no reference is left behind;
+    /// * a rename has retired every other name it knows about, because the DB
+    ///   function drops the old registry row and a still-present row means the
+    ///   rename did not run;
+    /// * a visibility mutation has a row carrying exactly the intended flag.
+    public static func isComplete(
+        intent: TagMutationIntent,
+        serverTags: [TagMetadata],
+        serverRecordings: [TindeqRecording]
+    ) -> Bool {
+        let finalName = intent.finalName
+        for id in intent.recordingIDs {
+            guard let recording = serverRecordings.first(where: { $0.id == id }) else {
+                continue
+            }
+            guard recording.tag.trimmingCharacters(in: .whitespacesAndNewlines) == finalName
+            else { return false }
+        }
+        guard !intent.retiredNames.contains(where: { name in
+            serverTags.contains { $0.name == name }
+        }) else { return false }
+        if let hidden = intent.hidden {
+            guard let row = serverTags.first(where: { $0.name == finalName }) else {
+                return false
+            }
+            guard row.hidden == hidden else { return false }
+        }
+        return true
+    }
+
+    /// The same question as `isComplete`: a replayed intent is only allowed to
+    /// confirm what the authoritative state already shows.
+    public static func isApplied(
+        intent: TagMutationIntent,
+        serverTags: [TagMetadata],
+        serverRecordings: [TindeqRecording]
+    ) -> Bool {
+        isComplete(
+            intent: intent,
+            serverTags: serverTags,
+            serverRecordings: serverRecordings
+        )
+    }
+
+    /// The name a replayed rename has to repoint FROM, or `nil` when there is
+    /// nothing left to repoint.
+    ///
+    /// A rename that landed leaves the recordings under the newer name and a
+    /// lost acknowledgement leaves them under the older one, so the source is
+    /// read off the server's recordings first (the references are what must not
+    /// be lost) and off its registry rows second (a tag can keep a row after its
+    /// last recording is gone). The intended name itself is never a source: a
+    /// rename away from the name the records already carry is nothing to send
+    /// (`rename_tindeq_tag` returns early for `new_name = old_name`).
+    public static func repointSource(
+        intent: TagMutationIntent,
+        serverTags: [TagMetadata],
+        serverRecordings: [TindeqRecording]
+    ) -> String? {
+        guard let finalName = intent.renamedTo else { return nil }
+        let sources = intent.knownNames.filter { $0 != finalName }
+        for name in sources where serverRecordings.contains(where: { recording in
+            intent.recordingIDs.contains(recording.id)
+                && recording.tag.trimmingCharacters(in: .whitespacesAndNewlines) == name
+        }) {
+            return name
+        }
+        for name in sources where serverTags.contains(where: { $0.name == name }) {
+            return name
+        }
+        return nil
+    }
+
+    /// The intent a newer mutation for the same tag must persist in place of the
+    /// still-pending one.
+    ///
+    /// The pending intent's identity is preserved: its name chain (so the replay
+    /// can repoint from whichever name the server still serves) and the rename
+    /// it already carries (a rename moves the identity, and every later mutation
+    /// is authored against the moved name — dropping it would leave the
+    /// recordings under the old name for ever). The NEWEST mutation contributes
+    /// what it is about: its own name (appended to the chain when it differs),
+    /// its rename target, and its visibility. A rename clears the visibility
+    /// intent because that is what the repository's own rule does — a renamed
+    /// tag is visible unless it merges into a row that already existed.
+    ///
+    /// The operation identity stays that of the operation that first persisted
+    /// the intent, so an acknowledgement of the replaced revision can never be
+    /// mistaken for the replacement's.
+    public static func replacing(
+        pending: TagMutationIntent,
+        incoming: TagMutationIntent
+    ) -> TagMutationIntent {
+        var knownNames = pending.knownNames
+        if let incomingName = incoming.knownNames.last, knownNames.last != incomingName {
+            knownNames.append(incomingName)
+        }
+        var recordingIDs = pending.recordingIDs
+        for id in incoming.recordingIDs where !recordingIDs.contains(id) {
+            recordingIDs.append(id)
+        }
+        return TagMutationIntent(
+            knownNames: knownNames,
+            renamedTo: incoming.renamedTo ?? pending.renamedTo,
+            hidden: incoming.hidden,
+            recordingIDs: recordingIDs,
+            operationID: pending.operationID,
+            intendedAt: pending.intendedAt
+        )
+    }
+}
+
+/// A tag mutation whose replay could not reach the intended end state.
+///
+/// Only thrown after the mutation's own writes ran and the authoritative answer
+/// still does not show the intended name/visibility. Classified `retryable`: the
+/// next attempt re-reads the server state and repoints from the name the server
+/// actually serves, and a state that can never converge reaches the bounded
+/// quarantine — visible, retryable, never silently cleared.
+public enum TagMutationReplayError: Error, Equatable, Sendable {
+    case incompleteTagMutation
+}
+
+extension TagMutationReplayError: ServerRejectionClassifying {
+    public var rejectionClass: RejectionClass { .retryable }
 }
