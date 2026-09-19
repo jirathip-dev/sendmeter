@@ -4,6 +4,14 @@ name: Native Swift
 # job definitions without waiting for a PR (the gauntlet's hosted proof for an
 # exact head). It does not change what a pull_request or push run covers, and
 # the path filters below stay the only automatic triggers.
+#
+# #944: the doc surface below (CLAUDE.md/AGENTS.md, README.md, docs/**,
+# justfile and the other current entrypoints that
+# `scripts/check-docs-stale-commands.sh` scans) is in the path filters so the
+# stale-command check runs on a docs PR instead of only when someone
+# remembers. The `docs-check` job is the only job those paths need: it
+# classifies the change and the two heavy jobs below skip a docs-only diff, so
+# no PR pays for a native build it cannot affect.
 on:
   workflow_dispatch:
   pull_request:
@@ -26,6 +34,27 @@ on:
       - "scripts/swift-coverage.sh"
       - "scripts/test-coverage-threshold.sh"
       - ".github/workflows/native-swift.yml"
+      # #944: the doc surface the stale-command check guards — the current
+      # contributor entrypoints, the dated root records, `justfile` (the
+      # recipe names the check resolves) and the check itself. Every lane PR
+      # also carries its `.report-<n>.md`, so a docs-only lane PR (report +
+      # docs/evidence) is on this surface too. Only the `docs-check` job is
+      # needed for these paths; its classifier keeps the heavy jobs off a
+      # docs-only diff.
+      - "CLAUDE.md"
+      - "AGENTS.md"
+      - "README.md"
+      - "DESIGN.md"
+      - "FINDINGS-663.md"
+      - "PERF-671.md"
+      - "RELEASE_NOTES.md"
+      - ".report-*.md"
+      - "docs/**"
+      - "justfile"
+      - ".agent/config.yaml"
+      - ".claude/launch.json"
+      - "ios/debug.xcconfig"
+      - "scripts/check-docs-stale-commands.sh"
   push:
     branches:
       - staging
@@ -50,14 +79,101 @@ on:
       - "scripts/swift-coverage.sh"
       - "scripts/test-coverage-threshold.sh"
       - ".github/workflows/native-swift.yml"
+      # #944: the same doc surface as the pull_request trigger above (keep the
+      # two lists identical, and keep the classifier in the `docs-check` job in
+      # sync with the paths added here).
+      - "CLAUDE.md"
+      - "AGENTS.md"
+      - "README.md"
+      - "DESIGN.md"
+      - "FINDINGS-663.md"
+      - "PERF-671.md"
+      - "RELEASE_NOTES.md"
+      - ".report-*.md"
+      - "docs/**"
+      - "justfile"
+      - ".agent/config.yaml"
+      - ".claude/launch.json"
+      - "ios/debug.xcconfig"
+      - "scripts/check-docs-stale-commands.sh"
 
 concurrency:
   group: native-swift-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # #944: the doc surface added to the path filters above needs this job and
+  # nothing else. It is ALSO the classifier the two heavy jobs below depend on:
+  # a diff that lies entirely on the docs surface publishes `native=false` and
+  # they skip, so a docs-only PR never pays for a native build, while every
+  # other diff (a native path, a workflow change, anything unclassifiable) runs
+  # them exactly as before.
+  #
+  # The check is a pure text/tree scan — no compiler, no Xcode, no simulator,
+  # no network — which is why it runs on the cheap Linux runner. It is
+  # fail-closed by construction: a missing or unreadable scanned file, or a
+  # reference to a recipe/workflow/script/doc that does not exist, fails it.
+  # Its historical allowlist is explicit (one path + reason pair per file)
+  # inside scripts/check-docs-stale-commands.sh; relaxing it is a change to
+  # that script with a stated reason, never a suppression at this call site.
+  docs-check:
+    name: Docs stale-command check
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    outputs:
+      native: ${{ steps.classify.outputs.native }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The classifier diffs the PR base against the checked-out head, so
+          # both commits must be in the clone (the repository is small).
+          fetch-depth: 0
+      - name: Classify the change surface
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+
+          # Fail closed: every case this step cannot classify (a manual
+          # dispatch, a new branch's all-zero "before" sha, a base the clone
+          # cannot resolve) leaves native=true, i.e. the heavy jobs run exactly
+          # as they did before #944.
+          native=true
+          case "$EVENT_NAME" in
+            pull_request) base="${PR_BASE_SHA:-}" ;;
+            push) base="${PUSH_BEFORE_SHA:-}" ;;
+            *) base="" ;;
+          esac
+
+          if [[ -n "$base" && ! "$base" =~ ^0+$ ]]; then
+            if changed="$(git diff --name-only "$base" HEAD 2>/dev/null)"; then
+              # The docs surface is exactly the set of paths #944 added to the
+              # filters above (`.report-<n>.md` included: every lane PR carries
+              # one, and a docs-only lane PR must not pay for a native build).
+              # A path missing from this list classifies as native, so an
+              # omission costs a native run, never a skipped one.
+              docs_surface='^(CLAUDE\.md|AGENTS\.md|README\.md|DESIGN\.md|FINDINGS-663\.md|PERF-671\.md|RELEASE_NOTES\.md|\.report-[0-9]+\.md|docs/|justfile|\.agent/config\.yaml|\.claude/launch\.json|ios/debug\.xcconfig|scripts/check-docs-stale-commands\.sh)'
+              if [[ -n "$changed" ]] && ! grep -Evq "$docs_surface" <<<"$changed"; then
+                native=false
+              fi
+            fi
+          fi
+
+          echo "docs-check: event=${EVENT_NAME} base=${base:-none} native=$native"
+          echo "native=$native" >> "$GITHUB_OUTPUT"
+      - name: Check the current entrypoints for retired commands
+        run: bash scripts/check-docs-stale-commands.sh
+
   core-tests:
     name: Core tests
+    # Runs for every diff that is not docs-only; `!cancelled()` (rather than
+    # `always()`) so a failed docs check cannot hide a native regression while
+    # a cancelled run still cancels.
+    needs: [docs-check]
+    if: ${{ !cancelled() && needs.docs-check.outputs.native != 'false' }}
     runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 20
     steps:
@@ -113,6 +229,9 @@ jobs:
 
   ios-build:
     name: iOS Simulator build
+    # Same docs-only skip as `core-tests` above.
+    needs: [docs-check]
+    if: ${{ !cancelled() && needs.docs-check.outputs.native != 'false' }}
     runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 40
     steps:

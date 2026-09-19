@@ -1,0 +1,26 @@
+commit 1615f7406d287f62d68106b0965e5f8d10f489aa
+Author: lane <lane@example.invalid>
+Date:   Sun Sep 20 02:19:57 2026 +0700
+
+    Revert "probe: reintroduce the retired root npm dev command into .claude/launch.json"
+    
+    This reverts commit f5dea04817dbda79b295fcbd52ffa11a80749d2b.
+
+diff --git a/.claude/launch.json b/.claude/launch.json
+index da9f992..d88acdd 100644
+--- a/.claude/launch.json
++++ b/.claude/launch.json
+@@ -1,11 +1,5 @@
+ {
+   "version": "0.0.1",
+-  "configurations": [
+-    {
+-      "name": "dev",
+-      "runtimeExecutable": "zsh",
+-      "runtimeArgs": ["-c", "export PATH=$HOME/.nvm/versions/node/v24.18.0/bin:$PATH && npm run dev"],
+-      "port": 5173
+-    }
+-  ]
++  "configurations": [],
++  "note": "Historical: the only configuration this file ever held started the retired web app's dev server (Vite on port 5173) for the web/Capacitor client removed in #857. No launch configuration is current; see docs/architecture/857-removal-inventory.md."
+ }
