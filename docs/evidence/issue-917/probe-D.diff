@@ -1,0 +1,14 @@
+--- a/native/SendmeterNative/Sources/Core/DirectWriteReplay.swift
++++ b/native/SendmeterNative/Sources/Core/DirectWriteReplay.swift
+@@ -329,9 +329,8 @@
+         intent: PhaseTransitionIntent,
+         serverPeriods: [PhasePeriod]
+     ) -> [PhasePeriod] {
+-        isServerAnchored(intent: intent, serverPeriods: serverPeriods)
+-            ? intent.previousPeriods
+-            : serverPeriods
++        _ = serverPeriods
++        return intent.previousPeriods
+     }
+ 
+     /// Whether a replayed transition ended where the intent said: exactly one
