@@ -1,4 +1,5 @@
 import Foundation
+@_implementationOnly import GRDB
 import SendLogWatchCore
 
 /// The fixed classes of user-facing failure the native app is allowed to
@@ -32,6 +33,14 @@ public enum FriendlyErrorClass: Equatable, Sendable {
     case healthPermissionDenied
     case healthUnavailable
     case storageFull
+    /// #964: the local account cache (GRDB-backed) could not be opened, read
+    /// or written on this device.
+    case cacheUnavailable
+    /// #964: a payload the app stored or received is not in a shape this
+    /// build can decode.
+    case dataUnreadable
+    /// #964: the Keychain-backed session store could not be reached.
+    case secureStorageUnavailable
     case unknown
 }
 
@@ -101,6 +110,12 @@ public enum UserFacingError {
             return "Apple Health isn\u{2019}t available on this device."
         case .storageFull:
             return "This iPhone doesn\u{2019}t have enough free storage. Free up space and try again."
+        case .cacheUnavailable:
+            return "Sendmeter couldn\u{2019}t read its saved data on this iPhone. Reopen the app, then try again."
+        case .dataUnreadable:
+            return "Sendmeter couldn\u{2019}t read some of its data. Update Sendmeter, then try again."
+        case .secureStorageUnavailable:
+            return "Sendmeter couldn\u{2019}t reach its saved sign-in on this iPhone. Reopen the app, then try again."
         case .unknown:
             return "Something went wrong while completing that. Try again."
         }
@@ -121,6 +136,19 @@ public enum UserFacingError {
         if let typed = error as? FriendlyErrorClassifying {
             return typed.friendlyErrorClass
         }
+        // #964: the launch-path failure families that used to collapse into
+        // `.unknown`. A payload (stored or received) that this build cannot
+        // decode is its own class, not an unexplained failure.
+        if error is DecodingError {
+            return .dataUnreadable
+        }
+        // GRDB's own DatabaseError carries an SQLite result code; `SQLITE_FULL`
+        // is the "free up space" case the copy already covers.
+        if let databaseError = error as? DatabaseError {
+            return databaseError.resultCode == .SQLITE_FULL
+                ? .storageFull
+                : .cacheUnavailable
+        }
         if let urlError = error as? URLError {
             if let classification = classification(for: urlError.code) {
                 return classification
@@ -136,6 +164,12 @@ public enum UserFacingError {
             if nsError.domain == NSCocoaErrorDomain,
                nsError.code == CocoaError.Code.fileWriteOutOfSpace.rawValue {
                 return .storageFull
+            }
+            if let classification = classification(
+                forDomain: nsError.domain,
+                code: nsError.code
+            ) {
+                return classification
             }
         }
         return Self.classification(for: BackendFailureReason(error: error))
@@ -274,6 +308,45 @@ public enum UserFacingError {
         }
     }
 
+    /// HealthKit's `NSError` domain (`HKErrorDomain`). HealthKit itself is not
+    /// importable in this cross-platform Core target, so the domain string and
+    /// the two code families the app can explain are pinned by
+    /// `FriendlyErrorTests` against the SDK's real raw values (#964).
+    private static let healthKitErrorDomain = "com.apple.healthkit"
+    /// `HKError.Code.errorAuthorizationDenied` / `errorAuthorizationNotDetermined`
+    /// / `errorRequiredAuthorizationDenied`.
+    private static let healthKitPermissionCodes: Set<Int> = [4, 5, 10]
+    /// `errorHealthDataUnavailable` / `errorHealthDataRestricted` /
+    /// `errorDatabaseInaccessible` / `errorNoData`.
+    private static let healthKitUnavailableCodes: Set<Int> = [1, 2, 6, 11]
+
+    /// #964: framework error domains the launch path can surface, which the
+    /// typed conformances cannot reach (GRDB bridges to its own domain, the
+    /// Security framework reports OSStatus values, HealthKit reports
+    /// `HKError`s, and the Supabase Auth SDK's Keychain errors are internal
+    /// Swift structs that bridge to `<Module>.KeychainError`).
+    private static func classification(
+        forDomain domain: String,
+        code: Int
+    ) -> FriendlyErrorClass? {
+        switch domain {
+        case "GRDB.DatabaseError":
+            return .cacheUnavailable
+        case healthKitErrorDomain:
+            if healthKitPermissionCodes.contains(code) {
+                return .healthPermissionDenied
+            }
+            if healthKitUnavailableCodes.contains(code) {
+                return .healthUnavailable
+            }
+            return nil
+        case NSOSStatusErrorDomain:
+            return .secureStorageUnavailable
+        default:
+            return domain.hasSuffix("KeychainError") ? .secureStorageUnavailable : nil
+        }
+    }
+
     private static func classification(
         forAuthErrorCode code: String,
         message: String? = nil
@@ -366,9 +439,29 @@ extension WorkoutEngineError: FriendlyErrorClassifying {
 }
 
 extension DurableQueueError: FriendlyErrorClassifying {
-    public var friendlyErrorClass: FriendlyErrorClass { .unknown }
+    public var friendlyErrorClass: FriendlyErrorClass {
+        switch self {
+        case .invalidDirectory:
+            // #964: the queue's durable file/directory could not be used —
+            // the same local-storage family as the cache.
+            return .cacheUnavailable
+        case .accountMismatch, .itemNotFound, .alreadyQuarantined:
+            // Internal invariants, not a user-recoverable storage failure.
+            return .unknown
+        }
+    }
 }
 
 extension LocalCacheError: FriendlyErrorClassifying {
-    public var friendlyErrorClass: FriendlyErrorClass { .unknown }
+    public var friendlyErrorClass: FriendlyErrorClass {
+        switch self {
+        case .invalidJSON:
+            // A value could not be written to the cache.
+            return .cacheUnavailable
+        case .invalidPayload:
+            // A stored payload could not be decoded back into the type this
+            // build asks for — the decode family, not an unexplained failure.
+            return .dataUnreadable
+        }
+    }
 }

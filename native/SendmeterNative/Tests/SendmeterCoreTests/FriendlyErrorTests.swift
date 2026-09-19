@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import XCTest
 @testable import SendmeterCore
 
@@ -41,6 +42,9 @@ final class FriendlyErrorTests: XCTestCase {
             (.healthPermissionDenied, "Sendmeter can\u{2019}t read Apple Health. Allow Health access in Settings, then try again."),
             (.healthUnavailable, "Apple Health isn\u{2019}t available on this device."),
             (.storageFull, "This iPhone doesn\u{2019}t have enough free storage. Free up space and try again."),
+            (.cacheUnavailable, "Sendmeter couldn\u{2019}t read its saved data on this iPhone. Reopen the app, then try again."),
+            (.dataUnreadable, "Sendmeter couldn\u{2019}t read some of its data. Update Sendmeter, then try again."),
+            (.secureStorageUnavailable, "Sendmeter couldn\u{2019}t reach its saved sign-in on this iPhone. Reopen the app, then try again."),
             (.unknown, "Something went wrong while completing that. Try again.")
         ]
         for (classification, expected) in expectations {
@@ -153,6 +157,134 @@ final class FriendlyErrorTests: XCTestCase {
             XCTAssertFalse(message.localizedCaseInsensitiveContains("PGRST"))
             XCTAssertFalse(message.localizedCaseInsensitiveContains("Status Code"))
         }
+    }
+
+    // MARK: - #964: the launch-path failure families stop collapsing to `.unknown`
+
+    /// A `DecodingError` is what an unexpected payload produces — a stored row
+    /// or a received response the build cannot read. It must read as that
+    /// family, never as the unexplained fallback.
+    func testDecodingFailureClassifiesAsUnreadableData() {
+        let error = DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: [],
+                debugDescription: "The data couldn\u{2019}t be read because it isn\u{2019}t in the correct format."
+            )
+        )
+        XCTAssertEqual(UserFacingError.classification(for: error), .dataUnreadable)
+        XCTAssertEqual(
+            UserFacingError.message(for: error),
+            UserFacingError.message(for: .dataUnreadable)
+        )
+        XCTAssertNotEqual(
+            UserFacingError.message(for: error),
+            UserFacingError.message(for: .unknown),
+            "a decode failure must not read as the generic fallback"
+        )
+        XCTAssertFalse(
+            UserFacingError.message(for: error)
+                .localizedCaseInsensitiveContains("DecodingError")
+        )
+    }
+
+    /// The GRDB-backed cache: open/read/write failures are their own family,
+    /// and a full disk keeps the existing "free up space" class.
+    func testCacheStorageFailuresClassifyAsCacheUnavailable() {
+        let cantOpen = DatabaseError(
+            resultCode: .SQLITE_CANTOPEN,
+            message: "unable to open database file"
+        )
+        XCTAssertEqual(UserFacingError.classification(for: cantOpen), .cacheUnavailable)
+        let corrupt = DatabaseError(
+            resultCode: .SQLITE_CORRUPT,
+            message: "database disk image is malformed"
+        )
+        XCTAssertEqual(UserFacingError.classification(for: corrupt), .cacheUnavailable)
+        let full = DatabaseError(resultCode: .SQLITE_FULL, message: "database or disk is full")
+        XCTAssertEqual(UserFacingError.classification(for: full), .storageFull)
+        // The same failure bridged through the module boundary the app sees.
+        let bridged = NSError(domain: "GRDB.DatabaseError", code: 14)
+        XCTAssertEqual(UserFacingError.classification(for: bridged), .cacheUnavailable)
+
+        let message = UserFacingError.message(for: cantOpen)
+        XCTAssertEqual(message, UserFacingError.message(for: .cacheUnavailable))
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("SQLITE"))
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("database file"))
+    }
+
+    /// The Keychain-backed session store: raw `OSStatus` values and the
+    /// Supabase Auth SDK's internal `KeychainError` bridge domain.
+    func testKeychainFailuresClassifyAsSecureStorageUnavailable() {
+        let notAvailable = NSError(domain: NSOSStatusErrorDomain, code: -25291)
+        XCTAssertEqual(
+            UserFacingError.classification(for: notAvailable),
+            .secureStorageUnavailable
+        )
+        let sdkKeychain = NSError(domain: "Auth.KeychainError", code: 1)
+        XCTAssertEqual(
+            UserFacingError.classification(for: sdkKeychain),
+            .secureStorageUnavailable
+        )
+        XCTAssertEqual(
+            UserFacingError.message(for: notAvailable),
+            UserFacingError.message(for: .secureStorageUnavailable)
+        )
+    }
+
+    /// HealthKit's own `HKError` codes (the app's typed `HealthKitError`
+    /// already classifies itself; these are the framework's).
+    func testHealthKitFrameworkFailuresClassifyByCodeFamily() {
+        for code in [4, 5, 10] {
+            XCTAssertEqual(
+                UserFacingError.classification(
+                    for: NSError(domain: "com.apple.healthkit", code: code)
+                ),
+                .healthPermissionDenied,
+                "HKError authorization code \(code)"
+            )
+        }
+        for code in [1, 2, 6, 11] {
+            XCTAssertEqual(
+                UserFacingError.classification(
+                    for: NSError(domain: "com.apple.healthkit", code: code)
+                ),
+                .healthUnavailable,
+                "HKError availability code \(code)"
+            )
+        }
+        // Codes the app cannot explain honestly (invalid argument, user
+        // cancelled, workout-session states) keep the generic fallback.
+        XCTAssertEqual(
+            UserFacingError.classification(
+                for: NSError(domain: "com.apple.healthkit", code: 7)
+            ),
+            .unknown
+        )
+    }
+
+    /// Core-owned storage errors ride the same families instead of `.unknown`.
+    func testCoreStorageErrorsClassifyInsteadOfFallingToUnknown() {
+        XCTAssertEqual(
+            UserFacingError.classification(for: LocalCacheError.invalidPayload),
+            .dataUnreadable
+        )
+        XCTAssertEqual(
+            UserFacingError.classification(for: LocalCacheError.invalidJSON),
+            .cacheUnavailable
+        )
+        XCTAssertEqual(
+            UserFacingError.classification(for: DurableQueueError.invalidDirectory),
+            .cacheUnavailable
+        )
+        // Internal invariants keep the honest generic copy.
+        XCTAssertEqual(
+            UserFacingError.classification(for: DurableQueueError.itemNotFound),
+            .unknown
+        )
+        XCTAssertEqual(
+            UserFacingError.classification(for: DurableQueueError.accountMismatch),
+            .unknown
+        )
     }
 
     func testDiagnosticDetailUsesFixedCopy() {

@@ -391,6 +391,23 @@ public final class AppModel {
     /// known" (#269 honest-states rule — unknown must not render as empty).
     public private(set) var quarantinedWrites: [QuarantinedWrite]?
     public var errorMessage: String?
+    /// #964: the classification of the last account-data load failure, kept
+    /// apart from `errorMessage` because the banner is dismissible: after the
+    /// banner is dismissed (or was never rendered), the Dashboard still needs
+    /// a truthful failure state with a retry instead of an empty screen. Only
+    /// set by the refresh funnel and only cleared by a refresh that actually
+    /// succeeds (or an account reset), so it can never outlive its cause.
+    public private(set) var dashboardLoadFailureClass: FriendlyErrorClass?
+    /// #964: true while the Dashboard should lead with its load-failure state:
+    /// the last account-data load failed AND the account has no authoritative
+    /// snapshot to render (`hasLoadedSessions` / `hasLoadedRecordings` are the
+    /// same last-good-data boundary `ErrorSurfacePolicy` reasons over). A
+    /// failure with data on screen belongs to the dismissible banner only.
+    public var showsDashboardLoadFailure: Bool {
+        dashboardLoadFailureClass != nil
+            && !hasLoadedSessions
+            && !hasLoadedRecordings
+    }
     public private(set) var toast: AppToastState?
     /// Compatibility accessors keep existing call sites readable while the
     /// observed source of truth is one identity-bearing toast instance.
@@ -2784,6 +2801,9 @@ public final class AppModel {
             // realtime slice reconciler, which is a targeted refresh that
             // intentionally leaves the non-watched tables untouched).
             lastListRefreshAt = ProcessInfo.processInfo.systemUptime
+            // #964: a refresh that actually succeeded retires the Dashboard's
+            // load-failure state — the screen has authoritative data again.
+            dashboardLoadFailureClass = nil
             warmTagCurvesIfMissing(capturedBy: accountFetch)
             // This is deliberately inside the private refresh path so cold
             // bootstrap, foreground refresh, and mutation follow-ups all
@@ -2796,6 +2816,12 @@ public final class AppModel {
                 // failure. Put the last-known cache snapshot back so a partial
                 // fetch cannot hide a pending local write.
                 applyCachedNonOverlayLists(accountUserID: userID)
+                // #964: record the failure for the Dashboard before deciding
+                // whether it also deserves the dismissible banner. The banner
+                // is transient; this state lasts until a refresh succeeds, so
+                // dismissing the banner cannot leave a blank Dashboard with no
+                // explanation or retry.
+                dashboardLoadFailureClass = UserFacingError.classification(for: error)
                 // #842: a background/partial refresh failure must not claim
                 // total offline while the last-good dataset is already on
                 // screen (History rendered, banner claiming a blackout). The
@@ -11431,6 +11457,10 @@ public final class AppModel {
         // should be able to report its own open/read/reconcile failure even if
         // the previous account already suppressed one.
         cacheOpenFailureReported = false
+        // #964: a new account starts without the previous account's load
+        // failure — the Dashboard failure state is account-scoped like the
+        // rest of the reset snapshot.
+        dashboardLoadFailureClass = nil
         publishForceProgressInputMutation(.accountReset)
         refreshingOwner = nil
         isRefreshing = false
