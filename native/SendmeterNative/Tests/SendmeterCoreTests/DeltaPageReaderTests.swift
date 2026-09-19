@@ -239,7 +239,7 @@ final class DeltaPageReaderTests: XCTestCase {
     }
 
     func testEmptyResponseLeavesTheCheckpointUntouched() async throws {
-        let server = CappedDeltaServer(rows: [], cap: 2)
+        let server = CappedDeltaServer<StubDeltaRow>(rows: [], cap: 2)
         let existing = DeltaCursor(updatedAt: stubDate(120), entityID: stubUUID(9).uuidString).persisted
 
         let delta = try await PagedSessionReader.read(
