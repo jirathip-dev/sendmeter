@@ -1,0 +1,26 @@
+# #919 evidence hashes (sha256 of each committed artifact; this file excluded)
+
+app-class-green-inside-full-run.log.gz                  b0f22ffebd16acbf87849e4ddd561b273db2456ea3c109fe83eb72b0955ca40d
+app-full-attempt1-guided-protocol-precheck.log.gz       6270049f0b265e75c4000f10573c0433adae704f67c642223099642ec6fc2743
+app-full-attempt2-own-test-fail-fixed.log.gz            a215968c0782d2519fa6e98f6e3b99e2df1a09ec3cd41e11caf8a4367d84307a
+app-full-attempt3-runner-hang.log.gz                    6c76045eb62e84f9a4a96878cb67bf91f80ec473d7eb704e7e65a4ee939e6a0d
+app-full-green-116-tests-ci-shape.log.gz                74a56c8c7871ff3a1fc53c2b4653b9af9b2f1a88ec5df9fce2839b2d0dbcaaf6
+build-ios-default-derived-data-denied.log.gz            03d0c3c7c04de6196b06c75a31421afec249f9cdd3715a294a9eacd6851f5081
+build-ios-local-derived-data-green.log.gz               f8d6fe6d2d76f4911786e388bf81205426cf205888154c892d0a50558fff0b90
+core-idle-hang-sample.txt.gz                            168d557a15554e4a6d4ad65249993b99c60355b23131eb5e573e8c58ae6e25b6
+just-fast-attempt1-hang.log.gz                          a373e58a925b1ddb479797ccf9623f21a288951248811d187e2878c1ef501741
+just-fast-final-green.log.gz                            357d3b8ea70a0171ae2ca8d335c01158472c3596495aef78bc75db2505e1e255
+just-list.log.gz                                        5ae829051eb717f0aca426c0a69016f7cbb25389ae80eb2bde5728069ca56a73
+probe-ab-green-after-restore.log.gz                     5e24680f9b33b3c28c43f48328a3c70126acc48ddb598aca217cc02854d3cf78
+probe-ab-red-2-tests-fail.log.gz                        23175eddb99c44c819917c07b26d96bd47ae361d4b71977fb5fb24fea9801237
+probe-ab-red-splice.diff                                6d86dcc26511a2e668e3f5e041731f24611338902eac66592d77d46bda75ad29
+probe-red-attempt1-runner-hang.log.gz                   2caa1f27da2889d907c83c78dc4cfae2490af5eaeb4641a4ac259c08f86c75b5
+slop.log.gz                                             acb3f69b9740545043ed9f96159dd5b1bc63a73866551fcfdda36b190a97d9ce
+
+# changed source blobs (git hash-object)
+native/SendmeterNative/Sources/Core/DirectWriteReplay.swift                                8b5a0c9e2b4a1de165fad1aa5e30aaf41c07b95b
+native/SendmeterNative/Sources/App/AppModel.swift                                          a5fcb078ef7a3add5633129af4f50703822fcca3
+native/SendmeterNative/Sources/Platform/HealthKitService.swift                             e56e2998814caed1ef17585b1d538cce6abf9dbc
+native/SendmeterNative/Tests/SendmeterCoreTests/HealthWriteReplayTests.swift               170e070b34b1f6069b52a58f9a37d285bdb37ac7
+native/SendmeterNative/Tests/SendmeterNativeTests/HealthWriteRecoveryAppTests.swift        7f31b8031ab6c66ccd0a4ff72fa49b2a1b31664c
+RELEASE_NOTES.md                                                                           31377816d947a6904a2d4f3b55d0f6aeebc6257d

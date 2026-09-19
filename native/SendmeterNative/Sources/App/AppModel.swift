@@ -58,6 +58,13 @@ private enum PendingWrite: Codable, Sendable {
     /// pending one and keeps the identity it continues (see
     /// `TagMutationReplayPolicy.replacing`).
     case tagMutation(TagMutationIntent)
+    /// #919: one interrupted health-metric write. A health row's identity is
+    /// its `(user_id, date)` key, mapped to a stable queue identity
+    /// (`HealthWriteIdentity`) so the queue holds at most ONE intent per date:
+    /// a newer pass replaces the pending one wholesale, and the recovery
+    /// REVALIDATES the queued payload against the server's current row instead
+    /// of replaying it (see `HealthWriteReplayPolicy`).
+    case healthWrite(HealthWriteIntent)
 }
 
 private extension PendingWrite {
@@ -75,7 +82,12 @@ private extension PendingWrite {
     /// transition is an account-wide singleton: every transition for one
     /// account shares `PhaseTransitionIntent.queueItemID`, so a newer switch
     /// replaces the pending one instead of racing it.
-    var directWriteEntityID: UUID? {
+    /// The queue item id for `accountUserID`. The account is passed in because
+    /// the queue is ONE file shared by every account on the device: a health
+    /// row's date is the same for all of them, so its key has to include the
+    /// account or it would collide with another account's pending write for
+    /// the same day (#919).
+    func directWriteEntityID(accountUserID: UUID) -> UUID? {
         switch self {
         case let .preset(intent): return UUID(uuidString: intent.entityID)
         case let .routine(intent): return UUID(uuidString: intent.entityID)
@@ -84,6 +96,11 @@ private extension PendingWrite {
         // tag) recovers the pending intent from the name alone.
         case let .tagMutation(intent): return intent.queueIdentity
         case .phaseTransition: return PhaseTransitionIntent.queueItemID
+        // A health row's identity is its `(account, date)` key: the date alone
+        // would collide across accounts, and the account alone would collide
+        // across days.
+        case let .healthWrite(intent):
+            return intent.queueIdentity(accountUserID: accountUserID)
         default: return nil
         }
     }
@@ -95,6 +112,11 @@ private extension PendingWrite {
     var replacesPendingWithNewest: Bool {
         switch self {
         case .phaseTransition: return true
+        // #919: a health pass carries the whole row state it decided to write
+        // (its biometrics plus, when the pass could score, its readiness), so
+        // the newest pass for a date is the account's only pending write for
+        // that date — there is no create/update/delete vocabulary to coalesce.
+        case .healthWrite: return true
         default: return false
         }
     }
@@ -171,6 +193,7 @@ private extension DurableQueueItem where Payload == PendingWrite {
         case .routine: return "Routine"
         case .phaseTransition: return "Training block change"
         case .tagMutation: return "Tag change"
+        case .healthWrite: return "Health metric"
         }
     }
 
@@ -603,6 +626,10 @@ public final class AppModel {
     /// #918 AC5: accounts whose pre-#918 tag-registry residue was already
     /// resolved (or proven free of residue) in this process.
     private var recoveredTagResidueAccounts: Set<UUID> = []
+    /// #919: accounts whose pre-#919 health-metric residue (a pending
+    /// cache-only row with no replay intent) was already resolved (or proven
+    /// free of residue) in this process.
+    private var recoveredHealthResidueAccounts: Set<UUID> = []
     /// The session-RPE revision and delete tombstone live in one coordinator;
     /// this keeps every async response's decision tied to current, actor-free
     /// state on the main actor rather than to a stale task closure.
@@ -2407,6 +2434,18 @@ public final class AppModel {
                 CacheEntityIdentity(entityType: .recordings, entityID: $0.uuidString)
             })
             return targets
+        case let .healthWrite(intent):
+            // #919: the row's cache identity is its date, and that is exactly
+            // the identity an acknowledgement has to clear. Capturing the
+            // revision before the first network await is what keeps an older
+            // recovery's answer from clearing (or re-publishing) a newer local
+            // pass for the same date.
+            return [
+                CacheEntityIdentity(
+                    entityType: .healthMetrics,
+                    entityID: intent.date
+                )
+            ]
         }
     }
 
@@ -6357,6 +6396,35 @@ public final class AppModel {
                         recomputeGate.cancel()
                         return nil
                     }
+                    let healthIntent = HealthWriteIntent(
+                        date: upsert.date,
+                        payload: upsert,
+                        trigger: HealthWriteTrigger(trigger)
+                    )
+                    // #919 AC1: the intended write is durable BEFORE the
+                    // optimistic row exists. A termination between the cache
+                    // write, the remote write and its acknowledgement then
+                    // leaves an intent the recovery resolves deterministically,
+                    // instead of a cache-only row that nothing can ever
+                    // distinguish from synced state.
+                    guard let healthIntentItem = await enqueueDirectWrite(
+                        .healthWrite(healthIntent),
+                        capturedBy: accountFetch,
+                        startUpload: false
+                    ) else {
+                        // No durable intent means no replay: the pass fails
+                        // honestly rather than leaving an unreplayable row.
+                        surfaceDirectWriteNotPersisted()
+                        recomputeGate.cancel()
+                        return nil
+                    }
+                    guard !Task.isCancelled, accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
                     let optimisticRevision = cacheUpsertLocal(
                         publishedMetric,
                         accountUserID: userID,
@@ -6403,6 +6471,15 @@ public final class AppModel {
                             return nil
                         }
                         acknowledgedReconciledDates.insert(upsert.date)
+                        // #919: the server accepted this exact revision, so the
+                        // durable intent is complete. A newer pass that replaced
+                        // it while this request was in flight keeps its own
+                        // intent (and its own acknowledgement).
+                        await completeHealthWriteIntent(
+                            healthIntentItem,
+                            intent: healthIntent,
+                            capturedBy: accountFetch
+                        )
                     } catch {
                         if Task.isCancelled {
                             recomputeGate.cancel()
@@ -6801,6 +6878,19 @@ public final class AppModel {
         // #918 AC5: tag-registry residue (pending cache-only rows with no
         // intent) is resolved the same way — by the server's own answer only.
         guard await recoverLegacyTagResidues(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return }
+        // #919: a pending cache-only health row predates the health replay
+        // envelope. It is adopted into this same queue only when the server's
+        // own answer leaves it provably writable (and the recovery revalidates
+        // the payload again before anything is sent); anything else stays
+        // visibly unsynced instead of being cleared on a guess.
+        guard await recoverLegacyHealthResidues(
             userID: userID,
             capturedBy: accountFetch
         ),
@@ -7788,7 +7878,9 @@ public final class AppModel {
         startUpload: Bool
     ) async -> DurableQueueItem<PendingWrite>? {
         guard let queue,
-              let incomingEntityID = payload.directWriteEntityID else { return nil }
+              let incomingEntityID = payload.directWriteEntityID(
+                  accountUserID: accountFetch.accountUserID
+              ) else { return nil }
         for _ in 0..<3 {
             guard accountFetch.canApply(
                 to: currentUserID,
@@ -7860,7 +7952,9 @@ public final class AppModel {
                 }
                 queuedPayload = relabeled
             }
-            guard let entityID = queuedPayload.directWriteEntityID else { return nil }
+            guard let entityID = queuedPayload.directWriteEntityID(
+                accountUserID: accountFetch.accountUserID
+            ) else { return nil }
             let item = DurableQueueItem(
                 id: entityID,
                 accountUserID: accountFetch.accountUserID,
@@ -7976,7 +8070,9 @@ public final class AppModel {
         let queuedIDs = Set(await queue.items(
             for: accountUserID,
             includeQuarantined: true
-        ).compactMap { $0.payload.directWriteEntityID?.uuidString.lowercased() })
+        ).compactMap {
+            $0.payload.directWriteEntityID(accountUserID: accountUserID)?.uuidString.lowercased()
+        })
         guard let allPending = try? workspace.pendingEntityIDs(
             accountUserID: accountUserID,
             entityType: entityType,
@@ -8351,6 +8447,330 @@ public final class AppModel {
             accountEpoch: accountEpoch
         ) else { return false }
         recoveredTagResidueAccounts.insert(userID)
+        refreshPendingCacheWriteCount(accountUserID: userID)
+        return true
+    }
+
+    // MARK: Health write recovery (#919)
+
+    /// The authoritative state one replayed health write settled in: the
+    /// server's own row for the date.
+    private struct HealthWriteOutcome {
+        let row: HealthMetric
+    }
+
+    /// Resolves one durable health write intent against the server (#919).
+    ///
+    /// Nothing is replayed blindly. The server's CURRENT row is read first and
+    /// `HealthWriteReplayPolicy` decides whether the queued payload is already
+    /// applied (a lost acknowledgement), is superseded by fresher server data,
+    /// or must still be written under the current write policy. When it must,
+    /// the payload the policy re-derived is what gets sent — today through the
+    /// #802 precedence RPC, a date that has since become past through the
+    /// atomic insert-if-missing — and the server's own answer is read back as
+    /// the confirmation.
+    ///
+    /// Deliberately no HealthKit call happens here: recovery replays the
+    /// persisted payload and never re-runs biometric work to invent evidence.
+    private func applyHealthWriteIntent(
+        _ intent: HealthWriteIntent,
+        userID: UUID
+    ) async throws -> HealthWriteOutcome {
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let decision = HealthWriteReplayPolicy.decide(
+            intent: intent,
+            serverRow: try await fetchServerHealthRow(date: intent.date),
+            now: Date(),
+            timeZone: TimeZone.current
+        )
+        switch decision {
+        case let .alreadyApplied(serverRow), let .superseded(serverRow):
+            return HealthWriteOutcome(row: serverRow)
+        case let .send(payload, operation):
+            switch operation {
+            case .historicalInsert:
+                _ = try await repository.insertHealthMetricIfMissing(
+                    payload,
+                    userID: userID
+                )
+            case .todayMerge:
+                _ = try await repository.upsertHealthMetricWithPrecedence(
+                    payload,
+                    userID: userID
+                )
+            }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else {
+                throw CancellationError()
+            }
+            // The confirmation is the server's own row, never the request we
+            // just sent: a request that was applied-but-unacknowledged must not
+            // be reported as complete from our own side of the wire.
+            guard let confirmed = try await fetchServerHealthRow(date: intent.date) else {
+                throw HealthWriteReplayError.unconfirmedWrite
+            }
+            return HealthWriteOutcome(row: confirmed)
+        }
+    }
+
+    /// The server's current row for one date, or `nil` when it serves none.
+    private func fetchServerHealthRow(date: String) async throws -> HealthMetric? {
+        try await repository.fetchHealthMetrics(limit: healthWriteConfirmationWindow)
+            .first { $0.date == date }
+    }
+
+    /// How many recent health rows one recovery read may scan. The window is
+    /// the reconciliation window's own read plus headroom for an intent whose
+    /// date aged while the device was offline; a row outside it stays
+    /// unresolved (and visible) rather than guessed.
+    private var healthWriteConfirmationWindow: Int {
+        max(HealthMetricReadWindow.candidateDays, 60)
+    }
+
+    /// Reconciles one replayed health write into the account cache and the
+    /// published reading.
+    ///
+    /// The identity is the row's date, so the ordinary revision-fenced
+    /// confirmation applies: an older recovery's answer therefore cannot clear
+    /// (or overwrite) a newer local pass for the same date. A row that no
+    /// longer exists locally is not synthesized — a late answer must never
+    /// recreate cache state — but the server's own row is still published,
+    /// because that is the honest current reading.
+    ///
+    /// - Returns: whether this answer is still the newest local revision for
+    ///   the date. `false` means a newer local pass replaced it while the
+    ///   request was in flight, so the caller must not treat the row as synced.
+    @discardableResult
+    private func settleHealthWrite(
+        _ outcome: HealthWriteOutcome,
+        intent: HealthWriteIntent,
+        accountUserID: UUID,
+        cacheRevisions: [CacheEntityIdentity: Int]
+    ) -> Bool {
+        let entityID = CacheEntityID.healthMetric(outcome.row)
+        let captured = cacheConfirmationRevision(
+            cacheRevisions,
+            entityType: .healthMetrics,
+            entityID: entityID
+        )
+        let current: Int? = (try? cachedWorkspace?.localRevision(
+            accountUserID: accountUserID,
+            entityType: .healthMetrics,
+            entityID: entityID
+        )) ?? nil
+        guard captured == current else {
+            // A newer local pass owns this date now: its own intent (and its
+            // own acknowledgement) decides what that row becomes.
+            return false
+        }
+        if let captured {
+            cacheConfirmServerUpsert(
+                outcome.row,
+                accountUserID: accountUserID,
+                entityType: .healthMetrics,
+                entityID: entityID,
+                confirmingLocalRevision: captured
+            )
+        } else {
+            // The optimistic row never landed (termination before the cache
+            // write, or a rebuilt cache): record the server's own row as clean
+            // server state instead of synthesizing an unconfirmed write.
+            cacheUpsertServer(
+                outcome.row,
+                accountUserID: accountUserID,
+                entityType: .healthMetrics,
+                entityID: entityID
+            )
+        }
+        publishHealthMetric(outcome.row)
+        return true
+    }
+
+    /// Completes one health intent the pass itself acknowledged (#919).
+    ///
+    /// The queue item is removed only while it is still THIS intent: a newer
+    /// pass that replaced it while the request was in flight keeps its own
+    /// durable intent, and its own acknowledgement is what completes it. A
+    /// removal that fails leaves the intent durable, which is harmless — the
+    /// next replay re-reads the server and finds the write already applied.
+    private func completeHealthWriteIntent(
+        _ item: DurableQueueItem<PendingWrite>,
+        intent: HealthWriteIntent,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async {
+        guard let queue else { return }
+        guard let current = await queue.item(
+            id: item.id,
+            accountUserID: item.accountUserID
+        ),
+              current.revision == item.revision,
+              case let .healthWrite(queued) = current.payload,
+              queued.operationID == intent.operationID else {
+            await refreshQueueCount(for: accountFetch)
+            return
+        }
+        do {
+            try await queue.remove(
+                id: item.id,
+                accountUserID: item.accountUserID,
+                reason: "health-write-acknowledged"
+            )
+        } catch let error as DurableQueueError where error == .itemNotFound {
+            // Already gone: that is the terminal state this call wanted.
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
+        }
+        await refreshQueueCount(for: accountFetch)
+    }
+
+    /// The health dates with a durable intent in the queue — any state,
+    /// including quarantined, because a quarantined intent is still the user's
+    /// own unsynced data and the residue sweep must not resolve the row it owns.
+    private func queueItemsHealthDates(userID: UUID) async -> [String] {
+        guard let queue else { return [] }
+        return await queue.items(for: userID, includeQuarantined: true).compactMap { item in
+            guard case let .healthWrite(intent) = item.payload else { return nil }
+            return intent.date
+        }
+    }
+
+    /// #919: resolves the pre-#919 health residue — pending cache-only rows
+    /// left with no replay intent at all by an interrupted older build.
+    ///
+    /// Only PROVABLE outcomes are resolved, and nothing is reconstructed from a
+    /// local row alone (a queued write has to carry the payload the pass
+    /// decided, its trigger and its authoring time; none of those are
+    /// recoverable from a bare cache row):
+    ///
+    /// * a live pending row the server already serves exactly is adopted — the
+    ///   write landed and only its acknowledgement was lost;
+    /// * a live pending row for a date the server serves NOTHING for is adopted
+    ///   into a durable intent and replayed through the same revalidation, so
+    ///   it cannot clobber anything (it is the only writer for that date);
+    /// * a pending tombstone whose date the server no longer serves is a
+    ///   confirmed delete; one whose date the server DOES serve adopts that
+    ///   authoritative row instead.
+    ///
+    /// Everything else stays exactly where it is and keeps counting as unsynced
+    /// — a residue whose date the server already moved on from is not silently
+    /// cleared, and no write is invented to make it disappear.
+    private func recoverLegacyHealthResidues(
+        userID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> Bool {
+        guard queue != nil, let workspace = cachedWorkspace else { return true }
+        guard !recoveredHealthResidueAccounts.contains(userID) else { return true }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        let pendingIDs = (try? workspace.pendingEntityIDs(
+            accountUserID: userID,
+            entityType: .healthMetrics,
+            includingDeleted: true
+        )) ?? []
+        guard !pendingIDs.isEmpty else {
+            recoveredHealthResidueAccounts.insert(userID)
+            return true
+        }
+        let queuedDates = Set(await queueItemsHealthDates(userID: userID))
+        let residueIDs = pendingIDs.filter { !queuedDates.contains($0) }
+        guard !residueIDs.isEmpty else {
+            recoveredHealthResidueAccounts.insert(userID)
+            return true
+        }
+        let serverRows: [HealthMetric]
+        do {
+            serverRows = try await repository.fetchHealthMetrics(
+                limit: healthWriteConfirmationWindow
+            )
+        } catch {
+            // A failed authoritative read defers the whole sweep rather than
+            // resolving anything on a guess.
+            return false
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        for entityID in residueIDs {
+            guard let revision = (try? workspace.localRevision(
+                accountUserID: userID,
+                entityType: .healthMetrics,
+                entityID: entityID
+            )) ?? nil else { continue }
+            let serverRow = serverRows.first { $0.date == entityID }
+            guard let local = try? workspace.store.loadOne(
+                HealthMetric.self,
+                accountUserID: userID,
+                entityType: .healthMetrics,
+                entityID: entityID
+            ) else {
+                // A tombstone: the row was never confirmed server-side.
+                if let serverRow {
+                    cacheConfirmServerUpsert(
+                        serverRow,
+                        accountUserID: userID,
+                        entityType: .healthMetrics,
+                        entityID: entityID,
+                        confirmingLocalRevision: revision
+                    )
+                } else {
+                    cacheConfirmServerDelete(
+                        accountUserID: userID,
+                        entityType: .healthMetrics,
+                        entityID: entityID,
+                        confirmingLocalRevision: revision
+                    )
+                }
+                continue
+            }
+            if let serverRow {
+                let intent = HealthWriteIntent(
+                    date: local.date,
+                    payload: local,
+                    trigger: .automatic
+                )
+                guard intent.isSatisfied(by: serverRow) else { continue }
+                cacheConfirmServerUpsert(
+                    serverRow,
+                    accountUserID: userID,
+                    entityType: .healthMetrics,
+                    entityID: entityID,
+                    confirmingLocalRevision: revision
+                )
+                continue
+            }
+            // No server row for the date: adopting the residue costs one
+            // revalidation (the drain replays it through the same policy), and
+            // the adopted intent is the only writer for that date.
+            guard await enqueueDirectWrite(
+                .healthWrite(
+                    HealthWriteIntent(
+                        date: local.date,
+                        payload: local,
+                        trigger: .automatic
+                    )
+                ),
+                capturedBy: accountFetch,
+                startUpload: false
+            ) != nil else { return false }
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        recoveredHealthResidueAccounts.insert(userID)
         refreshPendingCacheWriteCount(accountUserID: userID)
         return true
     }
@@ -9643,6 +10063,28 @@ public final class AppModel {
                     return UploadResult(uploaded: false, failure: nil)
                 }
                 settleTagMutation(
+                    outcome,
+                    intent: intent,
+                    accountUserID: item.accountUserID,
+                    cacheRevisions: cacheRevisions
+                )
+                refreshPendingCacheWriteCount(accountUserID: item.accountUserID)
+            case let .healthWrite(intent):
+                // The recovery reports its own outcome (the row it confirmed);
+                // the queue's generic "Saved" toast would be a second,
+                // duplicate confirmation for a background health pass.
+                suppressSavedToast = true
+                let outcome = try await applyHealthWriteIntent(
+                    intent,
+                    userID: item.accountUserID
+                )
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                settleHealthWrite(
                     outcome,
                     intent: intent,
                     accountUserID: item.accountUserID,
@@ -11050,12 +11492,13 @@ public final class AppModel {
                         )
                     )
                 }
-            case .preset, .routine, .phaseTransition, .tagMutation:
-                // #916/#917/#918: a preset, routine, phase transition or tag
-                // mutation keeps its optimistic state in its own account-scoped
-                // cache row (which this restore pass reads separately), so there
-                // is no in-memory overlay to rebuild from the queue payload. The
-                // durable intent only drives the replay.
+            case .preset, .routine, .phaseTransition, .tagMutation, .healthWrite:
+                // #916/#917/#918/#919: a preset, routine, phase transition,
+                // tag mutation or health write keeps its optimistic state in
+                // its own account-scoped cache row (which this restore pass
+                // reads separately), so there is no in-memory overlay to
+                // rebuild from the queue payload. The durable intent only
+                // drives the replay.
                 continue
             }
         }
