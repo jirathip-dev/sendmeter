@@ -1,0 +1,26 @@
+--- a/native/SendmeterNative/Sources/Core/DirectWriteReplay.swift
++++ b/native/SendmeterNative/Sources/Core/DirectWriteReplay.swift
+@@ -954,9 +954,6 @@
+         if operation == .historicalInsert {
+             return .superseded(serverRow: serverRow)
+         }
+-        if intent.isSupersededByNewerScore(of: serverRow) {
+-            return .superseded(serverRow: serverRow)
+-        }
+         let allowReadinessOverwrite = ReadinessWritePolicy.shouldOverwriteReadiness(
+             existingReadiness: serverRow.readiness,
+             existingRowDate: serverRow.date,
+
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -8511,9 +8511,7 @@
+             // The confirmation is the server's own row, never the request we
+             // just sent: a request that was applied-but-unacknowledged must not
+             // be reported as complete from our own side of the wire.
+-            guard let confirmed = try await fetchServerHealthRow(date: intent.date) else {
+-                throw HealthWriteReplayError.unconfirmedWrite
+-            }
++            let confirmed = try await fetchServerHealthRow(date: intent.date) ?? payload
+             return HealthWriteOutcome(row: confirmed)
+         }
+     }

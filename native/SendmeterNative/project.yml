@@ -269,6 +269,39 @@ targets:
         Release:
           base:
             PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.watchkitapp.widgets
+  # #946: the Watch app-target suite. #857 deleted the committed Capacitor
+  # `ios/App/App.xcodeproj`, which is where this target used to live, so the
+  # 17 files in `ios/App/SendLogWatchTests/` became an orphan: nothing
+  # compiled or ran them until this target re-owned them. The settings mirror
+  # that deleted pbxproj target (watchOS unit-test bundle hosted by the Watch
+  # app, unsigned), and `native-swift.yml` runs it on a booted watchOS
+  # simulator. Keep it out of the phone/doc claims: this is Watch app-target
+  # coverage, not device coverage.
+  SendLogWatchTests:
+    type: bundle.unit-test
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: ../../ios/App/SendLogWatchTests
+    dependencies:
+      - target: SendLogWatch Watch App
+      - package: Supabase
+        product: Supabase
+      - package: SendLogWatchCore
+        product: SendLogWatchCore
+      - package: SendLogHealthCore
+        product: SendLogHealthCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.watchkitapp.tests
+        SWIFT_VERSION: 5.0
+        WATCHOS_DEPLOYMENT_TARGET: 10.0
+        TARGETED_DEVICE_FAMILY: 4
+        DEVELOPMENT_TEAM: 9244PWFYD7
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SendLogWatch Watch App.app/SendLogWatch Watch App"
+        BUNDLE_LOADER: "$(TEST_HOST)"
   # #674: WidgetKit app-extension hosting the guided-protocol Live Activity
   # UI. XcodeGen auto-embeds an app-extension into the app that depends on it
   # (an "Embed Foundation Extensions" copy-files phase into PlugIns), so
@@ -363,5 +396,13 @@ schemes:
       targets:
         SendLogWatch Watch App: all
         SendLogWatchWidgets: all
+    # #946: the Watch app-target suite runs on a booted watchOS simulator via
+    # this test action (`-only-testing:SendLogWatchTests` in native-swift.yml).
+    test:
+      config: Debug
+      targets:
+        - name: SendLogWatchTests
+          parallelizable: false
+          randomExecutionOrder: false
     run:
       config: Debug

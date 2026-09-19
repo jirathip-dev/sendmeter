@@ -46,6 +46,33 @@ jobs:
       - name: Run tindeq session merge SQL regression
         run: supabase test db --local supabase/tests/merge_tindeq_sessions.sql
 
+      # #946: these two files existed in supabase/tests/ with no step anywhere,
+      # so a green "Supabase SQL" check said nothing about the #521 live-mirror
+      # ordering trigger or the #508-510 resisted-movement recording shape.
+      # This workflow enumerates its files explicitly — a file without a step
+      # is silently skipped — so keep the list complete when adding one.
+      #
+      # Fixture regime: both files were authored (#508-510, #521) against the
+      # SEEDED local dataset — their headers say "Run after `supabase db
+      # reset`" and they use the seed's account for the auth.users foreign key.
+      # #830 moved the reset above to --no-seed for every other suite (those
+      # files create their own accounts), so restore the seeded dataset for
+      # these two steps. Running them under --no-seed is a guaranteed
+      # foreign-key failure, not a contract verdict.
+      #
+      # Follow-up (cheaper, if the seed ever stops being maintained):
+      # modernize their fixtures to create their own account — the pattern
+      # health_metrics_precedence.sql and merge_tindeq_sessions.sql already
+      # use. That is a test-file change, outside this lane's fence.
+      - name: Reseed the disposable database for the seeded-fixture regressions
+        run: supabase db reset --local
+
+      - name: Run live-mirror ordering SQL regression
+        run: supabase test db --local supabase/tests/live_mirror_ordering.sql
+
+      - name: Run movement optional-target SQL regression
+        run: supabase test db --local supabase/tests/movement_optional_measured_target.sql
+
       - name: Stop disposable local Supabase
         if: always()
         run: supabase stop --no-backup

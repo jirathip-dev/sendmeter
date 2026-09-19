@@ -107,6 +107,16 @@ public final class HealthKitService: ObservableObject {
     private var observersRegistered = false
     private var backgroundSetupRegistered = false
 
+    /// The deterministic-read seam the app-target tests use (#919).
+    ///
+    /// The health WRITE path cannot be driven end-to-end on a simulator: a
+    /// real HealthKit read needs samples and an authorization the test host
+    /// cannot grant. The seam replaces only the read — the recovery, the
+    /// write policy, the durable queue and the cache under test are the
+    /// production ones. It is `internal` on purpose: the shipped app can never
+    /// steer its own health reads.
+    var metricsReader: (@Sendable ([String: Double], TimeZone) async throws -> [HealthMetric])?
+
     public init(store: HKHealthStore = HKHealthStore()) {
         self.store = store
     }
@@ -164,6 +174,9 @@ public final class HealthKitService: ObservableObject {
         isSyncing = true
         lastError = nil
         defer { isSyncing = false }
+        if let metricsReader {
+            return try await metricsReader(acwrByDate, timeZone)
+        }
         let calendar = LocalDateSupport.calendar(timeZone: timeZone)
         do {
             let metrics = try await readMetrics(
