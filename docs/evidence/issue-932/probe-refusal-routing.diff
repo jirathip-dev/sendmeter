@@ -1,0 +1,15 @@
+--- native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift	2026-09-19 22:20:12
++++ /tmp/impl932-redgreen/native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift	2026-09-19 22:37:06
+@@ -321,11 +321,7 @@
+     /// explanation is presented inside that screen; from the Workout tab the
+     /// existing app-level banner is the visible surface and keeps its role.
+     private func presentEndRefusal(_ message: String) {
+-        guard showManualWorkout else {
+-            model.errorMessage = message
+-            return
+-        }
+-        endRefusal = ManualWorkoutEndRefusal(message: message)
++        model.errorMessage = message
+     }
+ 
+     private var restTarget: Int {

@@ -1,0 +1,34 @@
+# #932 evidence hashes (sha256)
+
+## files
+0bc87dd08d8ead588f973138f5d7ee15936ad4f9b4801650c317baebf0f573c3  anti-slop-linter-at-base.log.gz
+a43b1c268084d27b53add94b3e5f8dba85de9a252496dd787973551273b35782  anti-slop-linter.log.gz
+edee7bd97314e9198cdd18ee19a93672af92fb5668b43af7b23b978c500a844f  apptarget-saveonce.log.gz
+53bc8530d04cfe5f6ce810680cabfdd69973deb0502f0f9310b449eccebeadad  build-ios-attempt.log.gz
+deaffa495020b3295f282f2c540c4fa402cc5363c71097c3f98eeb3f59459e51  check-static-at-base.log.gz
+ab245767efea4eeec535a5aeb9fd9de4cb24994122e4e22878345774f5d99ce3  check-static.log.gz
+3c5b8acde37dc1bb0707ae50289b9400a725aab7b17791e3837e8d413ab4c437  check-watch-project.log.gz
+d0e94ec98e5fe7163250535bdc3b890b3a59fc45782ca8e3f314ada1a750710f  count-assert-negative.log.gz
+4bd4310874d465559c83fad1e50c1cee983f51db85476886f91efb305b912d39  count-assert-positive.log.gz
+f94138712e83bf29196ed02ca2a7e3c0d611d03b141c38980fafe08ceb91c566  docs-stale-check.log.gz
+f5460f3c67f4f9140bf15e552eb225b0dc98d577bc8f2224edf267c3fa5c5c99  evidence.md
+f241d501fc903720773ee62d3b80eb9e704562a2b8d3cc03e3761fdee3343e4a  gen.log.gz
+224f8da940ab7a5fdadb1fe682b0a0ff2f2f33012ed9bae556e4351d50f57930  gitleaks-committed-tree.log.gz
+f9aadb3e62b751db33d83f9f28f07a237bb8876cbfa9f6e1ab9f3ca8d4642062  gitleaks-worktree-run2-with-spm-checkouts.log.gz
+3329bf216a02a06d89e5757fff163215b3462e8bc25fe37b2c23374758e35fa4  just-fast.log.gz
+f6f62b55c8f9e020b62cd577c21ed3592277930137acc859a750fe334a7c5cd6  just-list.log.gz
+e2cf7fe1f6f3e376aadcfcbde3b063965b5f232092b269ee83dd0c4e034b423a  probe-refusal-routing.diff
+ed3fe1efd8b5caf6c59b773c419d284de2422c5c33b1181e31ae9a714cd5355c  slop.log.gz
+98d41c1dda182e8934add0163b47cd8fd02c0db91666dfdf9545532d42b4a9f5  ui-smoke-green-after-restore.log.gz
+3948a6b40fbd4cd039f7a02ea22ea8e25255c22d32ee48d3abe6e20632018386  ui-smoke-green.log.gz
+7c95d32a875268f5afc3ca45ac75b1ad807b477919953853a77d7f3a178c7bc5  ui-smoke-red.log.gz
+2abfdcfbb8e686f8ca769822490d17c26b75e5029fd2c1f8af8c010aac67bf41  xcresult-summary-green.json
+9b957ec46bac28735ac5123406fc77a44eccb517659b310d01acb89f4e941187  xcresult-summary-red.json
+
+## lane commits
+77c16556ee1ccf20eaf056d07ec623346968af58  implementation: .github/workflows/native-swift.yml + justfile
+
+## code blobs (shasum)
+95ce34b95e61296c0cc3691143a2e370fe9246e085d4e07ccfe038364b150af5  native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift (worktree == restored scratch copy)
+3f08b462fc7d009225b3f068494ae1f7adf60c2dd1443be5ce3b9883d1cc8cdb  Sendmeter.debug.dylib, RED leg (mutated copy build == simulator install)
+25e21a38fae70d6b31f2a42a67c3ef6f58be26f4ab17e06a7b0372d01bb2c620  Sendmeter.debug.dylib, GREEN-after-restore leg (restored copy build == simulator install)
