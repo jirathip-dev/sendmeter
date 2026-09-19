@@ -27,6 +27,7 @@ struct NativeForceCurveCard: View {
     let emptyAction: () -> Void
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(
         tag: String,
@@ -73,34 +74,12 @@ struct NativeForceCurveCard: View {
                         .accessibilityValue(accessibilityValue(for: model, targetBand: targetBand))
                         .accessibilityForceCurveChartDescriptor(model, targetBand: targetBand)
 
-                    HStack(spacing: 12) {
-                        curveMetric("Max", value: model.maximumForceKilograms, unit: "kg")
-                        curveMetric("CF", value: model.criticalForceKilograms, unit: "kg")
-                        curveMetric("W′", value: model.impulseAboveCriticalForceKilogramSeconds, unit: "kg·s")
-                        Spacer(minLength: 0)
-                    }
-                    .font(.caption.monospacedDigit())
+                    curveMetricRow(model)
+                        .font(.caption.monospacedDigit())
 
-                    HStack(spacing: 6) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(ChartToken.force.color(scheme))
-                            .frame(width: 10, height: 3)
-                        Text("Hill fit")
-                        if hasConfidenceBand {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(ChartToken.force.color(scheme).opacity(0.18))
-                                .frame(width: 10, height: 8)
-                            Text("95% band")
-                        }
-                        if targetBand != nil {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(ChartToken.optimal.color(scheme).opacity(0.8))
-                                .frame(width: 10, height: 3)
-                            Text("Plan target")
-                        }
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    legendRow(hasConfidenceBand: hasConfidenceBand)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 } else if hasLoadedRecordings {
                     if connectionPending {
                         ProgressView("Connecting to Progressor…")
@@ -153,6 +132,102 @@ struct NativeForceCurveCard: View {
         return targetPrefix + rangeDescription
     }
 
+    /// #928: the three curve metrics read side by side at normal text sizes
+    /// and one per line at accessibility sizes — three 40 pt metrics cannot
+    /// fit a 375 pt card without splitting mid-number.
+    @ViewBuilder
+    private func curveMetricRow(_ model: ForceCurveModel) -> some View {
+        let metrics: [(label: String, value: Double?, unit: String)] = [
+            ("Max", model.maximumForceKilograms, "kg"),
+            ("CF", model.criticalForceKilograms, "kg"),
+            ("W′", model.impulseAboveCriticalForceKilogramSeconds, "kg·s")
+        ]
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 6) {
+                metricEntries(metrics)
+            }
+        } else {
+            HStack(spacing: 12) {
+                metricEntries(metrics)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func metricEntries(_ metrics: [(label: String, value: Double?, unit: String)]) -> some View {
+        ForEach(metrics.indices, id: \.self) { index in
+            curveMetric(
+                metrics[index].label,
+                value: metrics[index].value,
+                unit: metrics[index].unit
+            )
+        }
+    }
+
+    /// #928: the legend reads as one row at normal text sizes and one entry
+    /// per line at accessibility sizes — a 40 pt "Plan target" hyphenates into
+    /// a three-line column otherwise.
+    @ViewBuilder
+    private func legendRow(hasConfidenceBand: Bool) -> some View {
+        let entries = legendEntries(hasConfidenceBand: hasConfidenceBand)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                legendEntries(entries)
+            }
+        } else {
+            HStack(spacing: 6) {
+                legendEntries(entries)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func legendEntries(_ entries: [LegendEntry]) -> some View {
+        ForEach(entries.indices, id: \.self) { index in
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(entries[index].color.opacity(entries[index].opacity))
+                    .frame(width: 10, height: entries[index].height)
+                Text(entries[index].label)
+            }
+        }
+    }
+
+    private struct LegendEntry {
+        let color: Color
+        let opacity: Double
+        let height: CGFloat
+        let label: String
+    }
+
+    private func legendEntries(hasConfidenceBand: Bool) -> [LegendEntry] {
+        var entries: [LegendEntry] = [
+            LegendEntry(color: ChartToken.force.color(scheme), opacity: 1, height: 3, label: "Hill fit")
+        ]
+        if hasConfidenceBand {
+            entries.append(
+                LegendEntry(
+                    color: ChartToken.force.color(scheme),
+                    opacity: 0.18,
+                    height: 8,
+                    label: "95% band"
+                )
+            )
+        }
+        if targetBand != nil {
+            entries.append(
+                LegendEntry(
+                    color: ChartToken.optimal.color(scheme),
+                    opacity: 0.8,
+                    height: 3,
+                    label: "Plan target"
+                )
+            )
+        }
+        return entries
+    }
+
     private func curveMetric(_ label: String, value: Double?, unit: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
@@ -188,38 +263,78 @@ private struct NativeForceCurvePlot: View {
     @State private var tooltipSize: CGSize = .zero
     @State private var tickedPointIndex: Int?
 
-    private let topInset: CGFloat = 8
-    private let bottomInset: CGFloat = 20
-    private let leadingInset: CGFloat = 32
-    private let trailingInset: CGFloat = 8
+    /// #928: the one resolved axis-label size. Seeded with the shared rule's
+    /// `caption2` base so the Canvas draws exactly the size the density and
+    /// inset math measures — a Canvas cannot lay text out, so this single
+    /// number feeds both the drawn glyphs and the rule.
+    @ScaledMetric(relativeTo: .caption2)
+    private var axisLabelPointSize: CGFloat = ChartAxisLabelRule.basePointSize
+
+    /// The log-x window and y-maximum this plot draws with — the shared Core
+    /// geometry (#928), unchanged from the formulas the Canvas used inline.
+    private var geometry: ForceCurvePlotGeometry? {
+        guard !model.points.isEmpty else { return nil }
+        return ForceCurvePlotGeometry(model: model, targetBand: targetBand)
+    }
+
+    /// The duration ticks the log window admits, in seconds.
+    private var tickCandidates: [Double] {
+        guard let geometry else { return [] }
+        return [1.0, 10.0, 60.0, 120.0].filter {
+            $0 >= geometry.minimumSeconds && $0 <= geometry.maximumSeconds
+        }
+    }
+
+    private func tickLabel(_ seconds: Double) -> String {
+        "\(seconds.formatted(.number.precision(.fractionLength(0))))s"
+    }
+
+    /// The y value drawn on gridline `index` (0 = top), as the Canvas had it.
+    private func yTickValue(index: Int) -> Double {
+        (geometry?.maximumValue ?? 0) * Double(2 - index) / 2
+    }
+
+    private func yTickLabel(index: Int) -> String {
+        yTickValue(index: index).formatted(.number.precision(.fractionLength(0)))
+    }
+
+    /// The shared rule's insets for this plot at the resolved label size.
+    private var axisInsets: ChartAxisLabelRule.Insets {
+        ChartAxisLabelRule.insets(
+            yLabels: (0...2).map { yTickLabel(index: $0) },
+            xLabels: tickCandidates.map { tickLabel($0) },
+            pointSize: axisLabelPointSize
+        )
+    }
+
+    private var topInset: CGFloat { axisInsets.top }
+    private var bottomInset: CGFloat { axisInsets.bottom }
+    private var leadingInset: CGFloat { axisInsets.leading }
+    private var trailingInset: CGFloat { axisInsets.trailing }
+
+    /// The Canvas label font: the resolved `caption2` size with monospaced
+    /// digits, matching `ChartAxisLabelRule.font`.
+    private var axisLabelFont: Font {
+        .system(size: axisLabelPointSize).monospacedDigit()
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Canvas { context, size in
-            guard let firstPoint = model.points.first,
-                  let lastPoint = model.points.last,
-                  size.width > leadingInset + trailingInset,
-                  size.height > topInset + bottomInset
-            else { return }
-
-            let plotWidth = size.width - leadingInset - trailingInset
-            let plotHeight = size.height - topInset - bottomInset
-            let minimumSeconds = max(0.001, firstPoint.windowSeconds)
-            let maximumSeconds = max(minimumSeconds * 1.01, max(lastPoint.windowSeconds, 10))
-            let minimumLog = log10(minimumSeconds)
-            let maximumLog = log10(maximumSeconds)
-            let maximumBand = model.confidenceBand?.map(\.highKilograms).max() ?? 0
-            let maximumTarget = targetBand?.highKilograms ?? 0
-            let maximumValue = max(10, max(model.maximumForceKilograms, max(maximumBand, maximumTarget))) * 1.1
+            guard let geometry else { return }
+            // One evaluation of the shared rule's insets per draw pass.
+            let insets = axisInsets
+            let plotWidth = size.width - insets.leading - insets.trailing
+            let plotHeight = size.height - insets.top - insets.bottom
+            guard plotWidth > 0, plotHeight > 0 else { return }
 
             func x(_ seconds: Double) -> CGFloat {
-                let fraction = (log10(max(minimumSeconds, seconds)) - minimumLog)
-                    / max(0.01, maximumLog - minimumLog)
-                return leadingInset + CGFloat(fraction) * plotWidth
+                insets.leading + CGFloat(geometry.xFraction(seconds: seconds)) * plotWidth
             }
 
             func y(_ kilograms: Double) -> CGFloat {
-                topInset + plotHeight - CGFloat(max(0, kilograms) / maximumValue) * plotHeight
+                insets.top + plotHeight
+                    - CGFloat(geometry.yFraction(kilograms: kilograms)) * plotHeight
             }
 
             let gridColor = ChartToken.grid.color(scheme)
@@ -229,18 +344,18 @@ private struct NativeForceCurvePlot: View {
             let targetColor = ChartToken.optimal.color(scheme)
 
             for index in 0...2 {
-                let lineY = topInset + plotHeight * CGFloat(index) / 2
+                let lineY = insets.top + plotHeight * CGFloat(index) / 2
                 var grid = Path()
-                grid.move(to: CGPoint(x: leadingInset, y: lineY))
-                grid.addLine(to: CGPoint(x: size.width - trailingInset, y: lineY))
+                grid.move(to: CGPoint(x: insets.leading, y: lineY))
+                grid.addLine(to: CGPoint(x: size.width - insets.trailing, y: lineY))
                 context.stroke(grid, with: .color(gridColor), lineWidth: 1)
 
-                let value = maximumValue * Double(2 - index) / 2
+                let value = yTickValue(index: index)
                 context.draw(
                     Text(value.formatted(.number.precision(.fractionLength(0))))
-                        .font(.system(size: 8))
+                        .font(axisLabelFont)
                         .foregroundColor(axisColor),
-                    at: CGPoint(x: leadingInset / 2, y: lineY),
+                    at: CGPoint(x: insets.leading / 2, y: lineY),
                     anchor: .center
                 )
             }
@@ -250,7 +365,7 @@ private struct NativeForceCurvePlot: View {
                 let lowerY = y(targetBand.lowKilograms)
                 context.fill(
                     Path(CGRect(
-                        x: leadingInset,
+                        x: insets.leading,
                         y: upperY,
                         width: plotWidth,
                         height: max(1, lowerY - upperY)
@@ -259,8 +374,10 @@ private struct NativeForceCurvePlot: View {
                 )
 
                 var targetPath = Path()
-                targetPath.move(to: CGPoint(x: leadingInset, y: y(targetBand.kilograms)))
-                targetPath.addLine(to: CGPoint(x: size.width - trailingInset, y: y(targetBand.kilograms)))
+                targetPath.move(to: CGPoint(x: insets.leading, y: y(targetBand.kilograms)))
+                targetPath.addLine(
+                    to: CGPoint(x: size.width - insets.trailing, y: y(targetBand.kilograms))
+                )
                 context.stroke(
                     targetPath,
                     with: .color(targetColor.opacity(0.85)),
@@ -268,17 +385,30 @@ private struct NativeForceCurvePlot: View {
                 )
             }
 
-            for seconds in [1.0, 10.0, 60.0, 120.0] where seconds >= minimumSeconds && seconds <= maximumSeconds {
-                let lineX = x(seconds)
+            // #928: every admitted tick keeps its gridline; the labels follow
+            // the shared rule's tick-density adaptation, so a label that grew
+            // with Dynamic Type can never collide with its neighbour.
+            let tickSeconds = tickCandidates
+            let tickPositions = tickSeconds.map(x)
+            let labelledTicks = Set(
+                ChartAxisLabelRule.visibleTickIndices(
+                    labels: tickSeconds.map(tickLabel),
+                    positions: tickPositions,
+                    pointSize: axisLabelPointSize
+                )
+            )
+            for (index, _) in tickSeconds.enumerated() {
+                let lineX = tickPositions[index]
                 var grid = Path()
-                grid.move(to: CGPoint(x: lineX, y: topInset))
-                grid.addLine(to: CGPoint(x: lineX, y: topInset + plotHeight))
+                grid.move(to: CGPoint(x: lineX, y: insets.top))
+                grid.addLine(to: CGPoint(x: lineX, y: insets.top + plotHeight))
                 context.stroke(grid, with: .color(gridColor), lineWidth: 1)
+                guard labelledTicks.contains(index) else { continue }
                 context.draw(
-                    Text("\(seconds.formatted(.number.precision(.fractionLength(0))))s")
-                        .font(.system(size: 8))
+                    Text(tickLabel(tickSeconds[index]))
+                        .font(axisLabelFont)
                         .foregroundColor(axisColor),
-                    at: CGPoint(x: lineX, y: size.height - bottomInset / 2),
+                    at: CGPoint(x: lineX, y: size.height - insets.bottom / 2),
                     anchor: .center
                 )
             }
@@ -436,33 +566,26 @@ private struct NativeForceCurvePlot: View {
     private func selectedPointIndex(at location: CGPoint, size: CGSize) -> Int? {
         let plotWidth = size.width - leadingInset - trailingInset
         guard plotWidth > 0,
-              let firstPoint = model.points.first,
-              let lastPoint = model.points.last,
+              let geometry,
               location.x >= leadingInset,
               location.x <= size.width - trailingInset
         else { return nil }
-        let minimumSeconds = max(0.001, firstPoint.windowSeconds)
-        let maximumSeconds = max(minimumSeconds * 1.01, max(lastPoint.windowSeconds, 10))
         let fraction = Double((location.x - leadingInset) / plotWidth)
         guard let seconds = ForceCurveSelection.seconds(
             atXFraction: fraction,
-            firstSeconds: minimumSeconds,
-            lastSeconds: maximumSeconds
+            firstSeconds: geometry.minimumSeconds,
+            lastSeconds: geometry.maximumSeconds
         ) else { return nil }
         return ForceCurveSelection.nearestPointIndex(points: model.points, toSeconds: seconds)
     }
 
     private func x(for seconds: Double, size: CGSize) -> CGFloat {
-        guard let firstPoint = model.points.first,
-              let lastPoint = model.points.last
-        else { return leadingInset }
-        let minimumSeconds = max(0.001, firstPoint.windowSeconds)
-        let maximumSeconds = max(minimumSeconds * 1.01, max(lastPoint.windowSeconds, 10))
+        guard let geometry else { return leadingInset }
         let plotWidth = max(1, size.width - leadingInset - trailingInset)
         let fraction = ForceCurveSelection.xFraction(
             forSeconds: seconds,
-            firstSeconds: minimumSeconds,
-            lastSeconds: maximumSeconds
+            firstSeconds: geometry.minimumSeconds,
+            lastSeconds: geometry.maximumSeconds
         ) ?? 0
         return leadingInset + CGFloat(fraction) * plotWidth
     }
@@ -511,8 +634,15 @@ private struct NativeForceCurvePlot: View {
                 }
             )
             .position(
-                x: clampedTooltipX(x: x, plotFrame: plotFrame, tooltipWidth: tooltipSize.width),
-                y: clampedTooltipY(plotFrame: plotFrame, tooltipHeight: tooltipSize.height)
+                x: ForceCurveTooltipPlacement.x(
+                    anchor: x,
+                    plotFrame: plotFrame,
+                    tooltipWidth: tooltipSize.width
+                ),
+                y: ForceCurveTooltipPlacement.y(
+                    plotFrame: plotFrame,
+                    tooltipHeight: tooltipSize.height
+                )
             )
             .zIndex(1)
     }
@@ -521,22 +651,6 @@ private struct NativeForceCurvePlot: View {
         let lowKilograms: String = formattedForceKilograms(point.lowKilograms)
         let highKilograms: String = formattedForceKilograms(point.highKilograms)
         return "95% \(lowKilograms)–\(highKilograms) kg"
-    }
-
-    private func clampedTooltipX(x: CGFloat, plotFrame: CGRect, tooltipWidth: CGFloat) -> CGFloat {
-        let width = tooltipWidth > 0 ? tooltipWidth : 90
-        let minCenter = plotFrame.minX + width / 2 + 8
-        let maxCenter = plotFrame.maxX - width / 2 - 8
-        if minCenter > maxCenter { return plotFrame.midX }
-        return min(max(x, minCenter), maxCenter)
-    }
-
-    private func clampedTooltipY(plotFrame: CGRect, tooltipHeight: CGFloat) -> CGFloat {
-        let height = tooltipHeight > 0 ? tooltipHeight : 60
-        let minCenter = plotFrame.minY + height / 2 + 4
-        let maxCenter = plotFrame.maxY - height / 2 - 4
-        if minCenter > maxCenter { return plotFrame.midY }
-        return minCenter
     }
 }
 
