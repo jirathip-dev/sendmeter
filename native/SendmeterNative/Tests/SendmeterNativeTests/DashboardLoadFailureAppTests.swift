@@ -1,5 +1,6 @@
 import Foundation
 import SendmeterCore
+import SendmeterWeather
 import SwiftUI
 import XCTest
 @_spi(Experimental) import Auth
@@ -391,12 +392,15 @@ final class DashboardLoadFailureAppTests: XCTestCase {
             cgImage,
             in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
         )
-        var inkRows = 0
-        var inkRowsInTopHalf = 0
-        var inkRowsInBottomHalf = 0
-        var inkPixels = 0
+        // Contrast metric, validated against a known-blank control before it
+        // is trusted: the card's own material (whatever it resolves to
+        // offscreen, light or dark) is the modal luminance and a pixel counts
+        // as content only when it differs from that background by a real
+        // margin. An absolute "darker than X" test mis-read the material
+        // itself as ink (measured: a blank card read as 99.7 % "ink").
+        var luminances = [Int](repeating: -1, count: width * height)
+        var histogram = [Int](repeating: 0, count: 256)
         for row in 0..<height {
-            var rowHasInk = false
             for column in 0..<width {
                 let offset = row * bytesPerRow + column * 4
                 let alpha = Double(pixels[offset + 3]) / 255
@@ -404,8 +408,22 @@ final class DashboardLoadFailureAppTests: XCTestCase {
                 let red = Double(pixels[offset])
                 let green = Double(pixels[offset + 1])
                 let blue = Double(pixels[offset + 2])
-                let luminance = 0.299 * red + 0.587 * green + 0.114 * blue
-                if luminance < 128 {
+                let luminance = Int((0.299 * red + 0.587 * green + 0.114 * blue).rounded())
+                luminances[row * width + column] = luminance
+                histogram[luminance] += 1
+            }
+        }
+        let background = histogram.enumerated().max { $0.element < $1.element }?.offset ?? 255
+        var inkRows = 0
+        var inkRowsInTopHalf = 0
+        var inkRowsInBottomHalf = 0
+        var inkPixels = 0
+        for row in 0..<height {
+            var rowHasInk = false
+            for column in 0..<width {
+                let luminance = luminances[row * width + column]
+                guard luminance >= 0 else { continue }
+                if abs(luminance - background) >= 40 {
                     inkPixels += 1
                     rowHasInk = true
                 }
