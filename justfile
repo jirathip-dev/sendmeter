@@ -62,6 +62,12 @@ build-watch:
       -scheme 'SendLogWatch Watch App' -configuration Debug \
       -destination 'generic/platform=watchOS Simulator' CODE_SIGNING_ALLOWED=NO build
 
+# --- Watch app-target tests (simulator-only; mirrors native-swift.yml) ----
+
+# Watch app-target tests (SendLogWatchTests, needs a watchOS simulator; CI: native-swift.yml)
+watch-app-tests:
+    cd native/SendmeterNative && UDID=$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries[] | select(.key | contains("watchOS")) | .value[]] | first | .udid') && xcrun simctl bootstatus "$UDID" -b && xcodebuild test -project SendmeterNative.xcodeproj -scheme 'SendLogWatch Watch App' -configuration Debug -destination "id=$UDID" -only-testing:SendLogWatchTests CODE_SIGNING_ALLOWED=NO
+
 # --- full parity with native-swift.yml Core tests -----------------------
 
 # Everything CI gates on, in CI order (excludes simulator-only steps)

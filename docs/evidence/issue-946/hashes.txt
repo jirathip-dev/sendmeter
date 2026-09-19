@@ -1,0 +1,22 @@
+# #946 evidence hashes (sha256)
+
+## files
+96830ade1685033822e010982b67d45d8ab650d89bf9c194ffe8f76141576e8a  assert-native-watch-project.log.gz
+d1d7d9ab5fb1920ca75e8b352c8238b8d70cbaac0cdc1bb594fb1a4281f226c8  check-static-at-base.log.gz
+f16f14a0aa0be7aa1c5cfc46b0224795e621c9880b195ba88d18c89e062446c7  check-static.log.gz
+dfaaa6181681c8a3d2c74275b3493b7ef8046f3b80970528ec62ce6ccd55a9eb  docs-stale-check.log.gz
+c53041470ee4fff29512dc2df83fadf008fb1e6273f90c2ee7a67b445cf2c1f7  gen.log.gz
+9fb06c187c22fa8837cc4ebdd57522e27dc2f6e461191006d8b1fad51514c570  just-fast.log.gz
+87f0a0ed05326df965e3de82198d8b6eed4fda3e999c5805e7555616e1057868  just-list.log.gz
+eeb46bd8e8f917f30567b529bbdb8b36ce78a860bd014721518f33886039bb61  orphan-reverify.log.gz
+8cc74c0b22b5a628b8866ec9204f0e8144afe4fc8ccf3f8279df66c437772308  probe-quarantine-notice.diff
+e8b1e1fd7cfb6ffa66bd6fe02f4e598838d7a1b2799ff698c8de86fc33f4efb6  slop.log.gz
+f7dd2a0e03392320f81cc912381872cb321c9a14dddee87183decaac7532d836  watch-buildfor-testing.log.gz
+023bea2ac0244ebc6cac97bffcdbec0374e7d9c22f884930658a8858e77360f0  watch-test-green-245-tests.log.gz
+03a1f055938166555728a65e2a127706a3ad78e71f473b596482fb551503fe9c  watch-test-green.log
+2aaae84fc52cc9b611037a384287ae1fd63d6b357147b8104ef680d925ef51a7  watch-test-red-quarantine-notice.log.gz
+b66b4c5c312c42f0f543159ffeeeb381477b52f5fa56986ee7ed2283ebb9e2d3  watch-test-red.log
+
+## probe blobs (git hash-object), watch suite
+green head 620b85286374c03346a10f774f497e395dda9948 ios/App/SendLogWatchTests/QuarantineTrimNoticeTests.swift
+restored   620b85286374c03346a10f774f497e395dda9948 (identical)
