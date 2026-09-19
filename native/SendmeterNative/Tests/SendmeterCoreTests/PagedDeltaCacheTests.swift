@@ -175,7 +175,7 @@ final class PagedDeltaCacheTests: XCTestCase {
         try workspace.reconcileServerDelta(firstDelta, accountUserID: accountID, entityType: .sessions)
         let checkpoint = try workspace.cursor(accountUserID: accountID, entityType: .sessions)
 
-        let empty = CappedDeltaServer(rows: [], cap: 2)
+        let empty = CappedDeltaServer<StubDeltaRow>(rows: [], cap: 2)
         let emptyDelta = try await PagedSessionReader.read(
             server: empty,
             accountUserID: accountID,

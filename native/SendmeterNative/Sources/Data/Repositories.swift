@@ -6,6 +6,8 @@ import SendmeterCore
 private let sessionColumns = "id,date,type,type_label,duration_min,rpe,rpe_confirmed,load,note,phase,group_id,workout_source,updated_at,deleted_at"
 private let recordingColumns = "id,deleted_at,updated_at,recorded_at,duration_ms,peak_kg,avg_kg,sample_count,note,tag,side,group_id,protocol_run_id,set_no,zone,source,external_load_kg,outcome,planned_duration_ms,actual_duration_ms,rep_no,protocol_mode,target_kg,target_low_kg,target_high_kg,cadence_out_s,cadence_return_s,cadence_markers,set_metrics,setup_note,capacity_evidence,completed_reps,completion_status"
 private let presetColumns = "id,name,hold_s,holds_s,reps,sets,rest_reps_s,rest_sets_s,target_kg,target_pct,pct_basis,pct_step,target_curve,alternate_sides,protocol_mode,cadence_out_s,cadence_return_s,tolerance_mode,tolerance_value,prepare_s,setup_note,capacity_evidence,deleted_at,updated_at"
+private let healthMetricColumns = "date,readiness,zone,computed_at,hrv_sdnn_ms,resting_hr,sleep_hours,sleep_deep_hours,sleep_rem_hours,body_mass_kg,resp_rate_bpm,updated_at"
+private let workoutColumns = "id,session_id,started_at,ended_at,avg_hr,max_hr,active_kcal,elevation_gain_m,attempts_confirmed,attempts_detected,rpe_confirmed,rpe_predicted,source,updated_at"
 
 private struct LiveWorkoutRow: Decodable {
     let workoutID: UUID
@@ -903,6 +905,7 @@ private struct WorkoutListRow: Decodable {
 /// (#645): the attempt windows shaded over the HR trace and the effort bars
 /// below need the same x-domain contribution as the trace itself.
 private struct WorkoutAttemptRow: Decodable {
+    let id: UUID
     let startedAt: Date
     let durationS: Double
     let elevationGainM: Double
@@ -912,7 +915,7 @@ private struct WorkoutAttemptRow: Decodable {
     let source: String
 
     enum CodingKeys: String, CodingKey {
-        case source
+        case id, source
         case startedAt = "started_at"
         case durationS = "duration_s"
         case elevationGainM = "elevation_gain_m"
@@ -923,6 +926,7 @@ private struct WorkoutAttemptRow: Decodable {
 
     var model: WorkoutAttempt {
         WorkoutAttempt(
+            id: id,
             startedAt: startedAt,
             durationSeconds: Int(durationS.rounded()),
             elevationGainMeters: elevationGainM,
@@ -1866,17 +1870,30 @@ public final class SendmeterRepository: @unchecked Sendable {
     /// sub-query of `fetchWorkoutById`): the attempt windows the HR chart
     /// shades and the effort bars plot on the same x-domain. A workout with
     /// no attempts yields `[]` — the charts then show the trace alone.
+    ///
+    /// #915 AC3: the attempt collection is a child collection of the workout,
+    /// and it is a bounded *complete* read — the same shared reader the delta
+    /// paths use, ordered `(started_at, id)` and scoped to this workout, one
+    /// bounded page per request. The loaded attempt set the detail publishes
+    /// (`.loaded(trace:attempts:)`) therefore can never be a silent prefix of
+    /// the workout's attempts: a capped, failed or over-budget read throws
+    /// instead of returning a partial collection, and `id` is the row's real
+    /// `climb_attempts.id`, so a retried row reconciles once.
     public func fetchWorkoutAttempts(id: UUID) async throws -> [WorkoutAttempt] {
-        let rows: [WorkoutAttemptRow] = try await transport.request(
+        let delta = try await pagedDelta(
             path: "rest/v1/climb_attempts",
-            method: .get,
-            queryItems: [
-                URLQueryItem(name: "select", value: "started_at,duration_s,elevation_gain_m,avg_hr,peak_hr,effort_score,source"),
-                URLQueryItem(name: "workout_id", value: "eq.\(id.uuidString.lowercased())"),
-                URLQueryItem(name: "order", value: "started_at.asc")
+            select: "id,started_at,duration_s,elevation_gain_m,avg_hr,peak_hr,effort_score,source",
+            since: nil,
+            timestampColumn: "started_at",
+            entityID: { (row: WorkoutAttemptRow) in row.id.uuidString },
+            value: { $0.model },
+            isDeleted: { _ in false },
+            updatedAt: { $0.startedAt },
+            extraQueryItems: [
+                URLQueryItem(name: "workout_id", value: "eq.\(id.uuidString.lowercased())")
             ]
         )
-        return rows.map(\.model)
+        return delta.activeValues
     }
 
     /// The workout's HR trace (web `fetchWorkoutRaw`): `climb_workouts.raw`
@@ -1988,73 +2005,87 @@ public final class SendmeterRepository: @unchecked Sendable {
         )
     }
 
+    /// Consumes every page of the settings delta (#915): one row per user,
+    /// ordered `(updated_at, user_id)` so a page boundary inside a shared
+    /// timestamp resumes with `user_id.gt`. The cache identity stays the
+    /// constant `CacheEntityID.settings`; only the database tie-break is the
+    /// row's real `user_id`.
     public func fetchSettingsDelta(
         since cursor: String?
     ) async throws -> RemoteEntityDelta<UserSettings> {
-        let rows: [SettingsRow] = try await transport.request(
+        try await pagedDelta(
             path: "rest/v1/user_settings",
-            method: .get,
-            queryItems: deltaQueryItems(
-                cursor: cursor,
-                select: "user_id,current_phase,phase_start_date,updated_at"
-            )
-        )
-        return makeDelta(
-            rows: rows,
+            select: "user_id,current_phase,phase_start_date,updated_at",
+            since: cursor,
+            tieBreakColumn: "user_id",
             entityID: { _ in CacheEntityID.settings },
+            // `user_settings.user_id` is the table's primary key (NOT NULL).
+            // A null is a broken server row: the empty tie-break cannot advance
+            // the checkpoint, so the reader fails closed instead of publishing
+            // it.
+            tieBreakID: { (row: SettingsRow) in row.userID?.uuidString ?? "" },
             value: {
-                UserSettings(currentPhase: PhaseID(rawValue: $0.currentPhase) ?? .capacity, phaseStartDate: $0.phaseStartDate)
+                UserSettings(
+                    currentPhase: PhaseID(rawValue: $0.currentPhase) ?? .capacity,
+                    phaseStartDate: $0.phaseStartDate
+                )
             },
             isDeleted: { _ in false },
             updatedAt: { $0.updatedAt }
         )
     }
 
+    /// Consumes every page of the phase-periods delta (#915), tombstones
+    /// included.
     public func fetchPhasePeriodDelta(
         since cursor: String?
     ) async throws -> RemoteEntityDelta<PhasePeriod> {
-        let rows: [PhasePeriodRow] = try await transport.request(
+        try await pagedDelta(
             path: "rest/v1/phase_periods",
-            method: .get,
-            queryItems: deltaQueryItems(
-                cursor: cursor,
-                select: "id,phase,started_on,ended_on,updated_at,deleted_at"
-            )
-        )
-        return makeDelta(
-            rows: rows,
-            entityID: { $0.id.uuidString },
+            select: "id,phase,started_on,ended_on,updated_at,deleted_at",
+            since: cursor,
+            entityID: { (row: PhasePeriodRow) in row.id.uuidString },
             value: { $0.model },
             isDeleted: { $0.deletedAt != nil },
             updatedAt: { $0.updatedAt }
         )
     }
 
+    /// Health metrics keep the historical 60-row display window on a first
+    /// sync (a product decision, not a delta): the newest rows by `date`.
+    /// Once a cursor exists that window is behind the caller and every changed
+    /// row is consumed to the end by the shared reader in `(updated_at, date)`
+    /// order — the `date` tie-break is the table's per-user primary-key half,
+    /// so a bulk upsert that stamps one `now()` across many rows cannot skip
+    /// the rest of its tie group (#915).
     public func fetchHealthMetricDelta(
         since cursor: String?,
         limit: Int = 60
     ) async throws -> RemoteEntityDelta<HealthMetric> {
-        // First sync keeps the historical 60-row display window. Once a
-        // cursor exists, fetch every change: a bulk upsert stamps many rows
-        // with the same `now()` timestamp, and paging by count with a strict
-        // `updated_at > cursor` filter would permanently skip the rows that
-        // share the cursor's timestamp.
-        var queryItems = deltaQueryItems(
-            cursor: cursor,
-            select: "date,readiness,zone,computed_at,hrv_sdnn_ms,resting_hr,sleep_hours,sleep_deep_hours,sleep_rem_hours,body_mass_kg,resp_rate_bpm,updated_at",
-            order: cursor == nil ? "date.desc" : "updated_at.asc"
-        )
-        if cursor == nil {
-            queryItems.append(URLQueryItem(name: "limit", value: String(max(1, limit))))
+        guard cursor != nil else {
+            let rows: [HealthMetricRow] = try await transport.request(
+                path: "rest/v1/health_metrics",
+                method: .get,
+                queryItems: [
+                    URLQueryItem(name: "select", value: healthMetricColumns),
+                    URLQueryItem(name: "order", value: "date.desc"),
+                    URLQueryItem(name: "limit", value: String(max(1, limit)))
+                ]
+            )
+            return makeDelta(
+                rows: rows,
+                entityID: { $0.date },
+                value: { $0.model },
+                isDeleted: { _ in false },
+                updatedAt: { $0.updatedAt }
+            )
         }
-        let rows: [HealthMetricRow] = try await transport.request(
+        return try await pagedDelta(
             path: "rest/v1/health_metrics",
-            method: .get,
-            queryItems: queryItems
-        )
-        return makeDelta(
-            rows: rows,
-            entityID: { $0.date },
+            select: healthMetricColumns,
+            since: cursor,
+            tieBreakColumn: "date",
+            entityID: { (row: HealthMetricRow) in row.date },
             value: { $0.model },
             isDeleted: { _ in false },
             updatedAt: { $0.updatedAt }
@@ -2077,86 +2108,89 @@ public final class SendmeterRepository: @unchecked Sendable {
         )
     }
 
+    /// Consumes every page of the presets delta (#915), tombstones included.
     public func fetchPresetDelta(
         since cursor: String?
     ) async throws -> RemoteEntityDelta<TindeqPreset> {
-        let rows: [PresetRow] = try await transport.request(
+        try await pagedDelta(
             path: "rest/v1/tindeq_presets",
-            method: .get,
-            queryItems: deltaQueryItems(cursor: cursor, select: presetColumns)
-        )
-        return makeDelta(
-            rows: rows,
-            entityID: { $0.id.uuidString },
+            select: presetColumns,
+            since: cursor,
+            entityID: { (row: PresetRow) in row.id.uuidString },
             value: { $0.model },
             isDeleted: { $0.deletedAt != nil },
             updatedAt: { $0.updatedAt }
         )
     }
 
+    /// Consumes every page of the routines delta (#915), tombstones included.
     public func fetchRoutineDelta(
         since cursor: String?
     ) async throws -> RemoteEntityDelta<RoutinePreset> {
-        let rows: [RoutineRow] = try await transport.request(
+        try await pagedDelta(
             path: "rest/v1/routine_presets",
-            method: .get,
-            queryItems: deltaQueryItems(
-                cursor: cursor,
-                select: "id,name,steps,updated_at,deleted_at"
-            )
-        )
-        return makeDelta(
-            rows: rows,
-            entityID: { $0.id.uuidString },
+            select: "id,name,steps,updated_at,deleted_at",
+            since: cursor,
+            entityID: { (row: RoutineRow) in row.id.uuidString },
             value: { $0.model },
             isDeleted: { $0.deletedAt != nil },
             updatedAt: { $0.updatedAt }
         )
     }
 
+    /// Workouts keep the historical 30-row first-sync window (newest by
+    /// `started_at`). Once a cursor exists every changed workout — and its
+    /// attempt counts, the `workoutsAndAttempts` group the cache publishes as
+    /// one snapshot — is consumed to the end by the shared reader in
+    /// `(updated_at, id)` order: only a complete collection reaches
+    /// `CachedWorkspace.reconcileServerDelta`, so an incomplete read can never
+    /// tombstone the workouts (or their attempt group) it did not see (#915
+    /// AC3).
     public func fetchWorkoutDelta(
         since cursor: String?,
         limit: Int = 30
     ) async throws -> RemoteEntityDelta<WorkoutListItem> {
-        // Same timestamp-collision rule as `fetchHealthMetricDelta`: only the
-        // first/full sync keeps the display limit, while a cursor-bounded
-        // fetch must see every changed row.
-        var queryItems = deltaQueryItems(
-            cursor: cursor,
-            select: "id,session_id,started_at,ended_at,avg_hr,max_hr,active_kcal,elevation_gain_m,attempts_confirmed,attempts_detected,rpe_confirmed,rpe_predicted,source,updated_at",
-            order: cursor == nil ? "started_at.desc" : "updated_at.asc"
-        )
-        if cursor == nil {
-            queryItems.append(URLQueryItem(name: "limit", value: String(max(1, limit))))
+        guard cursor != nil else {
+            let rows: [WorkoutListRow] = try await transport.request(
+                path: "rest/v1/climb_workouts",
+                method: .get,
+                queryItems: [
+                    URLQueryItem(name: "select", value: workoutColumns),
+                    URLQueryItem(name: "order", value: "started_at.desc"),
+                    URLQueryItem(name: "limit", value: String(max(1, limit)))
+                ]
+            )
+            return makeDelta(
+                rows: rows,
+                entityID: { $0.id.uuidString },
+                value: { $0.model },
+                isDeleted: { _ in false },
+                updatedAt: { $0.updatedAt }
+            )
         }
-        let rows: [WorkoutListRow] = try await transport.request(
+        return try await pagedDelta(
             path: "rest/v1/climb_workouts",
-            method: .get,
-            queryItems: queryItems
-        )
-        return makeDelta(
-            rows: rows,
-            entityID: { $0.id.uuidString },
+            select: workoutColumns,
+            since: cursor,
+            entityID: { (row: WorkoutListRow) in row.id.uuidString },
             value: { $0.model },
             isDeleted: { _ in false },
             updatedAt: { $0.updatedAt }
         )
     }
 
+    /// Consumes every page of the tag-metadata delta (#915): the tag name is
+    /// the table's per-user identity (`unique (user_id, name)`) and the cache's
+    /// entity id, so it is also the page tie-break.
     public func fetchTagMetadataDelta(
         since cursor: String?
     ) async throws -> RemoteEntityDelta<TagMetadata> {
-        let rows: [TagMetadataRow] = try await transport.request(
+        try await pagedDelta(
             path: "rest/v1/tindeq_tags",
-            method: .get,
-            queryItems: deltaQueryItems(
-                cursor: cursor,
-                select: "name,hidden,updated_at"
-            )
-        )
-        return makeDelta(
-            rows: rows,
-            entityID: { $0.name },
+            select: "name,hidden,updated_at",
+            since: cursor,
+            tieBreakColumn: "name",
+            entityID: { (row: TagMetadataRow) in row.name },
             value: { TagMetadata(name: $0.name, hidden: $0.hidden) },
             isDeleted: { _ in false },
             updatedAt: { $0.updatedAt }
@@ -2199,10 +2233,10 @@ public final class SendmeterRepository: @unchecked Sendable {
         )
     }
 
-    /// One reusable bounded delta reader (#914): consumes every page of a
-    /// `(updated_at, id)`-ordered response through `transport.requestPage`,
-    /// then returns a single delta whose cursor is the composite
-    /// `(updated_at, id)` checkpoint of the last row actually read.
+    /// One reusable bounded delta reader (#914/#915): consumes every page of a
+    /// `(<timestamp>, <tie-break>)`-ordered response through
+    /// `transport.requestPage`, then returns a single delta whose cursor is the
+    /// composite checkpoint of the last row actually read.
     ///
     /// A failed or cancelled page throws out of `read` before any delta
     /// exists, so the caller can never reconcile a partial response as an
@@ -2211,18 +2245,30 @@ public final class SendmeterRepository: @unchecked Sendable {
     /// makes the server report its matching row total, which is how a response
     /// capped below the requested page size still continues to the next page
     /// instead of silently ending the read.
+    ///
+    /// `timestampColumn`/`tieBreakColumn`/`tieBreakID` let one entity whose
+    /// ordering or identity is not `(updated_at, id)` — `started_at`-ordered
+    /// attempts, `user_id`-tied settings — use this same reader instead of a
+    /// second paging scheme.
     private func pagedDelta<Row: Decodable & Sendable, Value: Sendable>(
         path: String,
         select: String,
         since cursor: String?,
+        timestampColumn: String = "updated_at",
+        tieBreakColumn: String = "id",
         entityID: @escaping @Sendable (Row) -> String,
+        tieBreakID: (@Sendable (Row) -> String)? = nil,
         value: @escaping @Sendable (Row) -> Value,
         isDeleted: @escaping @Sendable (Row) -> Bool,
-        updatedAt: @escaping @Sendable (Row) -> Date
+        updatedAt: @escaping @Sendable (Row) -> Date,
+        extraQueryItems: [URLQueryItem] = []
     ) async throws -> RemoteEntityDelta<Value> {
         let reader = DeltaPageReader<Row, Value>(
             select: select,
+            tieBreakColumn: tieBreakColumn,
+            timestampColumn: timestampColumn,
             entityID: entityID,
+            tieBreakID: tieBreakID,
             value: value,
             isDeleted: isDeleted,
             updatedAt: updatedAt
@@ -2231,7 +2277,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             let page: PostgRESTPage<Row> = try await self.transport.requestPage(
                 path: path,
                 method: .get,
-                queryItems: request.queryItems,
+                queryItems: request.queryItems + extraQueryItems,
                 prefer: "count=exact"
             )
             return DeltaPageResponse(
@@ -2239,26 +2285,6 @@ public final class SendmeterRepository: @unchecked Sendable {
                 totalCount: page.contentRange?.total
             )
         }
-    }
-
-    private func deltaQueryItems(
-        cursor: String?,
-        select: String,
-        order: String = "updated_at.asc"
-    ) -> [URLQueryItem] {
-        // Still unpaged for the remaining entities (#915 adopts the paged
-        // reader). The strict `gt` cursor stays safe only because every row
-        // sharing the response's maximum updated_at is returned before that
-        // timestamp is persisted. Sessions and recordings no longer take this
-        // path: they page on the composite (updated_at, id) cursor.
-        var queryItems = [
-            URLQueryItem(name: "select", value: select),
-            URLQueryItem(name: "order", value: order)
-        ]
-        if let cursor {
-            queryItems.append(URLQueryItem(name: "updated_at", value: "gt.\(cursor)"))
-        }
-        return queryItems
     }
 
     private func makeDelta<Row, Value: Sendable>(
