@@ -1,1 +1,4 @@
-CAPACITOR_DEBUG = true
+// Historical: this file only set CAPACITOR_DEBUG for the retired Capacitor
+// host (removed in #857 — see docs/architecture/857-removal-inventory.md).
+// Nothing in the native project includes it, so it intentionally defines
+// nothing.

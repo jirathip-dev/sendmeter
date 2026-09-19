@@ -8,6 +8,12 @@ set -euo pipefail
 # tree. It never executes a documented command, never installs anything, and
 # never talks to a network or a service.
 #
+# Wired (#944): `just docs-check` and the "Docs stale-command check" job in
+# `.github/workflows/native-swift.yml`, whose path filter carries the doc
+# surface (CLAUDE.md/AGENTS.md, README.md, docs/** and the other current
+# entrypoints). The historical allowlist below stays the single place a
+# retired name is tolerated, one (path, reason) pair per file.
+#
 # Checks:
 #   1. AGENTS.md still resolves to CLAUDE.md (the guidance is one file; a
 #      copied AGENTS.md would silently drift).
@@ -46,6 +52,13 @@ CURRENT_FILES = [
     "docs/mcp-e2e-verification.md",
     "docs/app-review-notes.md",
     "docs/native-touch-latency-ab.md",
+    # #945: the four stale-guidance surfaces outside the #931 fence
+    # (re-verified and corrected at the #945 head; scanned so they cannot
+    # silently regress).
+    "native/SendmeterNative/README.md",
+    ".agent/config.yaml",
+    ".claude/launch.json",
+    "ios/debug.xcconfig",
 ]
 
 # --- explicit historical allowlist: reported, never failed --------------
