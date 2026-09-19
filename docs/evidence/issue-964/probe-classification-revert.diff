@@ -1,0 +1,86 @@
+diff --git a/native/SendmeterNative/Sources/App/AppModel.swift b/native/SendmeterNative/Sources/App/AppModel.swift
+index 9303ada..7e5d265 100644
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -2816,12 +2816,6 @@ public final class AppModel {
+                 // failure. Put the last-known cache snapshot back so a partial
+                 // fetch cannot hide a pending local write.
+                 applyCachedNonOverlayLists(accountUserID: userID)
+-                // #964: record the failure for the Dashboard before deciding
+-                // whether it also deserves the dismissible banner. The banner
+-                // is transient; this state lasts until a refresh succeeds, so
+-                // dismissing the banner cannot leave a blank Dashboard with no
+-                // explanation or retry.
+-                dashboardLoadFailureClass = UserFacingError.classification(for: error)
+                 // #842: a background/partial refresh failure must not claim
+                 // total offline while the last-good dataset is already on
+                 // screen (History rendered, banner claiming a blackout). The
+diff --git a/native/SendmeterNative/Sources/Core/FriendlyError.swift b/native/SendmeterNative/Sources/Core/FriendlyError.swift
+index 614bfb3..69c7a63 100644
+--- a/native/SendmeterNative/Sources/Core/FriendlyError.swift
++++ b/native/SendmeterNative/Sources/Core/FriendlyError.swift
+@@ -136,19 +136,6 @@ public enum UserFacingError {
+         if let typed = error as? FriendlyErrorClassifying {
+             return typed.friendlyErrorClass
+         }
+-        // #964: the launch-path failure families that used to collapse into
+-        // `.unknown`. A payload (stored or received) that this build cannot
+-        // decode is its own class, not an unexplained failure.
+-        if error is DecodingError {
+-            return .dataUnreadable
+-        }
+-        // GRDB's own DatabaseError carries an SQLite result code; `SQLITE_FULL`
+-        // is the "free up space" case the copy already covers.
+-        if let databaseError = error as? DatabaseError {
+-            return databaseError.resultCode == .SQLITE_FULL
+-                ? .storageFull
+-                : .cacheUnavailable
+-        }
+         if let urlError = error as? URLError {
+             if let classification = classification(for: urlError.code) {
+                 return classification
+@@ -165,12 +152,6 @@ public enum UserFacingError {
+                nsError.code == CocoaError.Code.fileWriteOutOfSpace.rawValue {
+                 return .storageFull
+             }
+-            if let classification = classification(
+-                forDomain: nsError.domain,
+-                code: nsError.code
+-            ) {
+-                return classification
+-            }
+         }
+         return Self.classification(for: BackendFailureReason(error: error))
+     }
+@@ -439,29 +420,9 @@ extension WorkoutEngineError: FriendlyErrorClassifying {
+ }
+ 
+ extension DurableQueueError: FriendlyErrorClassifying {
+-    public var friendlyErrorClass: FriendlyErrorClass {
+-        switch self {
+-        case .invalidDirectory:
+-            // #964: the queue's durable file/directory could not be used —
+-            // the same local-storage family as the cache.
+-            return .cacheUnavailable
+-        case .accountMismatch, .itemNotFound, .alreadyQuarantined:
+-            // Internal invariants, not a user-recoverable storage failure.
+-            return .unknown
+-        }
+-    }
++    public var friendlyErrorClass: FriendlyErrorClass { .unknown }
+ }
+ 
+ extension LocalCacheError: FriendlyErrorClassifying {
+-    public var friendlyErrorClass: FriendlyErrorClass {
+-        switch self {
+-        case .invalidJSON:
+-            // A value could not be written to the cache.
+-            return .cacheUnavailable
+-        case .invalidPayload:
+-            // A stored payload could not be decoded back into the type this
+-            // build asks for — the decode family, not an unexplained failure.
+-            return .dataUnreadable
+-        }
+-    }
++    public var friendlyErrorClass: FriendlyErrorClass { .unknown }
+ }
