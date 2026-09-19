@@ -1,0 +1,8 @@
+# just fast attempt 1 — bounded observation + kill (issue-956 hang class)
+# seen: 2026-09-20 06:27:00 +0700
+21673 21539       09:17   0.0 /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-test --package-path native/SendmeterNative
+25860 21673       07:54   0.0 /Applications/Xcode.app/Contents/Developer/usr/bin/xctest /Users/jirathip/.herdr/worktrees/sendmeter/impl-970/native/SendmeterNative/.build/arm64-apple-macosx/debug/SendmeterNativePackageTests.xctest
+# load: { 64.91 98.17 88.06 }
+# log last line (truncated mid-line = flush boundary, not the hang point):
+oreTests.GuidedForceFullscreenPresentationTests testPauseClaimFreezesTicksUntilPersistenceFinishes]' passed (0.000 seconds).
+Test Case '-[SendmeterCoreTests.GuidedForceFullscreenPresentationTests test

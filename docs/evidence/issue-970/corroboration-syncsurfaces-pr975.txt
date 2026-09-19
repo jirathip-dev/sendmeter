@@ -1,0 +1,54 @@
+# Corroboration: the same bounded-wait shape expiring in a SECOND app-target file
+
+Class: a fixed poll budget (600 iterations x 5 ms ~= 3 s) in an app-target test
+expires on a slower hosted runner while the app-side signal is still in flight.
+
+## The hosted failure (verified against the raw job log, not just the report)
+
+- repo: jirathip-dev/sendmeter
+- workflow run: 35469574193 ("Native Swift"), head
+  `d885c983cbe374048e09e4187d8018c46cb2468b` (PR #975, lane impl-920)
+- attempt 1, job "iOS Simulator build" (job id 105967999690) => `failure`
+  (started 2026-09-19T21:10:25Z, completed 2026-09-19T21:25:33Z)
+- attempt 2 of the SAME run/head => `success` (the same-head rerun)
+- log fetched with:
+  `gh api repos/jirathip-dev/sendmeter/actions/jobs/105967999690/logs`
+
+Raw lines from that job log:
+
+```
+2026-09-19T21:14:54.8092890Z /Users/runner/_work/sendmeter/sendmeter/native/SendmeterNative/Tests/SendmeterNativeTests/SyncSurfacesAppTests.swift:472: error: -[SendmeterNativeTests.SyncSurfacesAppTests testAuthRejectedSliceStillPublishesAndHeals] : XCTAssertTrue failed - the rejected slice never triggered the auth recovery
+2026-09-19T21:15:18.8921990Z 	 Executed 135 tests, with 1 failure (0 unexpected) in 58.604 (62.561) seconds
+2026-09-19T21:25:22.7003280Z ** TEST FAILED **
+```
+
+## The wait behind it (same head, file fetched with
+
+`gh api repos/jirathip-dev/sendmeter/contents/native/SendmeterNative/Tests/SendmeterNativeTests/SyncSurfacesAppTests.swift?ref=d885c983cbe374048e09e4187d8018c46cb2468b`)
+
+```
+472:        XCTAssertTrue(healed, "the rejected slice never triggered the auth recovery")
+...
+476:    @MainActor
+477:    private func waitForAuthRecoverySignal(_ model: AppModel) async -> Bool {
+478:        for _ in 0..<600 {
+479:            if model.currentUserID == nil { return true }
+480:            if model.authEventLog.contains(where: { $0.detail?.contains("401") ?? false }) {
+481:                return true
+482:            }
+483:            try? await Task.sleep(nanoseconds: 5_000_000)
+484:        }
+485:        return false
+486:    }
+```
+
+`for _ in 0..<600` over a 5 ms sleep is the identical budget shape this lane
+hardened in `PhaseTransitionReplayAppTests.swift` (#970); the same file also
+carries three `for _ in 0..<400` waits (`:491`, `:503`, `:512`) and another
+`0..<600` (`:520`) that are NOT fixed here — `SyncSurfacesAppTests.swift` is
+outside this lane's fence (issue #970's route: only `PhaseTransitionReplayAppTests.swift`).
+
+Related hosted numbers for the #970 file itself (from docs/evidence/issue-956/):
+failing runs executed the same 117 tests in 54.406 (58.053) / 54.858 (59.939) s
+with the phase test `failed (4.370 s)`; the passing neighbour run executed them
+in 33.370 (33.425) s with the test `passed (1.180 s)`.

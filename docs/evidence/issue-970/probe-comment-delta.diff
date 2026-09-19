@@ -1,0 +1,16 @@
+--- /tmp/impl970-fixed-test.swift	2026-09-20 05:27:45
++++ native/SendmeterNative/Tests/SendmeterNativeTests/PhaseTransitionReplayAppTests.swift	2026-09-20 05:48:54
+@@ -581,10 +581,9 @@
+     }
+ 
+     /// The durable queue as this test can see it: the model's published counts
+-    /// and per-item diagnostics, plus the queue file a relaunch would read. A
+-    /// wait that expires with an EMPTY queue file is a write that never became
+-    /// durable; one that expires with the item already on disk is a stalled
+-    /// replay — the two are different defects and must not look alike.
++    /// and per-item diagnostics, plus the queue file a relaunch would read —
++    /// together the state that tells a slow/stalled runner apart from a write
++    /// that never became durable.
+     @MainActor
+     private static func durableQueueState(_ model: AppModel) -> String {
+         let items = model.queuedWriteDiagnostics
