@@ -1,0 +1,15 @@
+# sha256 of the committed evidence files for the impl-915 fix lane
+# (the fix lane's raw logs; generated 2026-09-19T01:25:00Z)
+
+dc2914bab853bb2eeb1452ce246431b334d2c707184992d0c6f6991732a9371d  app-target-suite-aaaf150-gen-attempt2.log.gz
+86fa6077a214bdb1d8861199dddbd44e49eea5199daaa681e78e6a0e7a2dccc0  app-target-suite-aaaf150-gen.log.gz
+3792f643e261f1835f69ad115e182278ad044870e47e41d80a19cb280d79a296  app-target-suite-aaaf150.log.gz
+95066b76028b8ac08b4393b0da049e6057fb1c22e03be2990f8cd9989f7914ff  divergence-evidence.log.gz
+4f43aa1f9077cf5360672edf08c45558cafcf400de70f32b7ecf8e6da13b93ad  fence-proof.txt.gz
+1411ac1b6a3938779f4be89addff9b0df7ed59a9c77e20051085bec67fb6e1d6  green-focused-fix.log.gz
+c7e9790ce0418b18cfe9399f9ba154fc75c7349a19f1d1b835587b12aa761676  hosted-red-35409274399.log.gz
+3f0a1dd5c12ced60f52bc53214323570ea89c8741c7a99eef426741d29303bb9  hosted-vs-local-population.log.gz
+1df081ca83472e48fe3721fddab1ae74b4623e0e13ca5e3f917bcddf95f51bf7  just-fast-attempt1.log.gz
+0bf90cbd9b67d916c38101a2d01051d521504b8f85b0135d524e13b5f08e2977  just-gen.log.gz
+94f70ab1ecf394f6a8e8f8a7c6b556e6dd1b6bebe559eea145c54f4ca69ce2d7  red-7b97d72-focused-attempt2.log.gz
+33ff351d41f832211f658767ca85d0393a1edeb94bd6c5966605794b929972f4  red-7b97d72-focused.log.gz
