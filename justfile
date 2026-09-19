@@ -33,6 +33,17 @@ slop-cold:
 check-static:
     bash scripts/validate-native-static.sh
 
+# --- docs surface (text-only, no compiler; CI: native-swift.yml) ---------
+
+# The stale-command check's historical allowlist is explicit — a (path, reason)
+# pair per file — and lives in scripts/check-docs-stale-commands.sh. Running it
+# from here or from CI never relaxes it: a new entry is a script change that
+# states its reason, not a suppression at the call site.
+
+# Stale-command check for the current contributor entrypoints (same as the "Docs stale-command check" job in native-swift.yml)
+docs-check:
+    bash scripts/check-docs-stale-commands.sh
+
 # Slop scan + all three Swift test suites (the fast lane after edits)
 fast: slop core watch-core health-core
 
@@ -77,4 +88,4 @@ ui-tests:
 # --- full parity with native-swift.yml Core tests -----------------------
 
 # Everything CI gates on, in CI order (excludes simulator-only steps)
-ci: slop slop-cold core watch-core health-core gen check-watch-project build-ios build-watch
+ci: docs-check slop slop-cold core watch-core health-core gen check-watch-project build-ios build-watch
