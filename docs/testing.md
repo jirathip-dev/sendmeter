@@ -34,3 +34,11 @@ above-floor success for the shared numeric checker
 (`scripts/check-coverage-threshold.sh`), which the Swift helper also uses. `Package.resolved` is
 backed up and restored by the Swift helper so coverage runs do not commit
 SwiftPM's resolution churn. No generated coverage files belong in Git.
+
+## When a host gate hangs or a simulator run fails to launch
+
+A hanging `swift test`, `The test runner hung before establishing connection`, a
+`queue never reached …` app-target failure, and the pinned-DerivedData build stall are
+host/tooling classes, not test verdicts. The measured signatures, the kill/retry policy
+(report both attempts), the buffered-log trap, and the one-run-per-container rule for the
+app-target suite are in `docs/ci/host-gate-failures.md` (#956).
