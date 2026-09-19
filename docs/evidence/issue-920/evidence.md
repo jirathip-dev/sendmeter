@@ -14,7 +14,14 @@ iPhone 17 Pro, 3× — 402 × 874 pt logical, 1206 × 2622 px).
 The test hosts the REAL `SettingsView` / `TagManagerView` in a real `UIWindow`
 on the app's own `UIWindowScene`, scrolls the hosting list to the bottom (where
 the sync section sits), lays it out and captures the window hierarchy with
-`drawHierarchy(in:afterScreenUpdates:)` at 3×. A bare
+`drawHierarchy(in:afterScreenUpdates:)` at 3×. The PNGs in this directory are the captures of
+`xcodebuild test … -only-testing:SendmeterNativeTests/SyncSurfacesRenderEvidenceTests`
+(exit **0**, `Executed 1 test, with 0 failures`, seven `EVIDENCE_FRAME` lines),
+copied out of the app container immediately afterwards; that raw log is
+committed here as `render-evidence.log.gz`. The earlier full focused run
+(`docs/evidence/issue-923/app-target-focused.log.gz`, also 13/0 with the same
+seven frame lines) captured through the pre-fix path whose `layer.render`
+frames came out black — the delivered PNGs are the post-fix captures. A bare
 `SettingsView().aboutSupportSection` read is **not** renderable — SwiftUI reads
 that view's `@Environment(AppModel.self)` outside a view installation and
 crashes (`Accessing Environment<AppModel>'s value outside of being installed on
