@@ -1,5 +1,5 @@
 # sha256 hashes — impl-929-fix (review-929-r1 fix round)
-# generated 2026-09-19T02:25:28Z at the fix head (see .report-2.md)
+# generated 2026-09-19T02:26:06Z at the fix head (see .report-2.md)
 
 ## fixed-head captures and renders (docs/evidence/issue-929-fix/)
 9a5a80f5fb911831394f7653fbff8eb1be811568944e481a9b8dd3376036e39a  diagnostic-app-width-probe.png
@@ -32,6 +32,7 @@ f57ff287906866f8b4e9cf9a6a84aa6a84667fea603addebf243b3f1fbda66f7  training-load-
 ## fix-round logs (gzipped, docs/evidence/issue-929-fix/)
 a2bc098a43e4f4b72407cd675094b0c3b39a0fb7856659f5a81b4d02b5a49877  green-app-suite.log.gz
 b222f07b8f64db3fc0978c2a2e3c453999a7a393bdb52228c9d6bc3b3cf90783  green-host-focused.log.gz
+f2b26c4e65355a6c43d3c91cb4a5d7d653fa84b7d4fb696b488bc08d69fbcd1f  green-newtests.log.gz
 0952aaadd0bd2bb38497c92e0a7e919184bc6c82a4baab1cff678899ab1d256a  green2-newtests.log.gz
 d3dc5e9848150f8b47481049f7b520aadb2139df2e2bfd6e830851361000b9e5  instr-build.log.gz
 63129a6672fd049d5daa4fd113e0d02e8a377cdb89ab7b0e7f32ad853ec2e655  instr2-build.log.gz
