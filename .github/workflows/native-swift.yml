@@ -1,6 +1,11 @@
 name: Native Swift
 
+# #932: `workflow_dispatch` lets a lane head be executed on THIS workflow's
+# job definitions without waiting for a PR (the gauntlet's hosted proof for an
+# exact head). It does not change what a pull_request or push run covers, and
+# the path filters below stay the only automatic triggers.
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "native/SendmeterNative/**"
@@ -189,6 +194,61 @@ jobs:
             -destination "id=${{ steps.ios-sim.outputs.udid }}" \
             -only-testing:SendmeterNativeTests \
             CODE_SIGNING_ALLOWED=NO
+
+      # #932: the UI-test target is the only layer that presses real controls
+      # and reads real pixels; the app-target suite above compiles against the
+      # app module but cannot drive a control. Bounded to the two named smoke
+      # journeys — #870/#816's menu activation probe and #926's manual-workout
+      # End/refusal/minimize recovery — so this stays a bounded smoke suite;
+      # the banner class (#927) is deliberately not selected here.
+      #
+      # No retry and no `|| true`: a failure is the suite's verdict, and the
+      # xcresult (with every test's screenshot attachment) is uploaded below.
+      - name: Build and test native UI smoke suite
+        working-directory: native/SendmeterNative
+        timeout-minutes: 25
+        run: |
+          xcodebuild test \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -configuration Debug \
+            -destination "id=${{ steps.ios-sim.outputs.udid }}" \
+            -only-testing:SendmeterNativeUITests/MenuActivationUITests \
+            -only-testing:SendmeterNativeUITests/ManualWorkoutEndRefusalUITests \
+            -resultBundlePath "$RUNNER_TEMP/native-ui-smoke.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+
+      # A `-only-testing` selector that matches nothing makes xcodebuild exit 0
+      # having executed ZERO tests, so the executed count is asserted, not
+      # assumed: the selection above is exactly the four named smoke cases.
+      - name: Assert the UI smoke suite executed its expected tests
+        env:
+          EXPECTED_UI_SMOKE_TESTS: "4"
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/native-ui-smoke.xcresult"
+          summary="$RUNNER_TEMP/native-ui-smoke-summary.json"
+          xcrun xcresulttool get test-results summary --path "$bundle" --compact > "$summary"
+          jq . "$summary"
+          executed=$(jq -r '.totalTestCount' "$summary")
+          echo "UI smoke suite executed $executed tests (expected $EXPECTED_UI_SMOKE_TESTS)"
+          xcrun xcresulttool get test-results tests --path "$bundle" \
+            | jq -r '[.. | objects | select(.nodeType? == "Test Case") | .name] | unique | sort | .[]'
+          if [[ "$executed" != "$EXPECTED_UI_SMOKE_TESTS" ]]; then
+            echo "::error::executed $executed tests; expected $EXPECTED_UI_SMOKE_TESTS — a selector that matches nothing runs zero tests and exits 0"
+            exit 1
+          fi
+
+      - name: Upload UI smoke xcresult
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-ui-smoke-xcresult
+          path: |
+            ${{ runner.temp }}/native-ui-smoke.xcresult
+            ${{ runner.temp }}/native-ui-smoke-summary.json
+          if-no-files-found: warn
+          retention-days: 14
 
       # #946: `ios/App/SendLogWatchTests/` existed with no target and no step
       # after #857 deleted the committed Capacitor project, so nothing compiled
