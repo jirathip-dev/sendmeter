@@ -1,0 +1,11 @@
+--- RefreshSlicePlan.swift	2026-09-20 02:48:08
++++ native/SendmeterNative/Sources/Core/RefreshSlicePlan.swift	2026-09-20 02:48:08
+@@ -115,7 +115,7 @@
+ 
+     /// Only a group whose every slice succeeded may be applied and published.
+     public func publishes(_ group: RefreshConsistencyGroup) -> Bool {
+-        !wasCancelled && group.slices.allSatisfy { !failedSlices.contains($0) }
++        !wasCancelled && group.slices.contains { !failedSlices.contains($0) }
+     }
+ 
+     public var publishableGroups: [RefreshConsistencyGroup] {
