@@ -4,6 +4,7 @@ aa3ea9c006424027ef889e4488a05b58f68f5cce07ebc15400cf8dbf041787e5  ./Issue964Base
 8f80826eaf0aaa0af5daf0e760b844d5f9a90f00eef041a7ba54fac466d8017f  ./app-compile-error-attempt.log.gz
 8683616cc8cb5517bd147cbf9fb92f55f17232316bdf21f013b9e4668ee6670b  ./app-infra-hang-1.log.gz
 12249d67f96843c5aa137c03a0237641c7c8ee06a57372b21c2a8293474bcb79  ./app-infra-hang-2.log.gz
+910cb0eda33d8e17cdfb84452954b03633fe7c960a1b4f6daaded51df29cf9ec  ./app-target-green-metric-bug.log.gz
 18e56e9537e29e13ee53b03983abad23c5f5dd08a91e1a857fe6c0bfe6cb13c1  ./app-target-green.log.gz
 609ff45d60da57ec5dc2d470e58042dc38aa8846decdcd330796b177379db64c  ./app-target-red-mutated.log.gz
 3b4c6536a54425626dff1487222318c93c2d00de2bec4da97dff36ffb0fd1493  ./base-red.log.gz
@@ -13,7 +14,7 @@ fba46fe45d295356ddaba3c8189775aa1a7e739b86889b23ec16ca45988abcdc  ./check-static
 334a5608086816aa4d6a5ef39434fbe297039fb942e553ae1c666ea16c9342e2  ./check-watch-project.log.gz
 53842d22c8c042f99144f7475f65913a5269d7a27f1274d3d0e420156a464455  ./core-red-mutated.log.gz
 e1a9467565fb967ae493a0bb6f2af2545a5e04da2c16ece90bd8fc0479b41dee  ./fast-1.log.gz
-7d4a57198790849406486454b8e5414cea5a1a5b28fafe6bd849a0745ab6cf91  ./hashes.txt
+79d741cd7260515bb513da2b8baf688dc380d7e4cf10264fe9bffd2ee445332a  ./hashes.txt
 79a43cb915886b03729a15eef6a9cd995a387de073b744a1c8441962a05a5e68  ./healthkit-error-codes.log.gz
 c1ed12e795990c2243e6d7f642682d1f7da62d33cbb7a13abb7dd5c435bc7f8a  ./healthkit-error-codes.swift
 7ebb446f67b0dc3139c785df5af302c52c28afcd7fc82632da4fad8a298f9d4a  ./mutate-classification.py
