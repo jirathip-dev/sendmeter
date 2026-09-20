@@ -1,0 +1,12 @@
+# implementation commit ef76ad7152cf04ced6361ff02824fdb3fddb009a (#936)
+
+$ git show --stat ef76ad7
+
+ native/SendmeterNative/Sources/App/AppModel.swift  | 175 +++++++-
+ .../Core/ManualWorkoutActivityContent.swift        |   7 +-
+ .../Core/ManualWorkoutLifecycleCoordinator.swift   | 309 +++++++++++++
+ .../Features/Workout/ManualWorkoutFullscreen.swift |  19 +-
+ .../Sources/Features/Workout/WorkoutView.swift     | 182 ++++----
+ .../ManualWorkoutLifecycleCoordinatorTests.swift   | 489 +++++++++++++++++++++
+ .../ManualWorkoutLifecycleAppTests.swift           | 412 +++++++++++++++++
+ 7 files changed, 1477 insertions(+), 116 deletions(-)

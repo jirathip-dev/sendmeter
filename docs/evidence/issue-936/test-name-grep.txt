@@ -1,0 +1,109 @@
+# #936 committed test names → the logs that executed them
+# (grep over the committed .log.gz evidence; names come from the lane's
+#  committed test files, never from memory)
+
+## testTheOwnerKeepsOneWorkoutAndOneFinishAcrossViewRecreation
+   app-target-cishape-attempt1.log.gz: 4
+   app-target-cishape-attempt2.log.gz: 2
+   app-target-focused-lifecycle.log.gz: 2
+
+## testAnEndWithNoCompletedAttemptIsRefusedAndTheWorkoutStaysArmed
+   app-target-cishape-attempt1.log.gz: 2
+   app-target-cishape-attempt2.log.gz: 2
+   app-target-focused-lifecycle.log.gz: 2
+
+## testTheAccountBoundaryTearsTheWorkoutDownThroughTheOwner
+   app-target-cishape-attempt1.log.gz: 8
+   app-target-cishape-attempt2.log.gz: 2
+   app-target-focused-lifecycle.log.gz: 2
+
+## testRecreatedViewResumesTheWorkoutInsteadOfRecreatingOrTerminatingIt
+   core-focused-lifecycle-attempt3.log.gz: 2
+   core-focused-wiring-and-lifecycle.log.gz: 2
+   just-fast-attempt1.log.gz: 2
+   just-fast-attempt2.log.gz: 2
+   probe-0-green-control.log.gz: 2
+   probe-A-view-recreation.log.gz: 5
+   probe-B-account-boundary.log.gz: 2
+
+## testResumeWithNoWorkoutCreatesNothingAndTerminatesNothing
+   core-focused-lifecycle-attempt3.log.gz: 2
+   core-focused-wiring-and-lifecycle.log.gz: 2
+   just-fast-attempt1.log.gz: 2
+   just-fast-attempt2.log.gz: 2
+   probe-0-green-control.log.gz: 2
+   probe-A-view-recreation.log.gz: 2
+   probe-B-account-boundary.log.gz: 2
+
+## testMinimizeKeepsTheWorkoutAndDropsOnlyItsExplanation
+   core-focused-lifecycle-attempt3.log.gz: 2
+   core-focused-wiring-and-lifecycle.log.gz: 2
+   just-fast-attempt1.log.gz: 2
+   just-fast-attempt2.log.gz: 2
+   probe-0-green-control.log.gz: 2
+   probe-A-view-recreation.log.gz: 2
+   probe-B-account-boundary.log.gz: 2
+
+## testEndWithNoCompletedAttemptIsRefusedAndLeavesTheWorkoutArmed
+   core-focused-lifecycle-attempt3.log.gz: 2
+   core-focused-wiring-and-lifecycle.log.gz: 2
+   just-fast-attempt1.log.gz: 2
+   just-fast-attempt2.log.gz: 2
+   probe-0-green-control.log.gz: 2
+   probe-A-view-recreation.log.gz: 2
+   probe-B-account-boundary.log.gz: 2
+
+## testValidFinishHandsOverExactlyOneDraftAndTearsTheEffectsDown
+   core-focused-lifecycle-attempt3.log.gz: 2
+   core-focused-wiring-and-lifecycle.log.gz: 2
+   just-fast-attempt1.log.gz: 2
+   just-fast-attempt2.log.gz: 2
+   probe-0-green-control.log.gz: 2
+   probe-A-view-recreation.log.gz: 2
+   probe-B-account-boundary.log.gz: 2
+
+## testRepeatedEndNeverHandsOverASecondDraft
+   core-focused-lifecycle-attempt3.log.gz: 2
+   core-focused-wiring-and-lifecycle.log.gz: 2
+   just-fast-attempt1.log.gz: 2
+   just-fast-attempt2.log.gz: 2
+   probe-0-green-control.log.gz: 2
+   probe-A-view-recreation.log.gz: 2
+   probe-B-account-boundary.log.gz: 2
+
+## testALateOrStaleSaveCompletionNeverReleasesANewerFinish
+   core-focused-lifecycle-attempt3.log.gz: 2
+   core-focused-wiring-and-lifecycle.log.gz: 2
+   just-fast-attempt1.log.gz: 2
+   just-fast-attempt2.log.gz: 2
+   probe-0-green-control.log.gz: 2
+   probe-A-view-recreation.log.gz: 2
+   probe-B-account-boundary.log.gz: 2
+
+## testAccountChangeTearsDownTheOriginalOwnersWorkoutAndItsIdentity
+   core-focused-lifecycle-attempt3.log.gz: 2
+   core-focused-wiring-and-lifecycle.log.gz: 2
+   just-fast-attempt1.log.gz: 2
+   just-fast-attempt2.log.gz: 2
+   probe-0-green-control.log.gz: 2
+   probe-A-view-recreation.log.gz: 2
+   probe-B-account-boundary.log.gz: 2
+
+## testAccountBoundaryForAnotherAccountLeavesTheWorkoutAlone
+   core-focused-lifecycle-attempt3.log.gz: 2
+   core-focused-wiring-and-lifecycle.log.gz: 2
+   just-fast-attempt1.log.gz: 2
+   just-fast-attempt2.log.gz: 2
+   probe-0-green-control.log.gz: 2
+   probe-A-view-recreation.log.gz: 2
+   probe-B-account-boundary.log.gz: 6
+
+## testTeardownDuringASaveReleasesTheLatchAndMakesTheLateCompletionANoop
+   core-focused-lifecycle-attempt3.log.gz: 2
+   core-focused-wiring-and-lifecycle.log.gz: 2
+   just-fast-attempt1.log.gz: 2
+   just-fast-attempt2.log.gz: 2
+   probe-0-green-control.log.gz: 2
+   probe-A-view-recreation.log.gz: 2
+   probe-B-account-boundary.log.gz: 2
+
