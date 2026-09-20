@@ -1,13 +1,13 @@
 # #935 evidence hashes (sha256), regenerated after every evidence add
 # lane worktree: /Users/jirathip/.herdr/worktrees/sendmeter/impl-935
-# head at packaging: 8e52093f61a05bb6f9f011821411004eae84a568
+# head at packaging: 353c8fcf5f81dc7f0a741e8eda5d9b4245d39ad5
 
 29e84b875d0793d94163b22fea70c12c61a2277f6da3dd7f5fd05a7edf85d09b  app-target-focused-directwrite.log.gz
 b342629fefa96dfea9ef0f94bca374771b76b8b979c57acc4ceeaae9003ca15e  app-target-full-cishape.log.gz
 72fb16494e1a486209295cf934c86ec8b93eb721570d0c9622c7e7f70697f1ee  app-target-health-focused.log.gz
 6187d7b2a20ff8b97b58845b460e76ad2297bd39a2dc0a9d0f166e497ffb404e  core-focused-recovery-and-split.log.gz
 7ffacafb53241feb4e1dcc5716f2fa90545f513ef56703809fd7a2f221e66fe3  diagnosis-drain-clock-probe.log.gz
-0b3858d37922e40f0b59b70f8f9e592e27f149eaf8585245404af8097590af83  hashes.txt
+caef7e114a07d05713c3ace669f6986e1da03acbc6b1466592cafed174ec8756  hashes.txt
 659bc3c72ea9e8dcc4ddce12cf7268fdfa59567df3d164e5f6025eb4041a152a  just-core-hanging-class-alone.log.gz
 caac8fd289032eb3baddc1891af1de791c248cc03a6d4fa95d8255b5329c4c41  just-core-skip-hanging-class.log.gz
 a879695a06159a2317007f54e24de289520e02e50ec2881bd6e9333d892fffa2  just-fast-hang-1-sample.txt.gz
