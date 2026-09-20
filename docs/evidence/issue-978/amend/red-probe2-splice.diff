@@ -1,0 +1,90 @@
+diff --git a/native/SendmeterNative/Tests/SendmeterNativeTests/PhaseTransitionReplayAppTests.swift b/native/SendmeterNative/Tests/SendmeterNativeTests/PhaseTransitionReplayAppTests.swift
+index aa23d48..5843102 100644
+--- a/native/SendmeterNative/Tests/SendmeterNativeTests/PhaseTransitionReplayAppTests.swift
++++ b/native/SendmeterNative/Tests/SendmeterNativeTests/PhaseTransitionReplayAppTests.swift
+@@ -254,6 +254,15 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
+         server.resume()
+         await relaunched.retryAllQueuedWrites()
+         try await waitForQueueCount(relaunched, expected: 0)
++        // #978 amendment: the replay must be PUBLISHED, not merely enqueued-then-
++        // applied — wait for the settings row, the single open block and both
++        // counters to settle before asserting (deadline-bound; values unchanged).
++        try await waitForReplayPublished(
++            relaunched,
++            server: server,
++            phase: .strength,
++            startedOn: today
++        )
+ 
+         XCTAssertEqual(server.periodCount, 2, "no duplicate period for an already-applied create")
+         XCTAssertEqual(server.openPeriods.count, 1)
+@@ -580,6 +589,46 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
+         )
+     }
+ 
++    /// #978 amendment: after a manual retry pass returns, the transition's
++    /// confirmation and the two published counters land through several more
++    /// awaited hops (`confirmPhaseTransition` → `refreshPendingCacheWriteCount`
++    /// inside the uploader, then the pass's own `refreshQueueCount`). On a
++    /// contended runner those hops can still be settling when the pass
++    /// returns, so the post-retry assertions wait for the PUBLISHED end state
++    /// instead of racing it. The deadline decides only how long that may take;
++    /// the assertions below keep their exact values and meaning.
++    @MainActor
++    private func waitForReplayPublished(
++        _ model: AppModel,
++        server: FakePhasePostgREST,
++        phase: PhaseID,
++        startedOn: String
++    ) async throws {
++        try await waitUntil(
++            "the replayed transition to be published: settings=\(phase.rawValue)@\(startedOn), "
++                + "openPeriods=1, pendingCacheWriteCount=0, queuedWriteCount=0",
++            isSatisfied: {
++                server.settings?.phase == phase
++                    && server.settings?.startDate == startedOn
++                    && server.openPeriods.count == 1
++                    && model.pendingCacheWriteCount == 0
++                    && model.queuedWriteCount == 0
++            },
++            observed: {
++                let open = server.openPeriods
++                let openDesc = open
++                    .map { "\($0.phase.rawValue)@\($0.startedOn)" }
++                    .joined(separator: "; ")
++                return "serverSettings=\(server.settings.map { "\($0.phase.rawValue)@\($0.startDate)" } ?? "nil"), "
++                    + "openPeriods(\(open.count))=[\(openDesc)], "
++                    + "pendingCacheWriteCount=\(model.pendingCacheWriteCount), "
++                    + "queuedWriteCount=\(model.queuedWriteCount), "
++                    + "currentPhase=\(model.settings.currentPhase), "
++                    + Self.durableQueueState(model)
++            }
++        )
++    }
++
+     /// The durable queue as this test can see it: the model's published counts
+     /// and per-item diagnostics, plus the queue file a relaunch would read —
+     /// together the state that tells a slow/stalled runner apart from a write
+@@ -1018,15 +1067,13 @@ private final class FakePhasePostgREST: @unchecked Sendable {
+                     ]])
+                 )
+             case "POST":
+-                return mutateLocked {
+-                    let payload = Self.object(from: body) ?? [:]
+-                    settingsRow = StoredSettings(
+-                        phase: PhaseID(rawValue: payload["current_phase"] as? String ?? "")
+-                            ?? .capacity,
+-                        startDate: payload["phase_start_date"] as? String ?? "1970-01-01",
+-                        updatedAt: Self.timestamp()
+-                    )
+-                }
++                // RED PROBE (scratch tree, evidence only): the SETTINGS upsert is
++                // a silent NO-OP — the completeness step the replay performs
++                // genuinely never lands server-side, so the transition is never
++                // complete. Everything else (the periods half, the durable
++                // queue, the retry pass) runs the real boundary. The hardened
++                // wait must TIME OUT and print its observed-state diagnostic.
++                return Reply(status: 200, body: Data("[]".utf8))
+             default:
+                 return Reply(status: 405, body: Data("[]".utf8))
+             }

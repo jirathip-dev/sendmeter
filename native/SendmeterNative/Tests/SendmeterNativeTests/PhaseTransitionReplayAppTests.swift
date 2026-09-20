@@ -254,6 +254,15 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
         server.resume()
         await relaunched.retryAllQueuedWrites()
         try await waitForQueueCount(relaunched, expected: 0)
+        // #978 amendment: the replay must be PUBLISHED, not merely enqueued-then-
+        // applied — wait for the settings row, the single open block and both
+        // counters to settle before asserting (deadline-bound; values unchanged).
+        try await waitForReplayPublished(
+            relaunched,
+            server: server,
+            phase: .strength,
+            startedOn: today
+        )
 
         XCTAssertEqual(server.periodCount, 2, "no duplicate period for an already-applied create")
         XCTAssertEqual(server.openPeriods.count, 1)
@@ -577,6 +586,46 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
             "the stubbed server to hold the expected request",
             isSatisfied: { server.isHoldingRequest },
             observed: { server.holdState }
+        )
+    }
+
+    /// #978 amendment: after a manual retry pass returns, the transition's
+    /// confirmation and the two published counters land through several more
+    /// awaited hops (`confirmPhaseTransition` → `refreshPendingCacheWriteCount`
+    /// inside the uploader, then the pass's own `refreshQueueCount`). On a
+    /// contended runner those hops can still be settling when the pass
+    /// returns, so the post-retry assertions wait for the PUBLISHED end state
+    /// instead of racing it. The deadline decides only how long that may take;
+    /// the assertions below keep their exact values and meaning.
+    @MainActor
+    private func waitForReplayPublished(
+        _ model: AppModel,
+        server: FakePhasePostgREST,
+        phase: PhaseID,
+        startedOn: String
+    ) async throws {
+        try await waitUntil(
+            "the replayed transition to be published: settings=\(phase.rawValue)@\(startedOn), "
+                + "openPeriods=1, pendingCacheWriteCount=0, queuedWriteCount=0",
+            isSatisfied: {
+                server.settings?.phase == phase
+                    && server.settings?.startDate == startedOn
+                    && server.openPeriods.count == 1
+                    && model.pendingCacheWriteCount == 0
+                    && model.queuedWriteCount == 0
+            },
+            observed: {
+                let open = server.openPeriods
+                let openDesc = open
+                    .map { "\($0.phase.rawValue)@\($0.startedOn)" }
+                    .joined(separator: "; ")
+                return "serverSettings=\(server.settings.map { "\($0.phase.rawValue)@\($0.startDate)" } ?? "nil"), "
+                    + "openPeriods(\(open.count))=[\(openDesc)], "
+                    + "pendingCacheWriteCount=\(model.pendingCacheWriteCount), "
+                    + "queuedWriteCount=\(model.queuedWriteCount), "
+                    + "currentPhase=\(model.settings.currentPhase), "
+                    + Self.durableQueueState(model)
+            }
         )
     }
 
