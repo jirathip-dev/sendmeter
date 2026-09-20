@@ -8,7 +8,6 @@ import AVFAudio
 
 struct WorkoutView: View {
     @Environment(AppModel.self) private var model
-    @State private var engine: PhoneWorkoutEngine?
     @State private var showRoutineEditor = false
     /// #834 (reopen): the top-right Log Session toolbar action relocated here
     /// from DashboardView — same sheet, same haptic treatment.
@@ -22,17 +21,22 @@ struct WorkoutView: View {
     /// runner (the classified, non-dismissible execution surface) never starts
     /// on top of the preview.
     @State private var pendingRoutineStart: RoutinePreset?
-    @State private var isSaving = false
-    @State private var activeSaveID: UUID?
     @State private var showManualWorkout = false
     /// #926: the refused-End explanation that the full-screen workout is
-    /// showing. It lives here because the End control and the workout's
-    /// lifecycle both belong to this view — and because the app-level banner
-    /// is not visible behind the cover.
+    /// showing. It lives here because the presentation token is view state —
+    /// a repeat tap must re-announce — while the refusal itself (and the
+    /// workout it belongs to) is owned by the app-level lifecycle owner.
     @State private var endRefusal: ManualWorkoutEndRefusal?
     @State private var hasResolvedPersistedRun = false
     @AppStorage(ManualWorkoutRest.restTargetKey)
     private var storedRestTarget = ManualWorkoutRest.defaultRestTarget
+
+    /// #936: the in-progress workout lives on `AppModel.manualWorkoutLifecycle`,
+    /// never in this view's state. Recreating this view therefore reads the
+    /// workout that is already running (`resumeWorkout`) instead of creating a
+    /// new one or dropping the old one.
+    private var workout: PhoneWorkoutEngine? { model.manualWorkoutLifecycle.workout }
+    private var isSavingWorkout: Bool { model.manualWorkoutLifecycle.isSaving }
 
     var body: some View {
         NavigationStack {
@@ -41,7 +45,7 @@ struct WorkoutView: View {
                     if let live = model.liveWorkout {
                         WatchWorkoutMirrorCard(workout: live)
                     }
-                    if engine == nil {
+                    if workout == nil {
                         StartWorkoutCard(start: startWorkout)
                         RoutineLibraryCard(
                             preview: { preset in
@@ -60,8 +64,8 @@ struct WorkoutView: View {
                         )
                     } else {
                         ActiveWorkoutCard(
-                            engine: $engine,
-                            isSaving: isSaving,
+                            workout: workout,
+                            isSaving: isSavingWorkout,
                             finish: finishWorkout,
                             openFullscreen: resumeWorkout
                         )
@@ -112,9 +116,9 @@ struct WorkoutView: View {
             }
             .fullScreenCover(isPresented: $showManualWorkout, onDismiss: { Haptics.shared.sheetDismissed() }) {
                 ManualWorkoutFullscreen(
-                    engine: $engine,
+                    workout: workout,
                     endRefusal: $endRefusal,
-                    isSaving: isSaving,
+                    isSaving: isSavingWorkout,
                     restTarget: restTarget,
                     onRestTargetChange: { target in
                         storedRestTarget = ManualWorkoutRest.validatedTarget(target)
@@ -125,6 +129,7 @@ struct WorkoutView: View {
                         // (or into the next full-screen presentation).
                         endRefusal = nil
                         showManualWorkout = false
+                        model.minimizeManualWorkout()
                     },
                     onEnd: finishWorkout
                 )
@@ -137,19 +142,20 @@ struct WorkoutView: View {
                 drainManualWorkoutActions()
             }
             .onAppear {
+                // #936: the workout lives on the app-level owner, so a
+                // re-created view re-syncs the card/rest deadline to the
+                // workout it already has and replays any lock-screen action
+                // that arrived while it was gone — without recreating or
+                // terminating anything.
+                model.setManualWorkoutRestTarget(restTarget)
+                model.resumeManualWorkout()
                 drainManualWorkoutActions()
-                model.manualWorkoutRest.update(engine: engine, restTarget: restTarget)
                 #if DEBUG
                 armManualWorkoutFixtureIfNeeded()
                 #endif
             }
-            .onChange(of: engine) { newEngine in
-                model.manualWorkoutRest.update(engine: newEngine, restTarget: restTarget)
-                model.manualWorkoutActivity.sync(engine: newEngine, restTarget: restTarget)
-            }
             .onChange(of: storedRestTarget) { _ in
-                model.manualWorkoutRest.update(engine: engine, restTarget: restTarget)
-                model.manualWorkoutActivity.sync(engine: engine, restTarget: restTarget)
+                model.setManualWorkoutRestTarget(restTarget)
             }
             .task {
                 guard !hasResolvedPersistedRun else { return }
@@ -258,61 +264,43 @@ struct WorkoutView: View {
     }
 
     private func startWorkout() {
-        guard !isSaving else { return }
-        guard let userID = model.currentUserID else { return }
+        guard !isSavingWorkout else { return }
         Haptics.shared.tap()
-        let newEngine = PhoneWorkoutEngine(
-            accountUserID: userID,
-            phase: model.settings.currentPhase,
-            startedAt: Date()
-        )
-        engine = newEngine
+        // #936: the owner decides. A start while a workout is already in
+        // progress — or while the previous finish is still saving — is ignored,
+        // so recreating this view can never recreate or replace the workout.
+        guard case .changed = model.startManualWorkout().decision else { return }
         // #926: a fresh workout never inherits the previous one's explanation.
         endRefusal = nil
-        model.manualWorkoutActivity.start(engine: newEngine, restTarget: restTarget)
-        model.manualWorkoutRest.update(engine: newEngine, restTarget: restTarget)
         showManualWorkout = true
-        Task { await model.manualWorkoutRest.requestNotificationPermissionIfNeeded() }
     }
 
     private func resumeWorkout() {
-        guard engine != nil, !isSaving else { return }
+        guard workout != nil, !isSavingWorkout else { return }
         Haptics.shared.tap()
-        model.manualWorkoutRest.update(engine: engine, restTarget: restTarget)
+        // Resumes the workout the owner holds — it never starts a new one.
+        model.resumeManualWorkout()
         showManualWorkout = true
     }
 
     private func finishWorkout() {
-        guard !isSaving else { return }
-        guard var engine else { return }
-        do {
-            let draft = try engine.finish()
+        guard !isSavingWorkout else { return }
+        switch model.endManualWorkout().decision {
+        case .persist:
             // #656 (re-review): the accepted medium tick fires only once the
-            // finish is real — an empty-workout refusal below must play the
-            // warning pattern, never the accepted tick.
+            // finish is real — a refused finish below plays the warning
+            // pattern, never the accepted tick. The owner has already handed
+            // the ONE draft to the app's save path and cleared the workout.
             Haptics.shared.playGesture(.medium)
-            model.manualWorkoutRest.stop()
-            model.manualWorkoutActivity.end(immediate: true)
-            model.manualWorkoutActivity.discardPendingEvents()
-            showManualWorkout = false
             endRefusal = nil
-            self.engine = nil
-            let saveID = UUID()
-            activeSaveID = saveID
-            isSaving = true
-            Task { @MainActor in
-                await model.saveWorkout(draft)
-                guard activeSaveID == saveID else { return }
-                activeSaveID = nil
-                isSaving = false
-            }
-        } catch WorkoutEngineError.emptyWorkout {
-            presentEndRefusal(UserFacingError.message(for: .missingAttempt))
+            showManualWorkout = false
+        case let .refused(message):
+            presentEndRefusal(message)
             // #222: the Finish button is deliberately kept clickable so the
             // tap can say why — a refused finish must not feel accepted.
             Haptics.shared.playGesture(RefusedActionHaptics.cue(tappableAndRefused: true))
-        } catch {
-            presentEndRefusal(UserFacingError.message(for: error))
+        case .changed, .ignored:
+            break
         }
     }
 
@@ -332,29 +320,23 @@ struct WorkoutView: View {
         ManualWorkoutRest.validatedTarget(storedRestTarget)
     }
 
-    /// Replay lock-screen intent taps into the authoritative engine. The
-    /// event identity keeps a stale event from replaying into a newer workout;
-    /// the engine's own guards make duplicates/no-ops safe. If the workout is
-    /// gone, the whole queue is discarded.
+    /// Replay lock-screen intent taps into the authoritative workout through
+    /// the app-level owner. The event identity keeps a stale event from
+    /// replaying into a newer workout; the owner's own guards make
+    /// duplicates/no-ops safe. With no workout in progress the drained batch is
+    /// discarded — the adapter's contract for a missing identity.
     private func drainManualWorkoutActions() {
-        let events = model.manualWorkoutActivity.drainPendingEvents(
-            forWorkoutStartedAt: engine?.draft.startedAt
-        )
-        guard let engine else { return }
-        let current = ManualWorkoutActivityReplay.applying(events, to: engine)
-        guard current != engine else { return }
-        self.engine = current
-        model.manualWorkoutActivity.refresh(engine: current, restTarget: restTarget)
+        model.drainManualWorkoutActivityEvents()
     }
 
     #if DEBUG
     /// #926 UI-test/evidence harness: the signed-out simulator lanes cannot
     /// sign in, so `--manual-workout-fixture` arms the REAL manual workout —
-    /// the production engine, full-screen presentation, End control and
-    /// refusal surface. `--manual-workout-fixture=refused` additionally taps
-    /// End once, through the production path, so host captures can photograph
-    /// the refusal. DEBUG-only and launch-argument-gated: the signed-in
-    /// product path never reads it.
+    /// the production lifecycle owner, engine, full-screen presentation, End
+    /// control and refusal surface. `--manual-workout-fixture=refused`
+    /// additionally taps End once, through the production path, so host
+    /// captures can photograph the refusal. DEBUG-only and launch-argument-
+    /// gated: the signed-in product path never reads it.
     @State private var hasArmedManualWorkoutFixture = false
 
     private func armManualWorkoutFixtureIfNeeded() {
@@ -364,11 +346,10 @@ struct WorkoutView: View {
               })
         else { return }
         hasArmedManualWorkoutFixture = true
-        engine = PhoneWorkoutEngine(
-            accountUserID: UUID(),
-            phase: model.settings.currentPhase,
-            startedAt: Date()
-        )
+        // #936: the harness arms the REAL product lifecycle (the owner, with a
+        // synthetic account). Only the notification-permission ask is skipped —
+        // its system prompt would cover the surface under capture.
+        guard case .changed = model.startManualWorkoutFixture().decision else { return }
         endRefusal = nil
         showManualWorkout = true
         guard flag.hasSuffix("=refused") else { return }
@@ -442,12 +423,14 @@ private struct StartWorkoutCard: View {
 
 private struct ActiveWorkoutCard: View {
     @Environment(AppModel.self) private var model
-    @Binding var engine: PhoneWorkoutEngine?
+    /// #936: a read-only view of the workout the app-level owner holds. The
+    /// card mutates it only through the owner's own entry points.
+    let workout: PhoneWorkoutEngine?
     let isSaving: Bool
     let finish: () -> Void
     let openFullscreen: () -> Void
 
-    private var isAttempting: Bool { engine?.attemptStartedAt != nil }
+    private var isAttempting: Bool { workout?.attemptStartedAt != nil }
 
     var body: some View {
         SurfaceCard {
@@ -459,13 +442,13 @@ private struct ActiveWorkoutCard: View {
                         StatusPill(isAttempting ? "Climbing" : "Resting", color: isAttempting ? SendmeterStyle.power : SendmeterStyle.optimal)
                     }
 
-                    if let engine {
-                        Text(durationString(context.date.timeIntervalSince(engine.draft.startedAt)))
+                    if let workout {
+                        Text(durationString(context.date.timeIntervalSince(workout.draft.startedAt)))
                             .modifier(SendmeterStyle.countdownMetric(baseSize: 52))
                         HStack(spacing: 28) {
-                            metric("Attempts", "\(engine.draft.attempts.count)")
-                            metric("RPE", engine.draft.rpe.formatted(.number.precision(.fractionLength(0...1))))
-                            metric("Block", PhaseCatalog.definition(for: engine.draft.phase).name)
+                            metric("Attempts", "\(workout.draft.attempts.count)")
+                            metric("RPE", workout.draft.rpe.formatted(.number.precision(.fractionLength(0...1))))
+                            metric("Block", PhaseCatalog.definition(for: workout.draft.phase).name)
                         }
 
                         Button(action: openFullscreen) {
@@ -476,17 +459,7 @@ private struct ActiveWorkoutCard: View {
                         .accessibilityHint("Resume the immersive Manual workout timer")
 
                         Button {
-                            var copy = engine
-                            do {
-                                if copy.attemptStartedAt == nil {
-                                    try copy.startAttempt()
-                                } else {
-                                    _ = try copy.endAttempt()
-                                }
-                                self.engine = copy
-                            } catch {
-                                model.errorMessage = UserFacingError.message(for: error)
-                            }
+                            toggleAttempt()
                         } label: {
                             Label(
                                 isAttempting ? "End Attempt" : "Start Attempt",
@@ -500,12 +473,8 @@ private struct ActiveWorkoutCard: View {
                             Text("Session RPE")
                             Slider(
                                 value: Binding(
-                                    get: { self.engine?.draft.rpe ?? 7 },
-                                    set: { value in
-                                        guard var copy = self.engine else { return }
-                                        copy.setRPE(value)
-                                        self.engine = copy
-                                    }
+                                    get: { workout.draft.rpe },
+                                    set: { model.setManualWorkoutRPE($0) }
                                 ),
                                 in: 1...10,
                                 step: 0.5
@@ -524,6 +493,17 @@ private struct ActiveWorkoutCard: View {
                     }
                 }
             }
+        }
+    }
+
+    /// #936: the attempt transition goes through the app-level owner, which
+    /// keeps the workout, the live card and the rest deadline in one place.
+    private func toggleAttempt() {
+        do {
+            try model.toggleManualWorkoutAttempt()
+            Haptics.shared.playGesture(.light)
+        } catch {
+            model.errorMessage = UserFacingError.message(for: error)
         }
     }
 

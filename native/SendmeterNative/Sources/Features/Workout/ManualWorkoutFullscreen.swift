@@ -8,7 +8,10 @@ import SwiftUI
 struct ManualWorkoutFullscreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Binding var engine: PhoneWorkoutEngine?
+    /// #936: the presentation renders the workout the app-level lifecycle owner
+    /// holds. It never owns, recreates or terminates it: attempts go back
+    /// through the owner, and minimizing only dismisses this cover.
+    let workout: PhoneWorkoutEngine?
     /// #926: the explanation for a refused End. It must be presented HERE —
     /// the app-level error banner renders behind this cover, so a refusal
     /// routed there is invisible while the workout is up. The parent clears
@@ -25,7 +28,7 @@ struct ManualWorkoutFullscreen: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { context in
-            if let currentEngine = engine {
+            if let currentEngine = workout {
                 let snapshot = makeSnapshot(engine: currentEngine, now: context.date)
                 screen(snapshot: snapshot)
                     .task(id: snapshot.phase) {
@@ -292,15 +295,13 @@ struct ManualWorkoutFullscreen: View {
         .accessibilityHint(snapshot.phase == .climbing ? "Stops the current attempt" : "Starts a new attempt")
     }
 
+    /// #936: the attempt transition is the app-level owner's decision. The
+    /// engine's own guards still refuse an invalid one, and that error is
+    /// presented where it always was (the app banner) with the refused haptic.
     private func toggleAttempt() {
-        guard !isSaving, var copy = engine else { return }
+        guard !isSaving else { return }
         do {
-            if copy.attemptStartedAt == nil {
-                try copy.startAttempt(at: Date())
-            } else {
-                _ = try copy.endAttempt(at: Date())
-            }
-            engine = copy
+            try model.toggleManualWorkoutAttempt()
             // #926: the workout moved on, so the refusal that was on screen
             // now describes a state the user has left.
             endRefusal = nil

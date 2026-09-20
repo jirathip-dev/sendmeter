@@ -76,9 +76,10 @@ public enum ManualWorkoutActivityReplay {
 /// activities. The in-memory active-workout marker is set by
 /// `ManualWorkoutActivityManager.start` and cleared by `end`, so a live
 /// workout is protected even if ActivityKit has temporarily dropped the
-/// in-process activity handle. The manual engine itself is `@State` and never
-/// persisted, so after a relaunch there is by definition no live workout to
-/// protect and the sweep may retire stranded cards.
+/// in-process handle. The manual workout itself (#936: held in memory by
+/// `ManualWorkoutLifecycleCoordinator`) is never persisted, so after a relaunch
+/// there is by definition no live workout to protect and the sweep may retire
+/// stranded cards.
 public enum ManualWorkoutActivityReconcileGuard {
     public static func shouldReconcile(
         isActive: Bool,
