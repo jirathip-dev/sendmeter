@@ -1,0 +1,31 @@
+pre-fix-quiet-1	482	29.36	exit=0	), _NSUTest Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (1.377 seconds).
+pre-fix-contended-1	223	136.90	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (3.687 seconds).
+pre-fix-contended-2	164	testload=34.06	exit=0	2026-09-20 04:54:07.836706+0700 Sendmeter[12950:4Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (3.423 seconds).
+pre-fix-contended-3	1342	testload=102.30	exit=137	
+fix-quiet-1	53	21.12	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (2.308 seconds).
+fix-quiet-2	15	22.31	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (1.294 seconds).
+fix-quiet-3	17	21.49	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (1.306 seconds).
+fix-quiet-4	14	19.93	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (1.371 seconds).
+fix-quiet-5	15	18.17	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (1.265 seconds).
+fix-contended-1	51	testload=9.96	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (2.643 seconds).
+fix-contended-2	40	testload=30.33	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (4.016 seconds).
+fix-contended-3	44	testload=31.98	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (2.244 seconds).
+fix-contended-4	55	testload=38.61	exit=0	2026-09-20 05:26:20.189970+0700 Sendmeter[25539:49951800] [DTest Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (3.638 seconds).
+fix-contended-5	71	testload=45.07	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (3.511 seconds).
+red-splice-fixed	503	5.95	exit=65	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' failed (180.478 seconds).
+cause-inject4-fixed	56	7.38	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (5.155 seconds).
+cause-inject4-old	19	7.22	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (5.211 seconds).
+cause-inject2-old	71	13.66	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (3.262 seconds).
+amend-quiet-1	236	251.89	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (1.430 seconds).
+amend-quiet-2	27	180.48	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (1.374 seconds).
+amend-quiet-3	54	159.93	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (1.392 seconds).
+amend-quiet-4	24	117.94	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (1.345 seconds).
+amend-quiet-5	18	87.87	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (1.359 seconds).
+amend-contended-1	50	testload=81.23	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (2.388 seconds).
+amend-contended-2	167	testload=61.90	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (29.834 seconds).
+amend-contended-3	99	testload=157.25	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (3.918 seconds).
+amend-contended-4	98	testload=111.44	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (2.771 seconds).
+amend-contended-5	77	testload=79.17	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (2.581 seconds).
+amend-class	37	54.23	exit=0		 Executed 9 tests, with 0 failures (0 unexpected) in 2.970 (2.978) seconds
+cause-asyncpub30-old	161	15.22	exit=65	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' failed (12.154 seconds).
+cause-asyncpub30-fixed	123	170.18	exit=0	Test Case '-[SendmeterNativeTests.PhaseTransitionReplayAppTests testOfflinePhaseTransitionIsDurableAndReplaysOnceAfterProcessDeath]' passed (91.495 seconds).

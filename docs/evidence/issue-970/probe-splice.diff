@@ -1,0 +1,14 @@
+--- /Users/jirathip/.herdr/worktrees/sendmeter/impl-970/native/SendmeterNative/Sources/App/AppModel.swift	2026-09-20 04:04:24
++++ /tmp/impl970-probes/native/SendmeterNative/Sources/App/AppModel.swift	2026-09-20 05:27:45
+@@ -7988,10 +7988,7 @@
+                 payload: queuedPayload
+             )
+             do {
+-                let installed = try await queue.enqueueIfCurrent(
+-                    item,
+-                    expectedRevision: existing?.revision
+-                )
++                let installed = true // PROBE(splice): the durable enqueue was removed
+                 guard installed else {
+                     if await queue.terminalizedKeys(
+                         for: accountFetch.accountUserID
