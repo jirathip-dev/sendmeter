@@ -1,0 +1,21 @@
+diff --git a/native/SendmeterNative/Sources/App/AppModel.swift b/native/SendmeterNative/Sources/App/AppModel.swift
+index 8751efe..64f5c15 100644
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -916,7 +916,15 @@ public final class AppModel {
+         // following it. `prepareCacheIfNeeded()` joins this same flight.
+         let preparation = self.cachePreparation
+         let seams = self.cacheStorageSeams
+-        Task { _ = await preparation.preparedCache(directory: support, seams: seams) }
++        // PROBE A (pre-#921 shape): the main thread waits for the store open
++        // and its migrations instead of letting the one flight run beside the
++        // first frame.
++        let probeWait = DispatchSemaphore(value: 0)
++        Task.detached {
++            _ = await preparation.preparedCache(directory: support, seams: seams)
++            probeWait.signal()
++        }
++        probeWait.wait()
+ 
+         let watch = self.watchService
+         let realtime = self.realtime

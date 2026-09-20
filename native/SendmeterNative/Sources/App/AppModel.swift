@@ -604,7 +604,19 @@ public final class AppModel {
     }
 
     private let queue: DurableQueue<PendingWrite>?
-    private let cachedWorkspace: CachedWorkspace?
+    /// #921: the account-agnostic cache handle. It is `nil` until the one
+    /// preparation flight has opened and migrated the store, so a cache-backed
+    /// read during that window degrades to the network-only path instead of
+    /// touching an unready store. `cacheReadiness` is the honest state.
+    private var cachedWorkspace: CachedWorkspace?
+    /// #921: the one lifetime preparation flight, shared by the auth bootstrap,
+    /// the foreground pass and a background app-refresh.
+    private let cachePreparation = CachePreparation()
+    private let cacheStorageSeams: CacheStorageSeams
+    private let cacheDirectory: URL?
+    /// #921: what the app knows about the local cache. `preparing` until the
+    /// flight answers; `unavailable` is recoverable and never a success claim.
+    public private(set) var cacheReadiness: CacheReadiness = .preparing
     /// Set when the local cache file opens or first reads. Kept separate from
     /// the queue's own diagnostics because a cache failure must degrade to the
     /// network-only path without looking like an auth failure.
@@ -827,7 +839,8 @@ public final class AppModel {
         health: HealthKitService? = nil,
         watch: WatchConnectivityService? = nil,
         realtime: RealtimeService? = nil,
-        weather: WeatherService? = nil
+        weather: WeatherService? = nil,
+        cacheStorageSeams: CacheStorageSeams = .live
     ) {
         // The services' initializers are MainActor-isolated; default-argument
         // expressions are nonisolated, so they must be constructed here in
@@ -871,44 +884,39 @@ public final class AppModel {
         // from the account — the native app keeps them on-device.
         self.tagSideModes = TagSideModeStore.allStoredModes()
 
-        // #747 review note: LocalCacheStore init opens GRDB and runs migrations
-        // synchronously on the main actor during AppModel init. This is on the
-        // launch path and is acceptable for slice 2, but should be profiled on
-        // device and deferred off the main actor if cold-start cost matters.
+        // #921: the local cache is prepared OFF the launch path. `init` no
+        // longer creates the directory, opens SQLite or runs the schema
+        // migrations — all three used to run synchronously on the main actor
+        // right here, before the app could present its first frame (see the
+        // block this replaced, #747). The one preparation flight now runs on
+        // the storage side (`CachePreparation`) and every cache-backed
+        // lifecycle entrypoint JOINS it. A store that is slow, missing or
+        // broken therefore cannot delay the first frame; the splash
+        // presentation policy (#841) owns that window, and its intentional
+        // floor is not performance waste.
+        self.cacheStorageSeams = cacheStorageSeams
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first?.appendingPathComponent("SendmeterNative", isDirectory: true)
-        if let support {
-            do {
-                try FileManager.default.createDirectory(
-                    at: support,
-                    withIntermediateDirectories: true
-                )
-                let store = try LocalCacheStore(
-                    databaseURL: support.appendingPathComponent(
-                        "local-cache.sqlite",
-                        isDirectory: false
-                    )
-                )
-                cachedWorkspace = CachedWorkspace(store: store)
-            } catch {
-                cachedWorkspace = nil
-                cacheOpenFailureReported = true
-                self.auth.recordAuthEvent(
-                    .failure,
-                    detail: "Local cache unavailable: \(error.localizedDescription)"
-                )
-            }
-            self.queue = try? DurableQueue(
-                directoryURL: support,
+        self.cacheDirectory = support
+        self.cachedWorkspace = nil
+        // The durable queue is a small JSON file owned by `DurableQueue`; its
+        // read is not the database open this issue moves and is measured in
+        // docs/evidence/issue-921/first-frame-timings.txt.
+        self.queue = support.flatMap { directory in
+            try? DurableQueue(
+                directoryURL: directory,
                 filename: "pending-writes.json",
                 breadcrumbLimit: 10
             )
-        } else {
-            cachedWorkspace = nil
-            self.queue = nil
         }
+        // Start the single flight without awaiting it, so opening and
+        // migrating the store overlaps the auth round-trip instead of
+        // following it. `prepareCacheIfNeeded()` joins this same flight.
+        let preparation = self.cachePreparation
+        let seams = self.cacheStorageSeams
+        Task { _ = await preparation.preparedCache(directory: support, seams: seams) }
 
         let watch = self.watchService
         let realtime = self.realtime
@@ -1216,33 +1224,33 @@ public final class AppModel {
     /// that has not been read yet is "not loaded", never "Synced".
     public var mutationSyncStatus: MutationSyncStatus {
         MutationSyncStatus.resolve(
-            MutationSyncStatusInputs(
-                hasLoadedPendingWrites: hasLoadedPendingWrites,
-                queuedCount: queuedWriteCount,
-                unsyncedCacheCount: pendingCacheWriteCount,
-                quarantinedCount: quarantinedWrites?.count,
-                isRetrying: isRetryingQueuedWrites,
-                lastRetryOutcome: lastRetryOutcome
+            // #921: a cache that has not answered cannot have read its
+            // unsynced rows, so its zero count must never resolve to
+            // "Synced" — the gate reports `notLoaded` ("Checking…") instead.
+            cacheReadiness.honestSyncInputs(
+                MutationSyncStatusInputs(
+                    hasLoadedPendingWrites: hasLoadedPendingWrites,
+                    queuedCount: queuedWriteCount,
+                    unsyncedCacheCount: pendingCacheWriteCount,
+                    quarantinedCount: quarantinedWrites?.count,
+                    isRetrying: isRetryingQueuedWrites,
+                    lastRetryOutcome: lastRetryOutcome
+                )
             )
         )
     }
 
-    /// #920: the tag-registry identities on this device that the server has
+    /// #922: the tag-registry identities on this device that the server has
     /// not confirmed. Every tag mutation — a queued intent or a cache-only
     /// residue from an older app version — writes its optimistic row with the
     /// (trimmed) tag name as the cache identity, so this one set covers both
     /// without counting the same change twice. Manage Exercises names them.
-    public var pendingTagWriteCount: Int {
-        guard let userID = currentUserID, let workspace = cachedWorkspace else {
-            return 0
-        }
-        let ids = (try? workspace.pendingEntityIDs(
-            accountUserID: userID,
-            entityType: .tagMetadata,
-            includingDeleted: true
-        )) ?? []
-        return ids.count
-    }
+    ///
+    /// Published state, not a query: this used to read the cache inside a view
+    /// body. It is refreshed at the same boundaries as `pendingCacheWriteCount`
+    /// — every cache confirm/write and every publish — so a render never
+    /// touches the store.
+    public private(set) var pendingTagWriteCount = 0
 
     // MARK: Tag registry (#631)
 
@@ -1781,6 +1789,11 @@ public final class AppModel {
         manualWorkoutActivity.reconcileOrphans()
         guard let currentSession = authSession else { return }
         updateAuthClockAdvisory(for: currentSession)
+        // #921: a foreground pass is a cache-backed entrypoint, so it joins the
+        // one preparation flight before any cache read or write. On the normal
+        // launch this is already `.ready` and costs nothing; after a failed
+        // open it is the retry that lets the cache recover without a relaunch.
+        await prepareCacheIfNeeded()
         // A cache-open/read failure deliberately leaves the WC inbox row in
         // place. Retry it on every foreground pass instead of waiting for a
         // relaunch or an account transition.
@@ -1887,6 +1900,13 @@ public final class AppModel {
                 // finish. Otherwise the watch inbox adoption can suspend with
                 // an ownerless loading latch between signed-in and refresh.
                 let bootstrapRefreshOwner = beginDataRefresh()
+                // #921: the cache is opened off the launch path, so the
+                // account bootstrap joins the one preparation flight before
+                // the first cache-backed adoption. The join SUSPENDS the main
+                // actor (it never blocks it), and the splash floor claimed
+                // above still holds the first frame: a delayed store moves
+                // when this bootstrap finishes, not when the app can draw.
+                await prepareCacheIfNeeded()
                 // Adopt persisted watch summaries before any network await so
                 // a relaunch with a delayed Supabase path still renders the
                 // completion in History immediately.
@@ -2078,91 +2098,104 @@ public final class AppModel {
     /// auth/bootstrap path: `refreshAll` continues with the existing
     /// network-only behavior and the failure is visible in the Settings
     /// diagnostics ring.
-    private func hydrateCachedWorkspace(accountUserID: UUID) {
-        do {
-            guard let snapshot = try CacheHydrator.load(
-                workspace: cachedWorkspace,
-                accountUserID: accountUserID
-            ) else { return }
-            let sessionsWereSynced = cacheHasCompletedSync(
-                accountUserID: accountUserID,
-                entityType: .sessions
-            )
-            let recordingsWereSynced = cacheHasCompletedSync(
-                accountUserID: accountUserID,
-                entityType: .recordings
-            )
-            sessions = snapshot.sessions
-            // Opening/creating SQLite is not a server boundary. Only a
-            // persisted cursor or explicit successful-empty marker can make a
-            // cached empty list authoritative after a failed refresh.
-            hasLoadedSessions = hasLoadedSessions || sessionsWereSynced
-            if let cachedSettings = snapshot.settings {
-                settings = cachedSettings
-            }
-            phasePeriods = snapshot.phasePeriods
-            healthMetrics = snapshot.healthMetrics
-            recordings = snapshot.recordings
-            presets = snapshot.presets
-            routines = snapshot.routines
-            workouts = snapshot.workouts
-            tagMetadata = snapshot.tagMetadata
-            // Pending rows are the cache's durable optimistic overlay. Rebuild
-            // the in-memory overlays before the first remote merge so a
-            // pending item cannot be dropped when `refreshAll` replaces the
-            // published collections with the authoritative snapshot.
-            pendingSessions = Dictionary(
-                uniqueKeysWithValues: snapshot.sessions
-                    .filter(\.pending)
-                    .map { ($0.id, $0) }
-            )
-            let pendingRecordingIDs = try cachedWorkspace?.pendingEntityIDs(
-                accountUserID: accountUserID,
-                entityType: .recordings
-            ) ?? []
-            pendingRecordings = PendingRecordingOverlay()
-            let recordingsByID = Dictionary(
-                uniqueKeysWithValues: snapshot.recordings.map { ($0.id, $0) }
-            )
-            for pendingID in pendingRecordingIDs {
-                guard let id = UUID(uuidString: pendingID),
-                      let recording = recordingsByID[id] else { continue }
-                pendingRecordings.insert(recording, accountUserID: accountUserID)
-            }
-            hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced
-            forceModel.hasLoadedRecordings = hasLoadedRecordings
-            publishForceProgressInputMutation(.recordings)
-            refreshPendingCacheWriteCount(accountUserID: accountUserID)
-        } catch {
-            recordCacheFailure("cache read", error)
+    ///
+    /// #922 (#295/#296 captured state): calling this performs the read on the
+    /// storage side, so the account/epoch captured BEFORE that await is
+    /// re-checked before a single value is published. A hydration that loses
+    /// its account (switch, sign-out, cancellation) publishes nothing —
+    /// another account's cache rows can never reach the model.
+    ///
+    /// The returned read is the hydrated revision itself, so the caller's fetch
+    /// plan (cursors) and its publication (collections, pending counts) are
+    /// derived from the same point in time instead of re-querying the cache.
+    @discardableResult
+    private func hydrateCachedWorkspace(
+        accountUserID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> LocalCacheSnapshotRead? {
+        guard let read = await readCoherentCache(accountUserID: accountUserID) else {
+            return nil
         }
+        guard !Task.isCancelled else { return nil }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+        let snapshot = read.snapshot
+        let sessionsWereSynced = read.hasCompletedSync(.sessions)
+        let recordingsWereSynced = read.hasCompletedSync(.recordings)
+        sessions = snapshot.sessions
+        // Opening/creating SQLite is not a server boundary. Only a
+        // persisted cursor or explicit successful-empty marker can make a
+        // cached empty list authoritative after a failed refresh.
+        hasLoadedSessions = hasLoadedSessions || sessionsWereSynced
+        if let cachedSettings = snapshot.settings {
+            settings = cachedSettings
+        }
+        phasePeriods = snapshot.phasePeriods
+        healthMetrics = snapshot.healthMetrics
+        recordings = snapshot.recordings
+        presets = snapshot.presets
+        routines = snapshot.routines
+        workouts = snapshot.workouts
+        tagMetadata = snapshot.tagMetadata
+        // Pending rows are the cache's durable optimistic overlay. Rebuild
+        // the in-memory overlays before the first remote merge so a
+        // pending item cannot be dropped when `refreshAll` replaces the
+        // published collections with the authoritative snapshot.
+        pendingSessions = Dictionary(
+            uniqueKeysWithValues: snapshot.sessions
+                .filter(\.pending)
+                .map { ($0.id, $0) }
+        )
+        let pendingRecordingIDs = read.pendingEntityIDs(.recordings)
+        pendingRecordings = PendingRecordingOverlay()
+        let recordingsByID = Dictionary(
+            uniqueKeysWithValues: snapshot.recordings.map { ($0.id, $0) }
+        )
+        for pendingID in pendingRecordingIDs {
+            guard let id = UUID(uuidString: pendingID),
+                  let recording = recordingsByID[id] else { continue }
+            pendingRecordings.insert(recording, accountUserID: accountUserID)
+        }
+        hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced
+        forceModel.hasLoadedRecordings = hasLoadedRecordings
+        publishForceProgressInputMutation(.recordings)
+        publishPendingCacheWriteCounts(from: read, accountUserID: accountUserID)
+        return read
     }
 
     /// Applies one entity refresh to the cache: a full snapshot on first sync
     /// or after a cursor reset, or a cursor-bounded delta otherwise. Cache
     /// errors are recorded and non-fatal, matching the cold-start read policy.
-    private func reconcileEntityRefresh<T: Encodable>(
+    ///
+    /// #922: the write runs on the storage side — one hop for the whole entity,
+    /// never one task per row. The caller re-checks its account/epoch capture
+    /// after this await.
+    private func reconcileEntityRefresh<T: Encodable & Sendable>(
         _ delta: RemoteEntityDelta<T>,
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
         fullSnapshot: CachedWorkspaceSnapshot?,
         purgeGeneration: Int64? = nil
-    ) {
-        guard let cachedWorkspace else { return }
+    ) async {
+        guard let workspace = cachedWorkspace else { return }
         do {
-            if fullSnapshot != nil {
-                try cachedWorkspace.reconcileServerDelta(
-                    delta,
-                    accountUserID: accountUserID,
-                    entityType: entityType,
-                    purgeGeneration: purgeGeneration
-                )
-            } else {
-                try cachedWorkspace.reconcileDelta(
-                    delta,
-                    accountUserID: accountUserID,
-                    entityType: entityType
-                )
+            try await CacheOffload.run {
+                if let fullSnapshot {
+                    try workspace.reconcileServerDelta(
+                        delta,
+                        accountUserID: accountUserID,
+                        entityType: entityType,
+                        purgeGeneration: purgeGeneration
+                    )
+                } else {
+                    try workspace.reconcileDelta(
+                        delta,
+                        accountUserID: accountUserID,
+                        entityType: entityType
+                    )
+                }
             }
         } catch {
             recordCacheFailure("cache entity reconcile", error)
@@ -2185,26 +2218,14 @@ public final class AppModel {
         }
     }
 
-    private func cacheHasCompletedSync(
-        accountUserID: UUID,
-        entityType: LocalCacheEntityType
-    ) -> Bool {
-        guard let cachedWorkspace else { return false }
-        do {
-            return try cachedWorkspace.hasCompletedSync(
-                accountUserID: accountUserID,
-                entityType: entityType
-            )
-        } catch {
-            recordCacheFailure("cache sync boundary read", error)
-            return false
-        }
-    }
-
     /// Hard purges leave no row for an `updated_at > cursor` delta to return.
     /// The server generation is account-scoped; a mismatch or unavailable
     /// generation forces both Trash-backed entities through full authoritative
     /// reconciliation while retaining pending-local-write precedence.
+    ///
+    /// #922: deliberately a targeted two-entity check rather than one more
+    /// full-workspace read — it runs after the generation fetch, so it must
+    /// observe the boundaries as of that moment.
     private func cacheNeedsPurgeReconcile(
         accountUserID: UUID,
         remoteGeneration: Int64?
@@ -2240,23 +2261,25 @@ public final class AppModel {
     /// `mergeRecordings`, which also restore RPE/editor overlays and durable
     /// queue rows. The remaining entities only have the cache as their durable
     /// local row, so this is the final authority after an authoritative refresh.
-    private func applyCachedNonOverlayLists(accountUserID: UUID) {
-        guard let cachedWorkspace else { return }
-        do {
-            let snapshot = try cachedWorkspace.load(accountUserID: accountUserID)
-            if let cachedSettings = snapshot.settings {
-                settings = cachedSettings
-            }
-            phasePeriods = snapshot.phasePeriods
-            healthMetrics = snapshot.healthMetrics
-            presets = snapshot.presets
-            routines = snapshot.routines
-            workouts = snapshot.workouts
-            tagMetadata = snapshot.tagMetadata
-            refreshPendingCacheWriteCount(accountUserID: accountUserID)
-        } catch {
-            recordCacheFailure("cache publish", error)
+    ///
+    /// #922: it publishes from an ALREADY-READ revision. It used to perform its
+    /// own full-workspace load, which is how one refresh ended up loading the
+    /// whole workspace several times just to republish subsets.
+    private func applyCachedNonOverlayLists(
+        accountUserID: UUID,
+        read: LocalCacheSnapshotRead?
+    ) {
+        guard let read else { return }
+        if let cachedSettings = read.snapshot.settings {
+            settings = cachedSettings
         }
+        phasePeriods = read.snapshot.phasePeriods
+        healthMetrics = read.snapshot.healthMetrics
+        presets = read.snapshot.presets
+        routines = read.snapshot.routines
+        workouts = read.snapshot.workouts
+        tagMetadata = read.snapshot.tagMetadata
+        publishPendingCacheWriteCounts(from: read, accountUserID: accountUserID)
     }
 
     @discardableResult
@@ -2594,6 +2617,76 @@ public final class AppModel {
         ]
     }
 
+    // MARK: Cache preparation (#921)
+
+    /// Joins the one local-cache preparation flight and publishes its outcome.
+    ///
+    /// Every cache-backed lifecycle entrypoint calls this: the auth bootstrap,
+    /// the foreground pass and a background app-refresh. After a successful
+    /// preparation it is a no-op, and while the flight is running a caller
+    /// SUSPENDS on it — the main actor is never blocked, and the store is
+    /// never opened twice.
+    func prepareCacheIfNeeded() async {
+        guard !cacheReadiness.isReady else { return }
+        let preparation = cachePreparation
+        let directory = cacheDirectory
+        let seams = cacheStorageSeams
+        let result = await preparation.preparedCache(directory: directory, seams: seams)
+        applyPreparedCache(result)
+    }
+
+    /// #921: how many times the storage opener has actually run. Two
+    /// entrypoints that arrive together leave this at one.
+    public func cacheOpenAttempts() async -> Int {
+        await cachePreparation.openAttempts
+    }
+
+    /// #922: how many full-workspace cache reads this app's store handle has
+    /// issued. One refresh is exactly two of them (the hydration read and the
+    /// post-reconcile publication read) — the number a read-count test pins.
+    public var cacheSnapshotReadCount: Int {
+        cachedWorkspace?.store.snapshotReadCount ?? 0
+    }
+
+    /// #922: whether the most recent full-workspace read ran on the main
+    /// thread. `nil` before the first read. This is the assertion that keeps
+    /// "the read is off the main actor" from depending on a timing.
+    public var lastCacheSnapshotReadOnMainThread: Bool? {
+        cachedWorkspace?.store.lastSnapshotReadOnMainThread
+    }
+
+    private func applyPreparedCache(
+        _ result: Result<PreparedLocalCache, CacheUnavailableReason>
+    ) {
+        switch result {
+        case .success(let prepared):
+            if cachedWorkspace == nil {
+                cachedWorkspace = prepared.workspace
+            }
+            cacheReadiness = .ready
+            // A cache that recovered may report its own (later) failure again.
+            cacheOpenFailureReported = false
+        case .failure(let reason):
+            // Honest and recoverable: the app keeps running network-only, the
+            // failure is visible in the diagnostics ring, and the NEXT
+            // lifecycle entrypoint retries the flight (`CachePreparation`
+            // drops a failed flight). Nothing here claims local persistence.
+            cacheReadiness = .unavailable(reason)
+            reportCacheUnavailable(reason)
+        }
+    }
+
+    /// #921: one diagnostics-ring entry per failed preparation, in the same
+    /// shape the pre-#921 inline open used.
+    private func reportCacheUnavailable(_ reason: CacheUnavailableReason) {
+        guard !cacheOpenFailureReported else { return }
+        cacheOpenFailureReported = true
+        auth.recordAuthEvent(
+            .failure,
+            detail: "Local cache unavailable: \(reason.detail)"
+        )
+    }
+
     private func recordCacheFailure(_ operation: String, _ error: Error) {
         guard !cacheOpenFailureReported else { return }
         cacheOpenFailureReported = true
@@ -2603,14 +2696,54 @@ public final class AppModel {
         )
     }
 
+    /// #922: both published pending counts from ONE query, and both off the
+    /// render path. Every cache confirm/write and every publish calls this, so
+    /// no view body reads the store (see `pendingTagWriteCount`).
     private func refreshPendingCacheWriteCount(accountUserID: UUID) {
         guard let cachedWorkspace else { return }
         do {
-            pendingCacheWriteCount = try cachedWorkspace.pendingDirectWriteCount(
+            let counts = try cachedWorkspace.pendingDirectWriteCounts(
                 accountUserID: accountUserID
             )
+            pendingCacheWriteCount = counts.total
+            pendingTagWriteCount = counts.tagMetadata
         } catch {
             recordCacheFailure("cache pending count", error)
+        }
+    }
+
+    /// #922: the same two counts, from an already-read coherent revision —
+    /// no extra query at a boundary that just performed one.
+    private func publishPendingCacheWriteCounts(
+        from read: LocalCacheSnapshotRead,
+        accountUserID: UUID
+    ) {
+        pendingCacheWriteCount = read.pendingDirectWriteCount
+        pendingTagWriteCount = read.pendingEntityIDs(
+            .tagMetadata,
+            includingDeleted: true
+        ).count
+    }
+
+    /// #922: one coherent read of the account's cache, on the storage side.
+    ///
+    /// Every bulk cache read in this file goes through here, so the read count
+    /// is a single observable number (`cachedWorkspace?.store.snapshotReadCount`)
+    /// and the main actor never performs the decode/sort work.
+    private func readCoherentCache(accountUserID: UUID) async -> LocalCacheSnapshotRead? {
+        guard let workspace = cachedWorkspace else { return nil }
+        let seams = cacheStorageSeams
+        do {
+            return try await CacheOffload.run {
+                await seams.beforeSnapshotRead()
+                return try CacheHydrator.coherentRead(
+                    workspace: workspace,
+                    accountUserID: accountUserID
+                )
+            }
+        } catch {
+            recordCacheFailure("cache read", error)
+            return nil
         }
     }
 
@@ -2758,9 +2891,11 @@ public final class AppModel {
         let dataRefreshOwner = dataRefreshOwner ?? beginDataRefresh()
         defer { endDataRefresh(dataRefreshOwner) }
         guard let userID = currentUserID else { return }
-        // Cold-start / account-switch path: render the account's local
-        // snapshot before any network request starts.
-        hydrateCachedWorkspace(accountUserID: userID)
+        // #921: the store is opened off the launch path, so the local snapshot
+        // read joins the one preparation flight first. A caller that arrives
+        // while the flight runs suspends here; a cache that cannot be opened
+        // leaves `cachedWorkspace` nil and this pass continues network-only.
+        await prepareCacheIfNeeded()
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
@@ -2783,6 +2918,17 @@ public final class AppModel {
                 refreshingOwner = nil
             }
         }
+        // Cold-start / account-switch path: render the account's local
+        // snapshot before any network request starts. The returned read is
+        // this pass's hydration revision: its cursors plan the fetch below and
+        // its collections are what a failed pass republishes.
+        let hydrated = await hydrateCachedWorkspace(
+            accountUserID: userID,
+            capturedBy: accountFetch
+        )
+        // #922: the most recent coherent revision this pass read. A failure
+        // republishes THIS instead of loading the workspace a third time.
+        var latestCacheRead: LocalCacheSnapshotRead? = hydrated
         do {
             let remotePurgeGeneration: Int64?
             do {
@@ -2803,27 +2949,29 @@ public final class AppModel {
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
+            // #922: the purge decision stays a targeted post-fetch check (the
+            // generation arrives after the hydration read), but the cursors
+            // come from the hydrated revision itself, so the delta this pass
+            // fetches is planned against exactly the rows it hydrated.
             let forcePurgeReconcile = cacheNeedsPurgeReconcile(
                 accountUserID: userID,
                 remoteGeneration: remotePurgeGeneration
             )
-            let sessionCursor = cacheCursor(
-                accountUserID: userID,
-                entityType: .sessions,
-                forcingFullReconcile: forcePurgeReconcile
-            )
-            let settingsCursor = cacheCursor(accountUserID: userID, entityType: .settings)
-            let phaseCursor = cacheCursor(accountUserID: userID, entityType: .phasePeriods)
-            let healthCursor = cacheCursor(accountUserID: userID, entityType: .healthMetrics)
-            let recordingCursor = cacheCursor(
-                accountUserID: userID,
-                entityType: .recordings,
-                forcingFullReconcile: forcePurgeReconcile
-            )
-            let presetCursor = cacheCursor(accountUserID: userID, entityType: .presets)
-            let routineCursor = cacheCursor(accountUserID: userID, entityType: .routinePresets)
-            let workoutCursor = cacheCursor(accountUserID: userID, entityType: .workoutsAndAttempts)
-            let tagCursor = cacheCursor(accountUserID: userID, entityType: .tagMetadata)
+            func cursor(
+                _ entityType: LocalCacheEntityType,
+                forcingFullReconcile: Bool = false
+            ) -> String? {
+                forcingFullReconcile ? nil : hydrated?.cursor(for: entityType)
+            }
+            let sessionCursor = cursor(.sessions, forcingFullReconcile: forcePurgeReconcile)
+            let settingsCursor = cursor(.settings)
+            let phaseCursor = cursor(.phasePeriods)
+            let healthCursor = cursor(.healthMetrics)
+            let recordingCursor = cursor(.recordings, forcingFullReconcile: forcePurgeReconcile)
+            let presetCursor = cursor(.presets)
+            let routineCursor = cursor(.routinePresets)
+            let workoutCursor = cursor(.workoutsAndAttempts)
+            let tagCursor = cursor(.tagMetadata)
             let today = LocalDateSupport.string(from: Date())
             // #923: each slice captures its own outcome instead of throwing
             // into the shared pass. `try await`-ing them in sequence is
@@ -2915,7 +3063,7 @@ public final class AppModel {
             if outcomes.publishes(.sessionsAndRecordings),
                let fetchedSessions = sessionsSlice.value,
                let fetchedRecordings = recordingsSlice.value {
-                reconcileEntityRefresh(
+                await reconcileEntityRefresh(
                     fetchedSessions,
                     accountUserID: userID,
                     entityType: .sessions,
@@ -2924,7 +3072,7 @@ public final class AppModel {
                         : nil,
                     purgeGeneration: remotePurgeGeneration
                 )
-                reconcileEntityRefresh(
+                await reconcileEntityRefresh(
                     fetchedRecordings,
                     accountUserID: userID,
                     entityType: .recordings,
@@ -2937,7 +3085,7 @@ public final class AppModel {
             if outcomes.publishes(.settingsAndPhase),
                let fetchedSettings = settingsSlice.value,
                let fetchedPeriods = periodsSlice.value {
-                reconcileEntityRefresh(
+                await reconcileEntityRefresh(
                     fetchedSettings,
                     accountUserID: userID,
                     entityType: .settings,
@@ -2945,7 +3093,7 @@ public final class AppModel {
                         ? CachedWorkspaceSnapshot(settings: fetchedSettings.activeValues.first)
                         : nil
                 )
-                reconcileEntityRefresh(
+                await reconcileEntityRefresh(
                     fetchedPeriods,
                     accountUserID: userID,
                     entityType: .phasePeriods,
@@ -2956,7 +3104,7 @@ public final class AppModel {
             }
             if outcomes.publishes(.healthMetrics),
                let fetchedHealth = healthSlice.value {
-                reconcileEntityRefresh(
+                await reconcileEntityRefresh(
                     fetchedHealth,
                     accountUserID: userID,
                     entityType: .healthMetrics,
@@ -2967,7 +3115,7 @@ public final class AppModel {
             }
             if outcomes.publishes(.presets),
                let fetchedPresets = presetsSlice.value {
-                reconcileEntityRefresh(
+                await reconcileEntityRefresh(
                     fetchedPresets,
                     accountUserID: userID,
                     entityType: .presets,
@@ -2978,7 +3126,7 @@ public final class AppModel {
             }
             if outcomes.publishes(.routinePresets),
                let fetchedRoutines = routinesSlice.value {
-                reconcileEntityRefresh(
+                await reconcileEntityRefresh(
                     fetchedRoutines,
                     accountUserID: userID,
                     entityType: .routinePresets,
@@ -2989,7 +3137,7 @@ public final class AppModel {
             }
             if outcomes.publishes(.workoutsAndAttempts),
                let fetchedWorkouts = workoutsSlice.value {
-                reconcileEntityRefresh(
+                await reconcileEntityRefresh(
                     fetchedWorkouts,
                     accountUserID: userID,
                     entityType: .workoutsAndAttempts,
@@ -3000,7 +3148,7 @@ public final class AppModel {
             }
             if outcomes.publishes(.tagMetadata),
                let fetchedTags = tagsSlice.value {
-                reconcileEntityRefresh(
+                await reconcileEntityRefresh(
                     fetchedTags,
                     accountUserID: userID,
                     entityType: .tagMetadata,
@@ -3010,7 +3158,64 @@ public final class AppModel {
                 )
             }
 
-            let publishedSnapshot = try? cachedWorkspace?.load(accountUserID: userID)
+            // #922: the restore's "already on the server" identity is the
+            // POST-reconcile active set, derived from this pass's own reads —
+            // no third full-workspace load. A row the reconcile tombstoned must
+            // NOT be in it: its durable queue overlay is exactly what has to be
+            // restored, and suppressing that restore is how a locally saved row
+            // that the server's authoritative snapshot does not carry would
+            // disappear from the published list.
+            let hydratedSessions = hydrated?.snapshot.sessions ?? []
+            let hydratedRecordings = hydrated?.snapshot.recordings ?? []
+            let fetchedSessions = sessionsSlice.value?.activeValues ?? []
+            let fetchedRecordings = recordingsSlice.value?.activeValues ?? []
+            let pendingSessionIDs = Set(
+                (hydrated?.pendingRows ?? [])
+                    .filter { $0.entityType == .sessions }
+                    .compactMap { UUID(uuidString: $0.entityID) }
+            )
+            let pendingRecordingIDs = Set(
+                (hydrated?.pendingRows ?? [])
+                    .filter { $0.entityType == .recordings }
+                    .compactMap { UUID(uuidString: $0.entityID) }
+            )
+            let fetchedSessionIDs = Set(fetchedSessions.map(\.id))
+            let fetchedRecordingIDs = Set(fetchedRecordings.map(\.id))
+            // A cache row the server snapshot did not carry and that is not a
+            // pending local write is tombstoned by the reconcile — the same
+            // rule `CachedWorkspace.reconcile` applies.
+            let tombstonedSessionIDs = Set(
+                hydratedSessions.map(\.id).filter {
+                    !fetchedSessionIDs.contains($0) && !pendingSessionIDs.contains($0)
+                }
+            )
+            let tombstonedRecordingIDs = Set(
+                hydratedRecordings.map(\.id).filter {
+                    !fetchedRecordingIDs.contains($0) && !pendingRecordingIDs.contains($0)
+                }
+            )
+            let publishedSessionIDs = Set(hydratedSessions.map(\.id))
+                .subtracting(tombstonedSessionIDs)
+                .union(fetchedSessionIDs)
+            let publishedRecordingIDs = Set(hydratedRecordings.map(\.id))
+                .subtracting(tombstonedRecordingIDs)
+                .union(fetchedRecordingIDs)
+            await restorePendingWrites(
+                accountFetch: accountFetch,
+                userID: userID,
+                remoteSessionIDs: publishedSessionIDs,
+                remoteRecordingIDs: publishedRecordingIDs
+            )
+            // #922: the publication reads the workspace ONCE, immediately
+            // before the synchronous publication closure. That ordering is
+            // load-bearing: an optimistic local write that landed while this
+            // pass was suspended in `restorePendingWrites` must be part of the
+            // revision that publishes, and must never be overwritten by an
+            // older one. Together with the hydration read, one refresh is
+            // exactly TWO full-workspace loads.
+            let publicationRead = await readCoherentCache(accountUserID: userID)
+            latestCacheRead = publicationRead
+            let publishedSnapshot = publicationRead?.snapshot
             // #923: a failed slice's published list is its last-good value —
             // the untouched cache row, or the in-memory list with its pending
             // local overlays still on top.
@@ -3021,14 +3226,6 @@ public final class AppModel {
             let publishedRecordings = publishedSnapshot?.recordings
                 ?? recordingsSlice.value?.activeValues
                 ?? recordings
-            let publishedSessionIDs = Set(publishedSessions.map(\.id))
-            let publishedRecordingIDs = Set(publishedRecordings.map(\.id))
-            await restorePendingWrites(
-                accountFetch: accountFetch,
-                userID: userID,
-                remoteSessionIDs: publishedSessionIDs,
-                remoteRecordingIDs: publishedRecordingIDs
-            )
             let publishedLists = accountFetch.publishIfCurrent(
                 to: currentUserID,
                 accountEpoch: accountEpoch
@@ -3040,7 +3237,9 @@ public final class AppModel {
                 // keep their richer overlays below). A group whose slices
                 // failed was never reconciled, so its cache rows are still the
                 // last-good ones.
-                applyCachedNonOverlayLists(accountUserID: userID)
+                //
+                // #922: re-adopted from the ONE post-reconcile read above.
+                applyCachedNonOverlayLists(accountUserID: userID, read: publicationRead)
                 // #923: the successful slices publish ONCE, in this one
                 // MainActor publication. A failed group publishes nothing, so
                 // its sessions/recordings keep last-good data and their
@@ -3104,8 +3303,9 @@ public final class AppModel {
             if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
                 // Some slices may have already been published before the
                 // failure. Put the last-known cache snapshot back so a partial
-                // fetch cannot hide a pending local write.
-                applyCachedNonOverlayLists(accountUserID: userID)
+                // fetch cannot hide a pending local write. #922: the last read
+                // of this pass is that snapshot.
+                applyCachedNonOverlayLists(accountUserID: userID, read: latestCacheRead)
                 // #964: record the failure for the Dashboard before deciding
                 // whether it also deserves the dismissible banner. The banner
                 // is transient; this state lasts until a refresh succeeds, so
@@ -7050,6 +7250,7 @@ public final class AppModel {
                 accountEpoch: self.accountEpoch
             ) else { return }
             self.pendingCacheWriteCount = 0
+            self.pendingTagWriteCount = 0
             try await self.auth.signOut()
             guard purgeBoundary.canApply(
                 to: self.currentUserID,
@@ -7375,6 +7576,12 @@ public final class AppModel {
             return .accountChanged
         }
         guard !Task.isCancelled else { return .cancelled }
+        // #921: a background app-refresh is the third cache-backed entrypoint
+        // and joins the SAME preparation flight the bootstrap and the
+        // foreground pass use — it never opens (or migrates) a second handle.
+        // A cache that is still opening delays this pass, never the first
+        // frame, and a failed open is retried here.
+        await prepareCacheIfNeeded()
         guard let workspace = cachedWorkspace else {
             await drainQueue()
             return .failed
@@ -7431,7 +7638,7 @@ public final class AppModel {
         )
         let outcome = await BackgroundSyncEngine.run(run)
         if case .completed = outcome {
-            publishBackgroundSyncSnapshot(
+            await publishBackgroundSyncSnapshot(
                 accountUserID: userID,
                 capturedBy: accountFetch
             )
@@ -7548,28 +7755,39 @@ public final class AppModel {
         snapshot: @escaping @MainActor @Sendable (RemoteEntityDelta<Value>) -> CachedWorkspaceSnapshot
     ) -> BackgroundSyncOperation {
         BackgroundSyncOperation(entityType: entityType) {
-            let cursor = forceFull
-                ? nil
-                : try workspace.cursor(
-                    accountUserID: accountUserID,
-                    entityType: entityType
-                )
-            let delta = try await fetch(cursor)
-            let firstSnapshot = cursor == nil ? snapshot(delta) : nil
-            return BackgroundSyncPreparedOperation {
-                if firstSnapshot != nil {
-                    try workspace.reconcileServerDelta(
-                        delta,
-                        accountUserID: accountUserID,
-                        entityType: entityType,
-                        purgeGeneration: purgeGeneration
-                    )
-                } else {
-                    try workspace.reconcileDelta(
-                        delta,
+            let cursor: String?
+            if forceFull {
+                cursor = nil
+            } else {
+                // #922: the cursor read is blocking store work, so it runs on
+                // the storage side too.
+                cursor = try await CacheOffload.run {
+                    try workspace.cursor(
                         accountUserID: accountUserID,
                         entityType: entityType
                     )
+                }
+            }
+            let delta = try await fetch(cursor)
+            let firstSnapshot = cursor == nil ? snapshot(delta) : nil
+            return BackgroundSyncPreparedOperation {
+                // #922: the reconcile is one hop for the whole entity, with the
+                // engine's account/epoch guard re-checked after it.
+                try await CacheOffload.run {
+                    if firstSnapshot != nil {
+                        try workspace.reconcileServerDelta(
+                            delta,
+                            accountUserID: accountUserID,
+                            entityType: entityType,
+                            purgeGeneration: purgeGeneration
+                        )
+                    } else {
+                        try workspace.reconcileDelta(
+                            delta,
+                            accountUserID: accountUserID,
+                            entityType: entityType
+                        )
+                    }
                 }
             }
         }
@@ -7578,39 +7796,33 @@ public final class AppModel {
     private func publishBackgroundSyncSnapshot(
         accountUserID: UUID,
         capturedBy accountFetch: AccountScopedFetch
-    ) {
+    ) async {
         guard accountFetch.canApply(
             to: currentUserID,
             accountEpoch: accountEpoch
         ) else { return }
-        guard let workspace = cachedWorkspace else { return }
-        do {
-            let snapshot = try workspace.load(accountUserID: accountUserID)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            let sessionsWereSynced = cacheHasCompletedSync(
-                accountUserID: accountUserID,
-                entityType: .sessions
-            )
-            let recordingsWereSynced = cacheHasCompletedSync(
-                accountUserID: accountUserID,
-                entityType: .recordings
-            )
-            applyCachedNonOverlayLists(accountUserID: accountUserID)
-            mergeSessions(
-                remote: snapshot.sessions,
-                markLoaded: sessionsWereSynced
-            )
-            hasLoadedSessions = hasLoadedSessions || sessionsWereSynced
-            mergeRecordings(remote: snapshot.recordings)
-            hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced
-            forceModel.hasLoadedRecordings = hasLoadedRecordings
-            warmTagCurvesIfMissing(capturedBy: accountFetch)
-        } catch {
-            recordCacheFailure("background cache publish", error)
-        }
+        // #922: ONE coherent read on the storage side serves the whole
+        // publication — the collections, the two sync boundaries and the
+        // non-overlay lists. It used to be a load plus two boundary reads plus
+        // a second full-workspace load inside the re-adoption.
+        guard let read = await readCoherentCache(accountUserID: accountUserID) else { return }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        let snapshot = read.snapshot
+        let sessionsWereSynced = read.hasCompletedSync(.sessions)
+        let recordingsWereSynced = read.hasCompletedSync(.recordings)
+        applyCachedNonOverlayLists(accountUserID: accountUserID, read: read)
+        mergeSessions(
+            remote: snapshot.sessions,
+            markLoaded: sessionsWereSynced
+        )
+        hasLoadedSessions = hasLoadedSessions || sessionsWereSynced
+        mergeRecordings(remote: snapshot.recordings)
+        hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced
+        forceModel.hasLoadedRecordings = hasLoadedRecordings
+        warmTagCurvesIfMissing(capturedBy: accountFetch)
     }
 
     @discardableResult
@@ -10964,6 +11176,7 @@ public final class AppModel {
     private func refreshQueueCount(for accountFetch: AccountScopedFetch? = nil) async {
         guard let userID = currentUserID else {
             pendingCacheWriteCount = 0
+            pendingTagWriteCount = 0
             queuedWriteCount = 0
             queuedWriteDiagnostics = []
             queueBreadcrumbs = []
@@ -11546,7 +11759,7 @@ public final class AppModel {
             to: currentUserID,
             accountEpoch: accountEpoch
         ) else { return nil }
-        reconcileEntityRefresh(
+        await reconcileEntityRefresh(
             delta,
             accountUserID: accountUserID,
             entityType: entityType,
@@ -11561,7 +11774,15 @@ public final class AppModel {
             return fallback(delta)
         }
         do {
-            return try workspace.load(accountUserID: accountUserID)
+            // #922: the publication read runs on the storage side, and it is
+            // still exactly ONE full-workspace read for this slice — the
+            // cursor above is a single-row query, not a second load.
+            let seams = cacheStorageSeams
+            let read = try await CacheOffload.run {
+                await seams.beforeSnapshotRead()
+                return try workspace.coherentSnapshot(accountUserID: accountUserID)
+            }
+            return read.snapshot
         } catch {
             recordCacheFailure("cache realtime publish", error)
             // A cursor-bounded delta is not a complete snapshot. If the cache
@@ -12294,6 +12515,7 @@ public final class AppModel {
         queuedWriteCount = 0
         queuedWriteDiagnostics = []
         pendingCacheWriteCount = 0
+        pendingTagWriteCount = 0
         queueBreadcrumbs = []
         quarantinedWrites = nil
         // #920: the new account's pending-write state has not been read yet.

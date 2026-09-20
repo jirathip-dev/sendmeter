@@ -4,10 +4,14 @@ import Foundation
 ///
 /// The fetch happens in `prepare`; the write stays separate so the engine can
 /// re-check the account/epoch scope in the gap between network and disk.
+///
+/// #922: `apply` is async because the write runs on the storage side rather
+/// than on the main actor. It is still one hop per entity — the engine never
+/// fans out per row.
 public struct BackgroundSyncPreparedOperation: @unchecked Sendable {
-    public let apply: @MainActor @Sendable () throws -> Void
+    public let apply: @MainActor @Sendable () async throws -> Void
 
-    public init(apply: @escaping @MainActor @Sendable () throws -> Void) {
+    public init(apply: @escaping @MainActor @Sendable () async throws -> Void) {
         self.apply = apply
     }
 }
@@ -100,7 +104,7 @@ public enum BackgroundSyncEngine {
             guard !Task.isCancelled else { return .cancelled }
 
             do {
-                try prepared.apply()
+                try await prepared.apply()
             } catch {
                 return Task.isCancelled ? .cancelled : .failed
             }

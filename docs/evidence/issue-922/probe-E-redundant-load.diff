@@ -1,0 +1,14 @@
+diff --git a/native/SendmeterNative/Sources/App/AppModel.swift b/native/SendmeterNative/Sources/App/AppModel.swift
+index 8751efe..2fb33d2 100644
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -3214,6 +3214,9 @@ public final class AppModel {
+             // older one. Together with the hydration read, one refresh is
+             // exactly TWO full-workspace loads.
+             let publicationRead = await readCoherentCache(accountUserID: userID)
++            // PROBE E (pre-#922 shape): the publication reloads the whole
++            // workspace once more instead of reusing the read above.
++            _ = await readCoherentCache(accountUserID: userID)
+             latestCacheRead = publicationRead
+             let publishedSnapshot = publicationRead?.snapshot
+             // #923: a failed slice's published list is its last-good value —
