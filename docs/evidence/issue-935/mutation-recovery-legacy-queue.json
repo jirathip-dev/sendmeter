@@ -1,0 +1,68 @@
+{
+  "breadcrumbs": [
+    {
+      "accountUserID": "93500000-0000-0000-0000-0000000000AA",
+      "attempts": 1,
+      "id": "93500000-0000-0000-0000-0000000000C1",
+      "leftQueueAt": "2025-01-01T07:00:00Z",
+      "queueItemID": "93500000-0000-0000-0000-0000000000D1",
+      "reason": "uploaded"
+    }
+  ],
+  "items": [
+    {
+      "accountUserID": "93500000-0000-0000-0000-0000000000AA",
+      "attempts": 0,
+      "createdAt": "2025-01-01T09:00:00Z",
+      "id": "93500000-0000-0000-0000-0000000000B1",
+      "nextAttemptAt": "2025-01-01T09:00:00Z",
+      "payload": {
+        "value": "legacy-direct-write-intent"
+      },
+      "updatedAt": "2025-01-01T09:00:00Z"
+    },
+    {
+      "accountUserID": "93500000-0000-0000-0000-0000000000AA",
+      "attempts": 2,
+      "createdAt": "2025-01-01T10:00:00Z",
+      "id": "93500000-0000-0000-0000-0000000000B2",
+      "lastError": "The network connection was lost.",
+      "lastFailure": {
+        "at": "2025-01-01T10:05:00Z",
+        "detail": "The network connection was lost.",
+        "kind": "retryable"
+      },
+      "nextAttemptAt": "2025-01-01T10:05:00Z",
+      "orderingKey": 1000,
+      "payload": {
+        "value": "modern-envelope-intent"
+      },
+      "permanentAttempts": 1,
+      "revision": "93500000-0000-0000-0000-0000000000E2",
+      "terminalKey": "93500000-0000-0000-0000-0000000000F2",
+      "updatedAt": "2025-01-01T10:05:00Z"
+    },
+    {
+      "accountUserID": "93500000-0000-0000-0000-0000000000AA",
+      "attempts": 3,
+      "createdAt": "2025-01-01T08:00:00Z",
+      "id": "93500000-0000-0000-0000-0000000000B3",
+      "lastError": "duplicate key value violates unique constraint",
+      "nextAttemptAt": "2025-01-01T08:00:00Z",
+      "payload": {
+        "value": "quarantined-intent"
+      },
+      "permanentAttempts": 3,
+      "quarantined": {
+        "at": "2025-01-01T08:30:00Z",
+        "code": "23505",
+        "detail": "duplicate key value violates unique constraint",
+        "kind": "permanent"
+      },
+      "revision": "93500000-0000-0000-0000-0000000000E3",
+      "updatedAt": "2025-01-01T08:30:00Z"
+    }
+  ],
+  "terminalized": [],
+  "orderingWatermarks": []
+}

@@ -1,0 +1,11 @@
+--- /Users/jirathip/.herdr/worktrees/sendmeter/impl-936/native/SendmeterNative/Sources/Core/ManualWorkoutLifecycleCoordinator.swift	2026-09-20 17:12:56
++++ /tmp/impl936-redgreen/native/SendmeterNative/Sources/Core/ManualWorkoutLifecycleCoordinator.swift	2026-09-20 17:28:36
+@@ -118,7 +118,7 @@
+         at date: Date,
+         asksForRestNotificationPermission: Bool = true
+     ) -> ManualWorkoutLifecycleOutcome {
+-        guard workout == nil, !isSaving else { return .ignored }
++        guard !isSaving else { return .ignored }
+         let engine = PhoneWorkoutEngine(
+             accountUserID: accountUserID,
+             phase: phase,

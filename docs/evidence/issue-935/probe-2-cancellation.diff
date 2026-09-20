@@ -1,0 +1,14 @@
+--- a/MutationRecoveryCoordinator.swift
++++ b/MutationRecoveryCoordinator.swift
+@@ -422,10 +422,7 @@
+                 accountChanged = true
+                 break
+             }
+-            if isCancelled() {
+-                cancelled = true
+-                break
+-            }
++            // probe: the cancellation signal is ignored
+             let outcome = await upload(item, mode)
+             if outcome.uploaded {
+                 uploaded += 1

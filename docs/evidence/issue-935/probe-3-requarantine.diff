@@ -1,0 +1,20 @@
+--- a/MutationRecoveryCoordinator.swift
++++ b/MutationRecoveryCoordinator.swift
+@@ -657,16 +657,7 @@
+                     recovered += 1
+                     continue
+                 }
+-                let failure = outcome.failure
+-                try await queue.recoveryRequarantine(
+-                    id: item.id,
+-                    accountUserID: item.accountUserID,
+-                    previous: previous,
+-                    classification: failure?.classification ?? .retryable,
+-                    code: failure?.code,
+-                    detail: failure?.detail ?? item.lastError ?? "Manual retry failed",
+-                    now: Date()
+-                )
++                _ = outcome.failure // probe: no requarantine
+             } catch {
+                 onFailure(error)
+             }
