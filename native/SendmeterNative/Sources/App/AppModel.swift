@@ -420,8 +420,10 @@ public final class AppModel {
     /// the wrong screen's progress.
     public private(set) var isRetryingQueuedWrites = false
     /// #920 AC4: the identity of the retry pass allowed to clear
-    /// `isRetryingQueuedWrites` (account + epoch + token).
-    private var queuedWritesRetryOwner: AccountScopedCompletion?
+    /// `isRetryingQueuedWrites` (account + epoch + token). #935: the RULE lives
+    /// with the recovery owner (`MutationRetryGate`); this is the app's copy of
+    /// its state.
+    private var queuedWritesRetryGate = MutationRetryGate()
     public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
     /// #675: entries the server has permanently rejected — retained on device,
     /// excluded from every automatic retry, and recoverable only by the
@@ -620,6 +622,15 @@ public final class AppModel {
     /// no app state: the store, the account boundary and the failure reporter
     /// are passed in per call.
     private let workspaceSync: WorkspaceSyncCoordinator
+    /// #935: the single owner of the durable mutation recovery rules — drain,
+    /// manual/single-item retry, backoff, quarantine and the pass's
+    /// acknowledgement. The automatic drain (including the sign-out drain), the
+    /// explicit retry pass, the per-item manual retry and the quarantine
+    /// lifecycle all route their SHARED rules through this one coordinator — no
+    /// second queue, no second persistence format and no competing drain
+    /// timer. It holds no app state: the queue, the account boundary and the
+    /// uploader are passed in per call.
+    private let mutationRecovery = MutationRecoveryCoordinator()
     private let cacheDirectory: URL?
     /// #921: what the app knows about the local cache. `preparing` until the
     /// flight answers; `unavailable` is recoverable and never a success claim.
@@ -1669,17 +1680,24 @@ public final class AppModel {
         capturedBy accountFetch: AccountScopedFetch
     ) async -> Int {
         guard let queue else { return 0 }
-        var uploaded = 0
-        for item in await queue.items(for: accountUserID) {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return uploaded }
-            if (await upload(item, mode: .signOut, capturedBy: accountFetch)).uploaded {
-                uploaded += 1
-            }
-        }
-        return uploaded
+        // #935: `nil` due date = "active, regardless of backoff", and this pass
+        // deliberately skips the residue adopters (the token is about to die —
+        // the sign-out path's own policy measures what uploaded). Both facts are
+        // the recovery owner's; the pass publishes nothing (the caller reports).
+        let report = await mutationRecovery.drain(
+            boundary: recoveryBoundary(accountFetch),
+            mode: .signOut,
+            in: queue,
+            upload: { item, itemMode in
+                await self.upload(
+                    item,
+                    mode: itemMode,
+                    capturedBy: accountFetch
+                )
+            },
+            acknowledge: {}
+        )
+        return report.uploaded
     }
 
     public func updatePassword(_ password: String) async {
@@ -7298,22 +7316,42 @@ public final class AppModel {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        guard await adoptLegacyResidues(
-            userID: userID,
-            capturedBy: accountFetch
-        ),
-              accountFetch.canApply(
-                  to: currentUserID,
-                  accountEpoch: accountEpoch
-              ) else { return }
-        let due = await queue.items(
-            for: userID,
-            dueAt: mode.revalidationDueAt(now: Date())
+        // #935: the pass sequence (adopt the legacy residues, snapshot the
+        // mode's due set from the ONE durable queue, attempt each item, then
+        // acknowledge) is the recovery owner's. This body is composition only.
+        _ = await mutationRecovery.drain(
+            boundary: recoveryBoundary(accountFetch),
+            mode: mode,
+            in: queue,
+            isCancelled: { Task.isCancelled },
+            adoptResidues: {
+                await self.adoptLegacyResidues(
+                    userID: userID,
+                    capturedBy: accountFetch
+                )
+            },
+            upload: { item, itemMode in
+                await self.upload(
+                    item,
+                    mode: itemMode,
+                    capturedBy: accountFetch
+                )
+            },
+            acknowledge: { await self.refreshQueueCount(for: accountFetch) }
         )
-        for item in due {
-            _ = await upload(item, mode: mode, capturedBy: accountFetch)
+    }
+
+    /// #935: the explicit account boundary of every recovery pass — the same
+    /// `WorkspaceAccountBoundary` #934's workspace coordinator takes, so the app
+    /// has ONE account fence rather than a second one for queue work.
+    private func recoveryBoundary(_ accountFetch: AccountScopedFetch) -> WorkspaceAccountBoundary {
+        WorkspaceAccountBoundary(fetch: accountFetch) { [weak self] in
+            guard let self else { return false }
+            return accountFetch.canApply(
+                to: self.currentUserID,
+                accountEpoch: self.accountEpoch
+            )
         }
-        await refreshQueueCount(for: accountFetch)
     }
 
     /// #920 AC2: the residue adopters, in the drain's load-bearing order. A
@@ -7383,67 +7421,66 @@ public final class AppModel {
 
     public func retryAllQueuedWrites() async {
         guard let userID = currentUserID, let queue else { return }
-        // #920 AC4: one retry pass per account. A second tap while a pass is in
-        // flight coalesces onto it (the pass's progress is already published)
-        // instead of racing a second drain against the same queue.
-        guard queuedWritesRetryOwner == nil else { return }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        let owner = AccountScopedCompletion(fetch: accountFetch)
-        queuedWritesRetryOwner = owner
+        // #920 AC4 / #935: one retry pass per account. A second tap while a
+        // pass is in flight coalesces onto it (the pass's progress is already
+        // published) instead of racing a second drain against the same queue.
+        // The gate owns that rule; this body is composition only.
+        guard let owner = queuedWritesRetryGate.claim(accountFetch) else { return }
         isRetryingQueuedWrites = true
         defer {
             // Only the pass that owns the flag may clear it, and only while its
             // account/epoch is still live: an account switch cannot finish the
             // next account's progress (#920 AC4).
-            if owner.owns(
-                currentUserID: currentUserID,
-                accountEpoch: accountEpoch,
-                activeOwner: queuedWritesRetryOwner
+            if queuedWritesRetryGate.finish(
+                owner,
+                isCurrent: accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                )
             ) {
                 isRetryingQueuedWrites = false
-                queuedWritesRetryOwner = nil
             }
         }
         // Measure both acknowledged answers BEFORE the pass so the published
         // outcome is a real before/after rather than a guess.
         refreshPendingCacheWriteCount(accountUserID: userID)
         let unsyncedBefore = pendingCacheWriteCount
-        let queuedBefore = (await queue.items(for: userID)).count
-        guard accountFetch.canApply(
-            to: currentUserID,
-            accountEpoch: accountEpoch
+        // #920 AC2 / #935: Retry Now addresses the SAME residue set the drain
+        // does, and each identity goes through the owner's manual-retry loop
+        // (wait for an in-flight owner, re-read the durable item, then bypass
+        // ordinary backoff but never quarantine).
+        guard let report = await mutationRecovery.retryAll(
+            boundary: recoveryBoundary(accountFetch),
+            in: queue,
+            adoptResidues: {
+                await self.adoptLegacyResidues(
+                    userID: userID,
+                    capturedBy: accountFetch
+                )
+            },
+            isClaimed: { [weak self] key in
+                self?.inFlightUploadClaims.isClaimed(key) ?? false
+            },
+            waitForOwner: { [weak self] key in
+                guard let self else { return }
+                await self.waitForQueueUpload(key)
+            },
+            upload: { item, itemMode in
+                await self.upload(
+                    item,
+                    mode: itemMode,
+                    capturedBy: accountFetch
+                )
+            },
+            acknowledge: { await self.refreshQueueCount(for: accountFetch) }
         ) else { return }
-        // #920 AC2: Retry Now addresses the SAME residue set the drain does. A
-        // cache-only row has no durable intent, so a button that only iterated
-        // the queue could report "done" while the displayed unsynced changes
-        // were untouched.
-        guard await adoptLegacyResidues(
-            userID: userID,
-            capturedBy: accountFetch
-        ),
-              accountFetch.canApply(
-                  to: currentUserID,
-                  accountEpoch: accountEpoch
-              ) else { return }
-        let pending = await queue.items(for: userID)
-        for item in pending {
-            await retryQueuedWrite(
-                id: item.id,
-                accountUserID: userID,
-                capturedBy: accountFetch
-            )
-        }
-        guard accountFetch.canApply(
-            to: currentUserID,
-            accountEpoch: accountEpoch
-        ) else { return }
-        await refreshQueueCount(for: accountFetch)
         let outcome = MutationRetryOutcome(
             accountUserID: userID,
-            queuedBefore: queuedBefore,
+            queuedBefore: report.queuedBefore,
             queuedAfter: queuedWriteCount,
             unsyncedBefore: unsyncedBefore,
             unsyncedAfter: pendingCacheWriteCount,
@@ -7457,72 +7494,6 @@ public final class AppModel {
         }
     }
 
-    /// Force one manual pass for a queue identity. A foreground drain may
-    /// already own the item when the user taps Retry; returning immediately
-    /// from `upload` in that case made Retry look successful while the item
-    /// stayed pending. Wait for the owner, re-read the durable item, and then
-    /// bypass its automatic backoff for the explicit retry.
-    private func retryQueuedWrite(
-        id: UUID,
-        accountUserID: UUID,
-        capturedBy accountFetch: AccountScopedFetch
-    ) async {
-        let key = QueueUploadKey(itemID: id, accountUserID: accountUserID)
-        for _ in 0..<3 {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ), let queue else { return }
-
-            let current = await queue.item(
-                id: id,
-                accountUserID: accountUserID
-            )
-            switch QueueRetryPolicy.beforeUpload(
-                isClaimed: inFlightUploadClaims.isClaimed(key),
-                hasItem: current != nil,
-                isQuarantined: current?.quarantined != nil
-            ) {
-            case .waitForOwner:
-                await waitForQueueUpload(key)
-                continue
-            case .stop:
-                return
-            case .upload:
-                break
-            }
-            guard let current else { return }
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-
-            let result = await upload(
-                current,
-                mode: .manual,
-                capturedBy: accountFetch
-            )
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            // A producer can claim the identity in the small gap between the
-            // check above and `upload`'s own claim. Only that no-op result is
-            // retried here; a real failure has already been durably recorded
-            // with its class/error/backoff and should be shown to the user.
-            switch QueueRetryPolicy.afterUpload(
-                uploaded: result.uploaded,
-                recordedFailure: result.failure != nil,
-                ownerIsClaimed: inFlightUploadClaims.isClaimed(key)
-            ) {
-            case .waitForOwner:
-                await waitForQueueUpload(key)
-                continue
-            case .upload, .stop:
-                return
-            }
-        }
-    }
 
     /// The BGTask body: drain the durable queue, then reconcile every cache
     /// entity through its cursor delta. Account scope and cancellation are
@@ -7857,24 +7828,14 @@ public final class AppModel {
         }
     }
 
-    /// #675 N1: the classification + diagnostic an upload failure recorded,
-    /// so `retryQuarantinedWrites` can decide whether a fresh failure replaces
-    /// the prior rejection stamp or the prior stamp is restored verbatim.
-    private struct UploadFailure {
-        let classification: RejectionClass
-        let code: String?
-        let detail: String
-    }
-
-    private struct UploadResult {
-        let uploaded: Bool
-        let failure: UploadFailure?
-
-        init(uploaded: Bool, failure: UploadFailure?) {
-            self.uploaded = uploaded
-            self.failure = failure
-        }
-    }
+    /// #675 N1 / #935: the classification + diagnostic one failed attempt
+    /// recorded, so the recovery owner can decide whether a manual retry
+    /// replaces the prior rejection stamp or restores it verbatim. These are
+    /// the OWNER's types (`Sources/Core/MutationRecoveryCoordinator.swift`);
+    /// the aliases keep this file's call sites reading the same and there is
+    /// exactly ONE upload-outcome shape in the app.
+    private typealias UploadFailure = MutationUploadFailure
+    private typealias UploadResult = MutationUploadOutcome
 
     private func sourceRecordingID(for payload: PendingWrite) -> UUID? {
         switch payload {
@@ -10681,49 +10642,47 @@ public final class AppModel {
                 await refreshQueueCount(for: accountFetch)
                 return result
             }
-            do {
-                // #675: classify the rejection. A permanent one (constraint /
-                // malformed / forbidden-with-valid-token) earns the entry a
-                // bounded number of attempts and then a quarantine; auth /
-                // parked / transient failures keep plain backoff. The
-                // classification is the transport's (PostgRESTError
-                // conformance), so the actor never parses server errors.
-                //
-                // #675 F5: a MANUAL retry ("Retry now" in History/Settings,
-                // or the per-item quarantine retry) is an explicit user
-                // action, not an automatic drain attempt — it must never
-                // spend the quarantine budget, so its failures do not count
-                // toward the permanent-attempt bound.
-                let classification = (error as? ServerRejectionClassifying)?.rejectionClass ?? .retryable
-                let code = (error as? PostgRESTError)?.code
-                let applied = try await queue.markFailure(
-                    id: item.id,
-                    accountUserID: item.accountUserID,
-                    error: error.localizedDescription,
-                    classification: classification,
-                    code: code,
-                    countsTowardQuarantine: mode.countsTowardQuarantine,
-                    expectedRevision: item.revision
-                )
-                if applied {
-                    result = UploadResult(
-                        uploaded: false,
-                        failure: UploadFailure(
-                            classification: classification,
-                            code: code,
-                            detail: error.localizedDescription
-                        )
-                    )
-                } else {
-                    // The queue identity now holds a newer replacement. The
-                    // old request must not spend its backoff/quarantine
-                    // budget or report its error against that replacement.
-                    result = UploadResult(uploaded: false, failure: nil)
+            // #675: classify the rejection. A permanent one (constraint /
+            // malformed / forbidden-with-valid-token) earns the entry a
+            // bounded number of attempts and then a quarantine; auth /
+            // parked / transient failures keep plain backoff. The
+            // classification is the transport's (PostgRESTError
+            // conformance), so the actor never parses server errors.
+            //
+            // #935: the RECORD — attempts, backoff delay, diagnostic and the
+            // mode's quarantine budget under this entry's captured revision —
+            // is the recovery owner's one failure path. #675 F5: a MANUAL
+            // retry ("Retry now" in History/Settings, or the per-item
+            // quarantine retry) is an explicit user action, not an automatic
+            // drain attempt, so the mode never lets it spend the quarantine
+            // budget.
+            let classification = (error as? ServerRejectionClassifying)?.rejectionClass ?? .retryable
+            let code = (error as? PostgRESTError)?.code
+            let failure = MutationUploadFailure(
+                classification: classification,
+                code: code,
+                detail: error.localizedDescription
+            )
+            let applied = await mutationRecovery.recordFailure(
+                item: item,
+                failure: failure,
+                mode: mode,
+                in: queue
+            ) { [weak self] queueError in
+                guard let self else { return }
+                if accountFetch.canApply(
+                    to: self.currentUserID,
+                    accountEpoch: self.accountEpoch
+                ) {
+                    self.surface(queueError)
                 }
-            } catch {
-                if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
-                    surface(error)
-                }
+            }
+            if applied {
+                result = UploadResult(uploaded: false, failure: failure)
+            } else {
+                // The queue identity now holds a newer replacement. The
+                // old request must not spend its backoff/quarantine
+                // budget or report its error against that replacement.
                 result = UploadResult(uploaded: false, failure: nil)
             }
         }
@@ -10820,80 +10779,47 @@ public final class AppModel {
         return items
     }
 
-    /// #675: the explicit-user-action re-attempt for quarantined entries —
-    /// native mirror of the web's `retryStuckRecordings` (#484). With `id` it
-    /// retries ONE quarantined entry (the per-item Settings action); without,
-    /// all of them. Clears the rejection stamp (fresh bounded-attempt budget)
-    /// and uploads immediately; on success the upload removes the entry from
-    /// the queue.
-    ///
-    /// #675 F7: the entry is NOT re-armed onto the hot drain path by a failed
-    /// manual retry. The upload runs manual (so its rejection never spends the
-    /// quarantine budget — #675 F5), and on ANY failure the quarantine stamp
-    /// is immediately re-applied, so the entry goes straight back to its
-    /// quarantined, never-auto-retried state instead of getting free
-    /// automatic retries behind the user's back.
-    ///
-    /// #675 N1: a failed manual retry preserves the rejection DIAGNOSTIC. The
-    /// prior stamp is passed to `requarantine` as `previous`; a transient /
-    /// auth / parked failure on the retry restores it verbatim (code, detail
-    /// and `at` all survive), while only a FRESH `.permanent` rejection
-    /// replaces the stamp with its own code/detail.
+    /// #935: the explicit quarantine recovery entry point. The lifecycle it
+    /// drives — migrate the recording-edit residue the entry point has to
+    /// attempt first, then per entry: clear the rejection stamp, attempt ONE
+    /// manual upload, and re-stamp immediately on any failure so the entry is
+    /// never auto-retried (#675 F7, with the prior diagnostic restored verbatim
+    /// unless the retry itself was a fresh permanent rejection — #675 N1) — is
+    /// the recovery owner's. This body is composition only.
     public func retryQuarantinedWrites(id: UUID? = nil) async {
         guard let userID = currentUserID, let queue else { return }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        guard await migrateLegacyRecordingEdits(
-            userID: userID,
-            capturedBy: accountFetch
-        ) != nil else { return }
-        guard accountFetch.canApply(
-            to: currentUserID,
-            accountEpoch: accountEpoch
-        ) else { return }
-        let quarantined = await queue.quarantinedItems(for: userID)
-        for item in quarantined where id == nil || item.id == id {
-            do {
-                guard let previous = try await queue.retryQuarantined(
-                    id: item.id,
-                    accountUserID: item.accountUserID
-                ) else { continue }
-                let result = await upload(
+        _ = await mutationRecovery.retryQuarantined(
+            id: id,
+            boundary: recoveryBoundary(accountFetch),
+            in: queue,
+            prepare: {
+                await self.migrateLegacyRecordingEdits(
+                    userID: userID,
+                    capturedBy: accountFetch
+                ) != nil
+            },
+            upload: { item, itemMode in
+                await self.upload(
                     item,
-                    mode: .manual,
+                    mode: itemMode,
                     capturedBy: accountFetch
                 )
-                if !result.uploaded {
-                    // #675 F7 + N1: the manual attempt failed — re-stamp the
-                    // quarantine NOW so the entry is never auto-retried by a
-                    // later drain (Settings tells the user it is "kept on this
-                    // device and never retried on their own"). The stamp is
-                    // the PRIOR rejection unless the retry itself was a fresh
-                    // permanent rejection; either way the budget stays reset
-                    // (0), so the next MANUAL retry starts a clean window.
-                    let failure = result.failure
-                    try await queue.requarantine(
-                        id: item.id,
-                        accountUserID: item.accountUserID,
-                        previous: previous,
-                        classification: failure?.classification ?? .retryable,
-                        code: failure?.code,
-                        detail: failure?.detail ?? item.lastError ?? "Manual retry failed",
-                        now: Date()
-                    )
-                }
-            } catch {
+            },
+            acknowledge: { await self.refreshQueueCount(for: accountFetch) },
+            onFailure: { [weak self] error in
+                guard let self else { return }
                 if accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
+                    to: self.currentUserID,
+                    accountEpoch: self.accountEpoch
                 ) {
-                    surface(error)
+                    self.surface(error)
                 }
             }
-        }
-        await refreshQueueCount(for: accountFetch)
+        )
     }
 
     /// #675: discard ONE quarantined entry. Quarantined-only (the Settings
@@ -10909,16 +10835,30 @@ public final class AppModel {
             accountEpoch: accountEpoch
         )
         do {
-            let item = await queue.item(id: id, accountUserID: userID)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            guard try await queue.discardQuarantined(
+            // #935: the queue side of a discard — read the entry, remove it
+            // quarantined-only under the revision this snapshot captured, and
+            // report what actually happened — is the recovery owner's. The
+            // aftermath stays here: it owns the optimistic placeholder, the
+            // Undo claim and the list/trash refreshes.
+            guard let discard = await mutationRecovery.discardQuarantined(
                 id: id,
-                accountUserID: userID,
-                expectedRevision: item?.revision
+                boundary: recoveryBoundary(accountFetch),
+                in: queue,
+                onFailure: { [weak self] error in
+                    guard let self else { return }
+                    if accountFetch.canApply(
+                        to: self.currentUserID,
+                        accountEpoch: self.accountEpoch
+                    ) {
+                        self.surface(error)
+                    }
+                }
             ) else {
+                await refreshQueueCount(for: accountFetch)
+                return
+            }
+            let item = discard.item
+            guard discard.discarded else {
                 await refreshQueueCount(for: accountFetch)
                 guard accountFetch.canApply(
                     to: currentUserID,
@@ -12346,7 +12286,7 @@ public final class AppModel {
         // account's screens (account-scoped like the rest of the snapshot).
         lastRetryOutcome = nil
         isRetryingQueuedWrites = false
-        queuedWritesRetryOwner = nil
+        queuedWritesRetryGate.reset()
         lastPartialRefreshFailure = nil
         publishForceProgressInputMutation(.accountReset)
         refreshingOwner = nil
