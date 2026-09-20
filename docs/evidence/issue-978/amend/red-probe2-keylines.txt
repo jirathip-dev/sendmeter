@@ -1,0 +1,9 @@
+RED PROOF (issue-978 amendment) - PhaseTransitionReplayAppTests
+splice: fake server's POST /user_settings = silent NO-OP (completeness step never
+lands server-side). Scratch worktree /tmp/impl978-probe2 at 1be6fb7b + hardened
+test file; never committed to the lane branch.
+
+/tmp/impl978-probe2/native/SendmeterNative/Tests/SendmeterNativeTests/PhaseTransitionReplayAppTests.swift:549: error: -[SendmeterNativeTests.PhaseTransitionReplayAppTests testLostSettingsHalfIsCompletedFromTheServerState] : failed - timed out after 60.000165958000004 seconds waiting for the replayed transition to be published: settings=strength@2026-09-21, openPeriods=1, pendingCacheWriteCount=0, queuedWriteCount=0; observed serverSettings=capacity@2026-01-05, openPeriods(1)=[strength@2026-09-21], pendingCacheWriteCount=0, queuedWriteCount=0, currentPhase=strength, queuedWriteCount=0, pendingCacheWriteCount=0, account=520443E7-57F9-4A15-BAB4-4BD75A55EDA7, diagnostics=[], pending-writes.json=339 bytes, modified 2026-09-20T17:00:28Z
+/tmp/impl978-probe2/native/SendmeterNative/Tests/SendmeterNativeTests/PhaseTransitionReplayAppTests.swift:269: error: -[SendmeterNativeTests.PhaseTransitionReplayAppTests testLostSettingsHalfIsCompletedFromTheServerState] : XCTAssertEqual failed: ("Optional(SendmeterCore.PhaseID.capacity)") is not equal to ("Optional(SendmeterCore.PhaseID.strength)") - the completeness step finished the settings half
+
+RED_PROBE2_EXIT=65 (TEST FAILED)
