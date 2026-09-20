@@ -1,0 +1,39 @@
+--- /Users/jirathip/.herdr/worktrees/sendmeter/impl-970/native/SendmeterNative/Sources/App/AppModel.swift	2026-09-20 04:04:24
++++ /tmp/impl970-probes/native/SendmeterNative/Sources/App/AppModel.swift	2026-09-20 06:06:49
+@@ -10669,14 +10669,28 @@
+             accountEpoch: self.accountEpoch
+         ) else { return }
+         refreshPendingCacheWriteCount(accountUserID: userID)
+-        _ = fetch.publishIfCurrent(
+-            to: currentUserID,
+-            accountEpoch: self.accountEpoch
+-        ) {
+-            queuedWriteCount = activeItems.count
+-            queuedWriteDiagnostics = activeItems.map { $0.diagnostic() }
+-            queueBreadcrumbs = breadcrumbs
+-            quarantinedWrites = quarantined
++        // PROBE(asyncpub): the durable item is written now; the PUBLISHED
++        // count reaches the model only after the delay the hosted runner
++        // showed (state produced, published count lagging).
++        let deferredItems = activeItems
++        let deferredBreadcrumbs = breadcrumbs
++        let deferredQuarantined = quarantined
++        Task { @MainActor [weak self] in
++            try? await Task.sleep(nanoseconds: 30000000000)
++            guard let self,
++                  fetch.canApply(
++                      to: self.currentUserID,
++                      accountEpoch: self.accountEpoch
++                  ) else { return }
++            _ = fetch.publishIfCurrent(
++                to: self.currentUserID,
++                accountEpoch: self.accountEpoch
++            ) {
++                self.queuedWriteCount = deferredItems.count
++                self.queuedWriteDiagnostics = deferredItems.map { $0.diagnostic() }
++                self.queueBreadcrumbs = deferredBreadcrumbs
++                self.quarantinedWrites = deferredQuarantined
++            }
+         }
+     }
+ 

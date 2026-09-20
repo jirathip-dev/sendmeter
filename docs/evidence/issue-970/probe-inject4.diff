@@ -1,0 +1,12 @@
+--- /Users/jirathip/.herdr/worktrees/sendmeter/impl-970/native/SendmeterNative/Sources/App/AppModel.swift	2026-09-20 04:04:24
++++ /tmp/impl970-probes/native/SendmeterNative/Sources/App/AppModel.swift	2026-09-20 05:36:09
+@@ -7988,6 +7988,9 @@
+                 payload: queuedPayload
+             )
+             do {
++                // PROBE(inject): the durable path is slower than the old
++                // fixed ~3 s poll budget — the measured host flake.
++                try? await Task.sleep(nanoseconds: 4000000000)
+                 let installed = try await queue.enqueueIfCurrent(
+                     item,
+                     expectedRevision: existing?.revision
