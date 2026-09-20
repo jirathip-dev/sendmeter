@@ -1,0 +1,14 @@
+# rule: a purge mismatch forces BOTH hard-delete-backed entities to a full reconcile
+--- green/native/SendmeterNative/Sources/Core/WorkspaceSyncCoordinator.swift
++++ mutated/native/SendmeterNative/Sources/Core/WorkspaceSyncCoordinator.swift
+@@ -121,10 +121,6 @@
+     /// untouched by the purge signal, which is what keeps a purge convergence
+     /// from turning into a full-workspace refetch.
+     public func cursor(for entityType: LocalCacheEntityType) -> String? {
+-        if forceFullReconcile,
+-           PurgeConvergencePolicy.affectedEntityTypes.contains(entityType) {
+-            return nil
+-        }
+         return cursors[entityType]
+     }
+ 
