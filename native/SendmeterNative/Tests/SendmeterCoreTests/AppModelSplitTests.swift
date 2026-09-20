@@ -243,16 +243,29 @@ final class AppModelSplitTests: XCTestCase {
 
     func testHardPurgeConvergenceIsWiredThroughForegroundBackgroundAndRealtime() {
         let appModel = code(source("Sources/App/AppModel.swift"))
+        // #934: the convergence RULE (a missing or mismatched generation forces
+        // both hard-delete-backed entities through a full authoritative
+        // reconcile) moved into the workspace-sync coordinator, so this asserts
+        // the rule on its owner and the wiring on the call sites.
+        let coordinator = code(source("Sources/Core/WorkspaceSyncCoordinator.swift"))
+        XCTAssertTrue(coordinator.contains("func syncNeedsPurgeReconcile"))
+        XCTAssertTrue(coordinator.contains("PurgeConvergencePolicy.affectedEntityTypes"))
+        XCTAssertTrue(coordinator.contains("func resolvePurgeGeneration("))
+        XCTAssertTrue(coordinator.contains("public func plan("))
         XCTAssertTrue(appModel.contains("fetchPurgeSyncGeneration"))
         XCTAssertTrue(appModel.contains("cacheNeedsPurgeReconcile"))
         XCTAssertTrue(appModel.contains("let remotePurgeGeneration: Int64?"))
         XCTAssertTrue(
-            appModel.contains("remotePurgeGeneration = nil"),
+            appModel.contains("purgeResolution.endpointFailure"),
             "generation endpoint failure must fall back instead of aborting refresh"
         )
-        XCTAssertTrue(appModel.contains("forcingFullReconcile: forcePurgeReconcile"))
-        XCTAssertTrue(appModel.contains("forceFull: forcePurgeReconcile"))
+        XCTAssertTrue(appModel.contains("workspaceSync.plan("))
+        XCTAssertFalse(
+            appModel.contains("forcingFullReconcile: forcePurgeReconcile"),
+            "the forced-full decision must not be re-implemented at the call site"
+        )
         XCTAssertTrue(appModel.contains("purgeGeneration: remotePurgeGeneration"))
+        XCTAssertTrue(appModel.contains("forceFullReconcile: forcePurgeReconcile"))
         XCTAssertTrue(
             appModel.contains("await refreshAllSilently()"),
             "a realtime generation mismatch must converge both affected slices"
