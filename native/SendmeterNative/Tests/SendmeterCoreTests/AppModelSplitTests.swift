@@ -350,28 +350,69 @@ final class AppModelSplitTests: XCTestCase {
             return XCTFail("retryAllQueuedWrites is missing")
         }
         guard let retryEnd = appModel.range(
-            of: "private func retryQueuedWrite(",
+            of: "public func runBackgroundSync(",
             range: retryStart.upperBound..<appModel.endIndex
         ) else {
-            return XCTFail("retry helper boundary is missing")
+            return XCTFail("retry pass boundary is missing")
         }
         let retry = appModel[retryStart.lowerBound..<retryEnd.lowerBound]
-        XCTAssertTrue(retry.contains("await retryQueuedWrite("))
-        XCTAssertTrue(retry.contains("await refreshQueueCount(for: accountFetch)"))
+        // #935: the pass DELEGATES its rules to the recovery owner. The identity
+        // gate is claimed/released here (this method owns the published flags),
+        // and the per-item loop is no longer implemented in the app model.
+        XCTAssertTrue(retry.contains("queuedWritesRetryGate.claim(accountFetch)"))
+        XCTAssertTrue(retry.contains("queuedWritesRetryGate.finish("))
+        XCTAssertTrue(retry.contains("await mutationRecovery.retryAll("))
+        XCTAssertTrue(retry.contains("await self.refreshQueueCount(for: accountFetch)"))
+        XCTAssertFalse(
+            retry.contains("QueueRetryPolicy."),
+            "the manual retry loop is the recovery owner's, not AppModel's"
+        )
+        XCTAssertFalse(
+            retry.contains("queue.items(for:"),
+            "the pass snapshot is the recovery owner's"
+        )
 
-        guard let helperEnd = appModel.range(
-            of: "public func runBackgroundSync(",
-            range: retryEnd.upperBound..<appModel.endIndex
-        ) else {
-            return XCTFail("retry helper end is missing")
+        // The rule itself lives with the owner (Core), so it is testable without
+        // the app target.
+        let coordinator = code(source("Sources/Core/MutationRecoveryCoordinator.swift"))
+        XCTAssertTrue(coordinator.contains("await waitForOwner(key)"))
+        XCTAssertTrue(coordinator.contains("await queue.recoveryItem("))
+        XCTAssertTrue(coordinator.contains("QueueRetryPolicy.beforeUpload("))
+        XCTAssertTrue(coordinator.contains("QueueRetryPolicy.afterUpload("))
+        XCTAssertTrue(coordinator.contains("ownerIsClaimed: isClaimed(key)"))
+    }
+
+    /// #935: one owner for drain / manual retry / backoff / quarantine /
+    /// acknowledgement. Every app entry point delegates; the app keeps only the
+    /// payload-specific uploader, the optimistic UI and the published counters.
+    func testDurableMutationRecoveryRulesAreOwnedByTheCoreCoordinator() {
+        let appModel = code(source("Sources/App/AppModel.swift"))
+        for call in [
+            "await mutationRecovery.drain(",
+            "await mutationRecovery.retryAll(",
+            "await mutationRecovery.recordFailure(",
+            "await mutationRecovery.retryQuarantined(",
+            "await mutationRecovery.discardQuarantined("
+        ] {
+            XCTAssertTrue(appModel.contains(call), "the app must delegate `\(call)`")
         }
-        let helper = appModel[retryEnd.lowerBound..<helperEnd.lowerBound]
-        XCTAssertTrue(helper.contains("await waitForQueueUpload(key)"))
-        XCTAssertTrue(helper.contains("let current = await queue.item("))
-        XCTAssertTrue(helper.contains("QueueRetryPolicy.beforeUpload("))
-        XCTAssertTrue(helper.contains("QueueRetryPolicy.afterUpload("))
-        XCTAssertTrue(helper.contains("mode: .manual"))
-        XCTAssertTrue(helper.contains("recordedFailure: result.failure != nil"))
+        // No duplicate recovery algorithm left behind in the app model.
+        XCTAssertFalse(appModel.contains("QueueRetryPolicy.beforeUpload("))
+        XCTAssertFalse(appModel.contains("QueueRetryPolicy.afterUpload("))
+        XCTAssertFalse(appModel.contains("countsTowardQuarantine: mode.countsTowardQuarantine"))
+        XCTAssertFalse(appModel.contains("queue.retryQuarantined("))
+        XCTAssertFalse(appModel.contains("queue.requarantine("))
+        XCTAssertFalse(appModel.contains("queue.discardQuarantined("))
+        XCTAssertFalse(
+            appModel.contains("await queue.items(\n            for: userID,\n            dueAt:"),
+            "the drain's due snapshot belongs to the recovery owner"
+        )
+        // And the owner has exactly ONE queue seam, conformed by the ONE queue.
+        let coordinator = code(source("Sources/Core/MutationRecoveryCoordinator.swift"))
+        XCTAssertTrue(coordinator.contains("public protocol MutationRecoveryQueuing: Sendable"))
+        XCTAssertTrue(coordinator.contains("extension DurableQueue: MutationRecoveryQueuing"))
+        XCTAssertTrue(coordinator.contains("public struct MutationRetryGate"))
+        XCTAssertTrue(coordinator.contains("countsTowardQuarantine: mode.countsTowardQuarantine"))
     }
 
     func testAuthRecoveryDrainsSameAccountWithoutDiscardingActiveQueue() {

@@ -1,0 +1,11 @@
+--- a/MutationRecoveryCoordinator.swift
++++ b/MutationRecoveryCoordinator.swift
+@@ -411,7 +411,7 @@
+         }
+         let due = await queue.recoveryDueItems(
+             accountUserID: accountUserID,
+-            dueAt: mode.revalidationDueAt(now: now ?? Date())
++            dueAt: mode.revalidationDueAt(now: Date(timeIntervalSinceNow: -3600))
+         )
+         var uploaded = 0
+         var failed = 0
