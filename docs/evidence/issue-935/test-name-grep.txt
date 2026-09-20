@@ -1,0 +1,32 @@
+# #935 committed test names found in the committed logs
+## app-target-focused-directwrite.log.gz
+Test Case '-[SendmeterNativeTests.DirectWriteReplayAppTests testConcurrentRetryPassesAdoptThePersistedIdentityExactlyOnce]'
+Test Case '-[SendmeterNativeTests.DirectWriteReplayAppTests testPersistedQueueFileCarriedAcrossRelaunchStillDrainsThroughTheOwner]'
+## app-target-full-cishape.log.gz
+Test Case '-[SendmeterNativeTests.DirectWriteReplayAppTests testConcurrentRetryPassesAdoptThePersistedIdentityExactlyOnce]'
+Test Case '-[SendmeterNativeTests.DirectWriteReplayAppTests testPersistedQueueFileCarriedAcrossRelaunchStillDrainsThroughTheOwner]'
+Test Case '-[SendmeterNativeTests.HealthWriteRecoveryAppTests testLegacyHealthResidueIsResolvedOnlyOnTheServerProof]'
+## app-target-health-focused.log.gz
+Test Case '-[SendmeterNativeTests.HealthWriteRecoveryAppTests testLegacyHealthResidueIsResolvedOnlyOnTheServerProof]'
+
+## core-focused-recovery-and-split.log.gz (this lane's Core class)
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testANewAccountsPassNeverAdoptsThePreviousAccountsIntents]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testAccountSwitchStopsThePassLeavingTheOldAccountsIntentsDurable]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testCancelledPassStopsStartingUploadsAndLeavesTheRemainderDurable]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testConcurrentDrainsAdoptTheSameIdentityOnlyOnce]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testDiscardRemovesAQuarantinedEntryAndReportsTheCapturedItem]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testDiscardRemovesTheEntryOnlyUnderItsCapturedRevision]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testDrainAdoptsResiduesBeforeItSnapshotsTheDueSet]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testDrainAttemptsEveryDueItemOnceInQueueOrderAndAcknowledgesOnce]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testDrainReportsARefusedResidueAdoptionAndUploadsNothing]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testFailedManualQuarantineRetryRestampsThePriorRejectionVerbatim]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testFailureRecordIsFencedByTheCapturedRevision]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testFreshPermanentRejectionOnTheManualRetryReplacesTheStamp]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testLostAcknowledgementKeepsOneDurableIntentWithStableIdentity]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testManualRetryStopsOnAQuarantinedIdentity]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testManualRetryWaitsForTheInFlightOwnerAndThenUploadsOnce]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testPermanentRejectionsQuarantineAtTheBoundedBudgetButManualRetriesNeverDo]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testPersistedQueueFixtureStaysReadableWithOrderingAndStableIdentity]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testQuarantineRetrySkipsEntriesWhenItsPreparationRefuses]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testRetryGateCoalescesASecondPassAndOnlyItsOwnerReleasesIt]' passed
+Test Case '-[SendmeterCoreTests.MutationRecoveryCoordinatorTests testSuccessfulManualQuarantineRetryClearsTheStampAndTheEntry]' passed

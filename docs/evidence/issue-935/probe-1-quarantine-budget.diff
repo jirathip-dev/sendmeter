@@ -1,0 +1,11 @@
+--- a/MutationRecoveryCoordinator.swift
++++ b/MutationRecoveryCoordinator.swift
+@@ -595,7 +595,7 @@
+                 classification: failure.classification,
+                 code: failure.code,
+                 now: now,
+-                countsTowardQuarantine: mode.countsTowardQuarantine,
++                countsTowardQuarantine: true,
+                 expectedRevision: item.revision
+             )
+         } catch {
