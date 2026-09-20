@@ -93,6 +93,16 @@ public enum CacheHydrator {
     ) throws -> CachedWorkspaceSnapshot? {
         try workspace?.load(accountUserID: accountUserID)
     }
+
+    /// #922: the same seam for the coherent read — one revision of the
+    /// account's cache (collections, pending rows, cursors, boundaries, purge
+    /// generations), or `nil` when there is no workspace to read.
+    public static func coherentRead(
+        workspace: CachedWorkspace?,
+        accountUserID: UUID
+    ) throws -> LocalCacheSnapshotRead? {
+        try workspace?.coherentSnapshot(accountUserID: accountUserID)
+    }
 }
 
 /// Stable cache row identities for the nine read entities.
@@ -733,20 +743,30 @@ public struct CachedWorkspace: Sendable {
         )
     }
 
+    /// #922: one coherent read of this account's cache — the nine entity
+    /// collections, the pending rows, the cursors, the completed-sync
+    /// boundaries and the purge generations, all from a single point in time.
+    ///
+    /// This is the read the app's hydration, publication and reconcile
+    /// decisions share, so they cannot disagree about which revision they are
+    /// describing.
+    public func coherentSnapshot(accountUserID: UUID) throws -> LocalCacheSnapshotRead {
+        try store.coherentSnapshotRead(accountUserID: accountUserID)
+    }
+
     /// Number of unconfirmed direct-write rows (including hidden deletes) for
     /// an account. These rows are preserved by reconcile but have no durable
     /// replay yet, so AppModel reports them to the UI as unsynced rather than
     /// pretending they were saved.
     public func pendingDirectWriteCount(accountUserID: UUID) throws -> Int {
-        var count = 0
-        for entityType in Self.directWriteEntityTypes {
-            count += try store.pendingEntityIDs(
-                accountUserID: accountUserID,
-                entityType: entityType,
-                includingDeleted: true
-            ).count
-        }
-        return count
+        try store.pendingDirectWriteCounts(accountUserID: accountUserID).total
+    }
+
+    /// #922: the same count, plus the tag-registry subset, from ONE query.
+    public func pendingDirectWriteCounts(
+        accountUserID: UUID
+    ) throws -> LocalCachePendingWriteCounts {
+        try store.pendingDirectWriteCounts(accountUserID: accountUserID)
     }
 
     private func reconcile<T: Encodable>(

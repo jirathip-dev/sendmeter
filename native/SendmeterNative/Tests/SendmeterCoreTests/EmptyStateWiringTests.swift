@@ -280,14 +280,20 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(appModel.contains("public private(set) var isLoadingData = false"))
         XCTAssertTrue(appModel.contains("private func markRecordingsLoaded()"))
         XCTAssertTrue(appModel.contains("hasLoadedSessions = true"))
-        XCTAssertTrue(appModel.contains("private func cacheHasCompletedSync("))
+        // #922: the per-entity boundary read moved into the coherent cache read
+        // (`LocalCacheSnapshotRead.hasCompletedSync`), which is the one read
+        // AppModel's hydration now performs. The contract is unchanged: the
+        // hydration still decides `hasLoadedSessions`/`hasLoadedRecordings`
+        // from a persisted sync boundary, never from an openable SQLite file.
+        XCTAssertTrue(appModel.contains("hasCompletedSync(.sessions)"))
+        XCTAssertTrue(appModel.contains("hasCompletedSync(.recordings)"))
         XCTAssertTrue(appModel.contains("markRecordingsLoaded()"))
         XCTAssertTrue(appModel.contains("dataRefreshOwners.removeAll()"))
         XCTAssertTrue(appModel.contains("hasLoadedRecordings = false"))
         XCTAssertTrue(appModel.contains("forceModel.hasLoadedRecordings = false"))
         let cacheHydration = exactBlock(
             appModel,
-            startingWith: "private func hydrateCachedWorkspace(accountUserID: UUID)"
+            startingWith: "private func hydrateCachedWorkspace("
         )
         XCTAssertTrue(cacheHydration.contains("sessionsWereSynced"))
         XCTAssertTrue(cacheHydration.contains("recordingsWereSynced"))

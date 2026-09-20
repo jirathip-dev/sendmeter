@@ -1,9 +1,66 @@
+import CryptoKit
 import Foundation
 // Keep GRDB out of SendmeterCore's public module interface. A direct exposure
 // to the app target previously made the app-wide type checker time out in
 // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
 // Swift currently warns about it in non-library-evolution builds.
 @_implementationOnly import GRDB
+
+/// The raw rows of one coherent read, kept opaque outside the store.
+private struct RawCoherentRead {
+    let rows: [Row]
+    let cursors: [Row]
+    let boundaries: [Row]
+}
+
+/// One `cache_rows` row of a coherent read, with the columns the read's
+/// revision identity is built from.
+private struct TypedCoherentRow {
+    let entityType: LocalCacheEntityType
+    let entityID: String
+    let payload: String
+    let deletedAt: String?
+    let updatedAt: String
+    let pending: Bool
+    let localRevision: Int
+}
+
+/// #922 instrumentation for one store handle: how many coherent reads it has
+/// issued, and whether the most recent one ran on the main thread. The second
+/// value is what turns "the read is off the main actor" from a timing
+/// observation into an assertion.
+private final class LocalCacheSnapshotReadCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    private var lastOnMainThread: Bool?
+
+    func record(onMainThread: Bool) {
+        lock.lock()
+        count += 1
+        lastOnMainThread = onMainThread
+        lock.unlock()
+    }
+
+    var snapshot: (count: Int, lastOnMainThread: Bool?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (count, lastOnMainThread)
+    }
+}
+
+/// #922: both published pending counts from one query.
+public struct LocalCachePendingWriteCounts: Equatable, Sendable {
+    /// Unconfirmed direct-write rows across every direct-write entity,
+    /// including hidden deletes.
+    public let total: Int
+    /// The subset that belongs to the tag registry (`tindeq_tags`).
+    public let tagMetadata: Int
+
+    public init(total: Int, tagMetadata: Int) {
+        self.total = total
+        self.tagMetadata = tagMetadata
+    }
+}
 
 /// The nine read entities the native rewrite mirrors from Supabase. Each case
 /// is the value stored in `cache_rows.entity_type`, so every read/write/delete
@@ -135,6 +192,18 @@ private final class LocalCacheDatabase: @unchecked Sendable {
 /// to that queue; no raw GRDB connection or mutable cache state escapes it.
 public final class LocalCacheStore: Sendable {
     private let database: LocalCacheDatabase
+    /// #922 instrumentation for the coherent read path.
+    private let snapshotReadCounter = LocalCacheSnapshotReadCounter()
+
+    /// #922: how many coherent snapshot reads this handle has issued.
+    public var snapshotReadCount: Int { snapshotReadCounter.snapshot.count }
+
+    /// #922: whether the most recent coherent snapshot read ran on the main
+    /// thread. `nil` before the first read. A test asserts `false` here rather
+    /// than inferring the off-main-actor boundary from a duration.
+    public var lastSnapshotReadOnMainThread: Bool? {
+        snapshotReadCounter.snapshot.lastOnMainThread
+    }
 
     /// Internal test seam for migration and schema assertions. Production
     /// callers use the typed cache methods and never receive the GRDB queue.
@@ -168,8 +237,20 @@ public final class LocalCacheStore: Sendable {
     }
 
     /// File-backed store at `databaseURL`.
+    ///
+    /// #921: the open (and the migrations it runs) waits for a transient lock
+    /// instead of failing with `SQLITE_BUSY`. Opening the cache is no longer
+    /// serialized by the main actor — the preparation flight runs on the
+    /// storage side — so two handles in one process (the app's flight plus a
+    /// test harness that seeds the same file) can overlap. Waiting is the
+    /// honest behavior for a cache open; a lock error would silently degrade
+    /// the whole session to network-only.
     public init(databaseURL: URL) throws {
-        let database = LocalCacheDatabase(queue: try DatabaseQueue(path: databaseURL.path))
+        var configuration = Configuration()
+        configuration.busyMode = .timeout(5)
+        let database = LocalCacheDatabase(
+            queue: try DatabaseQueue(path: databaseURL.path, configuration: configuration)
+        )
         self.database = database
         try Self.migrate(database.queue)
     }
@@ -377,6 +458,217 @@ public final class LocalCacheStore: Sendable {
         entityID: String
     ) throws -> T? {
         try loadOneResult(type, accountUserID: accountUserID, entityType: entityType, entityID: entityID).value
+    }
+
+    // MARK: - Coherent reads (#922)
+
+    /// One point-in-time read of everything one account's cache holds: the nine
+    /// entity collections, the pending rows, the sync cursors, the completed
+    /// sync boundaries and the purge generations.
+    ///
+    /// This is deliberately a SINGLE `read` block: the rows, the cursors and
+    /// the boundaries it returns are one revision of the cache (`revision`),
+    /// so a delta fetched from these cursors reconciles against exactly the
+    /// rows the caller already hydrated, and a publication derived from this
+    /// read can never mix two revisions. Row visibility and ordering match the
+    /// per-entity reads (`deleted_at IS NULL`, `entity_id` ascending, invalid
+    /// payloads skipped, health metrics newest-first).
+    ///
+    /// The read also records that it ran, and whether it ran on the main
+    /// thread, so a test can prove the off-main-actor boundary instead of
+    /// inferring it from timings.
+    public func coherentSnapshotRead(accountUserID: UUID) throws -> LocalCacheSnapshotRead {
+        snapshotReadCounter.record(onMainThread: Thread.isMainThread)
+        let account = Self.accountIDString(accountUserID)
+        let raw = try dbQueue.read { db -> RawCoherentRead in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT entity_type, entity_id, payload, deleted_at, updated_at,
+                           pending, local_revision
+                    FROM cache_rows
+                    WHERE account_user_id = ?
+                    ORDER BY entity_type, entity_id
+                    """,
+                arguments: [account]
+            )
+            let cursors = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT entity_type, cursor FROM sync_cursors
+                    WHERE account_user_id = ?
+                    ORDER BY entity_type
+                    """,
+                arguments: [account]
+            )
+            let boundaries = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT entity_type, synced_at, purge_generation FROM sync_boundaries
+                    WHERE account_user_id = ?
+                    ORDER BY entity_type
+                    """,
+                arguments: [account]
+            )
+            return RawCoherentRead(rows: rows, cursors: cursors, boundaries: boundaries)
+        }
+
+        var typedRows: [TypedCoherentRow] = []
+        typedRows.reserveCapacity(raw.rows.count)
+        for row in raw.rows {
+            let rawType = row["entity_type"] as String
+            guard let entityType = LocalCacheEntityType(rawValue: rawType) else { continue }
+            typedRows.append(
+                TypedCoherentRow(
+                    entityType: entityType,
+                    entityID: row["entity_id"] as String,
+                    payload: row["payload"] as String,
+                    deletedAt: row["deleted_at"] as String?,
+                    updatedAt: row["updated_at"] as String,
+                    pending: (row["pending"] as Int) == 1,
+                    localRevision: row["local_revision"] as Int
+                )
+            )
+        }
+
+        func decodeAll<T: Decodable>(_ type: T.Type, _ entityType: LocalCacheEntityType) -> [T] {
+            typedRows
+                .filter { $0.entityType == entityType && $0.deletedAt == nil }
+                .compactMap { try? decode(payload: $0.payload, as: type) }
+        }
+
+        let settings: UserSettings? = typedRows
+            .first {
+                $0.entityType == .settings
+                    && $0.entityID == CacheEntityID.settings
+                    && $0.deletedAt == nil
+            }
+            .flatMap { try? decode(payload: $0.payload, as: UserSettings.self) }
+
+        let snapshot = CachedWorkspaceSnapshot(
+            sessions: decodeAll(Session.self, .sessions),
+            settings: settings,
+            phasePeriods: decodeAll(PhasePeriod.self, .phasePeriods),
+            healthMetrics: decodeAll(HealthMetric.self, .healthMetrics)
+                .sorted { $0.date > $1.date },
+            recordings: decodeAll(TindeqRecording.self, .recordings),
+            presets: decodeAll(TindeqPreset.self, .presets),
+            routines: decodeAll(RoutinePreset.self, .routinePresets),
+            workouts: decodeAll(WorkoutListItem.self, .workoutsAndAttempts),
+            tagMetadata: decodeAll(TagMetadata.self, .tagMetadata)
+        )
+
+        var cursors: [LocalCacheEntityType: String] = [:]
+        for row in raw.cursors {
+            let rawType = row["entity_type"] as String
+            guard let entityType = LocalCacheEntityType(rawValue: rawType) else { continue }
+            cursors[entityType] = row["cursor"] as String
+        }
+        var purgeGenerations: [LocalCacheEntityType: Int64] = [:]
+        var completed = Set(cursors.keys)
+        for row in raw.boundaries {
+            let rawType = row["entity_type"] as String
+            guard let entityType = LocalCacheEntityType(rawValue: rawType) else { continue }
+            completed.insert(entityType)
+            if let generation = row["purge_generation"] as Int64? {
+                purgeGenerations[entityType] = generation
+            }
+        }
+
+        let pendingRows = typedRows
+            .filter(\.pending)
+            .map {
+                LocalCachePendingRow(
+                    entityType: $0.entityType,
+                    entityID: $0.entityID,
+                    isDeleted: $0.deletedAt != nil
+                )
+            }
+
+        return LocalCacheSnapshotRead(
+            snapshot: snapshot,
+            revision: Self.revision(of: typedRows, cursors: raw.cursors, boundaries: raw.boundaries),
+            cursors: cursors,
+            completedEntityTypes: completed,
+            purgeGenerations: purgeGenerations,
+            pendingRows: pendingRows
+        )
+    }
+
+    /// The content identity of one coherent read: a SHA-256 over the ordered
+    /// row/cursor/boundary tuples, plus the two counts that make a diff
+    /// readable without re-hashing. Deterministic and clock-free.
+    private static func revision(
+        of rows: [TypedCoherentRow],
+        cursors: [Row],
+        boundaries: [Row]
+    ) -> LocalCacheRevision {
+        var hasher = SHA256()
+        var live = 0
+        var tombstones = 0
+        for row in rows {
+            if row.deletedAt == nil { live += 1 } else { tombstones += 1 }
+            hasher.update(
+                data: Data(
+                    """
+                    r|\(row.entityType.rawValue)|\(row.entityID)|\(row.localRevision)\
+                    |\(row.pending ? 1 : 0)|\(row.deletedAt ?? "-")|\(row.updatedAt)
+                    """.utf8
+                )
+            )
+        }
+        for row in cursors {
+            hasher.update(
+                data: Data("c|\(row["entity_type"] as String)|\(row["cursor"] as String)\n".utf8)
+            )
+        }
+        for row in boundaries {
+            let generation = (row["purge_generation"] as Int64?).map(String.init) ?? "-"
+            hasher.update(
+                data: Data(
+                    "b|\(row["entity_type"] as String)|\(row["synced_at"] as String)|\(generation)\n".utf8
+                )
+            )
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return LocalCacheRevision(
+            liveRowCount: live,
+            tombstoneCount: tombstones,
+            digest: digest
+        )
+    }
+
+    /// One query for both published pending counts. The six direct-write
+    /// entities used to be six separate `pendingEntityIDs` reads.
+    public func pendingDirectWriteCounts(
+        accountUserID: UUID
+    ) throws -> LocalCachePendingWriteCounts {
+        let types = CachedWorkspace.directWriteEntityTypes
+            .map(\.rawValue)
+            .sorted()
+        let placeholders = Array(repeating: "?", count: types.count).joined(separator: ", ")
+        let arguments: [String] = [Self.accountIDString(accountUserID)] + types
+        let rows = try dbQueue.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT entity_type, COUNT(*) AS pending_count FROM cache_rows
+                    WHERE account_user_id = ? AND pending = 1 AND entity_type IN (\(placeholders))
+                    GROUP BY entity_type
+                    """,
+                arguments: StatementArguments(arguments)
+            )
+        }
+        var total = 0
+        var tagMetadata = 0
+        for row in rows {
+            let count = row["pending_count"] as Int
+            total += count
+            if row["entity_type"] as String == LocalCacheEntityType.tagMetadata.rawValue {
+                tagMetadata = count
+            }
+        }
+        return LocalCachePendingWriteCounts(total: total, tagMetadata: tagMetadata)
     }
 
     /// Returns every non-deleted entity id for one account + entity type.
