@@ -32,6 +32,22 @@ final class WorkoutEngineTests: XCTestCase {
         }
     }
 
+    /// #926 AC3: a finished workout cannot be finished again, so a repeated
+    /// End tap cannot mint a second draft to save.
+    func testFinishedWorkoutRejectsASecondEnd() throws {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let end = start.addingTimeInterval(90)
+        var engine = PhoneWorkoutEngine(accountUserID: UUID(), phase: .power, startedAt: start)
+        try engine.startAttempt(at: start)
+
+        let draft = try engine.finish(at: end)
+        XCTAssertEqual(draft.attempts.count, 1)
+
+        XCTAssertThrowsError(try engine.finish(at: end)) { error in
+            XCTAssertEqual(error as? WorkoutEngineError, .workoutAlreadyFinished)
+        }
+    }
+
     func testRoutineStepDecodesSharedTypeScriptJSONShape() throws {
         let json = Data(#"{"label":"Hollow hold","detail":"Posterior tilt","s":20,"reps":3,"restS":10}"#.utf8)
         let step = try JSONDecoder().decode(RoutineStep.self, from: json)

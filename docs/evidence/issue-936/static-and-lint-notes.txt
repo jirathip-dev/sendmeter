@@ -1,0 +1,204 @@
+# check-static at the impl head (pre-existing red: the gate requires
+# Sources/Features/Force/ManualForceFullscreen.swift, which is absent at
+# BOTH fc088bc and ef76ad7 — git ls-tree count 0 in each — and the script is
+# not wired into just ci / native-swift.yml)
+
+$ bash scripts/validate-native-static.sh
+
+Parsing 331 native Swift source/test files
+Generated project is missing the Force source: ManualForceFullscreen.swift
+EXIT=1
+
+# anti-slop LINTER at the impl head (advisory in CI; the tool itself must
+# not fail). Both findings are PRE-EXISTING: the AppModel empty catch is
+# verbatim at base fc088bc:9082, and DirectWriteReplay.swift is not touched
+# by this lane. No finding sits on a line this diff adds.
+
+$ bash scripts/anti-slop-swift.sh native/SendmeterNative/Sources
+
+Fetching https://github.com/swiftlang/swift-syntax.git from cache
+Fetched https://github.com/swiftlang/swift-syntax.git from cache (1.49s)
+Computing version for https://github.com/swiftlang/swift-syntax.git
+Computed https://github.com/swiftlang/swift-syntax.git at 603.0.2 (2.39s)
+Computed https://github.com/swiftlang/swift-syntax.git at 603.0.2 (0.00s)
+Creating working copy for https://github.com/swiftlang/swift-syntax.git
+Working copy of https://github.com/swiftlang/swift-syntax.git resolved at 603.0.2
+Building for debugging...
+[0/18] Write sources
+[3/18] Write anti-slop-entitlement.plist
+[3/18] Write sources
+[13/18] Write swift-version--58304C5D6DBC2206.txt
+[15/30] Emitting module SwiftSyntax509
+[16/30] Emitting module SwiftSyntax603
+[17/30] Compiling SwiftSyntax602 Empty.swift
+[18/30] Emitting module SwiftSyntax602
+[19/30] Compiling SwiftSyntax603 Empty.swift
+[20/30] Emitting module SwiftSyntax510
+[21/30] Compiling SwiftSyntax510 Empty.swift
+[22/30] Emitting module SwiftSyntax601
+[23/30] Compiling SwiftSyntax601 Empty.swift
+[24/30] Compiling SwiftSyntax509 Empty.swift
+[25/30] Emitting module SwiftSyntax600
+[26/30] Compiling SwiftSyntax600 Empty.swift
+[26/30] Compiling _SwiftSyntaxCShims PlatformMutex.c
+[28/94] Compiling SwiftSyntax CustomTraits.swift
+[29/94] Compiling SwiftSyntax EditorPlaceholder.swift
+[30/94] Compiling SwiftSyntax Identifier.swift
+[31/94] Compiling SwiftSyntax MemoryLayout.swift
+[32/94] Compiling SwiftSyntax MissingNodeInitializers.swift
+[33/94] Compiling SwiftSyntax RawSyntax.swift
+[34/94] Compiling SwiftSyntax RawSyntaxArena.swift
+[35/101] Compiling SwiftSyntax Tokens.swift
+[36/101] Compiling SwiftSyntax TriviaPieces.swift
+[37/101] Compiling SwiftSyntax RawSyntaxNodesAB.swift
+[38/101] Compiling SwiftSyntax RawSyntaxNodesC.swift
+[39/101] Compiling SwiftSyntax RawSyntaxNodesD.swift
+[40/101] Compiling SwiftSyntax RawSyntaxNodesEF.swift
+[41/101] Compiling SwiftSyntax RawSyntaxNodesGHI.swift
+[42/101] Compiling SwiftSyntax AbsolutePosition.swift
+[43/101] Compiling SwiftSyntax AbsoluteSyntaxInfo.swift
+[44/101] Compiling SwiftSyntax ArenaAllocatedBuffer.swift
+[45/101] Compiling SwiftSyntax Assert.swift
+[46/101] Compiling SwiftSyntax BumpPtrAllocator.swift
+[47/101] Compiling SwiftSyntax CommonAncestor.swift
+[48/101] Compiling SwiftSyntax Convenience.swift
+[49/101] Compiling SwiftSyntax SwiftSyntaxCompatibility.swift
+[50/101] Compiling SwiftSyntax Syntax.swift
+[51/101] Compiling SwiftSyntax SyntaxChildren.swift
+[52/101] Compiling SwiftSyntax SyntaxCollection.swift
+[53/101] Compiling SwiftSyntax SyntaxHashable.swift
+[54/101] Compiling SwiftSyntax SyntaxIdentifier.swift
+[55/101] Compiling SwiftSyntax SyntaxNodeStructure.swift
+[56/101] Emitting module SwiftSyntax
+[57/101] Compiling SwiftSyntax SyntaxCollections.swift
+[58/101] Compiling SwiftSyntax SyntaxEnum.swift
+[59/101] Compiling SwiftSyntax SyntaxKind.swift
+[60/101] Compiling SwiftSyntax SyntaxRewriter.swift
+[61/101] Compiling SwiftSyntax SyntaxTraits.swift
+[62/101] Compiling SwiftSyntax SyntaxVisitor.swift
+[63/101] Compiling SwiftSyntax TokenKind.swift
+[64/101] Compiling SwiftSyntax SyntaxProtocol.swift
+[65/101] Compiling SwiftSyntax SyntaxText.swift
+[66/101] Compiling SwiftSyntax SyntaxTreeViewMode.swift
+[67/101] Compiling SwiftSyntax TokenDiagnostic.swift
+[68/101] Compiling SwiftSyntax TokenSequence.swift
+[69/101] Compiling SwiftSyntax TokenSyntax.swift
+[70/101] Compiling SwiftSyntax Trivia.swift
+[71/101] Compiling SwiftSyntax RawSyntaxNodesJKLMN.swift
+[72/101] Compiling SwiftSyntax RawSyntaxNodesOP.swift
+[73/101] Compiling SwiftSyntax RawSyntaxNodesQRS.swift
+[74/101] Compiling SwiftSyntax RawSyntaxNodesTUVWXYZ.swift
+[75/101] Compiling SwiftSyntax RawSyntaxValidation.swift
+[76/101] Compiling SwiftSyntax SyntaxNodesAB.swift
+[77/101] Compiling SwiftSyntax SyntaxNodesC.swift
+[78/101] Compiling SwiftSyntax RawSyntaxLayoutView.swift
+[79/101] Compiling SwiftSyntax RawSyntaxNodeProtocol.swift
+[80/101] Compiling SwiftSyntax RawSyntaxTokenView.swift
+[81/101] Compiling SwiftSyntax SourceEdit.swift
+[82/101] Compiling SwiftSyntax SourceLength.swift
+[83/101] Compiling SwiftSyntax SourceLocation.swift
+[84/101] Compiling SwiftSyntax SourcePresence.swift
+[85/101] Compiling SwiftSyntax Utils.swift
+[86/101] Compiling SwiftSyntax ChildNameForKeyPath.swift
+[87/101] Compiling SwiftSyntax Keyword.swift
+[88/101] Compiling SwiftSyntax RenamedChildrenCompatibility.swift
+[89/101] Compiling SwiftSyntax RenamedNodesCompatibility.swift
+[90/101] Compiling SwiftSyntax SyntaxAnyVisitor.swift
+[91/101] Compiling SwiftSyntax SyntaxBaseNodes.swift
+[92/101] Compiling SwiftSyntax SyntaxNodesD.swift
+[93/101] Compiling SwiftSyntax SyntaxNodesEF.swift
+[94/101] Compiling SwiftSyntax SyntaxNodesGHI.swift
+[95/101] Compiling SwiftSyntax SyntaxNodesJKLMN.swift
+[96/101] Compiling SwiftSyntax SyntaxNodesOP.swift
+[97/101] Compiling SwiftSyntax SyntaxNodesQRS.swift
+[98/101] Compiling SwiftSyntax SyntaxNodesTUVWXYZ.swift
+[99/154] Compiling SwiftDiagnostics Convenience.swift
+[100/155] Compiling SwiftDiagnostics Note.swift
+[101/155] Compiling SwiftDiagnostics GroupedDiagnostics.swift
+[102/155] Compiling SwiftDiagnostics Message.swift
+[103/155] Compiling SwiftDiagnostics DiagnosticDecorator.swift
+[104/155] Compiling SwiftDiagnostics FixIt.swift
+[105/155] Compiling SwiftDiagnostics ANSIDiagnosticDecorator.swift
+[106/155] Compiling SwiftDiagnostics Diagnostic.swift
+[107/155] Compiling SwiftDiagnostics BasicDiagnosticDecorator.swift
+[108/155] Emitting module SwiftDiagnostics
+[109/155] Compiling SwiftDiagnostics DiagnosticsFormatter.swift
+[110/155] Compiling SwiftParser StringLiterals.swift
+[111/155] Compiling SwiftParser SwiftParserCompatibility.swift
+[112/155] Compiling SwiftParser SwiftVersion.swift
+[113/155] Compiling SwiftParser SyntaxUtils.swift
+[114/159] Compiling SwiftParser Attributes.swift
+[115/159] Compiling SwiftParser Availability.swift
+[116/159] Compiling SwiftParser CharacterInfo.swift
+[117/159] Compiling SwiftParser CollectionNodes+Parsable.swift
+[118/159] Compiling SwiftParser CompilerFiles.swift
+[119/159] Compiling SwiftParser RegexLiteralLexer.swift
+[120/159] Compiling SwiftParser UnicodeScalarExtensions.swift
+[121/159] Compiling SwiftParser Lookahead.swift
+[122/159] Compiling SwiftParser LoopProgressCondition.swift
+[123/159] Compiling SwiftParser Modifiers.swift
+[124/159] Compiling SwiftParser TokenConsumer.swift
+[125/159] Compiling SwiftParser TokenPrecedence.swift
+[126/159] Compiling SwiftParser TokenSpec.swift
+[127/159] Compiling SwiftParser TokenSpecSet.swift
+[128/159] Compiling SwiftParser TopLevel.swift
+[129/159] Compiling SwiftParser TriviaParser.swift
+[130/159] Compiling SwiftParser Types.swift
+[131/159] Compiling SwiftParser ExperimentalFeatures.swift
+[132/159] Compiling SwiftParser Names.swift
+[133/159] Compiling SwiftParser Nominals.swift
+[134/159] Compiling SwiftParser Parameters.swift
+[135/159] Compiling SwiftParser ParseSourceFile.swift
+[136/159] Compiling SwiftParser Parser.swift
+[137/159] Emitting module SwiftParser
+[138/159] Compiling SwiftParser Patterns.swift
+[139/159] Compiling SwiftParser Recovery.swift
+[140/159] Compiling SwiftParser Specifiers.swift
+[141/159] Compiling SwiftParser Statements.swift
+[142/159] Compiling SwiftParser StringLiteralRepresentedLiteralValue.swift
+[143/159] Compiling SwiftParser IsValidIdentifier.swift
+[144/159] Compiling SwiftParser Cursor.swift
+[145/159] Compiling SwiftParser Lexeme.swift
+[146/159] Compiling SwiftParser LexemeSequence.swift
+[147/159] Compiling SwiftParser Lexer.swift
+[148/159] Compiling SwiftParser Declarations.swift
+[149/159] Compiling SwiftParser Directives.swift
+[150/159] Compiling SwiftParser ExpressionInterpretedAsVersionTuple.swift
+[151/159] Compiling SwiftParser Expressions.swift
+[152/159] Compiling SwiftParser IncrementalParseTransition.swift
+[153/159] Compiling SwiftParser IsLexerClassified.swift
+[154/159] Compiling SwiftParser LayoutNodes+Parsable.swift
+[155/159] Compiling SwiftParser Parser+TokenSpecSet.swift
+[156/159] Compiling SwiftParser TokenSpecStaticMembers.swift
+[157/169] Compiling SwiftOperators PrecedenceGroup.swift
+[158/170] Compiling SwiftOperators SyntaxSynthesis.swift
+[159/170] Compiling SwiftOperators PrecedenceGraph.swift
+[160/170] Compiling SwiftOperators OperatorTable.swift
+[161/170] Compiling SwiftOperators OperatorTable+Semantics.swift
+[162/170] Compiling SwiftOperators Operator.swift
+[163/170] Compiling SwiftOperators OperatorTable+Defaults.swift
+[164/170] Compiling SwiftOperators OperatorError.swift
+[165/170] Compiling SwiftOperators OperatorError+Diagnostics.swift
+[166/170] Emitting module SwiftOperators
+[167/170] Compiling SwiftOperators OperatorTable+Folding.swift
+[168/179] Compiling AntiSlopCore SimplifiedType.swift
+[169/179] Compiling AntiSlopCore SymbolAndRuntimeRules.swift
+[170/179] Compiling AntiSlopCore WideningRules.swift
+[171/179] Compiling AntiSlopCore SwiftSlopRules.swift
+[172/179] Compiling AntiSlopCore AnyLeakageRules.swift
+[173/179] Compiling AntiSlopCore CastRules.swift
+[174/179] Compiling AntiSlopCore AntiSlopConfig.swift
+[175/179] Compiling AntiSlopCore Rule.swift
+[176/179] Emitting module AntiSlopCore
+[177/181] Emitting module AntiSlop
+[178/181] Compiling AntiSlop main.swift
+[178/181] Write Objects.LinkFileList
+[179/181] Linking anti-slop
+[180/181] Applying anti-slop
+Build of product 'anti-slop' complete! (43.15s)
+native/SendmeterNative/Sources/App/AppModel.swift:9237:11: error: [no-swallowed-errors] Empty catch block swallows the error entirely; failures become invisible. Bind the error, log it, recover deliberately, or rethrow.
+native/SendmeterNative/Sources/Core/DirectWriteReplay.swift:200:93: error: [no-force-unwrap] Force unwrap crashes on the first unexpected nil. Add a // SAFETY: comment stating why the optional is known non-nil, or unwrap with `guard let`.
+
+[anti-slop] 2 violations across 165 files (17 rules).
+anti-slop: scanned 165 Swift files
+EXIT=1

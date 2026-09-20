@@ -1,0 +1,11 @@
+# rule: a stale account boundary never writes the old account's rows
+--- green/native/SendmeterNative/Sources/Core/WorkspaceSyncCoordinator.swift
++++ mutated/native/SendmeterNative/Sources/Core/WorkspaceSyncCoordinator.swift
+@@ -431,7 +431,6 @@
+             )
+         }
+         let delta = try await fetch(cursor)
+-        guard boundary.canApply() else { return nil }
+         if let store {
+             await reconcileEntity(
+                 in: store,

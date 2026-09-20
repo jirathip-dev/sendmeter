@@ -1,19 +1,18 @@
 # Sendmeter Native
 
-A full, parallel SwiftUI implementation of the Sendmeter iPhone application.
-It uses the same Supabase project and database schema as the existing
-React/Capacitor client while keeping the currently shipped target unchanged.
+The shipped SwiftUI implementation of the Sendmeter iPhone application. It is
+native-only since #857 and uses the same Supabase project and database schema
+the retired React/Capacitor client used; that client no longer exists in this
+repo (`docs/architecture/857-removal-inventory.md`).
 
-## Why this lives in a parallel target
+## Native-only since #857
 
-The native rewrite is intentionally additive. `native/SendmeterNative` can be
-built, tested, and exercised on TestFlight without replacing or destabilizing
-the production Capacitor target. The native rewrite currently requires iOS 17
-because its per-property Swift Observation model uses `@Observable`; the
-reusable `SendmeterCore` package remains iOS 16-compatible. Promotion should
-happen only after the native
-target passes the physical iPhone/Apple Watch soak and latency gates described
-in `docs/native-swift-rewrite.md`.
+`native/SendmeterNative` is not a parallel rewrite — since #857 it is the
+product target: built, tested, and exercised on TestFlight on its own. It
+requires iOS 17 because its per-property Swift Observation model uses
+`@Observable`; the reusable `SendmeterCore` package remains iOS 16-compatible.
+The physical iPhone/Apple Watch soak and latency checks remain device-only
+gates (see "Verification" below).
 
 ## Implemented product surfaces
 
@@ -79,9 +78,9 @@ surface; unsigned local builds cannot prove that portal configuration.
 
 The generated project also has a `SendLogWatch Watch App` watchOS target. It
 reuses the existing companion sources from `ios/App/SendLogWatch Watch App`,
-links the same `SendLogWatchCore` and Supabase packages used by the Capacitor
-target, and embeds the existing `SendLogWatchWidgets` target without copying
-its sources or rendering logic. The watch app is automatically copied into
+links the shared `SendLogWatchCore` and Supabase packages, and embeds the
+existing `SendLogWatchWidgets` target without copying its sources or rendering
+logic. The watch app is automatically copied into
 `SendmeterNative.app/Watch` by the native app's `Embed Watch Content` phase,
 and the watch-widget appex is copied into the watch app's foundation-extension
 destination. The Release phone bundle ID is `com.jirathip.sendlog`, matching

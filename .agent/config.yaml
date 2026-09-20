@@ -3,19 +3,15 @@
 
 base_branch: staging
 
+# Native-only since #857: there is no root package manager and no root npm
+# script left, so every gate resolves through the justfile — the canonical
+# entry point (see CLAUDE.md). `just fast` is the host gate (anti-slop + the
+# three SwiftPM suites, no simulator); the Xcode-backed gates run in CI
+# (`.github/workflows/native-swift.yml`, `just ci`).
 commands:
-  setup: npm ci              # hermetic install — never mutates the lockfile
-  # Chained onto `test`: Commands has no custom gate names, and this is the
-  # only gate that runs for every dispatched issue. Without it, a watch/iOS
-  # change compiles zero lines of Swift before opening a PR (#319). The
-  # script self-skips (exit 0) when the diff has nothing under ios/, so
-  # web-only runs — the majority — pay nothing. Coverage when ios/ IS
-  # touched: SendLogWatchCore's SPM tests + an xcodebuild of the watch
-  # scheme (incl. SendLogWatchWidgets, the #315/#277 target). It does NOT
-  # build the phone App target or native-plugins/ — see the gap notes in
-  # scripts/swift-gate.sh's header.
-  test: npm run test && ./scripts/swift-gate.sh
-  lint: npm run lint          # eslint .
-  typecheck: npm run typecheck  # tsc --noEmit
+  setup: null       # nothing to install — Xcode, XcodeGen, and just are host prerequisites
+  test: just fast
+  lint: just slop
+  typecheck: null   # no standalone typechecker; the SwiftPM suites compile the pure packages
 
 skills: [coding, testing]

@@ -1,4 +1,7 @@
+import CryptoKit
 import Foundation
+import SendLogHealthCore
+import SendLogWatchCore
 
 /// #916: how one "direct write" entity is mutated on the server.
 ///
@@ -423,4 +426,567 @@ extension RoutinePreset: DirectWriteEntityValue {
             && steps.count == other.steps.count
             && zip(steps, other.steps).allSatisfy { $0.hasSameMutationContent(as: $1) }
     }
+}
+
+// MARK: - Tag registry (#918)
+
+/// #918: the queue identity of one tag name.
+///
+/// The tag registry's identity is the tag NAME — denormalized into
+/// `tindeq_recordings.tag` and used as `CacheEntityID.tagMetadata` — while the
+/// durable queue keys its items by `UUID`. The two have to map deterministically
+/// for the queue to hold ONE intent per tag: a relaunch (or a second mutation
+/// for the same tag) recovers the pending item from the name alone, and a rename
+/// that is still pending is replaced under the identity it continues instead of
+/// racing it.
+///
+/// The mapping is RFC 4122 §4.3 UUIDv5 over the trimmed name under this
+/// namespace, so it is stable for every process and every future build.
+public enum TagMutationIdentity {
+    // SAFETY: fixed canonical 32-hex UUID string; UUID(uuidString:) always
+    // parses it.
+    public static let namespace = UUID(uuidString: "91800000-0000-4000-8000-000000000918")!
+
+    private static let namespaceBytes: [UInt8] = {
+        var uuid = namespace.uuid
+        return withUnsafeBytes(of: &uuid) { Array($0) }
+    }()
+
+    public static func queueItemID(for tagName: String) -> UUID {
+        let trimmed = tagName.trimmingCharacters(in: .whitespacesAndNewlines)
+        var bytes = namespaceBytes
+        bytes.append(contentsOf: Array(trimmed.utf8))
+        var digest = Array(Insecure.SHA1.hash(data: Data(bytes)).prefix(16))
+        digest[6] = (digest[6] & 0x0F) | 0x50
+        digest[8] = (digest[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            digest[0], digest[1], digest[2], digest[3],
+            digest[4], digest[5], digest[6], digest[7],
+            digest[8], digest[9], digest[10], digest[11],
+            digest[12], digest[13], digest[14], digest[15]
+        ))
+    }
+}
+
+/// #918: the durable intent of one tag-registry mutation (rename / hide /
+/// unhide).
+///
+/// The registry row's identity is the tag NAME (`CacheEntityID.tagMetadata`),
+/// and a rename MOVES that identity: `rename_tindeq_tag` repoints every
+/// recording carrying the old name and drops the old row, and it only carries a
+/// registry row across when the old name had one. An intent that is still
+/// pending has to keep both halves of that move:
+///
+/// * every name its recordings may still be served under, so a replay repoints
+///   from the name the server actually has (a rename whose acknowledgement was
+///   lost leaves the recordings under the older name), and
+/// * the rename itself, so a later mutation authored against the moved name
+///   still repoints the recordings the user renamed in the first place.
+public struct TagMutationIntent: Codable, Sendable, Equatable {
+    /// The names this tag has been known by while this intent was pending,
+    /// oldest first. The last one is the name the user sees (and authors a
+    /// later mutation against).
+    public let knownNames: [String]
+    /// The name the tag must end up carrying, or `nil` for a visibility-only
+    /// mutation.
+    public let renamedTo: String?
+    /// The visibility the mutation intends. `false` is a real value (unhide);
+    /// `nil` means the mutation does not touch it.
+    public let hidden: Bool?
+    /// The recordings that carried the tag when the mutation was authored. The
+    /// replay proves the end state against them: a rename that would leave one
+    /// of the user's references behind is never confirmed — the intent stays
+    /// durable and retryable instead.
+    public let recordingIDs: [UUID]
+    /// Stable identity of THIS operation, independent of the queue item's
+    /// replacement revision. A replacement keeps the identity of the operation
+    /// that first persisted it, so a completed replay can never be confused
+    /// with a newer one.
+    public let operationID: UUID
+    public let intendedAt: Date
+
+    public init(
+        knownNames: [String],
+        renamedTo: String? = nil,
+        hidden: Bool? = nil,
+        recordingIDs: [UUID] = [],
+        operationID: UUID = UUID(),
+        intendedAt: Date = Date()
+    ) {
+        self.knownNames = knownNames
+        self.renamedTo = renamedTo
+        self.hidden = hidden
+        self.recordingIDs = recordingIDs
+        self.operationID = operationID
+        self.intendedAt = intendedAt
+    }
+
+    /// The name the tag currently carries — the one a user-facing mutation is
+    /// authored against, and the one the queue item is looked up by.
+    public var tagName: String { knownNames.last ?? "" }
+
+    /// The name the intent must leave the tag under.
+    public var finalName: String { renamedTo ?? tagName }
+
+    /// The name the tag started this intent's chain under. The queue identity is
+    /// derived from this name, so a chained rename replaces the still-pending
+    /// intent it continues rather than filing a second one.
+    public var originName: String { knownNames.first ?? "" }
+
+    /// The queue item identity this intent must be filed under.
+    public var queueIdentity: UUID { TagMutationIdentity.queueItemID(for: originName) }
+
+    /// The names this intent's rename retires (everything but the final name).
+    public var retiredNames: Set<String> {
+        guard renamedTo != nil else { return [] }
+        return Set(knownNames).subtracting([finalName])
+    }
+}
+
+/// The replay decisions for a tag mutation (#918). Pure: every input is passed
+/// in, so the rules are unit-testable without a server.
+public enum TagMutationReplayPolicy {
+    /// Whether the server's own state already IS the intended end state.
+    ///
+    /// This is the single guard that keeps a retry from either duplicating work
+    /// or claiming a mutation it did not perform. Every clause is read off the
+    /// server's answer, never off local state:
+    ///
+    /// * every recording the user saw under an older name carries the intended
+    ///   name (or is gone from the server — a removal is a later word than this
+    ///   rename), so no reference is left behind;
+    /// * a rename has retired every other name it knows about, because the DB
+    ///   function drops the old registry row and a still-present row means the
+    ///   rename did not run;
+    /// * a visibility mutation has a row carrying exactly the intended flag.
+    public static func isComplete(
+        intent: TagMutationIntent,
+        serverTags: [TagMetadata],
+        serverRecordings: [TindeqRecording]
+    ) -> Bool {
+        let finalName = intent.finalName
+        for id in intent.recordingIDs {
+            guard let recording = serverRecordings.first(where: { $0.id == id }) else {
+                continue
+            }
+            guard recording.tag.trimmingCharacters(in: .whitespacesAndNewlines) == finalName
+            else { return false }
+        }
+        guard !intent.retiredNames.contains(where: { name in
+            serverTags.contains { $0.name == name }
+        }) else { return false }
+        if let hidden = intent.hidden {
+            guard let row = serverTags.first(where: { $0.name == finalName }) else {
+                return false
+            }
+            guard row.hidden == hidden else { return false }
+        }
+        return true
+    }
+
+    /// The same question as `isComplete`: a replayed intent is only allowed to
+    /// confirm what the authoritative state already shows.
+    public static func isApplied(
+        intent: TagMutationIntent,
+        serverTags: [TagMetadata],
+        serverRecordings: [TindeqRecording]
+    ) -> Bool {
+        isComplete(
+            intent: intent,
+            serverTags: serverTags,
+            serverRecordings: serverRecordings
+        )
+    }
+
+    /// The name a replayed rename has to repoint FROM, or `nil` when there is
+    /// nothing left to repoint.
+    ///
+    /// A rename that landed leaves the recordings under the newer name and a
+    /// lost acknowledgement leaves them under the older one, so the source is
+    /// read off the server's recordings first (the references are what must not
+    /// be lost) and off its registry rows second (a tag can keep a row after its
+    /// last recording is gone). The intended name itself is never a source: a
+    /// rename away from the name the records already carry is nothing to send
+    /// (`rename_tindeq_tag` returns early for `new_name = old_name`).
+    public static func repointSource(
+        intent: TagMutationIntent,
+        serverTags: [TagMetadata],
+        serverRecordings: [TindeqRecording]
+    ) -> String? {
+        guard let finalName = intent.renamedTo else { return nil }
+        let sources = intent.knownNames.filter { $0 != finalName }
+        for name in sources where serverRecordings.contains(where: { recording in
+            intent.recordingIDs.contains(recording.id)
+                && recording.tag.trimmingCharacters(in: .whitespacesAndNewlines) == name
+        }) {
+            return name
+        }
+        for name in sources where serverTags.contains(where: { $0.name == name }) {
+            return name
+        }
+        return nil
+    }
+
+    /// The intent a newer mutation for the same tag must persist in place of the
+    /// still-pending one.
+    ///
+    /// The pending intent's identity is preserved: its name chain (so the replay
+    /// can repoint from whichever name the server still serves) and the rename
+    /// it already carries (a rename moves the identity, and every later mutation
+    /// is authored against the moved name — dropping it would leave the
+    /// recordings under the old name for ever). The NEWEST mutation contributes
+    /// what it is about: its own name (appended to the chain when it differs),
+    /// its rename target, and its visibility. A rename clears the visibility
+    /// intent because that is what the repository's own rule does — a renamed
+    /// tag is visible unless it merges into a row that already existed.
+    ///
+    /// The operation identity stays that of the operation that first persisted
+    /// the intent, so an acknowledgement of the replaced revision can never be
+    /// mistaken for the replacement's.
+    public static func replacing(
+        pending: TagMutationIntent,
+        incoming: TagMutationIntent
+    ) -> TagMutationIntent {
+        var knownNames = pending.knownNames
+        if let incomingName = incoming.knownNames.last, knownNames.last != incomingName {
+            knownNames.append(incomingName)
+        }
+        var recordingIDs = pending.recordingIDs
+        for id in incoming.recordingIDs where !recordingIDs.contains(id) {
+            recordingIDs.append(id)
+        }
+        return TagMutationIntent(
+            knownNames: knownNames,
+            renamedTo: incoming.renamedTo ?? pending.renamedTo,
+            hidden: incoming.hidden,
+            recordingIDs: recordingIDs,
+            operationID: pending.operationID,
+            intendedAt: pending.intendedAt
+        )
+    }
+}
+
+/// A tag mutation whose replay could not reach the intended end state.
+///
+/// Only thrown after the mutation's own writes ran and the authoritative answer
+/// still does not show the intended name/visibility. Classified `retryable`: the
+/// next attempt re-reads the server state and repoints from the name the server
+/// actually serves, and a state that can never converge reaches the bounded
+/// quarantine — visible, retryable, never silently cleared.
+public enum TagMutationReplayError: Error, Equatable, Sendable {
+    case incompleteTagMutation
+}
+
+extension TagMutationReplayError: ServerRejectionClassifying {
+    public var rejectionClass: RejectionClass { .retryable }
+}
+
+// MARK: - Health metrics (#919)
+
+/// #919: the queue identity of one health row's write intent.
+///
+/// A health row's identity is its `(user_id, date)` key — `CacheEntityID
+/// .healthMetric` IS the date string — while the durable queue keys its items
+/// by `UUID`. The two have to map deterministically for the same reason the tag
+/// registry's does (#918): a relaunch resolves the pending intent from the row
+/// key alone, and a newer pass for the same date replaces the pending one
+/// instead of racing it.
+///
+/// The account is part of the KEY, not just of the queue item: the scheduled
+/// date is the same for every account on the device, and the queue is one
+/// shared file whose item ids must be unique ACROSS accounts (an id already
+/// held by another account's item can never be replaced or re-enqueued). The
+/// queue item's own `accountUserID` remains the only scope authority for
+/// replay; the account here only makes the identity collision-free.
+///
+/// The mapping is RFC 4122 §4.3 UUIDv5 over the account and the trimmed date
+/// under this namespace, so it is stable for every process and every future
+/// build.
+public enum HealthWriteIdentity {
+    // SAFETY: fixed canonical 32-hex UUID string; UUID(uuidString:) always
+    // parses it.
+    public static let namespace = UUID(uuidString: "91900000-0000-4000-8000-000000000919")!
+
+    private static let namespaceBytes: [UInt8] = {
+        var uuid = namespace.uuid
+        return withUnsafeBytes(of: &uuid) { Array($0) }
+    }()
+
+    public static func queueItemID(for date: String, accountUserID: UUID) -> UUID {
+        let trimmed = date.trimmingCharacters(in: .whitespacesAndNewlines)
+        var bytes = namespaceBytes
+        bytes.append(contentsOf: Array(
+            "\(accountUserID.uuidString.lowercased()):\(trimmed)".utf8
+        ))
+        var digest = Array(Insecure.SHA1.hash(data: Data(bytes)).prefix(16))
+        digest[6] = (digest[6] & 0x0F) | 0x50
+        digest[8] = (digest[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            digest[0], digest[1], digest[2], digest[3],
+            digest[4], digest[5], digest[6], digest[7],
+            digest[8], digest[9], digest[10], digest[11],
+            digest[12], digest[13], digest[14], digest[15]
+        ))
+    }
+}
+
+/// #919: the trigger a health pass was authored under, as a durable value.
+///
+/// The trigger is part of the intent because it is an INPUT to the write
+/// policy the recovery must re-check: a manual sync is authoritative (#109),
+/// while an automatic pass after noon keeps an existing score. Re-deciding at
+/// recovery time with the wrong trigger would either lose an authoritative
+/// write or overwrite a frozen one.
+public enum HealthWriteTrigger: String, Codable, Sendable, Equatable, CaseIterable {
+    case automatic
+    case manual
+
+    public init(_ trigger: SyncTrigger) {
+        self = trigger == .manual ? .manual : .automatic
+    }
+
+    public var syncTrigger: SyncTrigger {
+        self == .manual ? .manual : .automatic
+    }
+}
+
+/// #919: the durable intent of one interrupted health-metric write.
+///
+/// Health is the one direct-write family where blind replay is *worse* than
+/// dropping the write: a queued readiness score re-sent after the server (or
+/// the watch) already moved that day on would overwrite fresher data, and
+/// re-running the biometric read to "re-create" evidence is forbidden. So the
+/// intent records the exact payload the pass intended — the biometric columns
+/// plus, when the pass was allowed to score, the readiness/zone/computedAt the
+/// write would have sent — and the recovery REVALIDATES it against the server's
+/// current row instead of replaying it (see `HealthWriteReplayPolicy`).
+///
+/// The mutation is captured before the first server attempt and is never
+/// re-derived from later local state: a fresh `HealthKit` read is not part of
+/// recovery, so the replayed write is provably the user's own interrupted write
+/// and not newly invented evidence.
+public struct HealthWriteIntent: Codable, Sendable, Equatable {
+    /// The row's date key (`CacheEntityID.healthMetric`), YYYY-MM-DD.
+    public let date: String
+    /// The exact payload the pass intended to upsert.
+    public let payload: HealthMetric
+    /// The trigger the pass was authored under (#109/#802 re-check input).
+    public let trigger: HealthWriteTrigger
+    /// Stable identity of THIS operation, independent of the queue item's
+    /// replacement revision: a later pass for the same date replaces the
+    /// pending intent with the newer content and a newer operation id.
+    public let operationID: UUID
+    public let intendedAt: Date
+
+    public init(
+        date: String,
+        payload: HealthMetric,
+        trigger: HealthWriteTrigger,
+        operationID: UUID = UUID(),
+        intendedAt: Date = Date()
+    ) {
+        self.date = date
+        self.payload = payload
+        self.trigger = trigger
+        self.operationID = operationID
+        self.intendedAt = intendedAt
+    }
+
+    /// The queue item identity this intent must be filed under for one
+    /// account. The account is a parameter (not a stored field) because the
+    /// owning `DurableQueueItem` is the single account authority — the intent
+    /// itself must never carry a scope it could be replayed under.
+    public func queueIdentity(accountUserID: UUID) -> UUID {
+        HealthWriteIdentity.queueItemID(
+            for: date,
+            accountUserID: accountUserID
+        )
+    }
+
+    /// Whether `serverRow` already carries everything this intent's payload
+    /// intends to write.
+    ///
+    /// Only the fields the payload actually carries are compared — a nil
+    /// readiness/zone means the pass deliberately left the existing score alone
+    /// (#109 keep-score branch), and a nil biometric column is one the payload
+    /// does not write. `computed_at` is deliberately NOT compared: the DB
+    /// stamps `now()` for a fresh insert that carried none, so a lost
+    /// acknowledgement can legitimately come back with a different timestamp
+    /// while the score and biometrics are exactly the ones that were sent.
+    ///
+    /// The biometric columns are `real` (float4) in Postgres, so a
+    /// round-tripped row differs from a Double payload in the low bits: the
+    /// comparison is made at the server's own precision.
+    public func isSatisfied(by serverRow: HealthMetric) -> Bool {
+        Self.isPayload(payload, satisfiedBy: serverRow)
+    }
+
+    /// Whether `serverRow` already carries everything `payload` intends to
+    /// write.
+    ///
+    /// Only the fields the payload actually carries are compared — a nil
+    /// readiness/zone means the pass deliberately left the existing score alone
+    /// (#109 keep-score branch), and a nil biometric column is one the payload
+    /// does not write. `computed_at` is deliberately NOT compared: the DB
+    /// stamps `now()` for a fresh insert that carried none, so a lost
+    /// acknowledgement can legitimately come back with a different timestamp
+    /// while the score and biometrics are exactly the ones that were sent.
+    ///
+    /// Asked of the RE-DERIVED payload too (see `HealthWriteReplayPolicy`):
+    /// "does the row the server already serves make this write a no-op?" is the
+    /// same question whether the payload came off the wire or out of the write
+    /// policy.
+    ///
+    /// The biometric columns are `real` (float4) in Postgres, so a
+    /// round-tripped row differs from a Double payload in the low bits: the
+    /// comparison is made at the server's own precision.
+    public static func isPayload(
+        _ payload: HealthMetric,
+        satisfiedBy serverRow: HealthMetric
+    ) -> Bool {
+        guard serverRow.date == payload.date else { return false }
+        guard matches(payload.readiness, serverRow.readiness) else { return false }
+        guard matches(payload.zone, serverRow.zone) else { return false }
+        return matches(payload.hrvSDNNMilliseconds, serverRow.hrvSDNNMilliseconds)
+            && matches(payload.restingHeartRate, serverRow.restingHeartRate)
+            && matches(payload.sleepHours, serverRow.sleepHours)
+            && matches(payload.sleepDeepHours, serverRow.sleepDeepHours)
+            && matches(payload.sleepREMHours, serverRow.sleepREMHours)
+            && matches(payload.bodyMassKilograms, serverRow.bodyMassKilograms)
+            && matches(payload.respiratoryRate, serverRow.respiratoryRate)
+    }
+
+    /// Whether the payload would overwrite a NEWER score: the server's own row
+    /// for this date carries a timestamp later than the payload's own, so the
+    /// queued score is stale data. Never true for a payload that carries no
+    /// score at all (a keep-score biometric refresh cannot clobber one), and
+    /// true for a score with no timestamp of its own that faces a row the
+    /// server CAN date — an undatable queued score is never allowed to
+    /// overwrite a dated one.
+    public func isSupersededByNewerScore(of serverRow: HealthMetric) -> Bool {
+        guard payload.readiness != nil else { return false }
+        guard let serverComputedAt = serverRow.computedAt else { return false }
+        guard let payloadComputedAt = payload.computedAt else { return true }
+        return payloadComputedAt < serverComputedAt
+    }
+
+    /// One payload field against the server's row at the server's precision.
+    /// A nil payload value is a column this write does not touch.
+    private static func matches(_ payloadValue: Double?, _ serverValue: Double?) -> Bool {
+        guard let payloadValue else { return true }
+        guard let serverValue else { return false }
+        return Float(payloadValue) == Float(serverValue)
+    }
+
+    private static func matches(_ payloadValue: Int?, _ serverValue: Int?) -> Bool {
+        guard let payloadValue else { return true }
+        return payloadValue == serverValue
+    }
+
+    private static func matches(_ payloadValue: String?, _ serverValue: String?) -> Bool {
+        guard let payloadValue else { return true }
+        return payloadValue == serverValue
+    }
+}
+
+/// The recovery decision for one durable health write intent.
+public enum HealthWriteReplayDecision: Equatable, Sendable {
+    /// The server's row already IS this write (a lost acknowledgement), so the
+    /// recovery must send nothing and confirm the local row from the server's.
+    case alreadyApplied(serverRow: HealthMetric)
+    /// The queued payload must NOT be sent: the server's row for the date is
+    /// newer (or the date is historical and already immutable). The local row
+    /// is confirmed from the server's row — the user's fresher data wins and
+    /// the stale queued score is never written.
+    case superseded(serverRow: HealthMetric)
+    /// The re-derived write the recovery must send, under the CURRENT write
+    /// policy (today's date, the server's live row, the intent's own trigger).
+    case send(payload: HealthMetric, operation: HealthMetricWriteOperation)
+}
+
+/// The replay decisions for a health-metric write (#919). Pure: every input is
+/// passed in, so the rules are unit-testable without a server — and the tests
+/// that matter run them against a REAL `AppModel` (see
+/// `HealthWriteRecoveryAppTests`).
+public enum HealthWriteReplayPolicy {
+    /// Resolves one interrupted health write against the server's CURRENT row.
+    ///
+    /// Every clause reads the server's own answer:
+    ///
+    /// * no row for the date — the write never landed, so it is sent (today
+    ///   through the #802 precedence RPC, a past date through the atomic
+    ///   insert-if-missing that cannot rewrite an existing immutable row);
+    /// * a row that already carries the payload's own fields — the
+    ///   acknowledgement was lost, so nothing is sent;
+    /// * a PAST date that already has a row — historical rows are immutable,
+    ///   so the queued payload can never land and must not rewrite it;
+    /// * a row whose score is newer than the queued payload's — the queued
+    ///   score is stale and must never overwrite fresh data;
+    /// * otherwise the write is re-derived exactly as a live pass would: the
+    ///   #109 readiness-freeze decision is re-run against the server's LIVE row
+    ///   with the intent's own trigger, and the #802 precedence/`ReadinessSync`
+    ///   split decides what (if anything) is still missing.
+    ///
+    /// `timeZone` is the caller's local calendar: "today" — the one date whose
+    /// row may still be merged — is derived from it, never from the queued
+    /// date, so an intent authored yesterday becomes a historical
+    /// insert-if-missing after midnight instead of a blind merge.
+    public static func decide(
+        intent: HealthWriteIntent,
+        serverRow: HealthMetric?,
+        now: Date,
+        timeZone: TimeZone = .current
+    ) -> HealthWriteReplayDecision {
+        let calendar = LocalDateSupport.calendar(timeZone: timeZone)
+        let today = LocalDateSupport.string(from: now, timeZone: timeZone)
+        let operation = HealthMetricWritePolicy.operation(
+            for: intent.date,
+            today: today
+        )
+        guard let serverRow else {
+            return .send(payload: intent.payload, operation: operation)
+        }
+        if intent.isSatisfied(by: serverRow) {
+            return .alreadyApplied(serverRow: serverRow)
+        }
+        // Historical rows are immutable after they exist: an interrupted past
+        // write can only ever be an insert, and one is already there.
+        if operation == .historicalInsert {
+            return .superseded(serverRow: serverRow)
+        }
+        if intent.isSupersededByNewerScore(of: serverRow) {
+            return .superseded(serverRow: serverRow)
+        }
+        let allowReadinessOverwrite = ReadinessWritePolicy.shouldOverwriteReadiness(
+            existingReadiness: serverRow.readiness,
+            existingRowDate: serverRow.date,
+            now: now,
+            trigger: intent.trigger.syncTrigger,
+            calendar: calendar
+        )
+        let plan = ReadinessSyncPolicy.plan(
+            existingToday: serverRow,
+            freshlyComputed: intent.payload,
+            allowReadinessOverwrite: allowReadinessOverwrite
+        )
+        if HealthWriteIntent.isPayload(plan.upsertMetric, satisfiedBy: serverRow) {
+            return .alreadyApplied(serverRow: serverRow)
+        }
+        return .send(payload: plan.upsertMetric, operation: operation)
+    }
+}
+
+/// A health write whose replay could not be confirmed by the server's own
+/// answer.
+///
+/// Only thrown after the write ran and the authoritative read-back still does
+/// not serve a row for the date. Classified `retryable`: the next attempt
+/// re-reads the server state, and a state that can never converge reaches the
+/// bounded quarantine — visible, retryable, never silently cleared.
+public enum HealthWriteReplayError: Error, Equatable, Sendable {
+    case unconfirmedWrite
+}
+
+extension HealthWriteReplayError: ServerRejectionClassifying {
+    public var rejectionClass: RejectionClass { .retryable }
 }

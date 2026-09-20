@@ -1,0 +1,74 @@
+--- AppModel.swift	2026-09-20 02:58:03
++++ native/SendmeterNative/Sources/App/AppModel.swift	2026-09-20 02:58:03
+@@ -2912,7 +2912,7 @@
+             // (its reconcile never runs, so nothing is overwritten), and a
+             // broken pair is not applied at all — a partially authoritative
+             // group is never exposed.
+-            if outcomes.publishes(.sessionsAndRecordings),
++            if outcomes.didFullyRefresh && outcomes.publishes(.sessionsAndRecordings),
+                let fetchedSessions = sessionsSlice.value,
+                let fetchedRecordings = recordingsSlice.value {
+                 reconcileEntityRefresh(
+@@ -2934,7 +2934,7 @@
+                     purgeGeneration: remotePurgeGeneration
+                 )
+             }
+-            if outcomes.publishes(.settingsAndPhase),
++            if outcomes.didFullyRefresh && outcomes.publishes(.settingsAndPhase),
+                let fetchedSettings = settingsSlice.value,
+                let fetchedPeriods = periodsSlice.value {
+                 reconcileEntityRefresh(
+@@ -2954,7 +2954,7 @@
+                         : nil
+                 )
+             }
+-            if outcomes.publishes(.healthMetrics),
++            if outcomes.didFullyRefresh && outcomes.publishes(.healthMetrics),
+                let fetchedHealth = healthSlice.value {
+                 reconcileEntityRefresh(
+                     fetchedHealth,
+@@ -2965,7 +2965,7 @@
+                         : nil
+                 )
+             }
+-            if outcomes.publishes(.presets),
++            if outcomes.didFullyRefresh && outcomes.publishes(.presets),
+                let fetchedPresets = presetsSlice.value {
+                 reconcileEntityRefresh(
+                     fetchedPresets,
+@@ -2976,7 +2976,7 @@
+                         : nil
+                 )
+             }
+-            if outcomes.publishes(.routinePresets),
++            if outcomes.didFullyRefresh && outcomes.publishes(.routinePresets),
+                let fetchedRoutines = routinesSlice.value {
+                 reconcileEntityRefresh(
+                     fetchedRoutines,
+@@ -2987,7 +2987,7 @@
+                         : nil
+                 )
+             }
+-            if outcomes.publishes(.workoutsAndAttempts),
++            if outcomes.didFullyRefresh && outcomes.publishes(.workoutsAndAttempts),
+                let fetchedWorkouts = workoutsSlice.value {
+                 reconcileEntityRefresh(
+                     fetchedWorkouts,
+@@ -2998,7 +2998,7 @@
+                         : nil
+                 )
+             }
+-            if outcomes.publishes(.tagMetadata),
++            if outcomes.didFullyRefresh && outcomes.publishes(.tagMetadata),
+                let fetchedTags = tagsSlice.value {
+                 reconcileEntityRefresh(
+                     fetchedTags,
+@@ -3014,7 +3014,7 @@
+             // #923: a failed slice's published list is its last-good value —
+             // the untouched cache row, or the in-memory list with its pending
+             // local overlays still on top.
+-            let sessionsGroupPublished = outcomes.publishes(.sessionsAndRecordings)
++            let sessionsGroupPublished = outcomes.didFullyRefresh && outcomes.publishes(.sessionsAndRecordings)
+             let publishedSessions = publishedSnapshot?.sessions
+                 ?? sessionsSlice.value?.activeValues
+                 ?? sessions.filter { !$0.pending }

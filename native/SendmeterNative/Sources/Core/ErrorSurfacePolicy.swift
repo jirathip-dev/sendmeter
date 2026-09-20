@@ -42,4 +42,22 @@ public struct ErrorSurfacePolicy: Equatable, Sendable {
             return !hasLastGoodData
         }
     }
+
+    /// #923: the same decision once the pass knows whether it published any
+    /// consistency group.
+    ///
+    /// A refresh that published at least one group left usable, authoritative
+    /// data on screen, so the global banner's copy ("Couldn't reach
+    /// Sendmeter") would mislabel a partial failure as a total blackout — even
+    /// for an explicit user refresh, where the scoped failure row carries the
+    /// retry instead. When nothing published (or the caller cannot say), the
+    /// #842 matrix above is unchanged.
+    public func shouldSurface(
+        source: ErrorSurfaceSource,
+        hasLastGoodData: Bool,
+        publishedAnySlice: Bool
+    ) -> Bool {
+        if publishedAnySlice { return false }
+        return shouldSurface(source: source, hasLastGoodData: hasLastGoodData)
+    }
 }

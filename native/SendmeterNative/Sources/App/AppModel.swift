@@ -52,6 +52,19 @@ private enum PendingWrite: Codable, Sendable {
     /// single intent. The settings row and the periods are written together,
     /// so they are persisted together too.
     case phaseTransition(PhaseTransitionIntent)
+    /// #918: one durable tag-registry mutation (rename / hide / unhide). A tag
+    /// is a name, so its queue identity is the stable hash of that name and the
+    /// queue holds at most ONE intent per tag: a newer mutation replaces the
+    /// pending one and keeps the identity it continues (see
+    /// `TagMutationReplayPolicy.replacing`).
+    case tagMutation(TagMutationIntent)
+    /// #919: one interrupted health-metric write. A health row's identity is
+    /// its `(user_id, date)` key, mapped to a stable queue identity
+    /// (`HealthWriteIdentity`) so the queue holds at most ONE intent per date:
+    /// a newer pass replaces the pending one wholesale, and the recovery
+    /// REVALIDATES the queued payload against the server's current row instead
+    /// of replaying it (see `HealthWriteReplayPolicy`).
+    case healthWrite(HealthWriteIntent)
 }
 
 private extension PendingWrite {
@@ -69,11 +82,25 @@ private extension PendingWrite {
     /// transition is an account-wide singleton: every transition for one
     /// account shares `PhaseTransitionIntent.queueItemID`, so a newer switch
     /// replaces the pending one instead of racing it.
-    var directWriteEntityID: UUID? {
+    /// The queue item id for `accountUserID`. The account is passed in because
+    /// the queue is ONE file shared by every account on the device: a health
+    /// row's date is the same for all of them, so its key has to include the
+    /// account or it would collide with another account's pending write for
+    /// the same day (#919).
+    func directWriteEntityID(accountUserID: UUID) -> UUID? {
         switch self {
         case let .preset(intent): return UUID(uuidString: intent.entityID)
         case let .routine(intent): return UUID(uuidString: intent.entityID)
+        // A tag's registry identity IS its name, and the queue key is that
+        // name's stable hash, so a relaunch (or a newer mutation for the same
+        // tag) recovers the pending intent from the name alone.
+        case let .tagMutation(intent): return intent.queueIdentity
         case .phaseTransition: return PhaseTransitionIntent.queueItemID
+        // A health row's identity is its `(account, date)` key: the date alone
+        // would collide across accounts, and the account alone would collide
+        // across days.
+        case let .healthWrite(intent):
+            return intent.queueIdentity(accountUserID: accountUserID)
         default: return nil
         }
     }
@@ -85,6 +112,11 @@ private extension PendingWrite {
     var replacesPendingWithNewest: Bool {
         switch self {
         case .phaseTransition: return true
+        // #919: a health pass carries the whole row state it decided to write
+        // (its biometrics plus, when the pass could score, its readiness), so
+        // the newest pass for a date is the account's only pending write for
+        // that date — there is no create/update/delete vocabulary to coalesce.
+        case .healthWrite: return true
         default: return false
         }
     }
@@ -160,6 +192,8 @@ private extension DurableQueueItem where Payload == PendingWrite {
         case .preset: return "Preset"
         case .routine: return "Routine"
         case .phaseTransition: return "Training block change"
+        case .tagMutation: return "Tag change"
+        case .healthWrite: return "Health metric"
         }
     }
 
@@ -371,6 +405,25 @@ public final class AppModel {
     /// Kept separate from `queuedWriteCount` so Settings can label them as
     /// unsynced rather than as automatically retried queue work.
     public private(set) var pendingCacheWriteCount = 0
+    /// #920: true once this session has read the account's durable queue and
+    /// its quarantine list at least once. Before that, a zero
+    /// `queuedWriteCount`/`pendingCacheWriteCount` means "not read yet" and
+    /// MUST NOT render as "Synced" (#269 honest-states rule).
+    public private(set) var hasLoadedPendingWrites = false
+    /// #920: the measured outcome of the account's last "Retry Now" pass, so
+    /// the sync surface can tell work the button really retries from a residue
+    /// the pass proved it cannot upload.
+    public private(set) var lastRetryOutcome: MutationRetryOutcome?
+    /// #920 AC4: true while a retry pass owns the account's queue. A second
+    /// tap coalesces onto the running pass instead of racing a second drain,
+    /// and the flag is published once per account so a switch cannot light up
+    /// the wrong screen's progress.
+    public private(set) var isRetryingQueuedWrites = false
+    /// #920 AC4: the identity of the retry pass allowed to clear
+    /// `isRetryingQueuedWrites` (account + epoch + token). #935: the RULE lives
+    /// with the recovery owner (`MutationRetryGate`); this is the app's copy of
+    /// its state.
+    private var queuedWritesRetryGate = MutationRetryGate()
     public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
     /// #675: entries the server has permanently rejected — retained on device,
     /// excluded from every automatic retry, and recoverable only by the
@@ -380,6 +433,28 @@ public final class AppModel {
     /// known" (#269 honest-states rule — unknown must not render as empty).
     public private(set) var quarantinedWrites: [QuarantinedWrite]?
     public var errorMessage: String?
+    /// #964: the classification of the last account-data load failure, kept
+    /// apart from `errorMessage` because the banner is dismissible: after the
+    /// banner is dismissed (or was never rendered), the Dashboard still needs
+    /// a truthful failure state with a retry instead of an empty screen. Only
+    /// set by the refresh funnel and only cleared by a refresh that actually
+    /// succeeds (or an account reset), so it can never outlive its cause.
+    public private(set) var dashboardLoadFailureClass: FriendlyErrorClass?
+    /// #923: the scoped failure of the most recent refresh that published some
+    /// consistency groups and failed others. A partial failure is not a
+    /// blackout, so this — not the global banner — is where its retry lives.
+    /// Cleared by a pass where every slice reconciled (or by an account reset).
+    public private(set) var lastPartialRefreshFailure: RefreshFailureSummary?
+    /// #964: true while the Dashboard should lead with its load-failure state:
+    /// the last account-data load failed AND the account has no authoritative
+    /// snapshot to render (`hasLoadedSessions` / `hasLoadedRecordings` are the
+    /// same last-good-data boundary `ErrorSurfacePolicy` reasons over). A
+    /// failure with data on screen belongs to the dismissible banner only.
+    public var showsDashboardLoadFailure: Bool {
+        dashboardLoadFailureClass != nil
+            && !hasLoadedSessions
+            && !hasLoadedRecordings
+    }
     public private(set) var toast: AppToastState?
     /// Compatibility accessors keep existing call sites readable while the
     /// observed source of truth is one identity-bearing toast instance.
@@ -453,6 +528,16 @@ public final class AppModel {
     public let manualWorkoutRest: ManualWorkoutRestScheduler
     /// #763: lock-screen Live Activity mirror of the Manual workout.
     public let manualWorkoutActivity: ManualWorkoutActivityManager
+    /// #936: the ONE owner of the manual-workout lifecycle — start, minimize,
+    /// resume, the attempt transitions, End and the save it triggers, the
+    /// rest/live-card effects that follow it, and the account boundary that
+    /// tears it down. It HOLDS the in-progress workout, which is what makes a
+    /// recreated `WorkoutView` safe: the view reads the running workout from
+    /// here instead of owning it, so recreation can neither recreate it nor
+    /// silently terminate it. The owner performs no I/O — every effect it
+    /// decides is applied by `applyManualWorkoutLifecycle(_:)`, and the finish's
+    /// save still goes through `saveWorkout` → the #935 recovery owner.
+    public private(set) var manualWorkoutLifecycle = ManualWorkoutLifecycleCoordinator()
     /// #672: the Force tab's hot, feature-scoped observable state. Kept as a
     /// dedicated object (not an observed property on `AppModel`) so a force-stream
     /// publish no longer invalidates History/Dashboard/Settings bodies.
@@ -531,7 +616,35 @@ public final class AppModel {
     }
 
     private let queue: DurableQueue<PendingWrite>?
-    private let cachedWorkspace: CachedWorkspace?
+    /// #921: the account-agnostic cache handle. It is `nil` until the one
+    /// preparation flight has opened and migrated the store, so a cache-backed
+    /// read during that window degrades to the network-only path instead of
+    /// touching an unready store. `cacheReadiness` is the honest state.
+    private var cachedWorkspace: CachedWorkspace?
+    /// #921: the one lifetime preparation flight, shared by the auth bootstrap,
+    /// the foreground pass and a background app-refresh.
+    private let cachePreparation = CachePreparation()
+    private let cacheStorageSeams: CacheStorageSeams
+    /// #934: the single owner of the workspace refresh/reconciliation rules.
+    /// The foreground pass, the background app-refresh and the realtime slice
+    /// reconciler all route their SHARED rules through this one coordinator —
+    /// no second cache handle, cursor store or competing sync owner. It holds
+    /// no app state: the store, the account boundary and the failure reporter
+    /// are passed in per call.
+    private let workspaceSync: WorkspaceSyncCoordinator
+    /// #935: the single owner of the durable mutation recovery rules — drain,
+    /// manual/single-item retry, backoff, quarantine and the pass's
+    /// acknowledgement. The automatic drain (including the sign-out drain), the
+    /// explicit retry pass, the per-item manual retry and the quarantine
+    /// lifecycle all route their SHARED rules through this one coordinator — no
+    /// second queue, no second persistence format and no competing drain
+    /// timer. It holds no app state: the queue, the account boundary and the
+    /// uploader are passed in per call.
+    private let mutationRecovery = MutationRecoveryCoordinator()
+    private let cacheDirectory: URL?
+    /// #921: what the app knows about the local cache. `preparing` until the
+    /// flight answers; `unavailable` is recoverable and never a success claim.
+    public private(set) var cacheReadiness: CacheReadiness = .preparing
     /// Set when the local cache file opens or first reads. Kept separate from
     /// the queue's own diagnostics because a cache failure must degrade to the
     /// network-only path without looking like an auth failure.
@@ -589,6 +702,13 @@ public final class AppModel {
     /// #917 AC4: accounts whose pre-#917 phase/settings residue was already
     /// resolved (or proven free of residue) in this process.
     private var recoveredPhaseResidueAccounts: Set<UUID> = []
+    /// #918 AC5: accounts whose pre-#918 tag-registry residue was already
+    /// resolved (or proven free of residue) in this process.
+    private var recoveredTagResidueAccounts: Set<UUID> = []
+    /// #919: accounts whose pre-#919 health-metric residue (a pending
+    /// cache-only row with no replay intent) was already resolved (or proven
+    /// free of residue) in this process.
+    private var recoveredHealthResidueAccounts: Set<UUID> = []
     /// The session-RPE revision and delete tombstone live in one coordinator;
     /// this keeps every async response's decision tied to current, actor-free
     /// state on the main actor rather than to a stale task closure.
@@ -747,7 +867,8 @@ public final class AppModel {
         health: HealthKitService? = nil,
         watch: WatchConnectivityService? = nil,
         realtime: RealtimeService? = nil,
-        weather: WeatherService? = nil
+        weather: WeatherService? = nil,
+        cacheStorageSeams: CacheStorageSeams = .live
     ) {
         // The services' initializers are MainActor-isolated; default-argument
         // expressions are nonisolated, so they must be constructed here in
@@ -791,44 +912,40 @@ public final class AppModel {
         // from the account — the native app keeps them on-device.
         self.tagSideModes = TagSideModeStore.allStoredModes()
 
-        // #747 review note: LocalCacheStore init opens GRDB and runs migrations
-        // synchronously on the main actor during AppModel init. This is on the
-        // launch path and is acceptable for slice 2, but should be profiled on
-        // device and deferred off the main actor if cold-start cost matters.
+        // #921: the local cache is prepared OFF the launch path. `init` no
+        // longer creates the directory, opens SQLite or runs the schema
+        // migrations — all three used to run synchronously on the main actor
+        // right here, before the app could present its first frame (see the
+        // block this replaced, #747). The one preparation flight now runs on
+        // the storage side (`CachePreparation`) and every cache-backed
+        // lifecycle entrypoint JOINS it. A store that is slow, missing or
+        // broken therefore cannot delay the first frame; the splash
+        // presentation policy (#841) owns that window, and its intentional
+        // floor is not performance waste.
+        self.cacheStorageSeams = cacheStorageSeams
+        self.workspaceSync = WorkspaceSyncCoordinator(seams: cacheStorageSeams)
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first?.appendingPathComponent("SendmeterNative", isDirectory: true)
-        if let support {
-            do {
-                try FileManager.default.createDirectory(
-                    at: support,
-                    withIntermediateDirectories: true
-                )
-                let store = try LocalCacheStore(
-                    databaseURL: support.appendingPathComponent(
-                        "local-cache.sqlite",
-                        isDirectory: false
-                    )
-                )
-                cachedWorkspace = CachedWorkspace(store: store)
-            } catch {
-                cachedWorkspace = nil
-                cacheOpenFailureReported = true
-                self.auth.recordAuthEvent(
-                    .failure,
-                    detail: "Local cache unavailable: \(error.localizedDescription)"
-                )
-            }
-            self.queue = try? DurableQueue(
-                directoryURL: support,
+        self.cacheDirectory = support
+        self.cachedWorkspace = nil
+        // The durable queue is a small JSON file owned by `DurableQueue`; its
+        // read is not the database open this issue moves and is measured in
+        // docs/evidence/issue-921/first-frame-timings.txt.
+        self.queue = support.flatMap { directory in
+            try? DurableQueue(
+                directoryURL: directory,
                 filename: "pending-writes.json",
                 breadcrumbLimit: 10
             )
-        } else {
-            cachedWorkspace = nil
-            self.queue = nil
         }
+        // Start the single flight without awaiting it, so opening and
+        // migrating the store overlaps the auth round-trip instead of
+        // following it. `prepareCacheIfNeeded()` joins this same flight.
+        let preparation = self.cachePreparation
+        let seams = self.cacheStorageSeams
+        Task { _ = await preparation.preparedCache(directory: support, seams: seams) }
 
         let watch = self.watchService
         let realtime = self.realtime
@@ -1128,6 +1245,42 @@ public final class AppModel {
             }
     }
 
+    /// #920: the one derivation of the pending/sync status every sync surface
+    /// reads. It is built only from acknowledged answers — the queue's own
+    /// read (`queuedWriteCount` / `quarantinedWrites`), the cache's pending
+    /// row count, and the measured result of the last retry pass — so a local
+    /// optimistic write is never presented as a remote sync, and a zero count
+    /// that has not been read yet is "not loaded", never "Synced".
+    public var mutationSyncStatus: MutationSyncStatus {
+        MutationSyncStatus.resolve(
+            // #921: a cache that has not answered cannot have read its
+            // unsynced rows, so its zero count must never resolve to
+            // "Synced" — the gate reports `notLoaded` ("Checking…") instead.
+            cacheReadiness.honestSyncInputs(
+                MutationSyncStatusInputs(
+                    hasLoadedPendingWrites: hasLoadedPendingWrites,
+                    queuedCount: queuedWriteCount,
+                    unsyncedCacheCount: pendingCacheWriteCount,
+                    quarantinedCount: quarantinedWrites?.count,
+                    isRetrying: isRetryingQueuedWrites,
+                    lastRetryOutcome: lastRetryOutcome
+                )
+            )
+        )
+    }
+
+    /// #922: the tag-registry identities on this device that the server has
+    /// not confirmed. Every tag mutation — a queued intent or a cache-only
+    /// residue from an older app version — writes its optimistic row with the
+    /// (trimmed) tag name as the cache identity, so this one set covers both
+    /// without counting the same change twice. Manage Exercises names them.
+    ///
+    /// Published state, not a query: this used to read the cache inside a view
+    /// body. It is refreshed at the same boundaries as `pendingCacheWriteCount`
+    /// — every cache confirm/write and every publish — so a render never
+    /// touches the store.
+    public private(set) var pendingTagWriteCount = 0
+
     // MARK: Tag registry (#631)
 
     /// The exercise-manager rows: distinct recording tags with rep counts,
@@ -1146,64 +1299,50 @@ public final class AppModel {
         TagCatalog.visibleNames(tagEntries)
     }
 
+    /// Hide or unhide a tag (#918).
+    ///
+    /// The visibility change is persisted as a durable intent BEFORE the
+    /// optimistic registry row is published: a termination between the local
+    /// write and the server's answer then replays the same mutation instead of
+    /// leaving a cache-only pending row with no intent behind it. The intent
+    /// carries only `name` and `hidden` — the device-local side mode is not part
+    /// of it (see `setTagSideMode`), so nothing but the visibility flag can
+    /// reach `tindeq_tags` from here.
     public func setTagHidden(name: String, hidden: Bool) async {
         guard let userID = currentUserID else { return }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        let previous = tagMetadata.first { $0.name == name }
-        let optimistic = TagMetadata(name: name, hidden: hidden)
-        if let index = tagMetadata.firstIndex(where: { $0.name == name }) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let intent = TagMutationIntent(
+            knownNames: [trimmed],
+            hidden: hidden
+        )
+        guard let item = await enqueueDirectWrite(
+            .tagMutation(intent),
+            capturedBy: accountFetch,
+            startUpload: false
+        ) else { return }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        let optimistic = TagMetadata(name: trimmed, hidden: hidden)
+        if let index = tagMetadata.firstIndex(where: { $0.name == trimmed }) {
             tagMetadata[index] = optimistic
         } else {
             tagMetadata.append(optimistic)
         }
-        let optimisticRevision = cacheUpsertLocal(
+        cacheUpsertLocal(
             optimistic,
             accountUserID: userID,
             entityType: .tagMetadata,
             entityID: CacheEntityID.tagMetadata(optimistic)
         )
-        do {
-            try await repository.setTagHidden(name: name, hidden: hidden)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            cacheConfirmServerUpsert(
-                optimistic,
-                accountUserID: userID,
-                entityType: .tagMetadata,
-                entityID: CacheEntityID.tagMetadata(optimistic),
-                confirmingLocalRevision: optimisticRevision
-            )
-            toastMessage = hidden ? "Hid “\(name)”" : "Showing “\(name)”"
-        } catch {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            tagMetadata.removeAll { $0.name == name }
-            if let previous {
-                cacheConfirmServerUpsert(
-                    previous,
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: CacheEntityID.tagMetadata(previous),
-                    confirmingLocalRevision: optimisticRevision
-                )
-                tagMetadata.append(previous)
-            } else {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: CacheEntityID.tagMetadata(optimistic),
-                    confirmingLocalRevision: optimisticRevision
-                )
-            }
-            surface(error)
-        }
+        toastMessage = hidden ? "Hid “\(trimmed)”" : "Showing “\(trimmed)”"
+        startQueueUpload(item, capturedBy: accountFetch)
     }
 
     /// The side-applicability mode for a tag. A tag with no stored mode (or an
@@ -1227,6 +1366,18 @@ public final class AppModel {
     /// Rename a tag EVERYWHERE — the DB repoints every recording carrying
     /// the old name; the recording list is refetched after (its tags are
     /// the source of truth for counts).
+    ///
+    /// #918: the rename is persisted as a durable intent BEFORE anything local
+    /// moves, and its two halves are settled together by the replay. A
+    /// termination between the optimistic repoint and the server's
+    /// acknowledgement therefore leaves a replayable rename instead of
+    /// recordings repointed in the cache with nothing to finish the job, and the
+    /// intent keeps the name it has to repoint FROM — a later rename of the new
+    /// name either replaces this intent (still pending) or replays after it.
+    ///
+    /// The device-local side mode moves with the tag locally and is never part
+    /// of the intent: `tindeq_tags` is only ever written with the visibility flag
+    /// (the DB function carries `side_mode` across a rename on its own).
     public func renameTag(oldName: String, newName: String) async {
         guard let userID = currentUserID else { return }
         let accountFetch = AccountScopedFetch(
@@ -1236,7 +1387,6 @@ public final class AppModel {
         let old = oldName.trimmingCharacters(in: .whitespacesAndNewlines)
         let next = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !old.isEmpty, !next.isEmpty else { return }
-        let previousRecordings = recordings
         let previousMetadata = tagMetadata
         let merged = tagEntries.contains { $0.name == next }
         let nextMetadata = previousMetadata.first { $0.name == next }
@@ -1248,36 +1398,47 @@ public final class AppModel {
             }
             return updated
         }
+        // The references this rename carries: every recording the user will see
+        // under the new name once the repoint lands. They are the evidence the
+        // replay proves the rename against before it confirms anything.
+        let repointedRecordings = optimisticRecordings.filter { $0.tag == next }
+        let intent = TagMutationIntent(
+            knownNames: [old],
+            renamedTo: next,
+            recordingIDs: repointedRecordings.map(\.id)
+        )
+        guard let item = await enqueueDirectWrite(
+            .tagMutation(intent),
+            capturedBy: accountFetch,
+            startUpload: false
+        ) else { return }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
         let optimisticMetadata = previousMetadata
             .filter { $0.name != old }
             .filter { $0.name != next } + [nextMetadata]
-        var recordingRevisions: [UUID: Int] = [:]
-        var metadataRevisions: [String: Int] = [:]
-        var oldMetadataDeleteRevision: Int?
         recordings = optimisticRecordings
         tagMetadata = optimisticMetadata
-        for recording in optimisticRecordings where recording.tag == next {
-            if let revision = cacheUpsertLocal(
+        for recording in repointedRecordings {
+            cacheUpsertLocal(
                 recording,
                 accountUserID: userID,
                 entityType: .recordings,
                 entityID: CacheEntityID.recording(recording)
-            ) {
-                recordingRevisions[recording.id] = revision
-            }
+            )
         }
         for metadata in optimisticMetadata {
-            if let revision = cacheUpsertLocal(
+            cacheUpsertLocal(
                 metadata,
                 accountUserID: userID,
                 entityType: .tagMetadata,
                 entityID: CacheEntityID.tagMetadata(metadata)
-            ) {
-                metadataRevisions[metadata.name] = revision
-            }
+            )
         }
         if old != next {
-            oldMetadataDeleteRevision = cacheMarkDeletedLocal(
+            cacheMarkDeletedLocal(
                 accountUserID: userID,
                 entityType: .tagMetadata,
                 entityID: old
@@ -1292,121 +1453,10 @@ public final class AppModel {
             tagSideModes.removeValue(forKey: old)
             TagSideModeStore.remove(for: old)
         }
-        do {
-            try await repository.renameTag(oldName: old, newName: next)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            // The server is authoritative, but confirming the optimistic copy
-            // first lets the follow-up refresh adopt the returned state even if
-            // the network drops before that fetch completes.
-            for recording in optimisticRecordings where recording.tag == next {
-                cacheConfirmServerUpsert(
-                    recording,
-                    accountUserID: userID,
-                    entityType: .recordings,
-                    entityID: CacheEntityID.recording(recording),
-                    confirmingLocalRevision: recordingRevisions[recording.id]
-                )
-            }
-            for metadata in optimisticMetadata {
-                let revision = metadataRevisions[metadata.name]
-                cacheConfirmServerUpsert(
-                    metadata,
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: CacheEntityID.tagMetadata(metadata),
-                    confirmingLocalRevision: revision
-                )
-            }
-            if old != next {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: old,
-                    confirmingLocalRevision: oldMetadataDeleteRevision
-                )
-            }
-            // The rename RPC hard-deletes the stale registry row and does not
-            // create the new one unless it already existed. Deltas cannot
-            // observe that, so force a full tag reconcile before refreshing.
-            if let cachedWorkspace {
-                do {
-                    try cachedWorkspace.resetCursor(
-                        accountUserID: userID,
-                        entityType: .tagMetadata
-                    )
-                } catch {
-                    recordCacheFailure("cache cursor reset", error)
-                }
-            }
-            await refreshAllSilently()
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            toastMessage = merged
-                ? "Merged into “\(next)”"
-                : "Renamed to “\(next)”"
-        } catch {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            recordings = previousRecordings
-            tagMetadata = previousMetadata
-            for recording in previousRecordings where recordingRevisions[recording.id] != nil {
-                cacheConfirmServerUpsert(
-                    recording,
-                    accountUserID: userID,
-                    entityType: .recordings,
-                    entityID: CacheEntityID.recording(recording),
-                    confirmingLocalRevision: recordingRevisions[recording.id]
-                )
-            }
-            for metadata in previousMetadata where metadataRevisions[metadata.name] != nil {
-                cacheConfirmServerUpsert(
-                    metadata,
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: CacheEntityID.tagMetadata(metadata),
-                    confirmingLocalRevision: metadataRevisions[metadata.name]
-                )
-            }
-            if let oldMetadataDeleteRevision {
-                if let oldMetadata = previousMetadata.first(where: { $0.name == old }) {
-                    cacheConfirmServerUpsert(
-                        oldMetadata,
-                        accountUserID: userID,
-                        entityType: .tagMetadata,
-                        entityID: CacheEntityID.tagMetadata(oldMetadata),
-                        confirmingLocalRevision: oldMetadataDeleteRevision
-                    )
-                } else {
-                    cacheConfirmServerDelete(
-                        accountUserID: userID,
-                        entityType: .tagMetadata,
-                        entityID: old,
-                        confirmingLocalRevision: oldMetadataDeleteRevision
-                    )
-                }
-            }
-            if !previousMetadata.contains(where: { $0.name == next }),
-               let newMetadataRevision = metadataRevisions[next] {
-                cacheConfirmServerDelete(
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    entityID: next,
-                    confirmingLocalRevision: newMetadataRevision
-                )
-            }
-            if let mode = previousSideMode {
-                tagSideModes[old] = mode
-                TagSideModeStore.store(mode, for: old)
-            }
-            surface(error)
-        }
+        toastMessage = merged
+            ? "Merged into “\(next)”"
+            : "Renamed to “\(next)”"
+        startQueueUpload(item, capturedBy: accountFetch)
     }
 
     // MARK: Auth
@@ -1640,17 +1690,24 @@ public final class AppModel {
         capturedBy accountFetch: AccountScopedFetch
     ) async -> Int {
         guard let queue else { return 0 }
-        var uploaded = 0
-        for item in await queue.items(for: accountUserID) {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return uploaded }
-            if (await upload(item, mode: .signOut, capturedBy: accountFetch)).uploaded {
-                uploaded += 1
-            }
-        }
-        return uploaded
+        // #935: `nil` due date = "active, regardless of backoff", and this pass
+        // deliberately skips the residue adopters (the token is about to die —
+        // the sign-out path's own policy measures what uploaded). Both facts are
+        // the recovery owner's; the pass publishes nothing (the caller reports).
+        let report = await mutationRecovery.drain(
+            boundary: recoveryBoundary(accountFetch),
+            mode: .signOut,
+            in: queue,
+            upload: { item, itemMode in
+                await self.upload(
+                    item,
+                    mode: itemMode,
+                    capturedBy: accountFetch
+                )
+            },
+            acknowledge: {}
+        )
+        return report.uploaded
     }
 
     public func updatePassword(_ password: String) async {
@@ -1768,6 +1825,11 @@ public final class AppModel {
         manualWorkoutActivity.reconcileOrphans()
         guard let currentSession = authSession else { return }
         updateAuthClockAdvisory(for: currentSession)
+        // #921: a foreground pass is a cache-backed entrypoint, so it joins the
+        // one preparation flight before any cache read or write. On the normal
+        // launch this is already `.ready` and costs nothing; after a failed
+        // open it is the retry that lets the cache recover without a relaunch.
+        await prepareCacheIfNeeded()
         // A cache-open/read failure deliberately leaves the WC inbox row in
         // place. Retry it on every foreground pass instead of waiting for a
         // relaunch or an account transition.
@@ -1861,6 +1923,11 @@ public final class AppModel {
                 break
             }
             let changedUser = authSession?.user.id != session.user.id
+            // #936: captured BEFORE the incoming session replaces it. The
+            // account boundary below names the account that owned any
+            // in-progress manual workout, so the teardown can never take out a
+            // workout that already belongs to the incoming account.
+            let outgoingUserID = authSession?.user.id
             async let splashFloor: Void = awaitSplashPresentationFloor()
             if changedUser {
                 await teardownGuidedProtocolBeforeAuthRevocation()
@@ -1868,12 +1935,28 @@ public final class AppModel {
             authSession = session
             watch.relaySession(session)
             if changedUser || didBootstrapUserID != session.user.id {
+                // #936: the outgoing account's manual workout is torn down
+                // under the account that owned it, while the boundary still
+                // names it — a stale boundary can never take out a workout that
+                // already belongs to the incoming account.
+                applyManualWorkoutLifecycle(
+                    manualWorkoutLifecycle.accountChanged(
+                        previousAccountUserID: outgoingUserID
+                    )
+                )
                 resetAccountState()
                 restoreHealthSyncState(for: session.user.id)
                 // Claim the same refresh owner that the bootstrap refresh will
                 // finish. Otherwise the watch inbox adoption can suspend with
                 // an ownerless loading latch between signed-in and refresh.
                 let bootstrapRefreshOwner = beginDataRefresh()
+                // #921: the cache is opened off the launch path, so the
+                // account bootstrap joins the one preparation flight before
+                // the first cache-backed adoption. The join SUSPENDS the main
+                // actor (it never blocks it), and the splash floor claimed
+                // above still holds the first frame: a delayed store moves
+                // when this bootstrap finishes, not when the app can draw.
+                await prepareCacheIfNeeded()
                 // Adopt persisted watch summaries before any network await so
                 // a relaunch with a delayed Supabase path still renders the
                 // completion in History immediately.
@@ -1946,6 +2029,14 @@ public final class AppModel {
                 // down the old realtime channel before any recovery UI work.
                 watch.relaySession(preparedSession)
                 didBootstrapUserID = nil
+                // #936: the recovery callback is an account boundary too — name
+                // the outgoing account so its manual workout is torn down under
+                // the account that owned it.
+                applyManualWorkoutLifecycle(
+                    manualWorkoutLifecycle.accountChanged(
+                        previousAccountUserID: accountChanged ? currentRecoveryUserID : nil
+                    )
+                )
                 resetAccountState()
                 if let preparedSession {
                     restoreHealthSyncState(for: preparedSession.user.id)
@@ -2065,159 +2156,132 @@ public final class AppModel {
     /// auth/bootstrap path: `refreshAll` continues with the existing
     /// network-only behavior and the failure is visible in the Settings
     /// diagnostics ring.
-    private func hydrateCachedWorkspace(accountUserID: UUID) {
-        do {
-            guard let snapshot = try CacheHydrator.load(
-                workspace: cachedWorkspace,
-                accountUserID: accountUserID
-            ) else { return }
-            let sessionsWereSynced = cacheHasCompletedSync(
-                accountUserID: accountUserID,
-                entityType: .sessions
-            )
-            let recordingsWereSynced = cacheHasCompletedSync(
-                accountUserID: accountUserID,
-                entityType: .recordings
-            )
-            sessions = snapshot.sessions
-            // Opening/creating SQLite is not a server boundary. Only a
-            // persisted cursor or explicit successful-empty marker can make a
-            // cached empty list authoritative after a failed refresh.
-            hasLoadedSessions = hasLoadedSessions || sessionsWereSynced
-            if let cachedSettings = snapshot.settings {
-                settings = cachedSettings
-            }
-            phasePeriods = snapshot.phasePeriods
-            healthMetrics = snapshot.healthMetrics
-            recordings = snapshot.recordings
-            presets = snapshot.presets
-            routines = snapshot.routines
-            workouts = snapshot.workouts
-            tagMetadata = snapshot.tagMetadata
-            // Pending rows are the cache's durable optimistic overlay. Rebuild
-            // the in-memory overlays before the first remote merge so a
-            // pending item cannot be dropped when `refreshAll` replaces the
-            // published collections with the authoritative snapshot.
-            pendingSessions = Dictionary(
-                uniqueKeysWithValues: snapshot.sessions
-                    .filter(\.pending)
-                    .map { ($0.id, $0) }
-            )
-            let pendingRecordingIDs = try cachedWorkspace?.pendingEntityIDs(
-                accountUserID: accountUserID,
-                entityType: .recordings
-            ) ?? []
-            pendingRecordings = PendingRecordingOverlay()
-            let recordingsByID = Dictionary(
-                uniqueKeysWithValues: snapshot.recordings.map { ($0.id, $0) }
-            )
-            for pendingID in pendingRecordingIDs {
-                guard let id = UUID(uuidString: pendingID),
-                      let recording = recordingsByID[id] else { continue }
-                pendingRecordings.insert(recording, accountUserID: accountUserID)
-            }
-            hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced
-            forceModel.hasLoadedRecordings = hasLoadedRecordings
-            publishForceProgressInputMutation(.recordings)
-            refreshPendingCacheWriteCount(accountUserID: accountUserID)
-        } catch {
-            recordCacheFailure("cache read", error)
+    ///
+    /// #922 (#295/#296 captured state): calling this performs the read on the
+    /// storage side, so the account/epoch captured BEFORE that await is
+    /// re-checked before a single value is published. A hydration that loses
+    /// its account (switch, sign-out, cancellation) publishes nothing —
+    /// another account's cache rows can never reach the model.
+    ///
+    /// The returned read is the hydrated revision itself, so the caller's fetch
+    /// plan (cursors) and its publication (collections, pending counts) are
+    /// derived from the same point in time instead of re-querying the cache.
+    @discardableResult
+    private func hydrateCachedWorkspace(
+        accountUserID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> LocalCacheSnapshotRead? {
+        guard let read = await readCoherentCache(accountUserID: accountUserID) else {
+            return nil
         }
+        guard !Task.isCancelled else { return nil }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+        let snapshot = read.snapshot
+        let sessionsWereSynced = read.hasCompletedSync(.sessions)
+        let recordingsWereSynced = read.hasCompletedSync(.recordings)
+        sessions = snapshot.sessions
+        // Opening/creating SQLite is not a server boundary. Only a
+        // persisted cursor or explicit successful-empty marker can make a
+        // cached empty list authoritative after a failed refresh.
+        hasLoadedSessions = hasLoadedSessions || sessionsWereSynced
+        if let cachedSettings = snapshot.settings {
+            settings = cachedSettings
+        }
+        phasePeriods = snapshot.phasePeriods
+        healthMetrics = snapshot.healthMetrics
+        recordings = snapshot.recordings
+        presets = snapshot.presets
+        routines = snapshot.routines
+        workouts = snapshot.workouts
+        tagMetadata = snapshot.tagMetadata
+        // Pending rows are the cache's durable optimistic overlay. Rebuild
+        // the in-memory overlays before the first remote merge so a
+        // pending item cannot be dropped when `refreshAll` replaces the
+        // published collections with the authoritative snapshot.
+        pendingSessions = Dictionary(
+            uniqueKeysWithValues: snapshot.sessions
+                .filter(\.pending)
+                .map { ($0.id, $0) }
+        )
+        let pendingRecordingIDs = read.pendingEntityIDs(.recordings)
+        pendingRecordings = PendingRecordingOverlay()
+        let recordingsByID = Dictionary(
+            uniqueKeysWithValues: snapshot.recordings.map { ($0.id, $0) }
+        )
+        for pendingID in pendingRecordingIDs {
+            guard let id = UUID(uuidString: pendingID),
+                  let recording = recordingsByID[id] else { continue }
+            pendingRecordings.insert(recording, accountUserID: accountUserID)
+        }
+        hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced
+        forceModel.hasLoadedRecordings = hasLoadedRecordings
+        publishForceProgressInputMutation(.recordings)
+        publishPendingCacheWriteCounts(from: read, accountUserID: accountUserID)
+        return read
     }
 
     /// Applies one entity refresh to the cache: a full snapshot on first sync
-    /// or after a cursor reset, or a cursor-bounded delta otherwise. Cache
-    /// errors are recorded and non-fatal, matching the cold-start read policy.
-    private func reconcileEntityRefresh<T: Encodable>(
+    /// or after a cursor reset, or a cursor-bounded delta otherwise.
+    ///
+    /// #934: the rule (and the storage hop) now live in
+    /// `WorkspaceSyncCoordinator.reconcileEntity`; this call site supplies the
+    /// account's one open store handle and the diagnostics sink. The caller
+    /// still re-checks its account/epoch capture after the await.
+    private func reconcileEntityRefresh<T: Encodable & Sendable>(
         _ delta: RemoteEntityDelta<T>,
         accountUserID: UUID,
         entityType: LocalCacheEntityType,
         fullSnapshot: CachedWorkspaceSnapshot?,
         purgeGeneration: Int64? = nil
-    ) {
-        guard let cachedWorkspace else { return }
-        do {
-            if fullSnapshot != nil {
-                try cachedWorkspace.reconcileServerDelta(
-                    delta,
-                    accountUserID: accountUserID,
-                    entityType: entityType,
-                    purgeGeneration: purgeGeneration
-                )
-            } else {
-                try cachedWorkspace.reconcileDelta(
-                    delta,
-                    accountUserID: accountUserID,
-                    entityType: entityType
-                )
-            }
-        } catch {
-            recordCacheFailure("cache entity reconcile", error)
-        }
+    ) async {
+        guard let workspace = cachedWorkspace else { return }
+        await workspaceSync.reconcileEntity(
+            in: workspace,
+            delta,
+            accountUserID: accountUserID,
+            entityType: entityType,
+            fullSnapshot: fullSnapshot,
+            purgeGeneration: purgeGeneration,
+            onFailure: recordCacheFailure
+        )
     }
 
+    /// #934: the cursor read (and its off-main-actor hop) is the coordinator's;
+    /// this call site supplies the account's open store handle.
     private func cacheCursor(
         accountUserID: UUID,
         entityType: LocalCacheEntityType
-    ) -> String? {
-        guard let cachedWorkspace else { return nil }
-        do {
-            return try cachedWorkspace.cursor(
-                accountUserID: accountUserID,
-                entityType: entityType
-            )
-        } catch {
-            recordCacheFailure("cache cursor read", error)
-            return nil
-        }
-    }
-
-    private func cacheHasCompletedSync(
-        accountUserID: UUID,
-        entityType: LocalCacheEntityType
-    ) -> Bool {
-        guard let cachedWorkspace else { return false }
-        do {
-            return try cachedWorkspace.hasCompletedSync(
-                accountUserID: accountUserID,
-                entityType: entityType
-            )
-        } catch {
-            recordCacheFailure("cache sync boundary read", error)
-            return false
-        }
+    ) async -> String? {
+        guard let workspace = cachedWorkspace else { return nil }
+        return await workspaceSync.cursor(
+            in: workspace,
+            accountUserID: accountUserID,
+            entityType: entityType,
+            onFailure: recordCacheFailure
+        )
     }
 
     /// Hard purges leave no row for an `updated_at > cursor` delta to return.
     /// The server generation is account-scoped; a mismatch or unavailable
     /// generation forces both Trash-backed entities through full authoritative
     /// reconciliation while retaining pending-local-write precedence.
+    ///
+    /// #934: the paired two-entity decision (and its fail-closed read) is the
+    /// coordinator's; this call site supplies the account's open store handle.
     private func cacheNeedsPurgeReconcile(
         accountUserID: UUID,
         remoteGeneration: Int64?
-    ) -> Bool {
-        guard let cachedWorkspace else { return true }
-        do {
-            return try cachedWorkspace.needsPurgeReconcile(
-                accountUserID: accountUserID,
-                remoteGeneration: remoteGeneration
-            )
-        } catch {
-            recordCacheFailure("cache purge-generation read", error)
-            // A missing/corrupt convergence marker is not permission to keep
-            // using a cursor that may have crossed a hard purge.
-            return true
-        }
-    }
-
-    private func cacheCursor(
-        accountUserID: UUID,
-        entityType: LocalCacheEntityType,
-        forcingFullReconcile: Bool
-    ) -> String? {
-        forcingFullReconcile
-            ? nil
-            : cacheCursor(accountUserID: accountUserID, entityType: entityType)
+    ) async -> Bool {
+        guard let workspace = cachedWorkspace else { return true }
+        return await workspaceSync.needsPurgeReconcile(
+            in: workspace,
+            accountUserID: accountUserID,
+            remoteGeneration: remoteGeneration,
+            onFailure: recordCacheFailure
+        )
     }
 
     /// Re-adopts the reconciled cache values for the collections that do not
@@ -2227,23 +2291,25 @@ public final class AppModel {
     /// `mergeRecordings`, which also restore RPE/editor overlays and durable
     /// queue rows. The remaining entities only have the cache as their durable
     /// local row, so this is the final authority after an authoritative refresh.
-    private func applyCachedNonOverlayLists(accountUserID: UUID) {
-        guard let cachedWorkspace else { return }
-        do {
-            let snapshot = try cachedWorkspace.load(accountUserID: accountUserID)
-            if let cachedSettings = snapshot.settings {
-                settings = cachedSettings
-            }
-            phasePeriods = snapshot.phasePeriods
-            healthMetrics = snapshot.healthMetrics
-            presets = snapshot.presets
-            routines = snapshot.routines
-            workouts = snapshot.workouts
-            tagMetadata = snapshot.tagMetadata
-            refreshPendingCacheWriteCount(accountUserID: accountUserID)
-        } catch {
-            recordCacheFailure("cache publish", error)
+    ///
+    /// #922: it publishes from an ALREADY-READ revision. It used to perform its
+    /// own full-workspace load, which is how one refresh ended up loading the
+    /// whole workspace several times just to republish subsets.
+    private func applyCachedNonOverlayLists(
+        accountUserID: UUID,
+        read: LocalCacheSnapshotRead?
+    ) {
+        guard let read else { return }
+        if let cachedSettings = read.snapshot.settings {
+            settings = cachedSettings
         }
+        phasePeriods = read.snapshot.phasePeriods
+        healthMetrics = read.snapshot.healthMetrics
+        presets = read.snapshot.presets
+        routines = read.snapshot.routines
+        workouts = read.snapshot.workouts
+        tagMetadata = read.snapshot.tagMetadata
+        publishPendingCacheWriteCounts(from: read, accountUserID: accountUserID)
     }
 
     @discardableResult
@@ -2481,6 +2547,33 @@ public final class AppModel {
             // id). The revisions are therefore read from the account cache
             // itself at capture time — see `cacheConfirmationRevisions`.
             return []
+        case let .tagMutation(intent):
+            // The tag NAME is the registry row's cache identity (both the name
+            // a rename retires and the one it leaves behind), and the repointed
+            // recordings carry their own ids. Capturing all of them before the
+            // first network await is what keeps an older acknowledgement from
+            // clearing a newer local revision of any of them.
+            var names = [intent.finalName]
+            names.append(contentsOf: intent.knownNames.sorted())
+            var targets = names.map {
+                CacheEntityIdentity(entityType: .tagMetadata, entityID: $0)
+            }
+            targets.append(contentsOf: intent.recordingIDs.map {
+                CacheEntityIdentity(entityType: .recordings, entityID: $0.uuidString)
+            })
+            return targets
+        case let .healthWrite(intent):
+            // #919: the row's cache identity is its date, and that is exactly
+            // the identity an acknowledgement has to clear. Capturing the
+            // revision before the first network await is what keeps an older
+            // recovery's answer from clearing (or re-publishing) a newer local
+            // pass for the same date.
+            return [
+                CacheEntityIdentity(
+                    entityType: .healthMetrics,
+                    entityID: intent.date
+                )
+            ]
         }
     }
 
@@ -2554,6 +2647,76 @@ public final class AppModel {
         ]
     }
 
+    // MARK: Cache preparation (#921)
+
+    /// Joins the one local-cache preparation flight and publishes its outcome.
+    ///
+    /// Every cache-backed lifecycle entrypoint calls this: the auth bootstrap,
+    /// the foreground pass and a background app-refresh. After a successful
+    /// preparation it is a no-op, and while the flight is running a caller
+    /// SUSPENDS on it — the main actor is never blocked, and the store is
+    /// never opened twice.
+    func prepareCacheIfNeeded() async {
+        guard !cacheReadiness.isReady else { return }
+        let preparation = cachePreparation
+        let directory = cacheDirectory
+        let seams = cacheStorageSeams
+        let result = await preparation.preparedCache(directory: directory, seams: seams)
+        applyPreparedCache(result)
+    }
+
+    /// #921: how many times the storage opener has actually run. Two
+    /// entrypoints that arrive together leave this at one.
+    public func cacheOpenAttempts() async -> Int {
+        await cachePreparation.openAttempts
+    }
+
+    /// #922: how many full-workspace cache reads this app's store handle has
+    /// issued. One refresh is exactly two of them (the hydration read and the
+    /// post-reconcile publication read) — the number a read-count test pins.
+    public var cacheSnapshotReadCount: Int {
+        cachedWorkspace?.store.snapshotReadCount ?? 0
+    }
+
+    /// #922: whether the most recent full-workspace read ran on the main
+    /// thread. `nil` before the first read. This is the assertion that keeps
+    /// "the read is off the main actor" from depending on a timing.
+    public var lastCacheSnapshotReadOnMainThread: Bool? {
+        cachedWorkspace?.store.lastSnapshotReadOnMainThread
+    }
+
+    private func applyPreparedCache(
+        _ result: Result<PreparedLocalCache, CacheUnavailableReason>
+    ) {
+        switch result {
+        case .success(let prepared):
+            if cachedWorkspace == nil {
+                cachedWorkspace = prepared.workspace
+            }
+            cacheReadiness = .ready
+            // A cache that recovered may report its own (later) failure again.
+            cacheOpenFailureReported = false
+        case .failure(let reason):
+            // Honest and recoverable: the app keeps running network-only, the
+            // failure is visible in the diagnostics ring, and the NEXT
+            // lifecycle entrypoint retries the flight (`CachePreparation`
+            // drops a failed flight). Nothing here claims local persistence.
+            cacheReadiness = .unavailable(reason)
+            reportCacheUnavailable(reason)
+        }
+    }
+
+    /// #921: one diagnostics-ring entry per failed preparation, in the same
+    /// shape the pre-#921 inline open used.
+    private func reportCacheUnavailable(_ reason: CacheUnavailableReason) {
+        guard !cacheOpenFailureReported else { return }
+        cacheOpenFailureReported = true
+        auth.recordAuthEvent(
+            .failure,
+            detail: "Local cache unavailable: \(reason.detail)"
+        )
+    }
+
     private func recordCacheFailure(_ operation: String, _ error: Error) {
         guard !cacheOpenFailureReported else { return }
         cacheOpenFailureReported = true
@@ -2563,15 +2726,47 @@ public final class AppModel {
         )
     }
 
+    /// #922: both published pending counts from ONE query, and both off the
+    /// render path. Every cache confirm/write and every publish calls this, so
+    /// no view body reads the store (see `pendingTagWriteCount`).
     private func refreshPendingCacheWriteCount(accountUserID: UUID) {
         guard let cachedWorkspace else { return }
         do {
-            pendingCacheWriteCount = try cachedWorkspace.pendingDirectWriteCount(
+            let counts = try cachedWorkspace.pendingDirectWriteCounts(
                 accountUserID: accountUserID
             )
+            pendingCacheWriteCount = counts.total
+            pendingTagWriteCount = counts.tagMetadata
         } catch {
             recordCacheFailure("cache pending count", error)
         }
+    }
+
+    /// #922: the same two counts, from an already-read coherent revision —
+    /// no extra query at a boundary that just performed one.
+    private func publishPendingCacheWriteCounts(
+        from read: LocalCacheSnapshotRead,
+        accountUserID: UUID
+    ) {
+        pendingCacheWriteCount = read.pendingDirectWriteCount
+        pendingTagWriteCount = read.pendingEntityIDs(
+            .tagMetadata,
+            includingDeleted: true
+        ).count
+    }
+
+    /// #934: the coherent-read rule — the #922 storage-side hop, the injectable
+    /// before-read gate and the off-main-actor guarantee — lives in the
+    /// coordinator. This call site supplies the account's open store handle, so
+    /// the read count stays one observable number
+    /// (`cachedWorkspace?.store.snapshotReadCount`).
+    private func readCoherentCache(accountUserID: UUID) async -> LocalCacheSnapshotRead? {
+        guard let workspace = cachedWorkspace else { return nil }
+        return await workspaceSync.readCoherentCache(
+            in: workspace,
+            accountUserID: accountUserID,
+            onFailure: recordCacheFailure
+        )
     }
 
     private func beginDataRefresh() -> UUID {
@@ -2596,6 +2791,111 @@ public final class AppModel {
 
     // MARK: Loading
 
+    /// #923: the outcome of one slice fetch. The error travels as data so an
+    /// independent entity's failure cannot cancel a sibling slice, and so a
+    /// cancellation stays distinguishable from a failure.
+    private struct SliceFetch<Value> {
+        let value: Value?
+        let error: Error?
+
+        static func success(_ value: Value) -> SliceFetch<Value> {
+            SliceFetch(value: value, error: nil)
+        }
+
+        static func failure(_ error: Error) -> SliceFetch<Value> {
+            SliceFetch(value: nil, error: error)
+        }
+    }
+
+    private func fetchSlice<Value>(
+        _ operation: () async throws -> Value
+    ) async -> SliceFetch<Value> {
+        do {
+            return .success(try await operation())
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// The settings slice (#747). The whole first-sync create-default path is
+    /// part of the slice, not a step after it: it writes `user_settings` and
+    /// re-reads the stamped timestamp, so a failure anywhere in it must keep
+    /// the settings/phase group's last-good rows rather than publish half of
+    /// the pair (#923 AC2).
+    private func fetchSettingsSlice(
+        userID: UUID,
+        cursor: String?,
+        today: String
+    ) async throws -> RemoteEntityDelta<UserSettings> {
+        let fetched = try await repository.fetchSettingsDelta(since: cursor)
+        guard cursor == nil, fetched.activeValues.isEmpty else { return fetched }
+        // First sync with no settings row: keep the historical create-default
+        // behavior, then read the stamped timestamp so the next refresh can go
+        // incremental.
+        _ = try await repository.fetchSettings(userID: userID, today: today)
+        let afterUpsert = try await repository.fetchSettingsDelta(since: nil)
+        guard afterUpsert.activeValues.isEmpty else { return afterUpsert }
+        return RemoteEntityDelta(
+            changes: [],
+            activeValues: [UserSettings(currentPhase: .capacity, phaseStartDate: today)],
+            cursor: nil
+        )
+    }
+
+    /// #923: a pass that reconciled some groups and failed others. It records
+    /// the scoped failure an explicit refresh can retry, keeps auth recovery on
+    /// every rejected slice, and escalates to the global banner only when
+    /// nothing published and the #842 matrix allows it.
+    private func recordPartialRefresh(
+        outcomes: RefreshSliceOutcomes,
+        failures: [RefreshSlice: Error],
+        source: ErrorSurfaceSource,
+        capturedBy accountFetch: AccountScopedFetch
+    ) {
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        let orderedFailures = outcomes.failedSlicesInOrder.compactMap { slice in
+            failures[slice].map { (slice, $0) }
+        }
+        guard let representative = orderedFailures.first else { return }
+        let representativeSlice = representative.0
+        let representativeError = representative.1
+        // #964: the account's last load failure, recorded even when the banner
+        // is suppressed so the Dashboard can still explain an empty screen.
+        dashboardLoadFailureClass = UserFacingError.classification(for: representativeError)
+        let willSurface = errorSurfacePolicy.shouldSurface(
+            source: source,
+            hasLastGoodData: hasLoadedSessions && forceModel.hasLoadedRecordings,
+            publishedAnySlice: outcomes.didPublishAnyGroup
+        )
+        if willSurface {
+            surface(representativeError)
+        }
+        // #923 AC4: a rejected bearer heals whether or not its slice produced
+        // the banner — a suppressed or non-representative 401 must not leave
+        // the session poisoned (#842's rule, applied per slice). `surface(_:)`
+        // already ran the recovery for the representative error.
+        for (slice, error) in orderedFailures
+        where !(willSurface && slice == representativeSlice) {
+            recoverAuthFrom(error)
+        }
+        let summary = RefreshFailureSummary(
+            accountUserID: accountFetch.accountUserID,
+            groups: outcomes.failedGroups,
+            reason: UserFacingError.message(for: representativeError),
+            source: source,
+            occurredAt: Date()
+        )
+        _ = accountFetch.publishIfCurrent(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) {
+            lastPartialRefreshFailure = summary
+        }
+    }
+
     public func refreshAll(showSpinner: Bool = true) async {
         await refreshAll(
             showSpinner: showSpinner,
@@ -2613,9 +2913,11 @@ public final class AppModel {
         let dataRefreshOwner = dataRefreshOwner ?? beginDataRefresh()
         defer { endDataRefresh(dataRefreshOwner) }
         guard let userID = currentUserID else { return }
-        // Cold-start / account-switch path: render the account's local
-        // snapshot before any network request starts.
-        hydrateCachedWorkspace(accountUserID: userID)
+        // #921: the store is opened off the launch path, so the local snapshot
+        // read joins the one preparation flight first. A caller that arrives
+        // while the flight runs suspends here; a cache that cannot be opened
+        // leaves `cachedWorkspace` nil and this pass continues network-only.
+        await prepareCacheIfNeeded()
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
@@ -2638,190 +2940,316 @@ public final class AppModel {
                 refreshingOwner = nil
             }
         }
+        // Cold-start / account-switch path: render the account's local
+        // snapshot before any network request starts. The returned read is
+        // this pass's hydration revision: its cursors plan the fetch below and
+        // its collections are what a failed pass republishes.
+        let hydrated = await hydrateCachedWorkspace(
+            accountUserID: userID,
+            capturedBy: accountFetch
+        )
+        // #922: the most recent coherent revision this pass read. A failure
+        // republishes THIS instead of loading the workspace a third time.
+        var latestCacheRead: LocalCacheSnapshotRead? = hydrated
         do {
-            let remotePurgeGeneration: Int64?
-            do {
-                remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
-                markPurgeGenerationAvailable(capturedBy: accountFetch)
-            } catch {
-                // The generation endpoint may lag a staged/older project
-                // schema. Keep the ordinary refresh alive and make both
-                // purge-sensitive entities authoritative until it recovers.
+            // #934: the optional generation endpoint and its "a missing
+            // generation makes both purge-sensitive entities authoritative"
+            // fallback are one rule, owned by the coordinator. The endpoint may
+            // lag a staged/older project schema: keep the ordinary refresh
+            // alive, report the rollout error through the existing
+            // foreground-only policy, and let the plan below force both
+            // affected entities through a full reconcile until it recovers.
+            let purgeResolution = await workspaceSync.resolvePurgeGeneration {
+                try await self.repository.fetchPurgeSyncGeneration()
+            }
+            if let endpointFailure = purgeResolution.endpointFailure {
                 reportPurgeGenerationFailure(
-                    error,
+                    endpointFailure,
                     context: purgeGenerationContext,
                     capturedBy: accountFetch
                 )
-                remotePurgeGeneration = nil
+            } else {
+                markPurgeGenerationAvailable(capturedBy: accountFetch)
             }
+            let remotePurgeGeneration: Int64? = purgeResolution.generation
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
-            let forcePurgeReconcile = cacheNeedsPurgeReconcile(
+            // #922: the purge decision stays a targeted post-fetch check (the
+            // generation arrives after the hydration read), but the cursors
+            // come from the hydrated revision itself, so the delta this pass
+            // fetches is planned against exactly the rows it hydrated.
+            let forcePurgeReconcile = await cacheNeedsPurgeReconcile(
                 accountUserID: userID,
                 remoteGeneration: remotePurgeGeneration
             )
-            let sessionCursor = cacheCursor(
-                accountUserID: userID,
-                entityType: .sessions,
-                forcingFullReconcile: forcePurgeReconcile
+            // #934: the plan — which cursor each entity is fetched with, and
+            // which two entities the purge mismatch forces through a full
+            // authoritative reconcile — is the coordinator's rule. This call
+            // site only reads it.
+            let plan = workspaceSync.plan(
+                hydrated: hydrated,
+                forceFullReconcile: forcePurgeReconcile
             )
-            let settingsCursor = cacheCursor(accountUserID: userID, entityType: .settings)
-            let phaseCursor = cacheCursor(accountUserID: userID, entityType: .phasePeriods)
-            let healthCursor = cacheCursor(accountUserID: userID, entityType: .healthMetrics)
-            let recordingCursor = cacheCursor(
-                accountUserID: userID,
-                entityType: .recordings,
-                forcingFullReconcile: forcePurgeReconcile
-            )
-            let presetCursor = cacheCursor(accountUserID: userID, entityType: .presets)
-            let routineCursor = cacheCursor(accountUserID: userID, entityType: .routinePresets)
-            let workoutCursor = cacheCursor(accountUserID: userID, entityType: .workoutsAndAttempts)
-            let tagCursor = cacheCursor(accountUserID: userID, entityType: .tagMetadata)
+            let sessionCursor = plan.cursor(for: .sessions)
+            let settingsCursor = plan.cursor(for: .settings)
+            let phaseCursor = plan.cursor(for: .phasePeriods)
+            let healthCursor = plan.cursor(for: .healthMetrics)
+            let recordingCursor = plan.cursor(for: .recordings)
+            let presetCursor = plan.cursor(for: .presets)
+            let routineCursor = plan.cursor(for: .routinePresets)
+            let workoutCursor = plan.cursor(for: .workoutsAndAttempts)
+            let tagCursor = plan.cursor(for: .tagMetadata)
             let today = LocalDateSupport.string(from: Date())
-            async let remoteSessions = repository.fetchSessionDelta(
-                since: sessionCursor,
-                accountUserID: userID
-            )
-            async let remoteSettings = repository.fetchSettingsDelta(since: settingsCursor)
-            async let remotePeriods = repository.fetchPhasePeriodDelta(since: phaseCursor)
-            async let remoteHealth = repository.fetchHealthMetricDelta(since: healthCursor)
-            async let remoteRecordings = repository.fetchRecordingDelta(since: recordingCursor)
-            async let remotePresets = repository.fetchPresetDelta(since: presetCursor)
-            async let remoteRoutines = repository.fetchRoutineDelta(since: routineCursor)
-            async let remoteWorkouts = repository.fetchWorkoutDelta(since: workoutCursor)
-            async let remoteTags = repository.fetchTagMetadataDelta(since: tagCursor)
+            // #923: each slice captures its own outcome instead of throwing
+            // into the shared pass. `try await`-ing them in sequence is
+            // exactly how an unrelated entity's failure used to cancel a
+            // sibling page that had already come back.
+            async let sessionsFetch = fetchSlice {
+                try await repository.fetchSessionDelta(
+                    since: sessionCursor,
+                    accountUserID: userID
+                )
+            }
+            async let settingsFetch = fetchSlice {
+                try await fetchSettingsSlice(
+                    userID: userID,
+                    cursor: settingsCursor,
+                    today: today
+                )
+            }
+            async let periodsFetch = fetchSlice {
+                try await repository.fetchPhasePeriodDelta(since: phaseCursor)
+            }
+            async let healthFetch = fetchSlice {
+                try await repository.fetchHealthMetricDelta(since: healthCursor)
+            }
+            async let recordingsFetch = fetchSlice {
+                try await repository.fetchRecordingDelta(since: recordingCursor)
+            }
+            async let presetsFetch = fetchSlice {
+                try await repository.fetchPresetDelta(since: presetCursor)
+            }
+            async let routinesFetch = fetchSlice {
+                try await repository.fetchRoutineDelta(since: routineCursor)
+            }
+            async let workoutsFetch = fetchSlice {
+                try await repository.fetchWorkoutDelta(since: workoutCursor)
+            }
+            async let tagsFetch = fetchSlice {
+                try await repository.fetchTagMetadataDelta(since: tagCursor)
+            }
 
-            let fetchedSessions = try await remoteSessions
-            let fetchedRecordings = try await remoteRecordings
-            var fetchedSettings = try await remoteSettings
-            if settingsCursor == nil, fetchedSettings.activeValues.isEmpty {
-                // First sync with no settings row: keep the historical
-                // create-default behavior, then read the stamped timestamp so
-                // the next refresh can go incremental.
-                guard accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
-                ) else { return }
-                _ = try await repository.fetchSettings(userID: userID, today: today)
-                guard accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
-                ) else { return }
-                let settingsAfterUpsert = try await repository.fetchSettingsDelta(since: nil)
-                guard accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
-                ) else { return }
-                if settingsAfterUpsert.activeValues.isEmpty {
-                    fetchedSettings = RemoteEntityDelta(
-                        changes: [],
-                        activeValues: [UserSettings(currentPhase: .capacity, phaseStartDate: today)],
-                        cursor: nil
-                    )
-                } else {
-                    fetchedSettings = settingsAfterUpsert
+            let sessionsSlice = await sessionsFetch
+            let settingsSlice = await settingsFetch
+            let periodsSlice = await periodsFetch
+            let healthSlice = await healthFetch
+            let recordingsSlice = await recordingsFetch
+            let presetsSlice = await presetsFetch
+            let routinesSlice = await routinesFetch
+            let workoutsSlice = await workoutsFetch
+            let tagsSlice = await tagsFetch
+
+            let sliceResults: [(slice: RefreshSlice, error: Error?)] = [
+                (slice: .sessions, error: sessionsSlice.error),
+                (slice: .recordings, error: recordingsSlice.error),
+                (slice: .settings, error: settingsSlice.error),
+                (slice: .phasePeriods, error: periodsSlice.error),
+                (slice: .healthMetrics, error: healthSlice.error),
+                (slice: .presets, error: presetsSlice.error),
+                (slice: .routinePresets, error: routinesSlice.error),
+                (slice: .workoutsAndAttempts, error: workoutsSlice.error),
+                (slice: .tagMetadata, error: tagsSlice.error),
+            ]
+            // #934: the collection rule — a cancelled pass is not a verdict: it
+            // publishes nothing, advances no cursor and reports no failure — is
+            // the coordinator's. The caller's own cancellation state is an
+            // explicit input here, never something the coordinator infers from
+            // a swallowed error.
+            let collected = workspaceSync.collectOutcomes(
+                sliceResults,
+                isCancelled: Task.isCancelled
+            )
+            let outcomes = collected.outcomes
+            let sliceFailures = collected.failures
+            if outcomes.wasCancelled { return }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else { return }
+
+            // #923 AC1/AC2: apply only the groups whose every slice fetched
+            // successfully. A failed slice keeps its last-good cache rows
+            // (its reconcile never runs, so nothing is overwritten), and a
+            // broken pair is not applied at all — a partially authoritative
+            // group is never exposed.
+            if outcomes.publishes(.sessionsAndRecordings),
+               let fetchedSessions = sessionsSlice.value,
+               let fetchedRecordings = recordingsSlice.value {
+                await reconcileEntityRefresh(
+                    fetchedSessions,
+                    accountUserID: userID,
+                    entityType: .sessions,
+                    fullSnapshot: sessionCursor == nil
+                        ? CachedWorkspaceSnapshot(sessions: fetchedSessions.activeValues)
+                        : nil,
+                    purgeGeneration: remotePurgeGeneration
+                )
+                await reconcileEntityRefresh(
+                    fetchedRecordings,
+                    accountUserID: userID,
+                    entityType: .recordings,
+                    fullSnapshot: recordingCursor == nil
+                        ? CachedWorkspaceSnapshot(recordings: fetchedRecordings.activeValues)
+                        : nil,
+                    purgeGeneration: remotePurgeGeneration
+                )
+            }
+            if outcomes.publishes(.settingsAndPhase),
+               let fetchedSettings = settingsSlice.value,
+               let fetchedPeriods = periodsSlice.value {
+                await reconcileEntityRefresh(
+                    fetchedSettings,
+                    accountUserID: userID,
+                    entityType: .settings,
+                    fullSnapshot: settingsCursor == nil
+                        ? CachedWorkspaceSnapshot(settings: fetchedSettings.activeValues.first)
+                        : nil
+                )
+                await reconcileEntityRefresh(
+                    fetchedPeriods,
+                    accountUserID: userID,
+                    entityType: .phasePeriods,
+                    fullSnapshot: phaseCursor == nil
+                        ? CachedWorkspaceSnapshot(phasePeriods: fetchedPeriods.activeValues)
+                        : nil
+                )
+            }
+            if outcomes.publishes(.healthMetrics),
+               let fetchedHealth = healthSlice.value {
+                await reconcileEntityRefresh(
+                    fetchedHealth,
+                    accountUserID: userID,
+                    entityType: .healthMetrics,
+                    fullSnapshot: healthCursor == nil
+                        ? CachedWorkspaceSnapshot(healthMetrics: fetchedHealth.activeValues)
+                        : nil
+                )
+            }
+            if outcomes.publishes(.presets),
+               let fetchedPresets = presetsSlice.value {
+                await reconcileEntityRefresh(
+                    fetchedPresets,
+                    accountUserID: userID,
+                    entityType: .presets,
+                    fullSnapshot: presetCursor == nil
+                        ? CachedWorkspaceSnapshot(presets: fetchedPresets.activeValues)
+                        : nil
+                )
+            }
+            if outcomes.publishes(.routinePresets),
+               let fetchedRoutines = routinesSlice.value {
+                await reconcileEntityRefresh(
+                    fetchedRoutines,
+                    accountUserID: userID,
+                    entityType: .routinePresets,
+                    fullSnapshot: routineCursor == nil
+                        ? CachedWorkspaceSnapshot(routines: fetchedRoutines.activeValues)
+                        : nil
+                )
+            }
+            if outcomes.publishes(.workoutsAndAttempts),
+               let fetchedWorkouts = workoutsSlice.value {
+                await reconcileEntityRefresh(
+                    fetchedWorkouts,
+                    accountUserID: userID,
+                    entityType: .workoutsAndAttempts,
+                    fullSnapshot: workoutCursor == nil
+                        ? CachedWorkspaceSnapshot(workouts: fetchedWorkouts.activeValues)
+                        : nil
+                )
+            }
+            if outcomes.publishes(.tagMetadata),
+               let fetchedTags = tagsSlice.value {
+                await reconcileEntityRefresh(
+                    fetchedTags,
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    fullSnapshot: tagCursor == nil
+                        ? CachedWorkspaceSnapshot(tagMetadata: fetchedTags.activeValues)
+                        : nil
+                )
+            }
+
+            // #922: the restore's "already on the server" identity is the
+            // POST-reconcile active set, derived from this pass's own reads —
+            // no third full-workspace load. A row the reconcile tombstoned must
+            // NOT be in it: its durable queue overlay is exactly what has to be
+            // restored, and suppressing that restore is how a locally saved row
+            // that the server's authoritative snapshot does not carry would
+            // disappear from the published list.
+            let hydratedSessions = hydrated?.snapshot.sessions ?? []
+            let hydratedRecordings = hydrated?.snapshot.recordings ?? []
+            let fetchedSessions = sessionsSlice.value?.activeValues ?? []
+            let fetchedRecordings = recordingsSlice.value?.activeValues ?? []
+            let pendingSessionIDs = Set(
+                (hydrated?.pendingRows ?? [])
+                    .filter { $0.entityType == .sessions }
+                    .compactMap { UUID(uuidString: $0.entityID) }
+            )
+            let pendingRecordingIDs = Set(
+                (hydrated?.pendingRows ?? [])
+                    .filter { $0.entityType == .recordings }
+                    .compactMap { UUID(uuidString: $0.entityID) }
+            )
+            let fetchedSessionIDs = Set(fetchedSessions.map(\.id))
+            let fetchedRecordingIDs = Set(fetchedRecordings.map(\.id))
+            // A cache row the server snapshot did not carry and that is not a
+            // pending local write is tombstoned by the reconcile — the same
+            // rule `CachedWorkspace.reconcile` applies.
+            let tombstonedSessionIDs = Set(
+                hydratedSessions.map(\.id).filter {
+                    !fetchedSessionIDs.contains($0) && !pendingSessionIDs.contains($0)
                 }
-            }
-            let fetchedPeriods = try await remotePeriods
-            let fetchedHealth = try await remoteHealth
-            let fetchedPresets = try await remotePresets
-            let fetchedRoutines = try await remoteRoutines
-            let fetchedWorkouts = try await remoteWorkouts
-            let fetchedTags = try await remoteTags
-
-            guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
-                return
-            }
-            reconcileEntityRefresh(
-                fetchedSessions,
-                accountUserID: userID,
-                entityType: .sessions,
-                fullSnapshot: sessionCursor == nil
-                    ? CachedWorkspaceSnapshot(sessions: fetchedSessions.activeValues)
-                    : nil,
-                purgeGeneration: remotePurgeGeneration
             )
-            reconcileEntityRefresh(
-                fetchedSettings,
-                accountUserID: userID,
-                entityType: .settings,
-                fullSnapshot: settingsCursor == nil
-                    ? CachedWorkspaceSnapshot(settings: fetchedSettings.activeValues.first)
-                    : nil
+            let tombstonedRecordingIDs = Set(
+                hydratedRecordings.map(\.id).filter {
+                    !fetchedRecordingIDs.contains($0) && !pendingRecordingIDs.contains($0)
+                }
             )
-            reconcileEntityRefresh(
-                fetchedPeriods,
-                accountUserID: userID,
-                entityType: .phasePeriods,
-                fullSnapshot: phaseCursor == nil
-                    ? CachedWorkspaceSnapshot(phasePeriods: fetchedPeriods.activeValues)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedHealth,
-                accountUserID: userID,
-                entityType: .healthMetrics,
-                fullSnapshot: healthCursor == nil
-                    ? CachedWorkspaceSnapshot(healthMetrics: fetchedHealth.activeValues)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedRecordings,
-                accountUserID: userID,
-                entityType: .recordings,
-                fullSnapshot: recordingCursor == nil
-                    ? CachedWorkspaceSnapshot(recordings: fetchedRecordings.activeValues)
-                    : nil,
-                purgeGeneration: remotePurgeGeneration
-            )
-            reconcileEntityRefresh(
-                fetchedPresets,
-                accountUserID: userID,
-                entityType: .presets,
-                fullSnapshot: presetCursor == nil
-                    ? CachedWorkspaceSnapshot(presets: fetchedPresets.activeValues)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedRoutines,
-                accountUserID: userID,
-                entityType: .routinePresets,
-                fullSnapshot: routineCursor == nil
-                    ? CachedWorkspaceSnapshot(routines: fetchedRoutines.activeValues)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedWorkouts,
-                accountUserID: userID,
-                entityType: .workoutsAndAttempts,
-                fullSnapshot: workoutCursor == nil
-                    ? CachedWorkspaceSnapshot(workouts: fetchedWorkouts.activeValues)
-                    : nil
-            )
-            reconcileEntityRefresh(
-                fetchedTags,
-                accountUserID: userID,
-                entityType: .tagMetadata,
-                fullSnapshot: tagCursor == nil
-                    ? CachedWorkspaceSnapshot(tagMetadata: fetchedTags.activeValues)
-                    : nil
-            )
-
-            let publishedSnapshot = try? cachedWorkspace?.load(accountUserID: userID)
-            let publishedSessions = publishedSnapshot?.sessions
-                ?? fetchedSessions.activeValues
-            let publishedRecordings = publishedSnapshot?.recordings
-                ?? fetchedRecordings.activeValues
-            let publishedSessionIDs = Set(publishedSessions.map(\.id))
-            let publishedRecordingIDs = Set(publishedRecordings.map(\.id))
+            let publishedSessionIDs = Set(hydratedSessions.map(\.id))
+                .subtracting(tombstonedSessionIDs)
+                .union(fetchedSessionIDs)
+            let publishedRecordingIDs = Set(hydratedRecordings.map(\.id))
+                .subtracting(tombstonedRecordingIDs)
+                .union(fetchedRecordingIDs)
             await restorePendingWrites(
                 accountFetch: accountFetch,
                 userID: userID,
                 remoteSessionIDs: publishedSessionIDs,
                 remoteRecordingIDs: publishedRecordingIDs
             )
+            // #922: the publication reads the workspace ONCE, immediately
+            // before the synchronous publication closure. That ordering is
+            // load-bearing: an optimistic local write that landed while this
+            // pass was suspended in `restorePendingWrites` must be part of the
+            // revision that publishes, and must never be overwritten by an
+            // older one. Together with the hydration read, one refresh is
+            // exactly TWO full-workspace loads.
+            let publicationRead = await readCoherentCache(accountUserID: userID)
+            latestCacheRead = publicationRead
+            let publishedSnapshot = publicationRead?.snapshot
+            // #923: a failed slice's published list is its last-good value —
+            // the untouched cache row, or the in-memory list with its pending
+            // local overlays still on top.
+            let sessionsGroupPublished = outcomes.publishes(.sessionsAndRecordings)
+            let publishedSessions = publishedSnapshot?.sessions
+                ?? sessionsSlice.value?.activeValues
+                ?? sessions.filter { !$0.pending }
+            let publishedRecordings = publishedSnapshot?.recordings
+                ?? recordingsSlice.value?.activeValues
+                ?? recordings
             let publishedLists = accountFetch.publishIfCurrent(
                 to: currentUserID,
                 accountEpoch: accountEpoch
@@ -2830,35 +3258,66 @@ public final class AppModel {
                 // delta refresh: re-adopt it so a pending local
                 // preset/routine/settings/tag row is not hidden by the remote
                 // snapshot in the published collections (sessions/recordings
-                // keep their richer overlays below).
-                applyCachedNonOverlayLists(accountUserID: userID)
-                mergeSessions(remote: publishedSessions)
-                // This is the explicit authoritative refresh boundary. A
-                // server sample blob can change without metadata changing, so
-                // refreshAll is allowed to invalidate every fit; realtime
-                // rep reconciliation below stays key-scoped.
-                invalidateTagCurveCache()
-                mergeRecordings(remote: publishedRecordings)
-                // The sample rows are fetched later by the curve request and
-                // may have changed without any recording metadata change.
-                // Publish this authoritative refresh boundary so a scoped
-                // progress task restarts even when the metadata snapshot is
-                // equal.
-                publishForceProgressInputMutation(.recordings)
-                markRecordingsLoaded()
+                // keep their richer overlays below). A group whose slices
+                // failed was never reconciled, so its cache rows are still the
+                // last-good ones.
+                //
+                // #922: re-adopted from the ONE post-reconcile read above.
+                applyCachedNonOverlayLists(accountUserID: userID, read: publicationRead)
+                // #923: the successful slices publish ONCE, in this one
+                // MainActor publication. A failed group publishes nothing, so
+                // its sessions/recordings keep last-good data and their
+                // pending local overlays instead of being replaced by a
+                // half-authoritative pair.
+                if sessionsGroupPublished {
+                    mergeSessions(remote: publishedSessions)
+                    // This is the explicit authoritative refresh boundary. A
+                    // server sample blob can change without metadata changing,
+                    // so refreshAll is allowed to invalidate every fit;
+                    // realtime rep reconciliation below stays key-scoped.
+                    invalidateTagCurveCache()
+                    mergeRecordings(remote: publishedRecordings)
+                    // The sample rows are fetched later by the curve request
+                    // and may have changed without any recording metadata
+                    // change. Publish this authoritative refresh boundary so a
+                    // scoped progress task restarts even when the metadata
+                    // snapshot is equal.
+                    publishForceProgressInputMutation(.recordings)
+                    markRecordingsLoaded()
+                }
             }
             guard publishedLists else { return }
             await refreshQueueCount(for: accountFetch)
             guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
                 return
             }
-            // #673: the authoritative sweep succeeded AND is still for the
-            // current account — this is the freshness timestamp the
-            // foreground gate reasons over. Bumped only here (not by the
-            // realtime slice reconciler, which is a targeted refresh that
-            // intentionally leaves the non-watched tables untouched).
-            lastListRefreshAt = ProcessInfo.processInfo.systemUptime
-            warmTagCurvesIfMissing(capturedBy: accountFetch)
+            if outcomes.didFullyRefresh {
+                // #673: the authoritative sweep succeeded AND is still for the
+                // current account — this is the freshness timestamp the
+                // foreground gate reasons over. Bumped only here (not by the
+                // realtime slice reconciler, which is a targeted refresh that
+                // intentionally leaves the non-watched tables untouched).
+                //
+                // #923 AC3: it is also bumped only for a pass where EVERY
+                // slice reconciled. A partial pass leaves the account-wide
+                // stamp stale (so the next foreground retries the sweep)
+                // while the slices that did reconcile keep their own cursor,
+                // and no surface can read this stamp as "everything is fresh".
+                lastListRefreshAt = ProcessInfo.processInfo.systemUptime
+                // #964: a refresh that actually succeeded retires the
+                // Dashboard's load-failure state — the screen has
+                // authoritative data again.
+                dashboardLoadFailureClass = nil
+                lastPartialRefreshFailure = nil
+                warmTagCurvesIfMissing(capturedBy: accountFetch)
+            } else {
+                recordPartialRefresh(
+                    outcomes: outcomes,
+                    failures: sliceFailures,
+                    source: errorSurfaceSource,
+                    capturedBy: accountFetch
+                )
+            }
             // This is deliberately inside the private refresh path so cold
             // bootstrap, foreground refresh, and mutation follow-ups all
             // have one guaranteed publication point after authoritative data
@@ -2868,8 +3327,15 @@ public final class AppModel {
             if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
                 // Some slices may have already been published before the
                 // failure. Put the last-known cache snapshot back so a partial
-                // fetch cannot hide a pending local write.
-                applyCachedNonOverlayLists(accountUserID: userID)
+                // fetch cannot hide a pending local write. #922: the last read
+                // of this pass is that snapshot.
+                applyCachedNonOverlayLists(accountUserID: userID, read: latestCacheRead)
+                // #964: record the failure for the Dashboard before deciding
+                // whether it also deserves the dismissible banner. The banner
+                // is transient; this state lasts until a refresh succeeds, so
+                // dismissing the banner cannot leave a blank Dashboard with no
+                // explanation or retry.
+                dashboardLoadFailureClass = UserFacingError.classification(for: error)
                 // #842: a background/partial refresh failure must not claim
                 // total offline while the last-good dataset is already on
                 // screen (History rendered, banner claiming a blackout). The
@@ -3542,6 +4008,130 @@ public final class AppModel {
             )
         )
     }
+
+    // MARK: Manual workout lifecycle (#936)
+
+    /// Apply one lifecycle outcome: the rest/live-card effects in the order the
+    /// owner decided them, then the durable save it handed over.
+    ///
+    /// The save is the app's ONE workout path (`saveWorkout` → the durable
+    /// queue → the #935 recovery owner); the owner never writes a second
+    /// persistence format. Its completion is reported back with the ticket, so
+    /// only the finish that is actually in flight can release the save latch.
+    @discardableResult
+    private func applyManualWorkoutLifecycle(
+        _ outcome: ManualWorkoutLifecycleOutcome
+    ) -> ManualWorkoutLifecycleOutcome {
+        for effect in outcome.effects {
+            switch effect {
+            case let .syncActivity(workout, restTarget):
+                manualWorkoutActivity.sync(engine: workout, restTarget: restTarget)
+            case let .syncRest(workout, restTarget):
+                manualWorkoutRest.update(engine: workout, restTarget: restTarget)
+            case .discardActivityEvents:
+                manualWorkoutActivity.discardPendingEvents()
+            case .requestRestNotificationPermission:
+                // #936: the owner decides WHEN the one user-initiated ask
+                // happens; the adapter owns how.
+                Task { await manualWorkoutRest.requestNotificationPermissionIfNeeded() }
+            }
+        }
+        guard case let .persist(draft, ticket) = outcome.decision else { return outcome }
+        Task { @MainActor in
+            await saveWorkout(draft)
+            applyManualWorkoutLifecycle(manualWorkoutLifecycle.saveDidComplete(ticket: ticket))
+        }
+        return outcome
+    }
+
+    /// Start the user's manual workout. Ignored while one is already in progress
+    /// or while the previous finish is still saving — a re-created view can
+    /// never replace the workout the user is in the middle of.
+    @discardableResult
+    public func startManualWorkout(
+        at date: Date = Date(),
+        asksForRestNotificationPermission: Bool = true
+    ) -> ManualWorkoutLifecycleOutcome {
+        guard let userID = currentUserID else { return .ignored }
+        return applyManualWorkoutLifecycle(
+            manualWorkoutLifecycle.start(
+                accountUserID: userID,
+                phase: settings.currentPhase,
+                at: date,
+                asksForRestNotificationPermission: asksForRestNotificationPermission
+            )
+        )
+    }
+
+    /// The workout surface (re)appeared. Resumes the workout the owner holds —
+    /// it never creates one and never terminates one.
+    @discardableResult
+    public func resumeManualWorkout() -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(manualWorkoutLifecycle.resume())
+    }
+
+    /// Minimize the full-screen presentation. The workout keeps running.
+    @discardableResult
+    public func minimizeManualWorkout() -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(manualWorkoutLifecycle.minimize())
+    }
+
+    /// The boulder control. The engine's own guards throw on an invalid
+    /// transition; the caller presents that error where it always did.
+    @discardableResult
+    public func toggleManualWorkoutAttempt(
+        at date: Date = Date()
+    ) throws -> ManualWorkoutLifecycleOutcome {
+        try applyManualWorkoutLifecycle(manualWorkoutLifecycle.toggleAttempt(at: date))
+    }
+
+    @discardableResult
+    public func setManualWorkoutRPE(_ rpe: Double) -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(manualWorkoutLifecycle.setRPE(rpe))
+    }
+
+    @discardableResult
+    public func setManualWorkoutRestTarget(_ target: Int) -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(manualWorkoutLifecycle.setRestTarget(target))
+    }
+
+    /// The End control: refused with the #926 explanation when no attempt was
+    /// completed, otherwise EXACTLY ONE draft is handed to `saveWorkout`.
+    @discardableResult
+    public func endManualWorkout(at date: Date = Date()) -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(manualWorkoutLifecycle.end(at: date))
+    }
+
+    /// Replay the lock-screen intents the Live Activity adapter queued for the
+    /// workout the owner holds. A drained batch for a workout that is gone is
+    /// discarded — the adapter's own identity contract, kept intact here.
+    @discardableResult
+    public func drainManualWorkoutActivityEvents() -> ManualWorkoutLifecycleOutcome {
+        let events = manualWorkoutActivity.drainPendingEvents(
+            forWorkoutStartedAt: manualWorkoutLifecycle.workoutStartedAt
+        )
+        return applyManualWorkoutLifecycle(
+            manualWorkoutLifecycle.applyActivityEvents(events)
+        )
+    }
+
+    #if DEBUG
+    /// #926/#936 harness: arm the REAL manual workout for the signed-out
+    /// simulator fixtures — the production lifecycle owner, engine, effects and
+    /// End path, with a synthetic account. Only the notification-permission ask
+    /// stays off (its system prompt would cover the surface under capture).
+    @discardableResult
+    public func startManualWorkoutFixture() -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(
+            manualWorkoutLifecycle.start(
+                accountUserID: UUID(),
+                phase: settings.currentPhase,
+                at: Date(),
+                asksForRestNotificationPermission: false
+            )
+        )
+    }
+    #endif
 
     // MARK: Workout
 
@@ -6431,6 +7021,35 @@ public final class AppModel {
                         recomputeGate.cancel()
                         return nil
                     }
+                    let healthIntent = HealthWriteIntent(
+                        date: upsert.date,
+                        payload: upsert,
+                        trigger: HealthWriteTrigger(trigger)
+                    )
+                    // #919 AC1: the intended write is durable BEFORE the
+                    // optimistic row exists. A termination between the cache
+                    // write, the remote write and its acknowledgement then
+                    // leaves an intent the recovery resolves deterministically,
+                    // instead of a cache-only row that nothing can ever
+                    // distinguish from synced state.
+                    guard let healthIntentItem = await enqueueDirectWrite(
+                        .healthWrite(healthIntent),
+                        capturedBy: accountFetch,
+                        startUpload: false
+                    ) else {
+                        // No durable intent means no replay: the pass fails
+                        // honestly rather than leaving an unreplayable row.
+                        surfaceDirectWriteNotPersisted()
+                        recomputeGate.cancel()
+                        return nil
+                    }
+                    guard !Task.isCancelled, accountFetch.canApply(
+                        to: currentUserID,
+                        accountEpoch: accountEpoch
+                    ) else {
+                        recomputeGate.cancel()
+                        return nil
+                    }
                     let optimisticRevision = cacheUpsertLocal(
                         publishedMetric,
                         accountUserID: userID,
@@ -6477,6 +7096,15 @@ public final class AppModel {
                             return nil
                         }
                         acknowledgedReconciledDates.insert(upsert.date)
+                        // #919: the server accepted this exact revision, so the
+                        // durable intent is complete. A newer pass that replaced
+                        // it while this request was in flight keeps its own
+                        // intent (and its own acknowledgement).
+                        await completeHealthWriteIntent(
+                            healthIntentItem,
+                            intent: healthIntent,
+                            capturedBy: accountFetch
+                        )
                     } catch {
                         if Task.isCancelled {
                             recomputeGate.cancel()
@@ -6770,6 +7398,7 @@ public final class AppModel {
                 accountEpoch: self.accountEpoch
             ) else { return }
             self.pendingCacheWriteCount = 0
+            self.pendingTagWriteCount = 0
             try await self.auth.signOut()
             guard purgeBoundary.canApply(
                 to: self.currentUserID,
@@ -6843,6 +7472,54 @@ public final class AppModel {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
+        // #935: the pass sequence (adopt the legacy residues, snapshot the
+        // mode's due set from the ONE durable queue, attempt each item, then
+        // acknowledge) is the recovery owner's. This body is composition only.
+        _ = await mutationRecovery.drain(
+            boundary: recoveryBoundary(accountFetch),
+            mode: mode,
+            in: queue,
+            isCancelled: { Task.isCancelled },
+            adoptResidues: {
+                await self.adoptLegacyResidues(
+                    userID: userID,
+                    capturedBy: accountFetch
+                )
+            },
+            upload: { item, itemMode in
+                await self.upload(
+                    item,
+                    mode: itemMode,
+                    capturedBy: accountFetch
+                )
+            },
+            acknowledge: { await self.refreshQueueCount(for: accountFetch) }
+        )
+    }
+
+    /// #935: the explicit account boundary of every recovery pass — the same
+    /// `WorkspaceAccountBoundary` #934's workspace coordinator takes, so the app
+    /// has ONE account fence rather than a second one for queue work.
+    private func recoveryBoundary(_ accountFetch: AccountScopedFetch) -> WorkspaceAccountBoundary {
+        WorkspaceAccountBoundary(fetch: accountFetch) { [weak self] in
+            guard let self else { return false }
+            return accountFetch.canApply(
+                to: self.currentUserID,
+                accountEpoch: self.accountEpoch
+            )
+        }
+    }
+
+    /// #920 AC2: the residue adopters, in the drain's load-bearing order. A
+    /// cache-only row from an older app version carries no replay intent, so
+    /// iterating the durable queue alone could never address it — which is
+    /// exactly why the visible "Retry Now" has to run the same adopters the
+    /// drain does. Extracted verbatim from `drainQueue` so both entry points
+    /// share one implementation instead of two that can drift.
+    private func adoptLegacyResidues(
+        userID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> Bool {
         guard await migrateLegacyRecordingEdits(
             userID: userID,
             capturedBy: accountFetch
@@ -6850,9 +7527,9 @@ public final class AppModel {
               accountFetch.canApply(
                   to: currentUserID,
                   accountEpoch: accountEpoch
-              ) else { return }
+              ) else { return false }
         // #916 AC4: a pending cache-only preset/routine row predates the
-        // replay envelope; adopt it into this same queue before the drain
+        // replay envelope; adopt it into this same queue before the pass
         // snapshots the due items, so the row is no longer intent-less.
         guard await migrateLegacyDirectWrites(
             userID: userID,
@@ -6861,9 +7538,9 @@ public final class AppModel {
               accountFetch.canApply(
                   to: currentUserID,
                   accountEpoch: accountEpoch
-              ) else { return }
+              ) else { return false }
         // #917 AC4: the phase/settings residue gets the same once-per-account
-        // treatment on the drain path (its only writer is a transition).
+        // treatment (its only writer is a transition).
         guard await recoverLegacyPhaseResidues(
             userID: userID,
             capturedBy: accountFetch
@@ -6871,15 +7548,31 @@ public final class AppModel {
               accountFetch.canApply(
                   to: currentUserID,
                   accountEpoch: accountEpoch
-              ) else { return }
-        let due = await queue.items(
-            for: userID,
-            dueAt: mode.revalidationDueAt(now: Date())
-        )
-        for item in due {
-            _ = await upload(item, mode: mode, capturedBy: accountFetch)
-        }
-        await refreshQueueCount(for: accountFetch)
+              ) else { return false }
+        // #918 AC5: tag-registry residue (pending cache-only rows with no
+        // intent) is resolved the same way — by the server's own answer only.
+        guard await recoverLegacyTagResidues(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return false }
+        // #919: a pending cache-only health row predates the health replay
+        // envelope. It is adopted into this same queue only when the server's
+        // own answer leaves it provably writable (and the recovery revalidates
+        // the payload again before anything is sent); anything else stays
+        // visibly unsynced instead of being cleared on a guess.
+        guard await recoverLegacyHealthResidues(
+            userID: userID,
+            capturedBy: accountFetch
+        ),
+              accountFetch.canApply(
+                  to: currentUserID,
+                  accountEpoch: accountEpoch
+              ) else { return false }
+        return true
     }
 
     public func retryAllQueuedWrites() async {
@@ -6888,91 +7581,75 @@ public final class AppModel {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        guard await migrateLegacyRecordingEdits(
-            userID: userID,
-            capturedBy: accountFetch
-        ) != nil,
-              accountFetch.canApply(
-                  to: currentUserID,
-                  accountEpoch: accountEpoch
-              ) else { return }
-        let pending = await queue.items(for: userID)
-        for item in pending {
-            await retryQueuedWrite(
-                id: item.id,
-                accountUserID: userID,
-                capturedBy: accountFetch
-            )
-        }
-        await refreshQueueCount(for: accountFetch)
-    }
-
-    /// Force one manual pass for a queue identity. A foreground drain may
-    /// already own the item when the user taps Retry; returning immediately
-    /// from `upload` in that case made Retry look successful while the item
-    /// stayed pending. Wait for the owner, re-read the durable item, and then
-    /// bypass its automatic backoff for the explicit retry.
-    private func retryQueuedWrite(
-        id: UUID,
-        accountUserID: UUID,
-        capturedBy accountFetch: AccountScopedFetch
-    ) async {
-        let key = QueueUploadKey(itemID: id, accountUserID: accountUserID)
-        for _ in 0..<3 {
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ), let queue else { return }
-
-            let current = await queue.item(
-                id: id,
-                accountUserID: accountUserID
-            )
-            switch QueueRetryPolicy.beforeUpload(
-                isClaimed: inFlightUploadClaims.isClaimed(key),
-                hasItem: current != nil,
-                isQuarantined: current?.quarantined != nil
+        // #920 AC4 / #935: one retry pass per account. A second tap while a
+        // pass is in flight coalesces onto it (the pass's progress is already
+        // published) instead of racing a second drain against the same queue.
+        // The gate owns that rule; this body is composition only.
+        guard let owner = queuedWritesRetryGate.claim(accountFetch) else { return }
+        isRetryingQueuedWrites = true
+        defer {
+            // Only the pass that owns the flag may clear it, and only while its
+            // account/epoch is still live: an account switch cannot finish the
+            // next account's progress (#920 AC4).
+            if queuedWritesRetryGate.finish(
+                owner,
+                isCurrent: accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                )
             ) {
-            case .waitForOwner:
-                await waitForQueueUpload(key)
-                continue
-            case .stop:
-                return
-            case .upload:
-                break
-            }
-            guard let current else { return }
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-
-            let result = await upload(
-                current,
-                mode: .manual,
-                capturedBy: accountFetch
-            )
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            // A producer can claim the identity in the small gap between the
-            // check above and `upload`'s own claim. Only that no-op result is
-            // retried here; a real failure has already been durably recorded
-            // with its class/error/backoff and should be shown to the user.
-            switch QueueRetryPolicy.afterUpload(
-                uploaded: result.uploaded,
-                recordedFailure: result.failure != nil,
-                ownerIsClaimed: inFlightUploadClaims.isClaimed(key)
-            ) {
-            case .waitForOwner:
-                await waitForQueueUpload(key)
-                continue
-            case .upload, .stop:
-                return
+                isRetryingQueuedWrites = false
             }
         }
+        // Measure both acknowledged answers BEFORE the pass so the published
+        // outcome is a real before/after rather than a guess.
+        refreshPendingCacheWriteCount(accountUserID: userID)
+        let unsyncedBefore = pendingCacheWriteCount
+        // #920 AC2 / #935: Retry Now addresses the SAME residue set the drain
+        // does, and each identity goes through the owner's manual-retry loop
+        // (wait for an in-flight owner, re-read the durable item, then bypass
+        // ordinary backoff but never quarantine).
+        guard let report = await mutationRecovery.retryAll(
+            boundary: recoveryBoundary(accountFetch),
+            in: queue,
+            adoptResidues: {
+                await self.adoptLegacyResidues(
+                    userID: userID,
+                    capturedBy: accountFetch
+                )
+            },
+            isClaimed: { [weak self] key in
+                self?.inFlightUploadClaims.isClaimed(key) ?? false
+            },
+            waitForOwner: { [weak self] key in
+                guard let self else { return }
+                await self.waitForQueueUpload(key)
+            },
+            upload: { item, itemMode in
+                await self.upload(
+                    item,
+                    mode: itemMode,
+                    capturedBy: accountFetch
+                )
+            },
+            acknowledge: { await self.refreshQueueCount(for: accountFetch) }
+        ) else { return }
+        let outcome = MutationRetryOutcome(
+            accountUserID: userID,
+            queuedBefore: report.queuedBefore,
+            queuedAfter: queuedWriteCount,
+            unsyncedBefore: unsyncedBefore,
+            unsyncedAfter: pendingCacheWriteCount,
+            quarantinedAfter: quarantinedWrites?.count
+        )
+        _ = accountFetch.publishIfCurrent(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) {
+            lastRetryOutcome = outcome
+        }
     }
+
 
     /// The BGTask body: drain the durable queue, then reconcile every cache
     /// entity through its cursor delta. Account scope and cancellation are
@@ -7000,6 +7677,12 @@ public final class AppModel {
             return .accountChanged
         }
         guard !Task.isCancelled else { return .cancelled }
+        // #921: a background app-refresh is the third cache-backed entrypoint
+        // and joins the SAME preparation flight the bootstrap and the
+        // foreground pass use — it never opens (or migrates) a second handle.
+        // A cache that is still opening delays this pass, never the first
+        // frame, and a failed open is retried here.
+        await prepareCacheIfNeeded()
         guard let workspace = cachedWorkspace else {
             await drainQueue()
             return .failed
@@ -7017,14 +7700,19 @@ public final class AppModel {
             return .accountChanged
         }
         guard !Task.isCancelled else { return .cancelled }
-        let remotePurgeGeneration: Int64?
-        do {
-            remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
-            markPurgeGenerationAvailable(capturedBy: accountFetch)
-        } catch {
-            if Task.isCancelled { return .cancelled }
-            remotePurgeGeneration = nil
+        // #934: the optional rollout endpoint and its "a missing generation
+        // forces both purge-sensitive entities through a full reconcile"
+        // fallback are the coordinator's rule. A background pass stays quiet
+        // about a rollout error — the public foreground refresh reports it.
+        let purgeResolution = await workspaceSync.resolvePurgeGeneration {
+            try await self.repository.fetchPurgeSyncGeneration()
         }
+        if purgeResolution.isAvailable {
+            markPurgeGenerationAvailable(capturedBy: accountFetch)
+        } else if Task.isCancelled {
+            return .cancelled
+        }
+        let remotePurgeGeneration: Int64? = purgeResolution.generation
         guard accountFetch.canApply(
             to: currentUserID,
             accountEpoch: accountEpoch
@@ -7032,7 +7720,7 @@ public final class AppModel {
             return .accountChanged
         }
         guard !Task.isCancelled else { return .cancelled }
-        let forcePurgeReconcile = cacheNeedsPurgeReconcile(
+        let forcePurgeReconcile = await cacheNeedsPurgeReconcile(
             accountUserID: userID,
             remoteGeneration: remotePurgeGeneration
         )
@@ -7056,7 +7744,7 @@ public final class AppModel {
         )
         let outcome = await BackgroundSyncEngine.run(run)
         if case .completed = outcome {
-            publishBackgroundSyncSnapshot(
+            await publishBackgroundSyncSnapshot(
                 accountUserID: userID,
                 capturedBy: accountFetch
             )
@@ -7064,6 +7752,11 @@ public final class AppModel {
         return outcome
     }
 
+    /// #934: composition only — one entry per workspace entity, naming the
+    /// repository fetch and the full-snapshot shape. The shared rule (cursor
+    /// read, full-vs-delta reconcile, purge generation, the storage hop) is the
+    /// coordinator's `backgroundOperation`, so the background pass and the
+    /// realtime slice reconciler stay one rule.
     private func makeBackgroundSyncOperations(
         accountUserID: UUID,
         workspace: CachedWorkspace,
@@ -7072,11 +7765,11 @@ public final class AppModel {
     ) -> [BackgroundSyncOperation] {
         let repository = repository
         return [
-            makeBackgroundSyncOperation(
+            workspaceSync.backgroundOperation(
+                in: workspace,
                 entityType: .sessions,
                 accountUserID: accountUserID,
-                workspace: workspace,
-                forceFull: forcePurgeReconcile,
+                forceFullReconcile: forcePurgeReconcile,
                 purgeGeneration: purgeGeneration,
                 fetch: { cursor in
                     try await repository.fetchSessionDelta(
@@ -7084,158 +7777,115 @@ public final class AppModel {
                         accountUserID: accountUserID
                     )
                 },
-                snapshot: { CachedWorkspaceSnapshot(sessions: $0.activeValues) }
+                fullSnapshot: { CachedWorkspaceSnapshot(sessions: $0.activeValues) }
             ),
-            makeBackgroundSyncOperation(
+            workspaceSync.backgroundOperation(
+                in: workspace,
                 entityType: .settings,
                 accountUserID: accountUserID,
-                workspace: workspace,
                 fetch: { cursor in
                     try await repository.fetchSettingsDelta(since: cursor)
                 },
-                snapshot: { CachedWorkspaceSnapshot(settings: $0.activeValues.first) }
+                fullSnapshot: { CachedWorkspaceSnapshot(settings: $0.activeValues.first) }
             ),
-            makeBackgroundSyncOperation(
+            workspaceSync.backgroundOperation(
+                in: workspace,
                 entityType: .phasePeriods,
                 accountUserID: accountUserID,
-                workspace: workspace,
                 fetch: { cursor in
                     try await repository.fetchPhasePeriodDelta(since: cursor)
                 },
-                snapshot: { CachedWorkspaceSnapshot(phasePeriods: $0.activeValues) }
+                fullSnapshot: { CachedWorkspaceSnapshot(phasePeriods: $0.activeValues) }
             ),
-            makeBackgroundSyncOperation(
+            workspaceSync.backgroundOperation(
+                in: workspace,
                 entityType: .healthMetrics,
                 accountUserID: accountUserID,
-                workspace: workspace,
                 fetch: { cursor in
                     try await repository.fetchHealthMetricDelta(since: cursor)
                 },
-                snapshot: { CachedWorkspaceSnapshot(healthMetrics: $0.activeValues) }
+                fullSnapshot: { CachedWorkspaceSnapshot(healthMetrics: $0.activeValues) }
             ),
-            makeBackgroundSyncOperation(
+            workspaceSync.backgroundOperation(
+                in: workspace,
                 entityType: .recordings,
                 accountUserID: accountUserID,
-                workspace: workspace,
-                forceFull: forcePurgeReconcile,
+                forceFullReconcile: forcePurgeReconcile,
                 purgeGeneration: purgeGeneration,
                 fetch: { cursor in
                     try await repository.fetchRecordingDelta(since: cursor)
                 },
-                snapshot: { CachedWorkspaceSnapshot(recordings: $0.activeValues) }
+                fullSnapshot: { CachedWorkspaceSnapshot(recordings: $0.activeValues) }
             ),
-            makeBackgroundSyncOperation(
+            workspaceSync.backgroundOperation(
+                in: workspace,
                 entityType: .presets,
                 accountUserID: accountUserID,
-                workspace: workspace,
                 fetch: { cursor in
                     try await repository.fetchPresetDelta(since: cursor)
                 },
-                snapshot: { CachedWorkspaceSnapshot(presets: $0.activeValues) }
+                fullSnapshot: { CachedWorkspaceSnapshot(presets: $0.activeValues) }
             ),
-            makeBackgroundSyncOperation(
+            workspaceSync.backgroundOperation(
+                in: workspace,
                 entityType: .routinePresets,
                 accountUserID: accountUserID,
-                workspace: workspace,
                 fetch: { cursor in
                     try await repository.fetchRoutineDelta(since: cursor)
                 },
-                snapshot: { CachedWorkspaceSnapshot(routines: $0.activeValues) }
+                fullSnapshot: { CachedWorkspaceSnapshot(routines: $0.activeValues) }
             ),
-            makeBackgroundSyncOperation(
+            workspaceSync.backgroundOperation(
+                in: workspace,
                 entityType: .workoutsAndAttempts,
                 accountUserID: accountUserID,
-                workspace: workspace,
                 fetch: { cursor in
                     try await repository.fetchWorkoutDelta(since: cursor)
                 },
-                snapshot: { CachedWorkspaceSnapshot(workouts: $0.activeValues) }
+                fullSnapshot: { CachedWorkspaceSnapshot(workouts: $0.activeValues) }
             ),
-            makeBackgroundSyncOperation(
+            workspaceSync.backgroundOperation(
+                in: workspace,
                 entityType: .tagMetadata,
                 accountUserID: accountUserID,
-                workspace: workspace,
                 fetch: { cursor in
                     try await repository.fetchTagMetadataDelta(since: cursor)
                 },
-                snapshot: { CachedWorkspaceSnapshot(tagMetadata: $0.activeValues) }
+                fullSnapshot: { CachedWorkspaceSnapshot(tagMetadata: $0.activeValues) }
             )
         ]
-    }
-
-    private func makeBackgroundSyncOperation<Value: Encodable & Sendable>(
-        entityType: LocalCacheEntityType,
-        accountUserID: UUID,
-        workspace: CachedWorkspace,
-        forceFull: Bool = false,
-        purgeGeneration: Int64? = nil,
-        fetch: @escaping @MainActor @Sendable (String?) async throws -> RemoteEntityDelta<Value>,
-        snapshot: @escaping @MainActor @Sendable (RemoteEntityDelta<Value>) -> CachedWorkspaceSnapshot
-    ) -> BackgroundSyncOperation {
-        BackgroundSyncOperation(entityType: entityType) {
-            let cursor = forceFull
-                ? nil
-                : try workspace.cursor(
-                    accountUserID: accountUserID,
-                    entityType: entityType
-                )
-            let delta = try await fetch(cursor)
-            let firstSnapshot = cursor == nil ? snapshot(delta) : nil
-            return BackgroundSyncPreparedOperation {
-                if firstSnapshot != nil {
-                    try workspace.reconcileServerDelta(
-                        delta,
-                        accountUserID: accountUserID,
-                        entityType: entityType,
-                        purgeGeneration: purgeGeneration
-                    )
-                } else {
-                    try workspace.reconcileDelta(
-                        delta,
-                        accountUserID: accountUserID,
-                        entityType: entityType
-                    )
-                }
-            }
-        }
     }
 
     private func publishBackgroundSyncSnapshot(
         accountUserID: UUID,
         capturedBy accountFetch: AccountScopedFetch
-    ) {
+    ) async {
         guard accountFetch.canApply(
             to: currentUserID,
             accountEpoch: accountEpoch
         ) else { return }
-        guard let workspace = cachedWorkspace else { return }
-        do {
-            let snapshot = try workspace.load(accountUserID: accountUserID)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            let sessionsWereSynced = cacheHasCompletedSync(
-                accountUserID: accountUserID,
-                entityType: .sessions
-            )
-            let recordingsWereSynced = cacheHasCompletedSync(
-                accountUserID: accountUserID,
-                entityType: .recordings
-            )
-            applyCachedNonOverlayLists(accountUserID: accountUserID)
-            mergeSessions(
-                remote: snapshot.sessions,
-                markLoaded: sessionsWereSynced
-            )
-            hasLoadedSessions = hasLoadedSessions || sessionsWereSynced
-            mergeRecordings(remote: snapshot.recordings)
-            hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced
-            forceModel.hasLoadedRecordings = hasLoadedRecordings
-            warmTagCurvesIfMissing(capturedBy: accountFetch)
-        } catch {
-            recordCacheFailure("background cache publish", error)
-        }
+        // #922: ONE coherent read on the storage side serves the whole
+        // publication — the collections, the two sync boundaries and the
+        // non-overlay lists. It used to be a load plus two boundary reads plus
+        // a second full-workspace load inside the re-adoption.
+        guard let read = await readCoherentCache(accountUserID: accountUserID) else { return }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        let snapshot = read.snapshot
+        let sessionsWereSynced = read.hasCompletedSync(.sessions)
+        let recordingsWereSynced = read.hasCompletedSync(.recordings)
+        applyCachedNonOverlayLists(accountUserID: accountUserID, read: read)
+        mergeSessions(
+            remote: snapshot.sessions,
+            markLoaded: sessionsWereSynced
+        )
+        hasLoadedSessions = hasLoadedSessions || sessionsWereSynced
+        mergeRecordings(remote: snapshot.recordings)
+        hasLoadedRecordings = hasLoadedRecordings || recordingsWereSynced
+        forceModel.hasLoadedRecordings = hasLoadedRecordings
+        warmTagCurvesIfMissing(capturedBy: accountFetch)
     }
 
     @discardableResult
@@ -7334,24 +7984,14 @@ public final class AppModel {
         }
     }
 
-    /// #675 N1: the classification + diagnostic an upload failure recorded,
-    /// so `retryQuarantinedWrites` can decide whether a fresh failure replaces
-    /// the prior rejection stamp or the prior stamp is restored verbatim.
-    private struct UploadFailure {
-        let classification: RejectionClass
-        let code: String?
-        let detail: String
-    }
-
-    private struct UploadResult {
-        let uploaded: Bool
-        let failure: UploadFailure?
-
-        init(uploaded: Bool, failure: UploadFailure?) {
-            self.uploaded = uploaded
-            self.failure = failure
-        }
-    }
+    /// #675 N1 / #935: the classification + diagnostic one failed attempt
+    /// recorded, so the recovery owner can decide whether a manual retry
+    /// replaces the prior rejection stamp or restores it verbatim. These are
+    /// the OWNER's types (`Sources/Core/MutationRecoveryCoordinator.swift`);
+    /// the aliases keep this file's call sites reading the same and there is
+    /// exactly ONE upload-outcome shape in the app.
+    private typealias UploadFailure = MutationUploadFailure
+    private typealias UploadResult = MutationUploadOutcome
 
     private func sourceRecordingID(for payload: PendingWrite) -> UUID? {
         switch payload {
@@ -7852,16 +8492,30 @@ public final class AppModel {
         startUpload: Bool
     ) async -> DurableQueueItem<PendingWrite>? {
         guard let queue,
-              let entityID = payload.directWriteEntityID else { return nil }
+              let incomingEntityID = payload.directWriteEntityID(
+                  accountUserID: accountFetch.accountUserID
+              ) else { return nil }
         for _ in 0..<3 {
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return nil }
-            let existing = await queue.item(
-                id: entityID,
-                accountUserID: accountFetch.accountUserID
-            )
+            // #918: a tag's pending intent is resolved by the NAME the mutation
+            // is authored against — its own, or the one a still-pending rename
+            // moved the tag to — because that is the identity the newer mutation
+            // has to replace. Every other payload is keyed by its own identity.
+            let existing: DurableQueueItem<PendingWrite>?
+            if case let .tagMutation(intent) = payload {
+                existing = await pendingTagMutation(
+                    named: intent.tagName,
+                    accountUserID: accountFetch.accountUserID
+                )
+            } else {
+                existing = await queue.item(
+                    id: incomingEntityID,
+                    accountUserID: accountFetch.accountUserID
+                )
+            }
             guard accountFetch.canApply(
                 to: currentUserID,
                 accountEpoch: accountEpoch
@@ -7874,6 +8528,22 @@ public final class AppModel {
                 // pending one wholesale — there is no create/update/delete
                 // vocabulary to coalesce.
                 queuedPayload = payload
+            } else if case let .tagMutation(incoming) = payload {
+                // #918: the pending tag intent keeps the names it may still have
+                // to repoint from and the rename it carries; the newest mutation
+                // contributes its own name and its visibility. The composed
+                // intent keeps the ORIGIN name's queue identity, so it replaces
+                // the pending item instead of racing it.
+                if case let .tagMutation(pending)? = existing?.payload {
+                    queuedPayload = .tagMutation(
+                        TagMutationReplayPolicy.replacing(
+                            pending: pending,
+                            incoming: incoming
+                        )
+                    )
+                } else {
+                    queuedPayload = payload
+                }
             } else {
                 guard let incoming = payload.directWriteOperation else { return nil }
                 let operation: DirectWriteOperation
@@ -7896,6 +8566,9 @@ public final class AppModel {
                 }
                 queuedPayload = relabeled
             }
+            guard let entityID = queuedPayload.directWriteEntityID(
+                accountUserID: accountFetch.accountUserID
+            ) else { return nil }
             let item = DurableQueueItem(
                 id: entityID,
                 accountUserID: accountFetch.accountUserID,
@@ -7942,6 +8615,35 @@ public final class AppModel {
         return nil
     }
 
+    /// The still-pending tag intent a newer mutation for `name` has to replace:
+    /// the intent authored against that name, or the one a still-pending rename
+    /// moved the tag to (#918). The queue holds at most ONE intent per tag, so
+    /// this is the only lookup the tag write path needs.
+    private func pendingTagMutation(
+        named name: String,
+        accountUserID: UUID
+    ) async -> DurableQueueItem<PendingWrite>? {
+        guard let queue else { return nil }
+        let queued = await queue.items(for: accountUserID, includeQuarantined: true)
+        return queued.first { item in
+            guard case let .tagMutation(intent) = item.payload else { return false }
+            // The user's next mutation is authored against the name the tag has
+            // LOCALLY — which is a still-pending rename's target until it lands.
+            return intent.tagName == name || intent.renamedTo == name
+        }
+    }
+
+    /// The tag names with a durable intent in the queue — any state, including
+    /// quarantined, because a quarantined intent is still the user's own unsynced
+    /// data and the residue sweep must not resolve the row it owns (#918).
+    private func queueItemsTagNames(userID: UUID) async -> [String] {
+        guard let queue else { return [] }
+        return await queue.items(for: userID, includeQuarantined: true).compactMap { item in
+            guard case let .tagMutation(intent) = item.payload else { return nil }
+            return intent.tagName
+        }
+    }
+
     /// The user-facing failure for a write that could not become durable. The
     /// queue is the durability boundary, so this is reported as a failure the
     /// user can retry — never as a saved or synced state.
@@ -7982,7 +8684,9 @@ public final class AppModel {
         let queuedIDs = Set(await queue.items(
             for: accountUserID,
             includeQuarantined: true
-        ).compactMap { $0.payload.directWriteEntityID?.uuidString.lowercased() })
+        ).compactMap {
+            $0.payload.directWriteEntityID(accountUserID: accountUserID)?.uuidString.lowercased()
+        })
         guard let allPending = try? workspace.pendingEntityIDs(
             accountUserID: accountUserID,
             entityType: entityType,
@@ -8267,6 +8971,424 @@ public final class AppModel {
         return true
     }
 
+    /// #918 AC5: resolves the pre-#918 tag residue — pending cache-only
+    /// `.tagMetadata` rows left by an interrupted older build, with no replay
+    /// intent behind them.
+    ///
+    /// A registry row is `name` + `hidden` and nothing else, so a rename can
+    /// never be reconstructed from one and nothing is invented here. Only the
+    /// server's own answer resolves a row:
+    ///
+    /// * a live pending row the server already serves with the same flag IS the
+    ///   write, so it is confirmed;
+    /// * a pending tombstone whose name the server no longer serves is a removal
+    ///   that already took effect (that is exactly what a rename leaves behind).
+    ///
+    /// Everything else stays where it is and keeps counting as unsynced — the
+    /// Settings surface shows it and the user's next action on that tag (a new
+    /// hide/rename intent) is what resolves it. Nothing is dropped on a guess.
+    private func recoverLegacyTagResidues(
+        userID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> Bool {
+        guard queue != nil, let workspace = cachedWorkspace else { return true }
+        guard !recoveredTagResidueAccounts.contains(userID) else { return true }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        let pendingIDs = (try? workspace.pendingEntityIDs(
+            accountUserID: userID,
+            entityType: .tagMetadata,
+            includingDeleted: true
+        )) ?? []
+        guard !pendingIDs.isEmpty else {
+            recoveredTagResidueAccounts.insert(userID)
+            return true
+        }
+        let queuedNames = Set(await queueItemsTagNames(userID: userID))
+        let residueIDs = pendingIDs.filter { !queuedNames.contains($0) }
+        guard !residueIDs.isEmpty else {
+            recoveredTagResidueAccounts.insert(userID)
+            return true
+        }
+        let serverTags: [TagMetadata]
+        do {
+            serverTags = try await repository.fetchTagMetadata()
+        } catch {
+            // A failed authoritative read defers the whole sweep rather than
+            // resolving anything on a guess.
+            return false
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        for entityID in residueIDs {
+            guard let revision = try? workspace.localRevision(
+                accountUserID: userID,
+                entityType: .tagMetadata,
+                entityID: entityID
+            ) else { continue }
+            if let local = try? workspace.store.loadOne(
+                TagMetadata.self,
+                accountUserID: userID,
+                entityType: .tagMetadata,
+                entityID: entityID
+            ) {
+                guard serverTags.contains(where: {
+                    $0.name == local.name && $0.hidden == local.hidden
+                }) else { continue }
+                cacheConfirmServerUpsert(
+                    local,
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    entityID: entityID,
+                    confirmingLocalRevision: revision
+                )
+            } else {
+                guard !serverTags.contains(where: { $0.name == entityID }) else { continue }
+                cacheConfirmServerDelete(
+                    accountUserID: userID,
+                    entityType: .tagMetadata,
+                    entityID: entityID,
+                    confirmingLocalRevision: revision
+                )
+            }
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        recoveredTagResidueAccounts.insert(userID)
+        refreshPendingCacheWriteCount(accountUserID: userID)
+        return true
+    }
+
+    // MARK: Health write recovery (#919)
+
+    /// The authoritative state one replayed health write settled in: the
+    /// server's own row for the date.
+    private struct HealthWriteOutcome {
+        let row: HealthMetric
+    }
+
+    /// Resolves one durable health write intent against the server (#919).
+    ///
+    /// Nothing is replayed blindly. The server's CURRENT row is read first and
+    /// `HealthWriteReplayPolicy` decides whether the queued payload is already
+    /// applied (a lost acknowledgement), is superseded by fresher server data,
+    /// or must still be written under the current write policy. When it must,
+    /// the payload the policy re-derived is what gets sent — today through the
+    /// #802 precedence RPC, a date that has since become past through the
+    /// atomic insert-if-missing — and the server's own answer is read back as
+    /// the confirmation.
+    ///
+    /// Deliberately no HealthKit call happens here: recovery replays the
+    /// persisted payload and never re-runs biometric work to invent evidence.
+    private func applyHealthWriteIntent(
+        _ intent: HealthWriteIntent,
+        userID: UUID
+    ) async throws -> HealthWriteOutcome {
+        let accountFetch = AccountScopedFetch(
+            accountUserID: userID,
+            accountEpoch: accountEpoch
+        )
+        let decision = HealthWriteReplayPolicy.decide(
+            intent: intent,
+            serverRow: try await fetchServerHealthRow(date: intent.date),
+            now: Date(),
+            timeZone: TimeZone.current
+        )
+        switch decision {
+        case let .alreadyApplied(serverRow), let .superseded(serverRow):
+            return HealthWriteOutcome(row: serverRow)
+        case let .send(payload, operation):
+            switch operation {
+            case .historicalInsert:
+                _ = try await repository.insertHealthMetricIfMissing(
+                    payload,
+                    userID: userID
+                )
+            case .todayMerge:
+                _ = try await repository.upsertHealthMetricWithPrecedence(
+                    payload,
+                    userID: userID
+                )
+            }
+            guard accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) else {
+                throw CancellationError()
+            }
+            // The confirmation is the server's own row, never the request we
+            // just sent: a request that was applied-but-unacknowledged must not
+            // be reported as complete from our own side of the wire.
+            guard let confirmed = try await fetchServerHealthRow(date: intent.date) else {
+                throw HealthWriteReplayError.unconfirmedWrite
+            }
+            return HealthWriteOutcome(row: confirmed)
+        }
+    }
+
+    /// The server's current row for one date, or `nil` when it serves none.
+    private func fetchServerHealthRow(date: String) async throws -> HealthMetric? {
+        try await repository.fetchHealthMetrics(limit: healthWriteConfirmationWindow)
+            .first { $0.date == date }
+    }
+
+    /// How many recent health rows one recovery read may scan. The window is
+    /// the reconciliation window's own read plus headroom for an intent whose
+    /// date aged while the device was offline; a row outside it stays
+    /// unresolved (and visible) rather than guessed.
+    private var healthWriteConfirmationWindow: Int {
+        max(HealthMetricReadWindow.candidateDays, 60)
+    }
+
+    /// Reconciles one replayed health write into the account cache and the
+    /// published reading.
+    ///
+    /// The identity is the row's date, so the ordinary revision-fenced
+    /// confirmation applies: an older recovery's answer therefore cannot clear
+    /// (or overwrite) a newer local pass for the same date. A row that no
+    /// longer exists locally is not synthesized — a late answer must never
+    /// recreate cache state — but the server's own row is still published,
+    /// because that is the honest current reading.
+    ///
+    /// - Returns: whether this answer is still the newest local revision for
+    ///   the date. `false` means a newer local pass replaced it while the
+    ///   request was in flight, so the caller must not treat the row as synced.
+    @discardableResult
+    private func settleHealthWrite(
+        _ outcome: HealthWriteOutcome,
+        intent: HealthWriteIntent,
+        accountUserID: UUID,
+        cacheRevisions: [CacheEntityIdentity: Int]
+    ) -> Bool {
+        let entityID = CacheEntityID.healthMetric(outcome.row)
+        let captured = cacheConfirmationRevision(
+            cacheRevisions,
+            entityType: .healthMetrics,
+            entityID: entityID
+        )
+        let current: Int? = (try? cachedWorkspace?.localRevision(
+            accountUserID: accountUserID,
+            entityType: .healthMetrics,
+            entityID: entityID
+        )) ?? nil
+        guard captured == current else {
+            // A newer local pass owns this date now: its own intent (and its
+            // own acknowledgement) decides what that row becomes.
+            return false
+        }
+        if let captured {
+            cacheConfirmServerUpsert(
+                outcome.row,
+                accountUserID: accountUserID,
+                entityType: .healthMetrics,
+                entityID: entityID,
+                confirmingLocalRevision: captured
+            )
+        } else {
+            // The optimistic row never landed (termination before the cache
+            // write, or a rebuilt cache): record the server's own row as clean
+            // server state instead of synthesizing an unconfirmed write.
+            cacheUpsertServer(
+                outcome.row,
+                accountUserID: accountUserID,
+                entityType: .healthMetrics,
+                entityID: entityID
+            )
+        }
+        publishHealthMetric(outcome.row)
+        return true
+    }
+
+    /// Completes one health intent the pass itself acknowledged (#919).
+    ///
+    /// The queue item is removed only while it is still THIS intent: a newer
+    /// pass that replaced it while the request was in flight keeps its own
+    /// durable intent, and its own acknowledgement is what completes it. A
+    /// removal that fails leaves the intent durable, which is harmless — the
+    /// next replay re-reads the server and finds the write already applied.
+    private func completeHealthWriteIntent(
+        _ item: DurableQueueItem<PendingWrite>,
+        intent: HealthWriteIntent,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async {
+        guard let queue else { return }
+        guard let current = await queue.item(
+            id: item.id,
+            accountUserID: item.accountUserID
+        ),
+              current.revision == item.revision,
+              case let .healthWrite(queued) = current.payload,
+              queued.operationID == intent.operationID else {
+            await refreshQueueCount(for: accountFetch)
+            return
+        }
+        do {
+            try await queue.remove(
+                id: item.id,
+                accountUserID: item.accountUserID,
+                reason: "health-write-acknowledged"
+            )
+        } catch let error as DurableQueueError where error == .itemNotFound {
+            // Already gone: that is the terminal state this call wanted.
+        } catch {
+            if accountFetch.canApply(
+                to: currentUserID,
+                accountEpoch: accountEpoch
+            ) {
+                surface(error)
+            }
+        }
+        await refreshQueueCount(for: accountFetch)
+    }
+
+    /// The health dates with a durable intent in the queue — any state,
+    /// including quarantined, because a quarantined intent is still the user's
+    /// own unsynced data and the residue sweep must not resolve the row it owns.
+    private func queueItemsHealthDates(userID: UUID) async -> [String] {
+        guard let queue else { return [] }
+        return await queue.items(for: userID, includeQuarantined: true).compactMap { item in
+            guard case let .healthWrite(intent) = item.payload else { return nil }
+            return intent.date
+        }
+    }
+
+    /// #919: resolves the pre-#919 health residue — pending cache-only rows
+    /// left with no replay intent at all by an interrupted older build.
+    ///
+    /// Only PROVABLE outcomes are resolved, and nothing is reconstructed from a
+    /// local row alone (a queued write has to carry the payload the pass
+    /// decided, its trigger and its authoring time; none of those are
+    /// recoverable from a bare cache row):
+    ///
+    /// * a live pending row the server already serves exactly is adopted — the
+    ///   write landed and only its acknowledgement was lost;
+    /// * a live pending row for a date the server serves NOTHING for is adopted
+    ///   into a durable intent and replayed through the same revalidation, so
+    ///   it cannot clobber anything (it is the only writer for that date);
+    /// * a pending tombstone whose date the server no longer serves is a
+    ///   confirmed delete; one whose date the server DOES serve adopts that
+    ///   authoritative row instead.
+    ///
+    /// Everything else stays exactly where it is and keeps counting as unsynced
+    /// — a residue whose date the server already moved on from is not silently
+    /// cleared, and no write is invented to make it disappear.
+    private func recoverLegacyHealthResidues(
+        userID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> Bool {
+        guard queue != nil, let workspace = cachedWorkspace else { return true }
+        guard !recoveredHealthResidueAccounts.contains(userID) else { return true }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        let pendingIDs = (try? workspace.pendingEntityIDs(
+            accountUserID: userID,
+            entityType: .healthMetrics,
+            includingDeleted: true
+        )) ?? []
+        guard !pendingIDs.isEmpty else {
+            recoveredHealthResidueAccounts.insert(userID)
+            return true
+        }
+        let queuedDates = Set(await queueItemsHealthDates(userID: userID))
+        let residueIDs = pendingIDs.filter { !queuedDates.contains($0) }
+        guard !residueIDs.isEmpty else {
+            recoveredHealthResidueAccounts.insert(userID)
+            return true
+        }
+        let serverRows: [HealthMetric]
+        do {
+            serverRows = try await repository.fetchHealthMetrics(
+                limit: healthWriteConfirmationWindow
+            )
+        } catch {
+            // A failed authoritative read defers the whole sweep rather than
+            // resolving anything on a guess.
+            return false
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        for entityID in residueIDs {
+            guard let revision = (try? workspace.localRevision(
+                accountUserID: userID,
+                entityType: .healthMetrics,
+                entityID: entityID
+            )) ?? nil else { continue }
+            let serverRow = serverRows.first { $0.date == entityID }
+            guard let local = try? workspace.store.loadOne(
+                HealthMetric.self,
+                accountUserID: userID,
+                entityType: .healthMetrics,
+                entityID: entityID
+            ) else {
+                // A tombstone: the row was never confirmed server-side.
+                if let serverRow {
+                    cacheConfirmServerUpsert(
+                        serverRow,
+                        accountUserID: userID,
+                        entityType: .healthMetrics,
+                        entityID: entityID,
+                        confirmingLocalRevision: revision
+                    )
+                } else {
+                    cacheConfirmServerDelete(
+                        accountUserID: userID,
+                        entityType: .healthMetrics,
+                        entityID: entityID,
+                        confirmingLocalRevision: revision
+                    )
+                }
+                continue
+            }
+            if let serverRow {
+                let intent = HealthWriteIntent(
+                    date: local.date,
+                    payload: local,
+                    trigger: .automatic
+                )
+                guard intent.isSatisfied(by: serverRow) else { continue }
+                cacheConfirmServerUpsert(
+                    serverRow,
+                    accountUserID: userID,
+                    entityType: .healthMetrics,
+                    entityID: entityID,
+                    confirmingLocalRevision: revision
+                )
+                continue
+            }
+            // No server row for the date: adopting the residue costs one
+            // revalidation (the drain replays it through the same policy), and
+            // the adopted intent is the only writer for that date.
+            guard await enqueueDirectWrite(
+                .healthWrite(
+                    HealthWriteIntent(
+                        date: local.date,
+                        payload: local,
+                        trigger: .automatic
+                    )
+                ),
+                capturedBy: accountFetch,
+                startUpload: false
+            ) != nil else { return false }
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return false }
+        recoveredHealthResidueAccounts.insert(userID)
+        refreshPendingCacheWriteCount(accountUserID: userID)
+        return true
+    }
+
     // MARK: Phase transition replay (#917)
 
     /// The authoritative state one replayed phase transition ended in.
@@ -8499,6 +9621,211 @@ public final class AppModel {
             isNewest = false
         }
         return isNewest
+    }
+
+    // MARK: Tag registry replay (#918)
+
+    /// The authoritative state one replayed tag mutation ended in.
+    private struct TagMutationOutcome {
+        let tags: [TagMetadata]
+        let recordings: [TindeqRecording]
+    }
+
+    /// Replays one durable tag-registry mutation against the server (#918).
+    ///
+    /// The mutation's two halves are the recording repoint and the registry row,
+    /// and this is the single place they are settled together:
+    ///
+    /// * the server's own state is read first. When it already shows the
+    ///   intended end state — a rename whose acknowledgement was lost, a
+    ///   visibility flag that landed, a rename that was a no-op — nothing is
+    ///   re-sent.
+    /// * otherwise the rename is re-anchored on whichever name the server still
+    ///   serves (the older name while the rename has not run, a newer one when
+    ///   an earlier arrow of a chained rename already landed), and the
+    ///   visibility upsert is applied last. That upsert carries `name` and
+    ///   `hidden` and nothing else: the device-local side mode is never uploaded
+    ///   and no other setting is read or written here.
+    /// * the result has to show the intended end state before the mutation is
+    ///   allowed to confirm — a rename that would leave one of the user's
+    ///   recording references behind keeps its durable intent (and stays
+    ///   retryable) instead of being reported as done.
+    private func applyTagMutationIntent(
+        _ intent: TagMutationIntent
+    ) async throws -> TagMutationOutcome {
+        // A visibility-only mutation never looks at the recordings: the upsert
+        // carries `name` + `hidden` and nothing else.
+        let needsRecordings = intent.renamedTo != nil || !intent.recordingIDs.isEmpty
+        var tags = try await repository.fetchTagMetadata()
+        var recordings = needsRecordings ? try await repository.fetchRecordings() : []
+        if TagMutationReplayPolicy.isApplied(
+            intent: intent,
+            serverTags: tags,
+            serverRecordings: recordings
+        ) {
+            return TagMutationOutcome(tags: tags, recordings: recordings)
+        }
+        if let finalName = intent.renamedTo,
+           let source = TagMutationReplayPolicy.repointSource(
+               intent: intent,
+               serverTags: tags,
+               serverRecordings: recordings
+           ),
+           source != finalName {
+            try await repository.renameTag(oldName: source, newName: finalName)
+            tags = try await repository.fetchTagMetadata()
+            recordings = try await repository.fetchRecordings()
+        }
+        if let hidden = intent.hidden {
+            try await repository.setTagHidden(name: intent.finalName, hidden: hidden)
+            tags = try await repository.fetchTagMetadata()
+        }
+        guard TagMutationReplayPolicy.isComplete(
+            intent: intent,
+            serverTags: tags,
+            serverRecordings: recordings
+        ) else {
+            throw TagMutationReplayError.incompleteTagMutation
+        }
+        return TagMutationOutcome(tags: tags, recordings: recordings)
+    }
+
+    /// Settles one completed tag mutation into the account cache and the
+    /// published tag/recording state — the registry analogue of
+    /// `confirmDirectWriteSaved`.
+    ///
+    /// Every row is revision-fenced against the snapshot taken before the first
+    /// network await: a newer mutation that bumped a row while this (older)
+    /// request was in flight owns that row, so this acknowledgement may neither
+    /// clear it nor publish its own older values over it. Two rules keep the
+    /// registry exact: every name the mutation retires is confirmed-removed
+    /// locally, and a final name the server does not serve gets NO local row —
+    /// the optimistic row was a guess (a rename only carries a registry row
+    /// across when the old name had one) and leaving it pending would count as
+    /// unsynced for ever.
+    ///
+    /// - Returns: whether this acknowledgement is still the newest local state
+    ///   for the tag.
+    @discardableResult
+    private func settleTagMutation(
+        _ outcome: TagMutationOutcome,
+        intent: TagMutationIntent,
+        accountUserID: UUID,
+        cacheRevisions: [CacheEntityIdentity: Int]
+    ) -> Bool {
+        guard let workspace = cachedWorkspace else { return true }
+        var isNewest = true
+        for name in intent.retiredNames.sorted() {
+            guard let captured = cacheConfirmationRevision(
+                cacheRevisions,
+                entityType: .tagMetadata,
+                entityID: name
+            ) else { continue }
+            let current = try? workspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: .tagMetadata,
+                entityID: name
+            )
+            guard captured == current else {
+                // A newer local mutation owns this name.
+                isNewest = false
+                continue
+            }
+            cacheConfirmServerDelete(
+                accountUserID: accountUserID,
+                entityType: .tagMetadata,
+                entityID: name,
+                confirmingLocalRevision: captured
+            )
+            tagMetadata.removeAll { $0.name == name }
+        }
+        let finalName = intent.finalName
+        if let capturedFinal = cacheConfirmationRevision(
+            cacheRevisions,
+            entityType: .tagMetadata,
+            entityID: finalName
+        ) {
+            let currentFinal = try? workspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: .tagMetadata,
+                entityID: finalName
+            )
+            if capturedFinal == currentFinal {
+                if let row = outcome.tags.first(where: { $0.name == finalName }) {
+                    cacheConfirmServerUpsert(
+                        row,
+                        accountUserID: accountUserID,
+                        entityType: .tagMetadata,
+                        entityID: finalName,
+                        confirmingLocalRevision: capturedFinal
+                    )
+                    publishTagMetadata(row)
+                } else {
+                    cacheConfirmServerDelete(
+                        accountUserID: accountUserID,
+                        entityType: .tagMetadata,
+                        entityID: finalName,
+                        confirmingLocalRevision: capturedFinal
+                    )
+                    tagMetadata.removeAll { $0.name == finalName }
+                }
+            } else {
+                isNewest = false
+            }
+        }
+        for recording in outcome.recordings where intent.recordingIDs.contains(recording.id) {
+            let entityID = recording.id.uuidString
+            guard let captured = cacheConfirmationRevision(
+                cacheRevisions,
+                entityType: .recordings,
+                entityID: entityID
+            ) else { continue }
+            let current = try? workspace.localRevision(
+                accountUserID: accountUserID,
+                entityType: .recordings,
+                entityID: entityID
+            )
+            guard captured == current else {
+                isNewest = false
+                continue
+            }
+            cacheConfirmServerUpsert(
+                recording,
+                accountUserID: accountUserID,
+                entityType: .recordings,
+                entityID: entityID,
+                confirmingLocalRevision: captured
+            )
+            if let index = recordings.firstIndex(where: { $0.id == recording.id }),
+               recordings[index].tag != recording.tag {
+                recordings[index].tag = recording.tag
+            }
+        }
+        if intent.renamedTo != nil {
+            // The rename RPC hard-deletes the stale registry row (and only
+            // creates the new one when the old name had one). Deltas cannot
+            // observe either, so the tag cursor is reset and the next reconcile
+            // re-reads the whole registry.
+            do {
+                try workspace.resetCursor(
+                    accountUserID: accountUserID,
+                    entityType: .tagMetadata
+                )
+            } catch {
+                recordCacheFailure("cache cursor reset", error)
+            }
+        }
+        return isNewest
+    }
+
+    /// Publishes one registry row into the account's tag list, replacing the
+    /// row for the same name (the name IS the identity).
+    private func publishTagMetadata(_ row: TagMetadata) {
+        if let index = tagMetadata.firstIndex(where: { $0.name == row.name }) {
+            tagMetadata[index] = row
+        } else {
+            tagMetadata.append(row)
+        }
     }
 
     @discardableResult
@@ -9337,6 +10664,47 @@ public final class AppModel {
                     toastMessage = "Training Block changed to \(PhaseCatalog.definition(for: intent.targetPhase).name)."
                 }
                 refreshPendingCacheWriteCount(accountUserID: item.accountUserID)
+            case let .tagMutation(intent):
+                // The rename/hide reports itself locally (the tag list and its
+                // toast); the queue's generic "Saved" toast would be a second,
+                // duplicate confirmation.
+                suppressSavedToast = true
+                let outcome = try await applyTagMutationIntent(intent)
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                settleTagMutation(
+                    outcome,
+                    intent: intent,
+                    accountUserID: item.accountUserID,
+                    cacheRevisions: cacheRevisions
+                )
+                refreshPendingCacheWriteCount(accountUserID: item.accountUserID)
+            case let .healthWrite(intent):
+                // The recovery reports its own outcome (the row it confirmed);
+                // the queue's generic "Saved" toast would be a second,
+                // duplicate confirmation for a background health pass.
+                suppressSavedToast = true
+                let outcome = try await applyHealthWriteIntent(
+                    intent,
+                    userID: item.accountUserID
+                )
+                guard accountFetch.canApply(
+                    to: currentUserID,
+                    accountEpoch: accountEpoch
+                ) else {
+                    return UploadResult(uploaded: false, failure: nil)
+                }
+                settleHealthWrite(
+                    outcome,
+                    intent: intent,
+                    accountUserID: item.accountUserID,
+                    cacheRevisions: cacheRevisions
+                )
+                refreshPendingCacheWriteCount(accountUserID: item.accountUserID)
             }
             if let sessionReceipt, routineUndo.isClaimed(sessionReceipt) {
                 suppressSavedToast = true
@@ -9430,49 +10798,47 @@ public final class AppModel {
                 await refreshQueueCount(for: accountFetch)
                 return result
             }
-            do {
-                // #675: classify the rejection. A permanent one (constraint /
-                // malformed / forbidden-with-valid-token) earns the entry a
-                // bounded number of attempts and then a quarantine; auth /
-                // parked / transient failures keep plain backoff. The
-                // classification is the transport's (PostgRESTError
-                // conformance), so the actor never parses server errors.
-                //
-                // #675 F5: a MANUAL retry ("Retry now" in History/Settings,
-                // or the per-item quarantine retry) is an explicit user
-                // action, not an automatic drain attempt — it must never
-                // spend the quarantine budget, so its failures do not count
-                // toward the permanent-attempt bound.
-                let classification = (error as? ServerRejectionClassifying)?.rejectionClass ?? .retryable
-                let code = (error as? PostgRESTError)?.code
-                let applied = try await queue.markFailure(
-                    id: item.id,
-                    accountUserID: item.accountUserID,
-                    error: error.localizedDescription,
-                    classification: classification,
-                    code: code,
-                    countsTowardQuarantine: mode.countsTowardQuarantine,
-                    expectedRevision: item.revision
-                )
-                if applied {
-                    result = UploadResult(
-                        uploaded: false,
-                        failure: UploadFailure(
-                            classification: classification,
-                            code: code,
-                            detail: error.localizedDescription
-                        )
-                    )
-                } else {
-                    // The queue identity now holds a newer replacement. The
-                    // old request must not spend its backoff/quarantine
-                    // budget or report its error against that replacement.
-                    result = UploadResult(uploaded: false, failure: nil)
+            // #675: classify the rejection. A permanent one (constraint /
+            // malformed / forbidden-with-valid-token) earns the entry a
+            // bounded number of attempts and then a quarantine; auth /
+            // parked / transient failures keep plain backoff. The
+            // classification is the transport's (PostgRESTError
+            // conformance), so the actor never parses server errors.
+            //
+            // #935: the RECORD — attempts, backoff delay, diagnostic and the
+            // mode's quarantine budget under this entry's captured revision —
+            // is the recovery owner's one failure path. #675 F5: a MANUAL
+            // retry ("Retry now" in History/Settings, or the per-item
+            // quarantine retry) is an explicit user action, not an automatic
+            // drain attempt, so the mode never lets it spend the quarantine
+            // budget.
+            let classification = (error as? ServerRejectionClassifying)?.rejectionClass ?? .retryable
+            let code = (error as? PostgRESTError)?.code
+            let failure = MutationUploadFailure(
+                classification: classification,
+                code: code,
+                detail: error.localizedDescription
+            )
+            let applied = await mutationRecovery.recordFailure(
+                item: item,
+                failure: failure,
+                mode: mode,
+                in: queue
+            ) { [weak self] queueError in
+                guard let self else { return }
+                if accountFetch.canApply(
+                    to: self.currentUserID,
+                    accountEpoch: self.accountEpoch
+                ) {
+                    self.surface(queueError)
                 }
-            } catch {
-                if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
-                    surface(error)
-                }
+            }
+            if applied {
+                result = UploadResult(uploaded: false, failure: failure)
+            } else {
+                // The queue identity now holds a newer replacement. The
+                // old request must not spend its backoff/quarantine
+                // budget or report its error against that replacement.
                 result = UploadResult(uploaded: false, failure: nil)
             }
         }
@@ -9569,80 +10935,47 @@ public final class AppModel {
         return items
     }
 
-    /// #675: the explicit-user-action re-attempt for quarantined entries —
-    /// native mirror of the web's `retryStuckRecordings` (#484). With `id` it
-    /// retries ONE quarantined entry (the per-item Settings action); without,
-    /// all of them. Clears the rejection stamp (fresh bounded-attempt budget)
-    /// and uploads immediately; on success the upload removes the entry from
-    /// the queue.
-    ///
-    /// #675 F7: the entry is NOT re-armed onto the hot drain path by a failed
-    /// manual retry. The upload runs manual (so its rejection never spends the
-    /// quarantine budget — #675 F5), and on ANY failure the quarantine stamp
-    /// is immediately re-applied, so the entry goes straight back to its
-    /// quarantined, never-auto-retried state instead of getting free
-    /// automatic retries behind the user's back.
-    ///
-    /// #675 N1: a failed manual retry preserves the rejection DIAGNOSTIC. The
-    /// prior stamp is passed to `requarantine` as `previous`; a transient /
-    /// auth / parked failure on the retry restores it verbatim (code, detail
-    /// and `at` all survive), while only a FRESH `.permanent` rejection
-    /// replaces the stamp with its own code/detail.
+    /// #935: the explicit quarantine recovery entry point. The lifecycle it
+    /// drives — migrate the recording-edit residue the entry point has to
+    /// attempt first, then per entry: clear the rejection stamp, attempt ONE
+    /// manual upload, and re-stamp immediately on any failure so the entry is
+    /// never auto-retried (#675 F7, with the prior diagnostic restored verbatim
+    /// unless the retry itself was a fresh permanent rejection — #675 N1) — is
+    /// the recovery owner's. This body is composition only.
     public func retryQuarantinedWrites(id: UUID? = nil) async {
         guard let userID = currentUserID, let queue else { return }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
-        guard await migrateLegacyRecordingEdits(
-            userID: userID,
-            capturedBy: accountFetch
-        ) != nil else { return }
-        guard accountFetch.canApply(
-            to: currentUserID,
-            accountEpoch: accountEpoch
-        ) else { return }
-        let quarantined = await queue.quarantinedItems(for: userID)
-        for item in quarantined where id == nil || item.id == id {
-            do {
-                guard let previous = try await queue.retryQuarantined(
-                    id: item.id,
-                    accountUserID: item.accountUserID
-                ) else { continue }
-                let result = await upload(
+        _ = await mutationRecovery.retryQuarantined(
+            id: id,
+            boundary: recoveryBoundary(accountFetch),
+            in: queue,
+            prepare: {
+                await self.migrateLegacyRecordingEdits(
+                    userID: userID,
+                    capturedBy: accountFetch
+                ) != nil
+            },
+            upload: { item, itemMode in
+                await self.upload(
                     item,
-                    mode: .manual,
+                    mode: itemMode,
                     capturedBy: accountFetch
                 )
-                if !result.uploaded {
-                    // #675 F7 + N1: the manual attempt failed — re-stamp the
-                    // quarantine NOW so the entry is never auto-retried by a
-                    // later drain (Settings tells the user it is "kept on this
-                    // device and never retried on their own"). The stamp is
-                    // the PRIOR rejection unless the retry itself was a fresh
-                    // permanent rejection; either way the budget stays reset
-                    // (0), so the next MANUAL retry starts a clean window.
-                    let failure = result.failure
-                    try await queue.requarantine(
-                        id: item.id,
-                        accountUserID: item.accountUserID,
-                        previous: previous,
-                        classification: failure?.classification ?? .retryable,
-                        code: failure?.code,
-                        detail: failure?.detail ?? item.lastError ?? "Manual retry failed",
-                        now: Date()
-                    )
-                }
-            } catch {
+            },
+            acknowledge: { await self.refreshQueueCount(for: accountFetch) },
+            onFailure: { [weak self] error in
+                guard let self else { return }
                 if accountFetch.canApply(
-                    to: currentUserID,
-                    accountEpoch: accountEpoch
+                    to: self.currentUserID,
+                    accountEpoch: self.accountEpoch
                 ) {
-                    surface(error)
+                    self.surface(error)
                 }
             }
-        }
-        await refreshQueueCount(for: accountFetch)
+        )
     }
 
     /// #675: discard ONE quarantined entry. Quarantined-only (the Settings
@@ -9658,16 +10991,30 @@ public final class AppModel {
             accountEpoch: accountEpoch
         )
         do {
-            let item = await queue.item(id: id, accountUserID: userID)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            guard try await queue.discardQuarantined(
+            // #935: the queue side of a discard — read the entry, remove it
+            // quarantined-only under the revision this snapshot captured, and
+            // report what actually happened — is the recovery owner's. The
+            // aftermath stays here: it owns the optimistic placeholder, the
+            // Undo claim and the list/trash refreshes.
+            guard let discard = await mutationRecovery.discardQuarantined(
                 id: id,
-                accountUserID: userID,
-                expectedRevision: item?.revision
+                boundary: recoveryBoundary(accountFetch),
+                in: queue,
+                onFailure: { [weak self] error in
+                    guard let self else { return }
+                    if accountFetch.canApply(
+                        to: self.currentUserID,
+                        accountEpoch: self.accountEpoch
+                    ) {
+                        self.surface(error)
+                    }
+                }
             ) else {
+                await refreshQueueCount(for: accountFetch)
+                return
+            }
+            let item = discard.item
+            guard discard.discarded else {
                 await refreshQueueCount(for: accountFetch)
                 guard accountFetch.canApply(
                     to: currentUserID,
@@ -9861,10 +11208,15 @@ public final class AppModel {
     private func refreshQueueCount(for accountFetch: AccountScopedFetch? = nil) async {
         guard let userID = currentUserID else {
             pendingCacheWriteCount = 0
+            pendingTagWriteCount = 0
             queuedWriteCount = 0
             queuedWriteDiagnostics = []
             queueBreadcrumbs = []
             quarantinedWrites = nil
+            // #920: no signed-in account means nothing has been read — the
+            // status must stay "not loaded" rather than reading as Synced.
+            hasLoadedPendingWrites = false
+            lastRetryOutcome = nil
             return
         }
         let fetch = accountFetch ?? AccountScopedFetch(
@@ -9897,6 +11249,11 @@ public final class AppModel {
             queuedWriteDiagnostics = activeItems.map { $0.diagnostic() }
             queueBreadcrumbs = breadcrumbs
             quarantinedWrites = quarantined
+            // #920: this is the boundary where the app has actually read the
+            // account's durable answers. Without a queue handle the quarantine
+            // list is unknown (`nil`), so the status honestly stays "not
+            // loaded" instead of reporting an unread zero.
+            hasLoadedPendingWrites = quarantined != nil
         }
     }
 
@@ -10293,22 +11650,30 @@ public final class AppModel {
             accountUserID: userID,
             accountEpoch: accountEpoch
         )
+        // #934: the account boundary is an explicit value here — the identity
+        // captured before the first await, plus the live-identity test the
+        // coordinator re-runs after every await.
+        let boundary = WorkspaceAccountBoundary(fetch: accountFetch) { [weak self] in
+            guard let self else { return false }
+            return accountFetch.canApply(
+                to: self.currentUserID,
+                accountEpoch: self.accountEpoch
+            )
+        }
         do {
-            let remotePurgeGeneration: Int64?
-            do {
-                remotePurgeGeneration = try await repository.fetchPurgeSyncGeneration()
-                markPurgeGenerationAvailable(capturedBy: accountFetch)
-            } catch {
-                // Keep realtime convergence alive when this optional rollout
-                // endpoint is unavailable. The nil generation forces the
-                // foreground path below to reconcile both affected entities.
-                remotePurgeGeneration = nil
+            // #934: the optional rollout endpoint and its fallback rule are the
+            // coordinator's. Keep realtime convergence alive when it is
+            // unavailable: the nil generation forces the foreground path below
+            // to reconcile both affected entities.
+            let purgeResolution = await workspaceSync.resolvePurgeGeneration {
+                try await self.repository.fetchPurgeSyncGeneration()
             }
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            if cacheNeedsPurgeReconcile(
+            if purgeResolution.isAvailable {
+                markPurgeGenerationAvailable(capturedBy: accountFetch)
+            }
+            let remotePurgeGeneration: Int64? = purgeResolution.generation
+            guard boundary.canApply() else { return }
+            if await cacheNeedsPurgeReconcile(
                 accountUserID: userID,
                 remoteGeneration: remotePurgeGeneration
             ) {
@@ -10320,9 +11685,9 @@ public final class AppModel {
                 return
             }
             if slices.contains(.sessions) {
-                guard let snapshot = try await reconcileRealtimeSlice(
-                    accountUserID: userID,
-                    capturedBy: accountFetch,
+                guard let snapshot = try await workspaceSync.reconcileSlice(
+                    in: cachedWorkspace,
+                    boundary: boundary,
                     entityType: .sessions,
                     purgeGeneration: remotePurgeGeneration,
                     fetch: { cursor in
@@ -10331,7 +11696,8 @@ public final class AppModel {
                             accountUserID: userID
                         )
                     },
-                    fallback: { CachedWorkspaceSnapshot(sessions: $0.activeValues) }
+                    fullSnapshot: { CachedWorkspaceSnapshot(sessions: $0.activeValues) },
+                    onFailure: recordCacheFailure
                 ) else { return }
                 let publishedSessions = accountFetch.publishIfCurrent(
                     to: currentUserID,
@@ -10342,15 +11708,16 @@ public final class AppModel {
                 guard publishedSessions else { return }
             }
             if slices.contains(.recordings) {
-                guard let snapshot = try await reconcileRealtimeSlice(
-                    accountUserID: userID,
-                    capturedBy: accountFetch,
+                guard let snapshot = try await workspaceSync.reconcileSlice(
+                    in: cachedWorkspace,
+                    boundary: boundary,
                     entityType: .recordings,
                     purgeGeneration: remotePurgeGeneration,
                     fetch: { cursor in
                         try await self.repository.fetchRecordingDelta(since: cursor)
                     },
-                    fallback: { CachedWorkspaceSnapshot(recordings: $0.activeValues) }
+                    fullSnapshot: { CachedWorkspaceSnapshot(recordings: $0.activeValues) },
+                    onFailure: recordCacheFailure
                 ) else { return }
                 let publishedRecordings = accountFetch.publishIfCurrent(
                     to: currentUserID,
@@ -10363,14 +11730,15 @@ public final class AppModel {
                 warmTagCurvesIfMissing(capturedBy: accountFetch)
             }
             if slices.contains(.workouts) {
-                guard let snapshot = try await reconcileRealtimeSlice(
-                    accountUserID: userID,
-                    capturedBy: accountFetch,
+                guard let snapshot = try await workspaceSync.reconcileSlice(
+                    in: cachedWorkspace,
+                    boundary: boundary,
                     entityType: .workoutsAndAttempts,
                     fetch: { cursor in
                         try await self.repository.fetchWorkoutDelta(since: cursor)
                     },
-                    fallback: { CachedWorkspaceSnapshot(workouts: $0.activeValues) }
+                    fullSnapshot: { CachedWorkspaceSnapshot(workouts: $0.activeValues) },
+                    onFailure: recordCacheFailure
                 ) else { return }
                 let publishedWorkouts = accountFetch.publishIfCurrent(
                     to: currentUserID,
@@ -10381,14 +11749,15 @@ public final class AppModel {
                 guard publishedWorkouts else { return }
             }
             if slices.contains(.health) {
-                guard let snapshot = try await reconcileRealtimeSlice(
-                    accountUserID: userID,
-                    capturedBy: accountFetch,
+                guard let snapshot = try await workspaceSync.reconcileSlice(
+                    in: cachedWorkspace,
+                    boundary: boundary,
                     entityType: .healthMetrics,
                     fetch: { cursor in
                         try await self.repository.fetchHealthMetricDelta(since: cursor)
                     },
-                    fallback: { CachedWorkspaceSnapshot(healthMetrics: $0.activeValues) }
+                    fullSnapshot: { CachedWorkspaceSnapshot(healthMetrics: $0.activeValues) },
+                    onFailure: recordCacheFailure
                 ) else { return }
                 let publishedHealth = accountFetch.publishIfCurrent(
                     to: currentUserID,
@@ -10407,62 +11776,6 @@ public final class AppModel {
             // Deliberately keep the last list snapshot and swallow this
             // best-effort reconcile failure; it is not an auth event.
             _ = error
-        }
-    }
-
-    /// Fetches one realtime slice as a cursor-bounded delta, reconciles it into
-    /// the account cache, and returns the post-reconcile cache snapshot.
-    ///
-    /// The account/epoch guard is re-checked in the gap between the network
-    /// fetch and the cache write, so a realtime completion that outlives a
-    /// sign-out never mutates the wrong account's rows. A nil cursor triggers
-    /// the same full first-sync adopt/tombstone behavior as `refreshAll`.
-    private func reconcileRealtimeSlice<Value: Encodable & Sendable>(
-        accountUserID: UUID,
-        capturedBy accountFetch: AccountScopedFetch,
-        entityType: LocalCacheEntityType,
-        purgeGeneration: Int64? = nil,
-        fetch: @escaping (String?) async throws -> RemoteEntityDelta<Value>,
-        fallback: @escaping (RemoteEntityDelta<Value>) -> CachedWorkspaceSnapshot
-    ) async throws -> CachedWorkspaceSnapshot? {
-        let cursor = cacheCursor(
-            accountUserID: accountUserID,
-            entityType: entityType
-        )
-        let delta = try await fetch(cursor)
-        guard accountFetch.canApply(
-            to: currentUserID,
-            accountEpoch: accountEpoch
-        ) else { return nil }
-        reconcileEntityRefresh(
-            delta,
-            accountUserID: accountUserID,
-            entityType: entityType,
-            fullSnapshot: cursor == nil ? fallback(delta) : nil,
-            purgeGeneration: purgeGeneration
-        )
-        guard accountFetch.canApply(
-            to: currentUserID,
-            accountEpoch: accountEpoch
-        ) else { return nil }
-        guard let workspace = cachedWorkspace else {
-            return fallback(delta)
-        }
-        do {
-            return try workspace.load(accountUserID: accountUserID)
-        } catch {
-            recordCacheFailure("cache realtime publish", error)
-            // A cursor-bounded delta is not a complete snapshot. If the cache
-            // cannot be read, degrade to the same full network fallback a
-            // cache-open failure uses rather than publishing only the changed
-            // rows and dropping the rest of the in-memory list.
-            guard cursor != nil else { return fallback(delta) }
-            let fullDelta = try await fetch(nil)
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return nil }
-            return fallback(fullDelta)
         }
     }
 
@@ -10738,12 +12051,13 @@ public final class AppModel {
                         )
                     )
                 }
-            case .preset, .routine, .phaseTransition:
-                // #916/#917: a preset, routine or phase transition keeps its
-                // optimistic state in its own account-scoped cache row (which
-                // this restore pass reads separately), so there is no in-memory
-                // overlay to rebuild from the queue payload. The durable intent
-                // only drives the replay.
+            case .preset, .routine, .phaseTransition, .tagMutation, .healthWrite:
+                // #916/#917/#918/#919: a preset, routine, phase transition,
+                // tag mutation or health write keeps its optimistic state in
+                // its own account-scoped cache row (which this restore pass
+                // reads separately), so there is no in-memory overlay to
+                // rebuild from the queue payload. The durable intent only
+                // drives the replay.
                 continue
             }
         }
@@ -11090,6 +12404,14 @@ public final class AppModel {
         forceModel.tagCurves = []
     }
 
+    /// Clear every account-scoped surface.
+    ///
+    /// #936: the manual-workout lifecycle owner tears ITS workout down here —
+    /// with no account named (`nil`), because on every path that reaches this
+    /// method the model has already cleared its session, so there is no account
+    /// left to protect. The account boundaries that still know the outgoing
+    /// account tear their workout down themselves, before this reset, naming
+    /// it (see `handleAuthEvent`).
     private func resetAccountState() {
         accountEpoch &+= 1
         // Remove a different account's snapshot at the same synchronous
@@ -11119,6 +12441,17 @@ public final class AppModel {
         // should be able to report its own open/read/reconcile failure even if
         // the previous account already suppressed one.
         cacheOpenFailureReported = false
+        // #964: a new account starts without the previous account's load
+        // failure — the Dashboard failure state is account-scoped like the
+        // rest of the reset snapshot.
+        dashboardLoadFailureClass = nil
+        // #920/#923: the previous account's measured retry outcome, its retry
+        // progress and its partial-refresh failure never carry into the next
+        // account's screens (account-scoped like the rest of the snapshot).
+        lastRetryOutcome = nil
+        isRetryingQueuedWrites = false
+        queuedWritesRetryGate.reset()
+        lastPartialRefreshFailure = nil
         publishForceProgressInputMutation(.accountReset)
         refreshingOwner = nil
         isRefreshing = false
@@ -11170,8 +12503,11 @@ public final class AppModel {
         queuedWriteCount = 0
         queuedWriteDiagnostics = []
         pendingCacheWriteCount = 0
+        pendingTagWriteCount = 0
         queueBreadcrumbs = []
         quarantinedWrites = nil
+        // #920: the new account's pending-write state has not been read yet.
+        hasLoadedPendingWrites = false
         gaugeSessionTracker.reset()
         handsFreeSaveInFlight = false
         forceModel.guidedProtocolActive = false
@@ -11179,9 +12515,14 @@ public final class AppModel {
         guidedProtocolTeardownOwnerID = nil
         invalidateTagCurveCache()
         handsFree.handleDisconnected()
-        manualWorkoutRest.stop()
-        manualWorkoutActivity.end(immediate: true)
-        manualWorkoutActivity.discardPendingEvents()
+        // #936: the manual-workout lifecycle owner tears ITS workout down —
+        // the live card, the rest deadline and the workout's queued lock-screen
+        // actions. No account is named here (see the method's doc comment): the
+        // boundaries that still know the outgoing account tear down before this
+        // reset.
+        applyManualWorkoutLifecycle(
+            manualWorkoutLifecycle.accountChanged(previousAccountUserID: nil)
+        )
         keepAwakeRelease?()
         keepAwakeRelease = nil
         // The mirror must not survive an account change even without an

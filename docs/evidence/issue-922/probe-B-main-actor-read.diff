@@ -1,0 +1,29 @@
+diff --git a/native/SendmeterNative/Sources/App/AppModel.swift b/native/SendmeterNative/Sources/App/AppModel.swift
+index 8751efe..b874e67 100644
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -2734,13 +2734,19 @@ public final class AppModel {
+         guard let workspace = cachedWorkspace else { return nil }
+         let seams = cacheStorageSeams
+         do {
+-            return try await CacheOffload.run {
++            // PROBE B (pre-#922 shape): the full-workspace read runs on the
++            // caller's actor, so the storage side is felt as a main-thread
++            // block and the read itself happens on the main thread.
++            let probeWait = DispatchSemaphore(value: 0)
++            Task.detached {
+                 await seams.beforeSnapshotRead()
+-                return try CacheHydrator.coherentRead(
+-                    workspace: workspace,
+-                    accountUserID: accountUserID
+-                )
++                probeWait.signal()
+             }
++            probeWait.wait()
++            return try CacheHydrator.coherentRead(
++                workspace: workspace,
++                accountUserID: accountUserID
++            )
+         } catch {
+             recordCacheFailure("cache read", error)
+             return nil

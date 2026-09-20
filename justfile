@@ -33,6 +33,17 @@ slop-cold:
 check-static:
     bash scripts/validate-native-static.sh
 
+# --- docs surface (text-only, no compiler; CI: native-swift.yml) ---------
+
+# The stale-command check's historical allowlist is explicit — a (path, reason)
+# pair per file — and lives in scripts/check-docs-stale-commands.sh. Running it
+# from here or from CI never relaxes it: a new entry is a script change that
+# states its reason, not a suppression at the call site.
+
+# Stale-command check for the current contributor entrypoints (same as the "Docs stale-command check" job in native-swift.yml)
+docs-check:
+    bash scripts/check-docs-stale-commands.sh
+
 # Slop scan + all three Swift test suites (the fast lane after edits)
 fast: slop core watch-core health-core
 
@@ -62,7 +73,19 @@ build-watch:
       -scheme 'SendLogWatch Watch App' -configuration Debug \
       -destination 'generic/platform=watchOS Simulator' CODE_SIGNING_ALLOWED=NO build
 
+# --- Watch app-target tests (simulator-only; mirrors native-swift.yml) ----
+
+# Watch app-target tests (SendLogWatchTests, needs a watchOS simulator; CI: native-swift.yml)
+watch-app-tests:
+    cd native/SendmeterNative && UDID=$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries[] | select(.key | contains("watchOS")) | .value[]] | first | .udid') && xcrun simctl bootstatus "$UDID" -b && xcodebuild test -project SendmeterNative.xcodeproj -scheme 'SendLogWatch Watch App' -configuration Debug -destination "id=$UDID" -only-testing:SendLogWatchTests CODE_SIGNING_ALLOWED=NO
+
+# --- UI smoke suite (simulator-only; mirrors native-swift.yml) -----------
+
+# Bounded native UI smoke suite: menu activation + manual-workout End/refusal/minimize (CI: native-swift.yml)
+ui-tests:
+    cd native/SendmeterNative && UDID=$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[]] | first | .udid') && xcrun simctl bootstatus "$UDID" -b && xcodebuild test -project SendmeterNative.xcodeproj -scheme SendmeterNative -configuration Debug -destination "id=$UDID" -only-testing:SendmeterNativeUITests/MenuActivationUITests -only-testing:SendmeterNativeUITests/ManualWorkoutEndRefusalUITests CODE_SIGNING_ALLOWED=NO
+
 # --- full parity with native-swift.yml Core tests -----------------------
 
 # Everything CI gates on, in CI order (excludes simulator-only steps)
-ci: slop slop-cold core watch-core health-core gen check-watch-project build-ios build-watch
+ci: docs-check slop slop-cold core watch-core health-core gen check-watch-project build-ios build-watch

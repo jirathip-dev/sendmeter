@@ -1,12 +1,26 @@
 name: Native Swift
 
+# #932: `workflow_dispatch` lets a lane head be executed on THIS workflow's
+# job definitions without waiting for a PR (the gauntlet's hosted proof for an
+# exact head). It does not change what a pull_request or push run covers, and
+# the path filters below stay the only automatic triggers.
+#
+# #944: the doc surface below (CLAUDE.md/AGENTS.md, README.md, docs/**,
+# justfile and the other current entrypoints that
+# `scripts/check-docs-stale-commands.sh` scans) is in the path filters so the
+# stale-command check runs on a docs PR instead of only when someone
+# remembers. The `docs-check` job is the only job those paths need: it
+# classifies the change and the two heavy jobs below skip a docs-only diff, so
+# no PR pays for a native build it cannot affect.
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "native/SendmeterNative/**"
       - "ios/App/SendLogWatchCore/**"
       - "ios/App/SendLogWatch Watch App/**"
       - "ios/App/SendLogWatch Watch App-Info.plist"
+      - "ios/App/SendLogWatchTests/**"
       - "ios/App/SendLogWatchWidgets/**"
       - "ios/App/SendLogWatchWidgets-Info.plist"
       - "native-plugins/sendlog-health-core/**"
@@ -20,6 +34,27 @@ on:
       - "scripts/swift-coverage.sh"
       - "scripts/test-coverage-threshold.sh"
       - ".github/workflows/native-swift.yml"
+      # #944: the doc surface the stale-command check guards — the current
+      # contributor entrypoints, the dated root records, `justfile` (the
+      # recipe names the check resolves) and the check itself. Every lane PR
+      # also carries its `.report-<n>.md`, so a docs-only lane PR (report +
+      # docs/evidence) is on this surface too. Only the `docs-check` job is
+      # needed for these paths; its classifier keeps the heavy jobs off a
+      # docs-only diff.
+      - "CLAUDE.md"
+      - "AGENTS.md"
+      - "README.md"
+      - "DESIGN.md"
+      - "FINDINGS-663.md"
+      - "PERF-671.md"
+      - "RELEASE_NOTES.md"
+      - ".report-*.md"
+      - "docs/**"
+      - "justfile"
+      - ".agent/config.yaml"
+      - ".claude/launch.json"
+      - "ios/debug.xcconfig"
+      - "scripts/check-docs-stale-commands.sh"
   push:
     branches:
       - staging
@@ -30,6 +65,7 @@ on:
       - "ios/App/SendLogWatchCore/**"
       - "ios/App/SendLogWatch Watch App/**"
       - "ios/App/SendLogWatch Watch App-Info.plist"
+      - "ios/App/SendLogWatchTests/**"
       - "ios/App/SendLogWatchWidgets/**"
       - "ios/App/SendLogWatchWidgets-Info.plist"
       - "native-plugins/sendlog-health-core/**"
@@ -43,14 +79,101 @@ on:
       - "scripts/swift-coverage.sh"
       - "scripts/test-coverage-threshold.sh"
       - ".github/workflows/native-swift.yml"
+      # #944: the same doc surface as the pull_request trigger above (keep the
+      # two lists identical, and keep the classifier in the `docs-check` job in
+      # sync with the paths added here).
+      - "CLAUDE.md"
+      - "AGENTS.md"
+      - "README.md"
+      - "DESIGN.md"
+      - "FINDINGS-663.md"
+      - "PERF-671.md"
+      - "RELEASE_NOTES.md"
+      - ".report-*.md"
+      - "docs/**"
+      - "justfile"
+      - ".agent/config.yaml"
+      - ".claude/launch.json"
+      - "ios/debug.xcconfig"
+      - "scripts/check-docs-stale-commands.sh"
 
 concurrency:
   group: native-swift-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # #944: the doc surface added to the path filters above needs this job and
+  # nothing else. It is ALSO the classifier the two heavy jobs below depend on:
+  # a diff that lies entirely on the docs surface publishes `native=false` and
+  # they skip, so a docs-only PR never pays for a native build, while every
+  # other diff (a native path, a workflow change, anything unclassifiable) runs
+  # them exactly as before.
+  #
+  # The check is a pure text/tree scan — no compiler, no Xcode, no simulator,
+  # no network — which is why it runs on the cheap Linux runner. It is
+  # fail-closed by construction: a missing or unreadable scanned file, or a
+  # reference to a recipe/workflow/script/doc that does not exist, fails it.
+  # Its historical allowlist is explicit (one path + reason pair per file)
+  # inside scripts/check-docs-stale-commands.sh; relaxing it is a change to
+  # that script with a stated reason, never a suppression at this call site.
+  docs-check:
+    name: Docs stale-command check
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    outputs:
+      native: ${{ steps.classify.outputs.native }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The classifier diffs the PR base against the checked-out head, so
+          # both commits must be in the clone (the repository is small).
+          fetch-depth: 0
+      - name: Classify the change surface
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+
+          # Fail closed: every case this step cannot classify (a manual
+          # dispatch, a new branch's all-zero "before" sha, a base the clone
+          # cannot resolve) leaves native=true, i.e. the heavy jobs run exactly
+          # as they did before #944.
+          native=true
+          case "$EVENT_NAME" in
+            pull_request) base="${PR_BASE_SHA:-}" ;;
+            push) base="${PUSH_BEFORE_SHA:-}" ;;
+            *) base="" ;;
+          esac
+
+          if [[ -n "$base" && ! "$base" =~ ^0+$ ]]; then
+            if changed="$(git diff --name-only "$base" HEAD 2>/dev/null)"; then
+              # The docs surface is exactly the set of paths #944 added to the
+              # filters above (`.report-<n>.md` included: every lane PR carries
+              # one, and a docs-only lane PR must not pay for a native build).
+              # A path missing from this list classifies as native, so an
+              # omission costs a native run, never a skipped one.
+              docs_surface='^(CLAUDE\.md|AGENTS\.md|README\.md|DESIGN\.md|FINDINGS-663\.md|PERF-671\.md|RELEASE_NOTES\.md|\.report-[0-9]+\.md|docs/|justfile|\.agent/config\.yaml|\.claude/launch\.json|ios/debug\.xcconfig|scripts/check-docs-stale-commands\.sh)'
+              if [[ -n "$changed" ]] && ! grep -Evq "$docs_surface" <<<"$changed"; then
+                native=false
+              fi
+            fi
+          fi
+
+          echo "docs-check: event=${EVENT_NAME} base=${base:-none} native=$native"
+          echo "native=$native" >> "$GITHUB_OUTPUT"
+      - name: Check the current entrypoints for retired commands
+        run: bash scripts/check-docs-stale-commands.sh
+
   core-tests:
     name: Core tests
+    # Runs for every diff that is not docs-only; `!cancelled()` (rather than
+    # `always()`) so a failed docs check cannot hide a native regression while
+    # a cancelled run still cancels.
+    needs: [docs-check]
+    if: ${{ !cancelled() && needs.docs-check.outputs.native != 'false' }}
     runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 20
     steps:
@@ -106,6 +229,9 @@ jobs:
 
   ios-build:
     name: iOS Simulator build
+    # Same docs-only skip as `core-tests` above.
+    needs: [docs-check]
+    if: ${{ !cancelled() && needs.docs-check.outputs.native != 'false' }}
     runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 40
     steps:
@@ -186,4 +312,96 @@ jobs:
             -configuration Debug \
             -destination "id=${{ steps.ios-sim.outputs.udid }}" \
             -only-testing:SendmeterNativeTests \
+            CODE_SIGNING_ALLOWED=NO
+
+      # #932: the UI-test target is the only layer that presses real controls
+      # and reads real pixels; the app-target suite above compiles against the
+      # app module but cannot drive a control. Bounded to the two named smoke
+      # journeys — #870/#816's menu activation probe and #926's manual-workout
+      # End/refusal/minimize recovery — so this stays a bounded smoke suite;
+      # the banner class (#927) is deliberately not selected here.
+      #
+      # No retry and no `|| true`: a failure is the suite's verdict, and the
+      # xcresult (with every test's screenshot attachment) is uploaded below.
+      - name: Build and test native UI smoke suite
+        working-directory: native/SendmeterNative
+        timeout-minutes: 25
+        run: |
+          xcodebuild test \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -configuration Debug \
+            -destination "id=${{ steps.ios-sim.outputs.udid }}" \
+            -only-testing:SendmeterNativeUITests/MenuActivationUITests \
+            -only-testing:SendmeterNativeUITests/ManualWorkoutEndRefusalUITests \
+            -resultBundlePath "$RUNNER_TEMP/native-ui-smoke.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+
+      # A `-only-testing` selector that matches nothing makes xcodebuild exit 0
+      # having executed ZERO tests, so the executed count is asserted, not
+      # assumed: the selection above is exactly the four named smoke cases.
+      - name: Assert the UI smoke suite executed its expected tests
+        env:
+          EXPECTED_UI_SMOKE_TESTS: "4"
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/native-ui-smoke.xcresult"
+          summary="$RUNNER_TEMP/native-ui-smoke-summary.json"
+          xcrun xcresulttool get test-results summary --path "$bundle" --compact > "$summary"
+          jq . "$summary"
+          executed=$(jq -r '.totalTestCount' "$summary")
+          echo "UI smoke suite executed $executed tests (expected $EXPECTED_UI_SMOKE_TESTS)"
+          xcrun xcresulttool get test-results tests --path "$bundle" \
+            | jq -r '[.. | objects | select(.nodeType? == "Test Case") | .name] | unique | sort | .[]'
+          if [[ "$executed" != "$EXPECTED_UI_SMOKE_TESTS" ]]; then
+            echo "::error::executed $executed tests; expected $EXPECTED_UI_SMOKE_TESTS — a selector that matches nothing runs zero tests and exits 0"
+            exit 1
+          fi
+
+      - name: Upload UI smoke xcresult
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-ui-smoke-xcresult
+          path: |
+            ${{ runner.temp }}/native-ui-smoke.xcresult
+            ${{ runner.temp }}/native-ui-smoke-summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      # #946: `ios/App/SendLogWatchTests/` existed with no target and no step
+      # after #857 deleted the committed Capacitor project, so nothing compiled
+      # or ran it. The generated project owns the target again; this is the
+      # step that EXECUTES it. Selected by query rather than a hardcoded device
+      # name (a runner-image Xcode bump otherwise silently breaks the step) and
+      # booted explicitly so a boot failure is its own loud step instead of a
+      # confusing test-time timeout — the same shape this suite had in the
+      # pre-#857 ios-ci job, which ran it on a booted watchOS simulator.
+      #
+      # Unsigned is deliberate and sufficient: the suite drives seams that stop
+      # short of HealthKit. What this still does NOT cover: HealthKit runtime,
+      # background delivery, real sensors — device-only.
+      - name: Boot a watchOS simulator
+        id: watch-sim
+        run: |
+          UDID=$(xcrun simctl list devices available --json \
+            | jq -r '[.devices | to_entries[] | select(.key | contains("watchOS")) | .value[]] | first | .udid')
+          if [ -z "$UDID" ] || [ "$UDID" = "null" ]; then
+            echo "No available watchOS simulator on this runner" >&2
+            xcrun simctl list devices >&2
+            exit 1
+          fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true # already-booted is fine
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Build and test watch app target
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild test \
+            -project SendmeterNative.xcodeproj \
+            -scheme 'SendLogWatch Watch App' \
+            -configuration Debug \
+            -destination "id=${{ steps.watch-sim.outputs.udid }}" \
+            -only-testing:SendLogWatchTests \
             CODE_SIGNING_ALLOWED=NO

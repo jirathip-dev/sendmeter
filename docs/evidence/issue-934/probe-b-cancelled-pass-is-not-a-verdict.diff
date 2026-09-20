@@ -1,0 +1,12 @@
+# rule: a cancelled pass reports no failure for any slice
+--- green/native/SendmeterNative/Sources/Core/WorkspaceSyncCoordinator.swift
++++ mutated/native/SendmeterNative/Sources/Core/WorkspaceSyncCoordinator.swift
+@@ -269,7 +269,7 @@
+                 outcomes.record(slice: slice, failed: false)
+                 continue
+             }
+-            if isCancelled || error is CancellationError {
++            if error is CancellationError {
+                 outcomes.markCancelled()
+                 continue
+             }

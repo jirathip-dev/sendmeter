@@ -383,6 +383,99 @@ final class DirectWriteReplayAppTests: XCTestCase {
         XCTAssertEqual(owner.presets.count, 1)
     }
 
+    // MARK: - #935: durable mutation recovery ownership
+
+    /// #935 AC3: the queue file a PREVIOUS build persisted is still the file the
+    /// app reads. The bytes this build wrote are captured, put back as the file
+    /// the next launch finds, and drained by the new owner with the SAME
+    /// identity — once.
+    @MainActor
+    func testPersistedQueueFileCarriedAcrossRelaunchStillDrainsThroughTheOwner() async throws {
+        let server = FakeDirectWritePostgREST()
+        let model = try await makeSignedInModel(server: server)
+        await model.refreshAll(showSpinner: false)
+        let preset = Self.preset(name: "Carried Over Hang")
+
+        server.goOffline()
+        let accepted = await model.savePreset(preset, isNew: true)
+        XCTAssertTrue(accepted)
+        try await waitForQueueCount(model, expected: 1)
+        try await waitForRecordedAttempt(model)
+
+        // The persisted fixture: the exact bytes this build left on disk.
+        let fixture = try Self.queueFileContents()
+        XCTAssertTrue(fixture.contains(preset.id.uuidString))
+        let queueURL = Self.supportDirectory()
+            .appendingPathComponent("pending-writes.json", isDirectory: false)
+        try FileManager.default.removeItem(at: queueURL)
+        try Data(fixture.utf8).write(to: queueURL)
+
+        // Relaunch: a fresh model over the SAME persisted file.
+        let relaunched = try await makeSignedInModel(server: server)
+        await relaunched.refreshAll(showSpinner: false)
+        try await waitForQueueCount(relaunched, expected: 1)
+        XCTAssertTrue(
+            try Self.queueFileContents().contains(preset.id.uuidString),
+            "the persisted identity survives the relaunch"
+        )
+
+        server.goOnline()
+        // The offline attempt recorded the queue's OWN backoff, so the
+        // automatic drain is not due until that window elapses; the explicit
+        // retry pass is the production entry point that bypasses it. (The
+        // automatic drain over a persisted file is proven by
+        // `testLegacyPendingPresetCacheRowIsAdoptedWithProvableIntent`, which
+        // routes through the same recovery owner.)
+        await relaunched.retryAllQueuedWrites()
+        try await waitForQueueCount(relaunched, expected: 0)
+
+        XCTAssertEqual(
+            server.presetInsertCount,
+            1,
+            "one persisted intent, exactly one insert through the recovery owner"
+        )
+        XCTAssertEqual(server.activePresets.count, 1)
+        XCTAssertEqual(relaunched.presets.count, 1)
+        XCTAssertEqual(relaunched.pendingCacheWriteCount, 0)
+    }
+
+    /// #935 AC4 (concurrent passes): the explicit retry pass is single-flight
+    /// through the owner's gate. A second tap while the first pass is in flight
+    /// coalesces onto it, so the same durable identity is adopted exactly once.
+    @MainActor
+    func testConcurrentRetryPassesAdoptThePersistedIdentityExactlyOnce() async throws {
+        let server = FakeDirectWritePostgREST()
+        let model = try await makeSignedInModel(server: server)
+        await model.refreshAll(showSpinner: false)
+        let preset = Self.preset(name: "Coalesced Retry")
+
+        server.goOffline()
+        let accepted = await model.savePreset(preset, isNew: true)
+        XCTAssertTrue(accepted)
+        try await waitForQueueCount(model, expected: 1)
+        try await waitForRecordedAttempt(model)
+
+        server.goOnline()
+        server.holdNextRequest()
+        let first = Task { await model.retryAllQueuedWrites() }
+        try await waitForHeldRequest(server)
+        XCTAssertTrue(model.isRetryingQueuedWrites, "the first pass owns the account")
+        // The second tap coalesces onto the running pass instead of racing it.
+        await model.retryAllQueuedWrites()
+        server.releaseHeldRequest()
+        await first.value
+        try await waitForQueueCount(model, expected: 0)
+
+        XCTAssertEqual(
+            server.presetInsertCount,
+            1,
+            "a coalesced retry cannot adopt the same identity twice"
+        )
+        XCTAssertEqual(server.activePresets.count, 1)
+        XCTAssertEqual(model.presets.count, 1)
+        XCTAssertFalse(model.isRetryingQueuedWrites, "the owning pass released its flag")
+    }
+
     // MARK: - Model harness (mirrors TindeqSessionMergeAppTests seams)
 
     @MainActor

@@ -1,0 +1,34 @@
+--- a/native/SendmeterNative/Tests/SendmeterCoreTests/GuidedForceFullscreenPresentationTests.swift
++++ b/native/SendmeterNative/Tests/SendmeterCoreTests/GuidedForceFullscreenPresentationTests.swift
+@@ -549,20 +549,29 @@
+ @MainActor
+ final class GuidedForceTerminalSettlementTests: XCTestCase {
+     private final class Gate {
++        private let lock = NSLock()
+         private var isOpen = false
+         private var waiters: [CheckedContinuation<Void, Never>] = []
+ 
+         func wait() async {
+-            guard !isOpen else { return }
+             await withCheckedContinuation { continuation in
+-                waiters.append(continuation)
++                lock.lock()
++                if isOpen {
++                    lock.unlock()
++                    continuation.resume()
++                } else {
++                    waiters.append(continuation)
++                    lock.unlock()
++                }
+             }
+         }
+ 
+         func open() {
++            lock.lock()
+             isOpen = true
+             let pending = waiters
+             waiters.removeAll()
++            lock.unlock()
+             for waiter in pending { waiter.resume() }
+         }
+     }

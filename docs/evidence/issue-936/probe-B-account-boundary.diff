@@ -1,0 +1,11 @@
+--- /Users/jirathip/.herdr/worktrees/sendmeter/impl-936/native/SendmeterNative/Sources/Core/ManualWorkoutLifecycleCoordinator.swift	2026-09-20 17:12:56
++++ /tmp/impl936-redgreen/native/SendmeterNative/Sources/Core/ManualWorkoutLifecycleCoordinator.swift	2026-09-20 17:28:43
+@@ -271,7 +271,7 @@
+     ) -> ManualWorkoutLifecycleOutcome {
+         guard workout != nil || inFlightSave != nil else { return .ignored }
+         if let previousAccountUserID {
+-            let owner = workout?.draft.accountUserID ?? inFlightSave?.accountUserID
++            let owner = previousAccountUserID
+             guard owner == previousAccountUserID else { return .ignored }
+         }
+         workout = nil
