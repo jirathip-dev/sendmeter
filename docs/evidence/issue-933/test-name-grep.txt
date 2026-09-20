@@ -1,0 +1,8 @@
+   1 Test Case '-[SendmeterNativeTests.AccountSwitchInFlightAppTests testACancelledInFlightPassPublishesNothing]' passed
+   1 Test Case '-[SendmeterNativeTests.AccountSwitchInFlightAppTests testAStaleCacheHydrationNeverPublishesTheOldAccountsRowsIntoTheNewAccount]' passed
+   1 Test Case '-[SendmeterNativeTests.AccountSwitchInFlightAppTests testAnAOwnedMutationCompletionNeverEntersTheNewAccountsContext]' passed
+   1 Test Case '-[SendmeterNativeTests.AccountSwitchInFlightAppTests testAnOverlappingNewerRequestKeepsTheSpinnerItOwns]' passed
+   1 Test Case '-[SendmeterNativeTests.AccountSwitchInFlightAppTests testLateAuthRejectionAfterAnAccountSwitchNeverSignsTheNewAccountOut]' passed
+   1 Test Case '-[SendmeterNativeTests.AccountSwitchInFlightAppTests testLateFailureFromThePreviousEpochNeverSurfacesInTheReturningAccount]' passed
+   1 Test Case '-[SendmeterNativeTests.AccountSwitchInFlightAppTests testLateSuccessAfterAnAccountSwitchNeverPublishesTheOldAccountsData]' passed
+   1 Test Case '-[SendmeterNativeTests.AccountSwitchInFlightAppTests testLateSuccessFromThePreviousEpochNeverPublishesIntoTheReturningAccount]' passed
