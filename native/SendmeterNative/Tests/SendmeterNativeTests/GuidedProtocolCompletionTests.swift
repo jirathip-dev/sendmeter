@@ -19,8 +19,40 @@ import Supabase
 /// These live in the app-target bundle because `GuidedForceProtocolSession`
 /// and `AppModel` are app-target-only types; the harness mirrors
 /// `GuidedForceSideBehaviorTests` (stubbed Supabase transport, in-memory
-/// storage, no sleeps).
+/// storage), with every wait bounded by a WALL-CLOCK deadline (#978).
 final class GuidedProtocolCompletionTests: XCTestCase {
+    /// #978: every wait in this file is bounded by a wall-clock deadline, never
+    /// by a fixed iteration budget. The old shapes expired on a contended
+    /// runner — `makeSignedInModel` gave up after 200 `Task.yield()`s, and the
+    /// published-collection assertions had no wait at all — and the required
+    /// hosted job failed on merged staging content for every PR (`:88`/`:98`,
+    /// `XCTAssertEqual failed: ("1") is not equal to ("2")`). The deadline
+    /// decides only how long a wait may take; what is asserted never changes.
+    /// On expiry the state actually observed and the elapsed time are
+    /// reported, so a real #941 regression stays distinguishable from slowness.
+    private static let waitDeadline: Duration = .seconds(60)
+
+    /// Polls `isSatisfied` until it holds or `timeout` elapses, then fails the
+    /// test with the elapsed time and the state `observed`.
+    @MainActor
+    private func waitUntil(
+        _ expectation: String,
+        timeout: Duration = GuidedProtocolCompletionTests.waitDeadline,
+        isSatisfied: @MainActor () -> Bool,
+        observed: @MainActor () -> String
+    ) async throws {
+        let started = ContinuousClock.now
+        while ContinuousClock.now - started < timeout {
+            if isSatisfied() { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        guard isSatisfied() else {
+            let elapsed = ContinuousClock.now - started
+            XCTFail("timed out after \(elapsed) waiting for \(expectation); observed \(observed())")
+            return
+        }
+    }
+
     // MARK: - #941 AC4: protocol completion must not end the gauge session
 
     @MainActor
@@ -84,6 +116,10 @@ final class GuidedProtocolCompletionTests: XCTestCase {
             0,
             "#941 AC1: no protocol finish may log a History entry on its own"
         )
+        // #978: the group's rows are published by the model's own publication
+        // path and re-published after a hydration of the on-disk cache, so wait
+        // (deadline-bound) for both before asserting the grouping.
+        try await waitForGroupRecordings(model, groupID: groupID, count: 2)
         let groupRecordings = model.recordings.filter { $0.groupID == groupID }
         XCTAssertEqual(groupRecordings.count, 2, "both protocols' recordings are in the one group")
 
@@ -95,6 +131,10 @@ final class GuidedProtocolCompletionTests: XCTestCase {
         XCTAssertEqual(entries.count, 1, "#941 AC1: one gauge session ⇒ exactly one Tindeq entry")
         let entry = try XCTUnwrap(entries.first)
         XCTAssertEqual(entry.groupID, groupID)
+        // #978: the same published collection, re-read after the end; the rows
+        // must still be there, so wait for them rather than racing a
+        // concurrent hydration.
+        try await waitForGroupRecordings(model, groupID: groupID, count: 2)
         XCTAssertEqual(
             model.recordings.filter { $0.groupID == groupID }.count,
             2,
@@ -202,6 +242,75 @@ final class GuidedProtocolCompletionTests: XCTestCase {
     @MainActor
     private func tindeqEntryCount(_ model: AppModel) -> Int {
         model.sessions.filter { $0.type == "tindeq" }.count
+    }
+
+    /// #978: deadline-bound wait for the published recordings to hold `count`
+    /// rows of `groupID`. The save publishes an optimistic row on the model's
+    /// own publication path and a hydration of the on-disk cache replaces
+    /// `recordings` before re-adding the rows the cache overlaid, so a durable
+    /// row can be briefly absent from the published list. The deadline decides
+    /// only how long that may take — a row that never arrives still fails.
+    @MainActor
+    private func waitForGroupRecordings(
+        _ model: AppModel,
+        groupID: UUID?,
+        count: Int
+    ) async throws {
+        try await waitUntil(
+            "the published recordings to hold \(count) row(s) for the live group",
+            isSatisfied: { model.recordings.filter { $0.groupID == groupID }.count == count },
+            observed: { Self.recordingGroupState(model, groupID: groupID) }
+        )
+    }
+
+    /// The state a wait for the group's rows expired on: every published
+    /// recording with its group, the group the tracker is live on, the session
+    /// list, and the durable queue file behind all three. Together these
+    /// separate a row that was never persisted from one that is persisted but
+    /// not published, and a row published under the wrong group from a missing
+    /// one.
+    @MainActor
+    private static func recordingGroupState(_ model: AppModel, groupID: UUID?) -> String {
+        let rows = model.recordings
+            .map { "\(shortID($0.id))@\(shortID($0.groupID))/\($0.tag)" }
+            .joined(separator: ", ")
+        let groupRows = model.recordings.filter { $0.groupID == groupID }.count
+        let tindeqEntries = model.sessions.filter { $0.type == "tindeq" }.count
+        let fields = [
+            "liveGroup=\(shortID(model.gaugeSessionTracker.active?.groupID))",
+            "expected=\(shortID(groupID))",
+            "groupRows=\(groupRows)",
+            "recordings=[\(rows)]",
+            "sessions=\(model.sessions.count)",
+            "tindeqEntries=\(tindeqEntries)",
+            "queuedWrites=\(model.queuedWriteCount)",
+            durableQueueState()
+        ]
+        return fields.joined(separator: ", ")
+    }
+
+    private static func shortID(_ id: UUID?) -> String {
+        id.map { String($0.uuidString.prefix(8)) } ?? "nil"
+    }
+
+    /// The durable queue file as a relaunch would read it: the queue is the
+    /// only local copy that survives the process, so an item missing here was
+    /// never persisted while an item present here and absent from `recordings`
+    /// is a publication gap, not a lost write.
+    private static func durableQueueState() -> String {
+        let url = supportDirectory().appendingPathComponent("pending-writes.json", isDirectory: false)
+        guard let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = root["items"] as? [[String: Any]]
+        else { return "pending-writes.json absent/unreadable" }
+        return "pending-writes.json \(data.count) bytes, \(items.count) item(s)"
+    }
+
+    /// The app container paths `AppModel` uses for the durable queue and cache.
+    private static func supportDirectory() -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first!
+            .appendingPathComponent("SendmeterNative", isDirectory: true)
     }
 
     @MainActor
@@ -339,7 +448,7 @@ final class GuidedProtocolCompletionTests: XCTestCase {
     /// Builds a signed-in AppModel with an in-memory seeded session so the
     /// real gauge-session save/end guards (`currentUserID`, account scope)
     /// pass. The auth observation task delivers `.initialSession` from local
-    /// storage; wait deterministically (yield loop, no sleeps).
+    /// storage; the wait for it is deadline-bound (#978) below.
     @MainActor
     private func makeSignedInModel() async throws -> AppModel {
         let suite = "GuidedProtocolCompletionTests.signed-in.\(UUID().uuidString)"
@@ -367,13 +476,30 @@ final class GuidedProtocolCompletionTests: XCTestCase {
             weather: WeatherService(defaults: defaults, session: makeURLSession())
         )
 
-        var waited = 0
-        while model.currentUserID == nil, waited < 200 {
-            waited += 1
-            await Task.yield()
-        }
+        // The auth observation task delivers `.initialSession` from local
+        // storage. #978: wait against a WALL-CLOCK deadline — the old shape
+        // (`waited < 200` × `Task.yield()`) spent a fixed iteration budget and
+        // gave up on a contended runner without ever observing the state it
+        // timed out on. The assertion below is unchanged.
+        try await waitUntil(
+            "the seeded auth session to become currentUserID",
+            isSatisfied: { model.currentUserID != nil },
+            observed: { Self.authState(model) }
+        )
         XCTAssertNotNil(model.currentUserID, "seeded auth session never became currentUserID")
         return model
+    }
+
+    /// The state an expiry of the `currentUserID` wait observed: what the model
+    /// has published about its account and its first load.
+    @MainActor
+    private static func authState(_ model: AppModel) -> String {
+        let fields = [
+            "currentUserID=\(model.currentUserID?.uuidString ?? "nil")",
+            "accountScope=\(String(describing: model.accountScope))",
+            "hasLoadedSessions=\(model.hasLoadedSessions)"
+        ]
+        return fields.joined(separator: ", ")
     }
 
     private static func makeSession(

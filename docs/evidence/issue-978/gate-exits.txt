@@ -1,0 +1,5 @@
+gate-just-fast=0
+gate-slop=0
+gate-check-watch-project=0
+gate-just-gen=0
+gate-check-static(base tree, PRE-EXISTING)=1 — validate-native-static.sh still requires ManualForceFullscreen.swift, deleted in fe860c6 (#899/#906); fails at c273627f0 (base), at 4a5cc78 (current staging tip), NOT caused by this lane; script is local-only (not wired into .github/workflows), last touched 6ec42b3 (#787)

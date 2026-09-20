@@ -1,0 +1,5 @@
+# container state captured after base-1-guided (FAILED at :88/:98) — NOTE: this container was RECREATED by later runs (uninstall/reinstall cycles); the original base-1 container content is preserved verbatim in the transcript of this lane and in root-cause-notes.md. This capture (empty post-uninstall state from haptics runs) shows the clean-container baseline the repetition loops used.
+
+## cache rows (harness-created, latest)
+
+## queue items
