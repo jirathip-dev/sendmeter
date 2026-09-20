@@ -1,0 +1,34 @@
+# sha256 — docs/evidence/issue-936/* (committed evidence)
+609a51a400686cf537e46e84021635ddf34c3ce02209e78d8b4c17037f2c9a4b  docs/evidence/issue-936/anti-slop-linter.log.gz
+517a856079e7e852e6c13d32447dc8e53c4786498d2281fd97cee944156fa50b  docs/evidence/issue-936/app-target-cishape-attempt1.log.gz
+2888fd0a4d36afe1e97371700169a097770030685534fc93320761e94f251bd1  docs/evidence/issue-936/app-target-cishape-attempt2.log.gz
+03eb70ad35f15049ec26bcc940d5754ecf6302475fc9f897190ef680b592dc8e  docs/evidence/issue-936/app-target-focused-lifecycle.log.gz
+494506981eb770cb1173457a8b604b5c8a754d7aaf19d97251a860bd961b13c7  docs/evidence/issue-936/changed-files.txt
+74e797487e9aa2204852f58600e6a8e28c11b095dc0c371d16a8fcd5fe00c147  docs/evidence/issue-936/check-static.log.gz
+932e6635aaa2be9596857d2cbd0841f78d3b25b147eaad6ab04b35305c2f8897  docs/evidence/issue-936/circle-affordances-unchanged.diff
+0e2aa6a08d70316c5679c5d31d6a51ce2e67a2a245554f5154e1d166b33d0fe8  docs/evidence/issue-936/core-focused-lifecycle-attempt3.log.gz
+228ad7e3aa06127995c16947289123c13e59035a98db8fe0f44dbf2de25906e3  docs/evidence/issue-936/core-focused-lifecycle-compile-attempt1.log.gz
+05a62699c8758cabdea2bd61fb6a7526213ba7499e2a19cf91e204fc04ceb31c  docs/evidence/issue-936/core-focused-lifecycle-compile-attempt2.log.gz
+aec80eb7269e672ff1b31100654a328784fc6fc205728427af45bd39e242e066  docs/evidence/issue-936/core-focused-wiring-and-lifecycle.log.gz
+4269f23c2a0c3f4b8e244916fb97b6e3b3eeb04da3f7a4ab898e3f216f06c142  docs/evidence/issue-936/just-fast-attempt1.log.gz
+1923681f27273948538c37710ac422ac7dc3fcf96112befb6760b88c78c1c03a  docs/evidence/issue-936/just-fast-attempt2.log.gz
+2bccd7ea5d7c446c38494b7b51ac55f9b22895a43b615c4a65202546b1fd2722  docs/evidence/issue-936/just-list.txt
+c750ea0338ef91985c6714f047326656fca028a4c349a157c86b980659df0467  docs/evidence/issue-936/probe-0-green-control.log.gz
+257209b5baffae60bfbc923a714c1e4fced08244571718dc54a95f4102e3fddb  docs/evidence/issue-936/probe-A-view-recreation.diff
+f3dc450fdd20b7f9c937dd8872ec5126bd15b363b8713476f9749c84d84e1b88  docs/evidence/issue-936/probe-A-view-recreation.log.gz
+0cc3e680ede9e38edcdf2eb643bd89d66a8dac1b81975a3910e34f8095de2cf1  docs/evidence/issue-936/probe-B-account-boundary.diff
+0cea2e3db7115aae3947a1c43ce743015d9df12712f2dc6786f83ee16d3e3742  docs/evidence/issue-936/probe-B-account-boundary.log.gz
+34c19b7db3500c0e0bf655145136bcd4a3e0c8fae59c85a6afc508f7b396c16b  docs/evidence/issue-936/probe-transcript.log.gz
+4a35b1ff592ffb775f94a43be7805792427704652a9e4db020207649c3db653f  docs/evidence/issue-936/static-and-lint-notes.txt
+bb71c89024eaffd4bc874bbbffd847f7e223f22bb0e898b9bd0644e1ca10c882  docs/evidence/issue-936/test-name-grep.txt
+c4300278f6bb04fbb4fd634e1ddd1126de5e1711a9356389115d5d6f2a4f6793  docs/evidence/issue-936/ui-manual-workout-smoke.log.gz
+
+# sha256 — the files this lane changed (the Core coordinator's blob is
+# the probe restore target: 50fff74e…)
+50fff74e93506a5e02a855030bc83bf563081d948e100745319f22726e8f5bce  native/SendmeterNative/Sources/Core/ManualWorkoutLifecycleCoordinator.swift
+7288b35246393d15d8a94ca75539c55d18a3bbc00b738c628e54ec780d11a34e  native/SendmeterNative/Sources/Core/ManualWorkoutActivityContent.swift
+9abe280a9456262b44d6cbb1fc18c79612f167038527e2b624c502d7899a58c2  native/SendmeterNative/Sources/App/AppModel.swift
+e7270a91866954f0cf9772d9aa3cab7b71f259d5a7f054e823ea8e4b260d5594  native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift
+994abc7c5a8094ae5b9a7d0dea266f816235fb20ae4c436e7eaa0c99de59f15a  native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift
+61c4cd60289d9579f35f605d5535121e311b333ca9a657921620a1723af06bbb  native/SendmeterNative/Tests/SendmeterCoreTests/ManualWorkoutLifecycleCoordinatorTests.swift
+ec888a517bd4a9ff3c616019df6499cbe4fcb05d4fa6dc2698d1a1e3aaf84ea7  native/SendmeterNative/Tests/SendmeterNativeTests/ManualWorkoutLifecycleAppTests.swift

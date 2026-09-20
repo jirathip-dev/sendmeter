@@ -528,6 +528,16 @@ public final class AppModel {
     public let manualWorkoutRest: ManualWorkoutRestScheduler
     /// #763: lock-screen Live Activity mirror of the Manual workout.
     public let manualWorkoutActivity: ManualWorkoutActivityManager
+    /// #936: the ONE owner of the manual-workout lifecycle — start, minimize,
+    /// resume, the attempt transitions, End and the save it triggers, the
+    /// rest/live-card effects that follow it, and the account boundary that
+    /// tears it down. It HOLDS the in-progress workout, which is what makes a
+    /// recreated `WorkoutView` safe: the view reads the running workout from
+    /// here instead of owning it, so recreation can neither recreate it nor
+    /// silently terminate it. The owner performs no I/O — every effect it
+    /// decides is applied by `applyManualWorkoutLifecycle(_:)`, and the finish's
+    /// save still goes through `saveWorkout` → the #935 recovery owner.
+    public private(set) var manualWorkoutLifecycle = ManualWorkoutLifecycleCoordinator()
     /// #672: the Force tab's hot, feature-scoped observable state. Kept as a
     /// dedicated object (not an observed property on `AppModel`) so a force-stream
     /// publish no longer invalidates History/Dashboard/Settings bodies.
@@ -1913,6 +1923,11 @@ public final class AppModel {
                 break
             }
             let changedUser = authSession?.user.id != session.user.id
+            // #936: captured BEFORE the incoming session replaces it. The
+            // account boundary below names the account that owned any
+            // in-progress manual workout, so the teardown can never take out a
+            // workout that already belongs to the incoming account.
+            let outgoingUserID = authSession?.user.id
             async let splashFloor: Void = awaitSplashPresentationFloor()
             if changedUser {
                 await teardownGuidedProtocolBeforeAuthRevocation()
@@ -1920,6 +1935,15 @@ public final class AppModel {
             authSession = session
             watch.relaySession(session)
             if changedUser || didBootstrapUserID != session.user.id {
+                // #936: the outgoing account's manual workout is torn down
+                // under the account that owned it, while the boundary still
+                // names it — a stale boundary can never take out a workout that
+                // already belongs to the incoming account.
+                applyManualWorkoutLifecycle(
+                    manualWorkoutLifecycle.accountChanged(
+                        previousAccountUserID: outgoingUserID
+                    )
+                )
                 resetAccountState()
                 restoreHealthSyncState(for: session.user.id)
                 // Claim the same refresh owner that the bootstrap refresh will
@@ -2005,6 +2029,14 @@ public final class AppModel {
                 // down the old realtime channel before any recovery UI work.
                 watch.relaySession(preparedSession)
                 didBootstrapUserID = nil
+                // #936: the recovery callback is an account boundary too — name
+                // the outgoing account so its manual workout is torn down under
+                // the account that owned it.
+                applyManualWorkoutLifecycle(
+                    manualWorkoutLifecycle.accountChanged(
+                        previousAccountUserID: accountChanged ? currentRecoveryUserID : nil
+                    )
+                )
                 resetAccountState()
                 if let preparedSession {
                     restoreHealthSyncState(for: preparedSession.user.id)
@@ -3976,6 +4008,130 @@ public final class AppModel {
             )
         )
     }
+
+    // MARK: Manual workout lifecycle (#936)
+
+    /// Apply one lifecycle outcome: the rest/live-card effects in the order the
+    /// owner decided them, then the durable save it handed over.
+    ///
+    /// The save is the app's ONE workout path (`saveWorkout` → the durable
+    /// queue → the #935 recovery owner); the owner never writes a second
+    /// persistence format. Its completion is reported back with the ticket, so
+    /// only the finish that is actually in flight can release the save latch.
+    @discardableResult
+    private func applyManualWorkoutLifecycle(
+        _ outcome: ManualWorkoutLifecycleOutcome
+    ) -> ManualWorkoutLifecycleOutcome {
+        for effect in outcome.effects {
+            switch effect {
+            case let .syncActivity(workout, restTarget):
+                manualWorkoutActivity.sync(engine: workout, restTarget: restTarget)
+            case let .syncRest(workout, restTarget):
+                manualWorkoutRest.update(engine: workout, restTarget: restTarget)
+            case .discardActivityEvents:
+                manualWorkoutActivity.discardPendingEvents()
+            case .requestRestNotificationPermission:
+                // #936: the owner decides WHEN the one user-initiated ask
+                // happens; the adapter owns how.
+                Task { await manualWorkoutRest.requestNotificationPermissionIfNeeded() }
+            }
+        }
+        guard case let .persist(draft, ticket) = outcome.decision else { return outcome }
+        Task { @MainActor in
+            await saveWorkout(draft)
+            applyManualWorkoutLifecycle(manualWorkoutLifecycle.saveDidComplete(ticket: ticket))
+        }
+        return outcome
+    }
+
+    /// Start the user's manual workout. Ignored while one is already in progress
+    /// or while the previous finish is still saving — a re-created view can
+    /// never replace the workout the user is in the middle of.
+    @discardableResult
+    public func startManualWorkout(
+        at date: Date = Date(),
+        asksForRestNotificationPermission: Bool = true
+    ) -> ManualWorkoutLifecycleOutcome {
+        guard let userID = currentUserID else { return .ignored }
+        return applyManualWorkoutLifecycle(
+            manualWorkoutLifecycle.start(
+                accountUserID: userID,
+                phase: settings.currentPhase,
+                at: date,
+                asksForRestNotificationPermission: asksForRestNotificationPermission
+            )
+        )
+    }
+
+    /// The workout surface (re)appeared. Resumes the workout the owner holds —
+    /// it never creates one and never terminates one.
+    @discardableResult
+    public func resumeManualWorkout() -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(manualWorkoutLifecycle.resume())
+    }
+
+    /// Minimize the full-screen presentation. The workout keeps running.
+    @discardableResult
+    public func minimizeManualWorkout() -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(manualWorkoutLifecycle.minimize())
+    }
+
+    /// The boulder control. The engine's own guards throw on an invalid
+    /// transition; the caller presents that error where it always did.
+    @discardableResult
+    public func toggleManualWorkoutAttempt(
+        at date: Date = Date()
+    ) throws -> ManualWorkoutLifecycleOutcome {
+        try applyManualWorkoutLifecycle(manualWorkoutLifecycle.toggleAttempt(at: date))
+    }
+
+    @discardableResult
+    public func setManualWorkoutRPE(_ rpe: Double) -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(manualWorkoutLifecycle.setRPE(rpe))
+    }
+
+    @discardableResult
+    public func setManualWorkoutRestTarget(_ target: Int) -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(manualWorkoutLifecycle.setRestTarget(target))
+    }
+
+    /// The End control: refused with the #926 explanation when no attempt was
+    /// completed, otherwise EXACTLY ONE draft is handed to `saveWorkout`.
+    @discardableResult
+    public func endManualWorkout(at date: Date = Date()) -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(manualWorkoutLifecycle.end(at: date))
+    }
+
+    /// Replay the lock-screen intents the Live Activity adapter queued for the
+    /// workout the owner holds. A drained batch for a workout that is gone is
+    /// discarded — the adapter's own identity contract, kept intact here.
+    @discardableResult
+    public func drainManualWorkoutActivityEvents() -> ManualWorkoutLifecycleOutcome {
+        let events = manualWorkoutActivity.drainPendingEvents(
+            forWorkoutStartedAt: manualWorkoutLifecycle.workoutStartedAt
+        )
+        return applyManualWorkoutLifecycle(
+            manualWorkoutLifecycle.applyActivityEvents(events)
+        )
+    }
+
+    #if DEBUG
+    /// #926/#936 harness: arm the REAL manual workout for the signed-out
+    /// simulator fixtures — the production lifecycle owner, engine, effects and
+    /// End path, with a synthetic account. Only the notification-permission ask
+    /// stays off (its system prompt would cover the surface under capture).
+    @discardableResult
+    public func startManualWorkoutFixture() -> ManualWorkoutLifecycleOutcome {
+        applyManualWorkoutLifecycle(
+            manualWorkoutLifecycle.start(
+                accountUserID: UUID(),
+                phase: settings.currentPhase,
+                at: Date(),
+                asksForRestNotificationPermission: false
+            )
+        )
+    }
+    #endif
 
     // MARK: Workout
 
@@ -12248,6 +12404,14 @@ public final class AppModel {
         forceModel.tagCurves = []
     }
 
+    /// Clear every account-scoped surface.
+    ///
+    /// #936: the manual-workout lifecycle owner tears ITS workout down here —
+    /// with no account named (`nil`), because on every path that reaches this
+    /// method the model has already cleared its session, so there is no account
+    /// left to protect. The account boundaries that still know the outgoing
+    /// account tear their workout down themselves, before this reset, naming
+    /// it (see `handleAuthEvent`).
     private func resetAccountState() {
         accountEpoch &+= 1
         // Remove a different account's snapshot at the same synchronous
@@ -12351,9 +12515,14 @@ public final class AppModel {
         guidedProtocolTeardownOwnerID = nil
         invalidateTagCurveCache()
         handsFree.handleDisconnected()
-        manualWorkoutRest.stop()
-        manualWorkoutActivity.end(immediate: true)
-        manualWorkoutActivity.discardPendingEvents()
+        // #936: the manual-workout lifecycle owner tears ITS workout down —
+        // the live card, the rest deadline and the workout's queued lock-screen
+        // actions. No account is named here (see the method's doc comment): the
+        // boundaries that still know the outgoing account tear down before this
+        // reset.
+        applyManualWorkoutLifecycle(
+            manualWorkoutLifecycle.accountChanged(previousAccountUserID: nil)
+        )
         keepAwakeRelease?()
         keepAwakeRelease = nil
         // The mirror must not survive an account change even without an
