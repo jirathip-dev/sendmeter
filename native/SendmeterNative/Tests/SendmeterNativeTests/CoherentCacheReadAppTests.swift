@@ -1,6 +1,11 @@
+import SwiftUI
+import UIKit
 import XCTest
 
+@_spi(Experimental) import Auth
 import SendmeterCore
+import SendmeterWeather
+import Supabase
 
 @testable import Sendmeter
 

@@ -1,0 +1,14 @@
+diff --git a/native/SendmeterNative/Sources/Core/LocalCacheStore.swift b/native/SendmeterNative/Sources/Core/LocalCacheStore.swift
+index 43413bf..4e302ea 100644
+--- a/native/SendmeterNative/Sources/Core/LocalCacheStore.swift
++++ b/native/SendmeterNative/Sources/Core/LocalCacheStore.swift
+@@ -549,8 +549,7 @@ public final class LocalCacheStore: Sendable {
+             sessions: decodeAll(Session.self, .sessions),
+             settings: settings,
+             phasePeriods: decodeAll(PhasePeriod.self, .phasePeriods),
+-            healthMetrics: decodeAll(HealthMetric.self, .healthMetrics)
+-                .sorted { $0.date > $1.date },
++            healthMetrics: decodeAll(HealthMetric.self, .healthMetrics),
+             recordings: decodeAll(TindeqRecording.self, .recordings),
+             presets: decodeAll(TindeqPreset.self, .presets),
+             routines: decodeAll(RoutinePreset.self, .routinePresets),

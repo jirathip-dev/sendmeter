@@ -1,0 +1,84 @@
+# Measured timings — impl-921 (#921 launch path, #922 read cost)
+
+Everything below is a raw line from a run in this lane, or arithmetic on raw
+lines from that run. Nothing here is a modelled or guessed number.
+
+Build / device context
+  host        macOS 26.6.2 (25G83), Apple silicon
+  xcode       Xcode 26.6 (Swift 6), Debug configuration
+  device      iPhone 17 Pro simulator, iOS 26.5, UDID
+              A3ABC8DC-ED23-4998-B24C-E092AE1EEE57, `simctl erase`d immediately
+              before the recorded run
+  derived     /Users/jirathip/impl921-derived (-derivedDataPath; this host's
+              pinned DerivedData volume is unattached, so `just build-ios`
+              exits 74 here and the local path is what is reportable)
+  date        2026-09-20
+
+## #921 — the launch path no longer waits for storage
+
+AFTER (this head). Command, exact selection:
+  xcodebuild test -project native/SendmeterNative/SendmeterNative.xcodeproj \
+    -scheme SendmeterNative -destination "id=A3ABC8DC-…" \
+    -only-testing:SendmeterNativeTests/CachePreparationAppTests/testTheFirstFrameRendersWhileStorageIsStillOpening \
+    CODE_SIGNING_ALLOWED=NO -derivedDataPath /Users/jirathip/impl921-derived
+
+  raw: Test Case '-[SendmeterNativeTests.CachePreparationAppTests testTheFirstFrameRendersWhileStorageIsStillOpening]' passed (0.249 seconds).
+  raw: Test Case '-[SendmeterNativeTests.CachePreparationAppTests testAFailingOpenerSurfacesUnavailableAndNeverClaimsLocalPersistence]' passed (0.010 seconds).
+  raw: Test Case '-[SendmeterNativeTests.CachePreparationAppTests testConcurrentEntrypointsShareOnePreparationFlight]' passed (6.028 seconds).
+  raw: Test Case '-[SendmeterNativeTests.CachePreparationAppTests testEveryCacheBackedEntrypointJoinsThePreparationFlight]' passed (0.036 seconds).
+
+  Reading: the first-frame test holds the store opener behind a gate, so its
+  0.249 s is the complete `AppModel.init` + first frame with the cache NOT
+  ready — the number that used to contain createDirectory + GRDB open +
+  migrations. The 6.028 s test is gate-dominated by design (it holds the opener
+  open for ~6 s and proves the second caller joins the same flight).
+  The test also asserts `initSeconds < 3.0` and prints the measured value in the
+  assertion message on failure.
+
+BEFORE (the storage work the launch path no longer pays). Measured cold at this
+head over a fresh, empty directory — this is exactly the create + open + migrate
+sequence `AppModel.init` used to run synchronously before #921:
+  raw: MEASURED cold-cache-preparation create+open+migrate=0.019725084 seconds (off the launch path since #921)
+  (`swift test --package-path native/SendmeterNative --filter CachePreparationTests`
+  → EXIT=0, 8 tests / 0 failures; source: CachePreparationTests, committed log
+  docs/evidence/issue-921/cache-preparation-core.log.gz)
+
+  Reading: on this host a cold create + open + migrate costs ~20 ms of
+  main-actor time in the launch path's old shape. That is the measured before/
+  after pair for #921 — ~20 ms removed from the blocking path plus the removal
+  of the whole class of file-system stalls the delayed-opener test probes (the
+  gate can hold storage for arbitrarily long now). It is NOT a claim about
+  end-to-end launch time.
+
+RED proof of the AFTER claim (probe A, committed diff):
+  docs/evidence/issue-921/probe-A-init-blocks.diff restores the pre-#921 shape
+  (init performs the preparation inline). With that patch applied, the same
+  selection fails; restored, it passes. The applied/restored raw exits are in
+  docs/evidence/issue-921/probe-run.log.gz.
+
+## #922 — large-history read: coherent snapshot vs the per-entity reads
+
+Command:
+  swift test --package-path native/SendmeterNative \
+    --filter CoherentCacheReadTests/testLargeHistoryKeepsOutputIdentityAndOrderAgainstThePerEntityReads
+
+  raw run 1: MEASURED coherent-large-history rows=2228 perEntity=0.3463s coherent=0.2391s revision=4d62c06b5ff53f5c
+  raw run 2: MEASURED coherent-large-history rows=2228 perEntity=0.2928s coherent=0.2687s revision=4d9021fcefa15772
+
+  Reading: 2228 rows. The coherent single-transaction read lands at
+  0.24–0.27 s against 0.29–0.35 s for the row-identical per-entity path — the
+  per-entity column is the same-host comparison the test also asserts output
+  identity and order against. The gain is modest and host-load dependent; this
+  is a measurement, not a speedup claim.
+
+RED proof of the identity/order claim (probe F, committed diff):
+  docs/evidence/issue-922/probe-F-health-order.diff drops the documented
+  newest-first health-metric ordering from the coherent read; the identity test
+  fails with it applied and passes restored.
+
+## NOT MEASURED (OPEN)
+
+  * physical device cold launch — every number above is simulator-only.
+  * hosted CI timings at this head — not run from this lane.
+  * the small durable-queue JSON read inside `AppModel.init` is deliberately
+    still on the launch path (it is not storage) and is NOT separately measured.

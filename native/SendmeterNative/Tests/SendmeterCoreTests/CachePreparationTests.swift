@@ -139,6 +139,32 @@ final class CachePreparationTests: XCTestCase {
         XCTAssertEqual(flags, [false], "directory creation + open + migration are off the main actor")
     }
 
+    // MARK: - #921: the cost that used to sit on the launch path
+
+    /// #921: the storage work `AppModel.init` used to perform synchronously —
+    /// `createDirectory` + GRDB open + migrations over a fresh file. It runs
+    /// inside the preparation flight now, so this number is what the launch
+    /// path no longer pays; the app's own first-frame bound is pinned in
+    /// `CachePreparationAppTests`.
+    func testMeasureTheColdPreparationCostTheLaunchPathNoLongerPays() async throws {
+        let preparation = CachePreparation()
+        let clock = ContinuousClock()
+
+        let cold = try await clock.measure {
+            guard case .success = await preparation.preparedCache(
+                directory: makeDirectory(),
+                seams: .live
+            ) else {
+                throw CachePreparationTestError.opener
+            }
+        }
+
+        print(
+            "MEASURED cold-cache-preparation create+open+migrate=\(cold) "
+                + "(off the launch path since #921)"
+        )
+    }
+
     // MARK: - Failure and recovery
 
     func testAFailedOpenSurfacesUnavailableAndTheNextCallerCanRecover() async throws {
