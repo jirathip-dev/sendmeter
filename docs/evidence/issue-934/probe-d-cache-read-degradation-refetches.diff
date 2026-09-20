@@ -1,0 +1,15 @@
+# rule: an unreadable cache degrades a bounded slice to one full network page
+--- green/native/SendmeterNative/Sources/Core/WorkspaceSyncCoordinator.swift
++++ mutated/native/SendmeterNative/Sources/Core/WorkspaceSyncCoordinator.swift
+@@ -460,10 +460,7 @@
+             // cannot be read, degrade to the same full network fallback a
+             // cache-open failure uses rather than publishing only the changed
+             // rows and dropping the rest of the in-memory list.
+-            guard cursor != nil else { return fullSnapshot(delta) }
+-            let fullDelta = try await fetch(nil)
+-            guard boundary.canApply() else { return nil }
+-            return fullSnapshot(fullDelta)
++            return fullSnapshot(delta)
+         }
+     }
+ 

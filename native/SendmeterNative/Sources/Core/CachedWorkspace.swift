@@ -94,15 +94,12 @@ public enum CacheHydrator {
         try workspace?.load(accountUserID: accountUserID)
     }
 
-    /// #922: the same seam for the coherent read — one revision of the
-    /// account's cache (collections, pending rows, cursors, boundaries, purge
-    /// generations), or `nil` when there is no workspace to read.
-    public static func coherentRead(
-        workspace: CachedWorkspace?,
-        accountUserID: UUID
-    ) throws -> LocalCacheSnapshotRead? {
-        try workspace?.coherentSnapshot(accountUserID: accountUserID)
-    }
+    // #934: the coherent-read member of this seam (added by #922) was removed
+    // with the extraction — its only caller was `AppModel`'s bulk cache read,
+    // and that rule now lives in `WorkspaceSyncCoordinator.readCoherentCache`,
+    // which reads through `WorkspaceSyncStoring.syncCoherentRead` (the same
+    // `CachedWorkspace.coherentSnapshot`) so the app keeps exactly ONE
+    // coherent-read entry point.
 }
 
 /// Stable cache row identities for the nine read entities.
