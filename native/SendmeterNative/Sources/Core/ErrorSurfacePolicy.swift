@@ -61,3 +61,5 @@ public struct ErrorSurfacePolicy: Equatable, Sendable {
         return shouldSurface(source: source, hasLastGoodData: hasLastGoodData)
     }
 }
+
+// baseline-probe-978: comment-only change to force the full native CI job to run on (otherwise) unmodified staging content; PR closed unmerged.
