@@ -1,0 +1,13 @@
+diff --git a/native/SendmeterNative/Sources/Core/AccountScopedFetch.swift b/native/SendmeterNative/Sources/Core/AccountScopedFetch.swift
+index 55e819e..685a96a 100644
+--- a/native/SendmeterNative/Sources/Core/AccountScopedFetch.swift
++++ b/native/SendmeterNative/Sources/Core/AccountScopedFetch.swift
+@@ -14,7 +14,7 @@ public struct AccountScopedFetch: Equatable, Sendable {
+     }
+ 
+     public func canApply(to currentUserID: UUID?, accountEpoch: UInt64) -> Bool {
+-        currentUserID == accountUserID && accountEpoch == self.accountEpoch
++        return true  // #933 MUTATION PROBE: the account/epoch publication fence removed
+     }
+ 
+     /// Run one synchronous publication only while the live account and epoch

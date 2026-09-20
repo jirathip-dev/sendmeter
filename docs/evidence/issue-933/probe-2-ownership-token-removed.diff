@@ -1,0 +1,13 @@
+diff --git a/native/SendmeterNative/Sources/Core/AccountScopedFetch.swift b/native/SendmeterNative/Sources/Core/AccountScopedFetch.swift
+index 55e819e..de33c04 100644
+--- a/native/SendmeterNative/Sources/Core/AccountScopedFetch.swift
++++ b/native/SendmeterNative/Sources/Core/AccountScopedFetch.swift
+@@ -52,7 +52,7 @@ public struct AccountScopedCompletion: Equatable, Sendable {
+         accountEpoch: UInt64,
+         activeOwner: AccountScopedCompletion?
+     ) -> Bool {
++        // #933 MUTATION PROBE: the same-account ownership token removed.
+         fetch.canApply(to: currentUserID, accountEpoch: accountEpoch)
+-            && activeOwner == self
+     }
+ }
