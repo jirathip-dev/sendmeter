@@ -1,0 +1,38 @@
+#990 lane impl-990 — host-contention provenance (sibling xcodebuild live at start)
+
+Each xcodebuild invocation in this lane was preceded by its own
+`pgrep -fl xcodebuild` pre-flight check. The lane harness's background-process
+completion notices preserved that pre-flight output verbatim; two runs started
+while lane #964's xcodebuild was live on this host (the brief requires waiting
+for the host-wide slot — that rule was NOT honoured for these two runs, and the
+lane report says so).
+
+1) focused RED run — `focused-red.log.gz` (its suite failed at
+   2026-09-21 08:38:49 +07; exit 65, 5 tests / 1 failure, the intended RED leg).
+   Pre-flight output carried by the run's completion notice:
+
+   96441 /bin/zsh -lic set +m; cd /Users/jirathip/.herdr/worktrees/sendmeter/impl-964b && (xcodebuild test -project native/SendmeterNative/SendmeterNative.xcodeproj -scheme SendmeterNative -configuration Debug -destination "id=5AB8A446-CB3F-4097-95C4-26DDA395D0A8" -only-testing:SendmeterNativeTests/DashboardLoadFailureAppTests -only-testing:SendmeterNativeTests/ReadinessWidgetAppGroupReadTests CODE_SIGNING_ALLOWED=NO -derivedDataPath /Users/jirathip/.herdr/worktrees/sendmeter/impl-964b/.derived > /tmp/964b-apptarget-focused-1.log 2>&1; echo "APP_TARGET_FOCUSED_EXIT=$?" >> /tmp/964b-apptarget-focused-1.log)
+   97454 /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test -project native/SendmeterNative/SendmeterNative.xcodeproj -scheme SendmeterNative -configuration Debug -destination id=5AB8A446-CB3F-4097-95C4-26DDA395D0A8 -only-testing:SendmeterNativeTests/DashboardLoadFailureAppTests -only-testing:SendmeterNativeTests/ReadinessWidgetAppGroupReadTests CODE_SIGNING_ALLOWED=NO -derivedDataPath /Users/jirathip/.herdr/worktrees/sendmeter/impl-964b/.derived
+   PGREP_DONE
+   XCODEBUILD_EXIT=65
+
+2) CI-shape app-target suite — `app-target-suite.log.gz` (its suite ran
+   2026-09-21 08:59:53 → 09:04:19 +07; exit 65, 160 tests / 1 failure, the
+   intended RED leg). Pre-flight output carried by the run's completion notice:
+
+   90766 /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project /Users/jirathip/.herdr/worktrees/sendmeter/impl-964b/native/SendmeterNative/SendmeterNative.xcodeproj -scheme SendmeterNative -configuration Debug -destination generic/platform=iOS -allowProvisioningUpdates -derivedDataPath /Users/jirathip/.herdr/worktrees/sendmeter/impl-964b/.derived build
+   PGREP_DONE
+   APP_TARGET_SUITE_EXIT=65
+
+Why the verdicts still stand: both runs used THIS lane's own
+`-derivedDataPath` (no shared DerivedData, so no cross-lane build corruption),
+and both produced their expected assertion verdict rather than a
+timeout/hang/runner-attach failure (the failure in each is the same
+`XCTUnwrap failed: expected non-nil value of type "ZoneCurveInput"` at
+`ZoneCurvePopulationAppTests.swift:120`). Contention on this host slows runs; it
+does not turn an assertion failure into a pass, or vice versa.
+
+Note on artifacts: the pre-flight `pgrep` output is NOT inside the two
+`.log.gz` files above (the shell redirect captured only the `xcodebuild`
+process's own stdout). This file is that provenance; the run logs it refers to
+are committed alongside it.
