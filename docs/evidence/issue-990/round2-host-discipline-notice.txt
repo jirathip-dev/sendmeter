@@ -10,8 +10,9 @@ checkable rather than prose.
 Six of the seven xcodebuild invocations in this round carried the pre-flight:
 BEFORE focused leg (not carried — the lane's omission), AFTER focused leg, run-1
 CI-shape suite, run-2 CI-shape suite, flake-attribution focused run, base-control
-focused run, erased-suite run (carried). Five of those outputs survived in
-completion notices and are reproduced below; one (erased-suite) was not captured.
+focused run, erased-suite run (carried). All six of those outputs survived in
+completion notices and are reproduced below; only the BEFORE leg has none,
+because it ran no pre-flight.
 
 ## 1. AFTER focused leg (`round2-after-focused.log.gz`)
 
@@ -88,9 +89,26 @@ head-vs-base comparison a like-for-like one:
    UNINSTALL_EXIT=149
    ATTRIBUTION_EXIT=65
 
+## 6. Erased-suite run (`round2-app-target-suite-erased.log.gz`)
+
+The pre-flight matched nothing — a clean slot. The same output confirms the
+container reset the green run depends on: the `shutdown` was a no-op ("Unable to
+shutdown device in current state: Shutdown"), the **erase exited 0**, `bootstatus
+… Finished`, and the suite then exited 0:
+
+   (eval):1: can't change option: zle
+   (eval):1: can't change option: zle
+   PGREP_DONE
+   An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=405):
+   Unable to shutdown device in current state: Shutdown
+   ERASE_EXIT=0
+   Finished
+   ROUND2_SUITE_ERASED_EXIT=0
+
+(The `bootstatus` line is tab-indented in the raw notice; it is reproduced here
+with spaces so this file stays clean under `git diff --check`.)
+
 ## Not preserved
 
-- Erased-suite run: the command included the pre-flight, but its output was not
-  captured in a completion notice, so its slot state is unrecorded here (it
-  produced no timeout or runner-attach failure).
-- BEFORE focused leg: the pre-flight was not included in the command at all.
+- BEFORE focused leg: the pre-flight was not included in the command at all, so
+  it is the only invocation with no slot-state record.
