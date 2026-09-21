@@ -88,6 +88,61 @@ final class DashboardLoadFailureAppTests: XCTestCase {
         XCTAssertTrue(model.hasLoadedSessions, "the refresh published authoritative data")
     }
 
+    // MARK: - #964 round 2: the launch-path load families name themselves
+
+    @MainActor
+    func testDeltaOrderFailureKeepsANamedClassInsteadOfTheGenericFallback() async throws {
+        let server = FakeDashboardPostgREST()
+        let model = try await makeSignedInModel(server: server)
+        server.setMode(.misordered)
+
+        await model.refreshAll()
+        try await waitForLoadedFailure(model)
+
+        // The reader failed closed on an out-of-order page. Before this round
+        // that was `.unknown` — the owner's generic banner.
+        XCTAssertEqual(
+            model.dashboardLoadFailureClass,
+            .dataUnreadable,
+            "the delta reader's fail-closed error is the decode family"
+        )
+        XCTAssertNotEqual(model.dashboardLoadFailureClass, .unknown)
+        XCTAssertEqual(
+            model.lastPartialRefreshFailure?.reason,
+            UserFacingError.message(for: .dataUnreadable),
+            "the scoped failure row must carry the named copy"
+        )
+        XCTAssertNotEqual(
+            model.lastPartialRefreshFailure?.reason,
+            UserFacingError.message(for: .unknown)
+        )
+    }
+
+    @MainActor
+    func testUnnamedTransportCodeBlackoutNamesTheLoadInsteadOfTheGenericBanner() async throws {
+        let server = FakeDashboardPostgREST()
+        let model = try await makeSignedInModel(server: server)
+        // `URLError(.badServerResponse)` is a code the taxonomy does not name;
+        // every request fails, so nothing publishes and the global banner is
+        // the surface — the exact shape of the owner's cold-start report.
+        server.setMode(.transportFailure)
+
+        await model.refreshAll()
+        try await waitForLoadedFailure(model)
+
+        XCTAssertEqual(model.dashboardLoadFailureClass, .loadFailed)
+        XCTAssertEqual(
+            model.errorMessage,
+            UserFacingError.message(for: .loadFailed),
+            "the banner must name the load instead of the empty generic copy"
+        )
+        XCTAssertNotEqual(
+            model.errorMessage,
+            UserFacingError.message(for: .unknown),
+            "the owner's banner copy must never be the outcome of a launch load failure"
+        )
+    }
+
     // MARK: - AC: last-good data keeps the Dashboard body, banner only
 
     @MainActor
@@ -473,6 +528,15 @@ private final class FakeDashboardPostgREST: @unchecked Sendable {
         case empty
         /// A 200 whose body does not decode into the requested row type.
         case malformed
+        /// #964 round 2: a 200 whose paged delta rows are not in the
+        /// `(updated_at, tie-break)` order the reader asked for. The reader
+        /// fails closed with `DeltaReadError.outOfOrderPage` — the launch-path
+        /// load family that used to classify as `.unknown`.
+        case misordered
+        /// #964 round 2: every request fails at the transport layer with a
+        /// `URLError` code the taxonomy does not name (`badServerResponse`),
+        /// i.e. a full blackout whose banner copy was the generic fallback.
+        case transportFailure
     }
 
     private let lock = NSLock()
@@ -502,6 +566,19 @@ private final class FakeDashboardPostgREST: @unchecked Sendable {
             // PostgREST answers with a JSON object; every paged delta decodes
             // an array, so this throws a DecodingError inside the repository.
             return (200, Data(#"{"error":"unexpected payload shape"}"#.utf8))
+        case .misordered:
+            guard request.url?.absoluteString.contains("tindeq_tags") == true else {
+                return (200, Data("[]".utf8))
+            }
+            // Newest-first rows: the reader requires ascending
+            // `(updated_at, name)` and fails closed instead of advancing a
+            // cursor it cannot trust.
+            let misordered = #"[{"name":"boulder","hidden":false,"updated_at":"2026-09-20T10:00:00Z"},{"name":"crimp","hidden":false,"updated_at":"2026-09-19T10:00:00Z"}]"#
+            return (200, Data(misordered.utf8))
+        case .transportFailure:
+            // `nil` makes `FakeDashboardProtocol.startLoading` answer with
+            // `URLError(.badServerResponse)`.
+            return nil
         }
     }
 }
