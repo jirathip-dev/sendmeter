@@ -2,6 +2,7 @@
 import Combine
 import Foundation
 import Observation
+import os
 import SendLogHealthCore
 import SendLogWatchCore
 import SendmeterCore
@@ -2703,6 +2704,10 @@ public final class AppModel {
             // drops a failed flight). Nothing here claims local persistence.
             cacheReadiness = .unavailable(reason)
             reportCacheUnavailable(reason)
+            // #964 round 2: the launch-path failure log names this step even
+            // though it deliberately shows no banner (network-only is a
+            // recoverable degradation, not a user-facing failure).
+            recordLaunchFailure("cache-prepare", reason)
         }
     }
 
@@ -2864,14 +2869,23 @@ public final class AppModel {
         let representativeError = representative.1
         // #964: the account's last load failure, recorded even when the banner
         // is suppressed so the Dashboard can still explain an empty screen.
-        dashboardLoadFailureClass = UserFacingError.classification(for: representativeError)
+        // Round 2: the load funnel's classifier is the one the banner and the
+        // scoped failure row use too, so the retained class, the banner copy
+        // and the retry row can never disagree.
+        dashboardLoadFailureClass = UserFacingError.classification(
+            forLoadFailure: representativeError
+        )
+        recordLaunchFailure(
+            "refresh-slice:\(representativeSlice.rawValue)",
+            representativeError
+        )
         let willSurface = errorSurfacePolicy.shouldSurface(
             source: source,
             hasLastGoodData: hasLoadedSessions && forceModel.hasLoadedRecordings,
             publishedAnySlice: outcomes.didPublishAnyGroup
         )
         if willSurface {
-            surface(representativeError)
+            surfaceLoadFailure(representativeError)
         }
         // #923 AC4: a rejected bearer heals whether or not its slice produced
         // the banner — a suppressed or non-representative 401 must not leave
@@ -2884,7 +2898,7 @@ public final class AppModel {
         let summary = RefreshFailureSummary(
             accountUserID: accountFetch.accountUserID,
             groups: outcomes.failedGroups,
-            reason: UserFacingError.message(for: representativeError),
+            reason: UserFacingError.message(forLoadFailure: representativeError),
             source: source,
             occurredAt: Date()
         )
@@ -3334,8 +3348,11 @@ public final class AppModel {
                 // whether it also deserves the dismissible banner. The banner
                 // is transient; this state lasts until a refresh succeeds, so
                 // dismissing the banner cannot leave a blank Dashboard with no
-                // explanation or retry.
-                dashboardLoadFailureClass = UserFacingError.classification(for: error)
+                // explanation or retry. Round 2: the load funnel's classifier
+                // keeps the named class here — a first-launch data-load
+                // failure must never render the empty `.unknown` copy.
+                dashboardLoadFailureClass = UserFacingError.classification(forLoadFailure: error)
+                recordLaunchFailure("refresh", error)
                 // #842: a background/partial refresh failure must not claim
                 // total offline while the last-good dataset is already on
                 // screen (History rendered, banner claiming a blackout). The
@@ -3345,7 +3362,7 @@ public final class AppModel {
                     source: errorSurfaceSource,
                     hasLastGoodData: hasLoadedSessions && forceModel.hasLoadedRecordings
                 ) {
-                    surface(error)
+                    surfaceLoadFailure(error)
                 } else if let postgRESTError = error as? PostgRESTError {
                     recoverAuthFrom(postgRESTError)
                 }
@@ -12575,8 +12592,45 @@ public final class AppModel {
     }
 
     private func surface(_ error: Error) {
+        recordLaunchFailure("banner", error)
         errorMessage = UserFacingError.message(for: error)
         recoverAuthFrom(error)
+    }
+
+    /// #964 round 2: the account-data load funnel's failure surface. Same side
+    /// effects as `surface(_:)` — the banner copy plus the exact-session auth
+    /// recovery — but classified through the load-aware rule, so a first-launch
+    /// data-load failure can never render the empty `.unknown` copy, and the
+    /// Dashboard's retained class always agrees with the banner.
+    private func surfaceLoadFailure(_ error: Error) {
+        let classification = UserFacingError.classification(forLoadFailure: error)
+        dashboardLoadFailureClass = classification
+        errorMessage = UserFacingError.message(for: classification)
+        recoverAuthFrom(error)
+    }
+
+    /// #964 round 2: the persisted launch-failure line.
+    ///
+    /// The owner's device capture proved the app's own logging was not
+    /// persisted at all, so a launch failure could not name itself. This is
+    /// the `.notice` line (persisted by default) and it carries only fixed
+    /// vocabulary: the failing STEP, the error's DOMAIN and CODE, and the
+    /// taxonomy class. Domain and code are identifiers — never a message, a
+    /// payload, a token or user content — which is what makes them safe to
+    /// log as `.public` and readable in a device transcript. The class is the
+    /// RAW taxonomy result on purpose: an `.unknown` here is the signal that
+    /// the taxonomy still lacks a class for the real failure.
+    private static let launchFailureLog = Logger(
+        subsystem: "com.jirathip.sendlog.native",
+        category: "launch-failure"
+    )
+
+    private func recordLaunchFailure(_ step: String, _ error: Error) {
+        let nsError = error as NSError
+        let classification = UserFacingError.classification(for: error)
+        Self.launchFailureLog.notice(
+            "launch failure step=\(step, privacy: .public) domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) class=\(String(describing: classification), privacy: .public)"
+        )
     }
 
     /// The exact-session recovery side effect of `surface(_:)`, kept separate
