@@ -720,6 +720,26 @@ private struct GuidedForceProtocolView: View {
     let onMinimize: () -> Void
     let onClose: () -> Void
 
+    /// #993: the rendered sizes of the parts the layout's static budget used
+    /// to guess. They take over the fit decision as soon as the first layout
+    /// pass reports them, so the chart only grows when the screen really has
+    /// the room and never spends the controls' space.
+    @State private var measuredScrollContentHeight: Double?
+    @State private var measuredChartHeight: Double?
+    @State private var measuredControlsBarHeight: Double?
+
+    private var layoutMeasurement: GuidedForceLayoutMeasurement? {
+        guard let scrollContent = measuredScrollContentHeight,
+              let chart = measuredChartHeight,
+              let controlsBar = measuredControlsBarHeight
+        else { return nil }
+        return GuidedForceLayoutMeasurement(
+            scrollContentHeight: scrollContent,
+            chartHeight: chart,
+            controlsBarHeight: controlsBar
+        )
+    }
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.2)) { context in
             let stage = session.run.currentStage
@@ -735,7 +755,8 @@ private struct GuidedForceProtocolView: View {
                 let layout = GuidedForceLayout.resolve(
                     width: geometry.size.width,
                     height: geometry.size.height,
-                    textScale: Double(textScale)
+                    textScale: Double(textScale),
+                    measurement: layoutMeasurement
                 )
 
                 protocolContent(
@@ -746,6 +767,7 @@ private struct GuidedForceProtocolView: View {
                     accent: accent,
                     layout: layout
                 )
+                .modifier(LayoutProbe(line: layoutProbeLine(geometry: geometry, layout: layout)))
             }
             // #938: the cover's fills belong at the ROOT of the cover content,
             // outside `GeometryReader` — whose frame is the cover's safe-area
@@ -790,37 +812,48 @@ private struct GuidedForceProtocolView: View {
         accent: Color,
         layout: GuidedForceLayout
     ) -> some View {
-        // #938: ONE scroll container for both branches. The fit estimate is
-        // approximate, so a layout that claims to fit but actually overflows
-        // must still be reachable — without this the live chart's bottom edge
-        // and the controls below it sat past the screen edge and could not be
-        // scrolled into view. A layout that genuinely fits stays top-aligned
-        // in an unscrollable viewport, because the content's minimum height
-        // is the viewport height.
-        ScrollView(showsIndicators: false) {
-            protocolSections(
-                geometry: geometry,
-                date: date,
-                elapsed: elapsed,
-                presentation: presentation,
-                accent: accent,
-                layout: layout,
-                chartHeight: CGFloat(
-                    layout.essentialContentFits
-                        ? layout.flexibleChartHeight
-                        : layout.chartMinimumHeight
+        VStack(spacing: 0) {
+            // #938: ONE scroll container for both branches. The fit estimate
+            // is approximate, so a layout that claims to fit but actually
+            // overflows must still be reachable — without this the live chart's
+            // bottom edge sat past the screen edge and could not be scrolled
+            // into view. A layout that genuinely fits stays top-aligned in an
+            // unscrollable viewport.
+            ScrollView(showsIndicators: false) {
+                protocolSections(
+                    date: date,
+                    elapsed: elapsed,
+                    presentation: presentation,
+                    accent: accent,
+                    layout: layout,
+                    chartHeight: CGFloat(layout.flexibleChartHeight)
                 )
-            )
-            .frame(
-                maxWidth: .infinity,
-                minHeight: geometry.size.height,
-                alignment: .top
-            )
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: max(0, geometry.size.height - (measuredControlsBarHeight ?? 0)),
+                    alignment: .top
+                )
+            }
+            // #993: the pause/skip row is pinned UNDER the scroll view instead
+            // of scrolling with it, so the primary control is on screen at
+            // every chart height while the top bar (session timer + End) stays
+            // at the top of the stack — the two can no longer be split across
+            // two scroll positions. #899's shape is preserved: no bottom action
+            // inset and no STOP/FINISH circle; this is the same controls row,
+            // moved out of the scrollable content.
+            controls(date: date)
+                .padding(.horizontal, layout.horizontalPadding)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+                .frame(maxWidth: 620)
+                .frame(maxWidth: .infinity)
+                .onGeometryChange(for: Double.self) { $0.size.height } action: { height in
+                    measuredControlsBarHeight = height
+                }
         }
     }
 
     private func protocolSections(
-        geometry: GeometryProxy,
         date: Date,
         elapsed: Double,
         presentation: GuidedForceStagePresentation,
@@ -839,12 +872,25 @@ private struct GuidedForceProtocolView: View {
             statusRow(accent: accent)
             targetCoach
             liveChart(chartHeight: chartHeight)
-            controls(date: date)
         }
+        // #993: the presented cover's frame IS the safe-area rect — measured
+        // 375×647 on the SE's 375×667 screen and 402×778 on the iPhone 17
+        // Pro's 402×874 screen, while `geometry.safeAreaInsets` still reports
+        // the screen's 20/62 pt top inset. Padding by those insets again
+        // double-counted them: the dead gap above the first card in the
+        // owner's screenshot (measured: the top bar started 40 pt into a
+        // 647-pt SE frame and 124 pt into a 778-pt 17 Pro frame). The stack
+        // keeps a fixed breathing pad instead.
         .padding(.horizontal, layout.horizontalPadding)
-        .padding(.top, max(8, geometry.safeAreaInsets.top))
-        .padding(.bottom, max(12, geometry.safeAreaInsets.bottom))
+        .padding(.top, 8)
+        .padding(.bottom, 12)
         .frame(maxWidth: 620)
+        // #993: report the stack's rendered height back to the layout. This
+        // sits BEFORE the viewport-filling frame, so it is the natural height
+        // the fit decision needs, not the stretched one.
+        .onGeometryChange(for: Double.self) { $0.size.height } action: { height in
+            measuredScrollContentHeight = height
+        }
     }
 
     private var protocolIdentityHeader: some View {
@@ -1156,6 +1202,12 @@ private struct GuidedForceProtocolView: View {
                 )
                 .frame(height: chartHeight)
                 .layoutPriority(1)
+                // #993: the chart's own rendered height, so the layout can
+                // subtract it from the stack measurement and keep only the
+                // fixed sections (plus the chart's floor) in the fit decision.
+                .onGeometryChange(for: Double.self) { $0.size.height } action: { height in
+                    measuredChartHeight = height
+                }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
                     ForceTraceAccessibility.liveSummary(
@@ -1244,6 +1296,50 @@ private struct GuidedForceProtocolView: View {
         let minutes = seconds / 60
         let remainder = seconds % 60
         return String(format: "%02d:%02d", minutes, remainder)
+    }
+
+    /// #993 measurement leg (harness only): with
+    /// `--guided-force-fixture-measure` the container reports the rendered
+    /// sizes its fit decision was made from, so a simulator capture carries
+    /// numbers and not just pixels. Compiled out of release builds, and it
+    /// never influences layout.
+    private func layoutProbeLine(geometry: GeometryProxy, layout: GuidedForceLayout) -> String {
+        #if DEBUG
+        guard CommandLine.arguments.contains("--guided-force-fixture-measure") else { return "" }
+        func number(_ value: Double?) -> String {
+            value.map { String(format: "%.1f", $0) } ?? "nil"
+        }
+        return "[impl993] viewport=\(Int(geometry.size.width))x\(Int(geometry.size.height))"
+            + " insets.top=\(String(format: "%.1f", geometry.safeAreaInsets.top))"
+            + " insets.bottom=\(String(format: "%.1f", geometry.safeAreaInsets.bottom))"
+            + " scrollContent=\(number(measuredScrollContentHeight))"
+            + " chart=\(number(measuredChartHeight))"
+            + " controlsBar=\(number(measuredControlsBarHeight))"
+            + " staticBudget=\(String(format: "%.1f", layout.essentialContentHeight))"
+            + " measuredEssential=\(number(layout.measuredEssentialHeight))"
+            + " resolvedChart=\(String(format: "%.1f", layout.flexibleChartHeight))"
+            + " fits=\(layout.essentialContentFits)"
+        #else
+        return ""
+        #endif
+    }
+
+    /// #993 measurement leg: prints the probe line whenever it changes. A
+    /// no-op in release builds and whenever the fixture flag is absent.
+    private struct LayoutProbe: ViewModifier {
+        let line: String
+
+        @ViewBuilder
+        func body(content: Content) -> some View {
+            #if DEBUG
+            content.onChange(of: line) { _, newLine in
+                guard !newLine.isEmpty else { return }
+                print(newLine)
+            }
+            #else
+            content
+            #endif
+        }
     }
 }
 
