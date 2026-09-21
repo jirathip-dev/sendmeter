@@ -52,6 +52,57 @@ public struct GuidedForceStagePresentation: Equatable, Sendable {
     }
 }
 
+/// #993: one fixed section of the guided full-screen, in the order the screen
+/// stacks it. Each section reserves height in `GuidedForceLayout`'s budget, so
+/// the budget can be checked against what the screen actually renders instead
+/// of being one opaque sum.
+public enum GuidedForceLayoutSection: String, CaseIterable, Equatable, Sendable {
+    case topBar
+    case identityHeader
+    case phaseBanner
+    case statusRow
+    case targetCoach
+    case chartHeader
+    case chartFloor
+    case controlsBar
+}
+
+public struct GuidedForceLayoutSectionBudget: Equatable, Sendable {
+    public let section: GuidedForceLayoutSection
+    public let reservedHeight: Double
+
+    public init(section: GuidedForceLayoutSection, reservedHeight: Double) {
+        self.section = section
+        self.reservedHeight = reservedHeight
+    }
+}
+
+/// #993: the rendered sizes the guided full-screen reports back for the parts
+/// its static budget used to guess. `scrollContentHeight` is the padded
+/// scrollable stack as laid out with the flexible chart at `chartHeight`; the
+/// essential height is that stack with the chart's floor substituted for the
+/// chart, plus the pinned controls bar — the smallest height at which the
+/// whole screen is visible at once.
+public struct GuidedForceLayoutMeasurement: Equatable, Sendable {
+    public let scrollContentHeight: Double
+    public let chartHeight: Double
+    public let controlsBarHeight: Double
+
+    public init(
+        scrollContentHeight: Double,
+        chartHeight: Double,
+        controlsBarHeight: Double
+    ) {
+        self.scrollContentHeight = scrollContentHeight
+        self.chartHeight = chartHeight
+        self.controlsBarHeight = controlsBarHeight
+    }
+
+    public func essentialHeight(chartFloor: Double) -> Double {
+        scrollContentHeight - chartHeight + chartFloor + controlsBarHeight
+    }
+}
+
 /// Sizes for the element that must remain usable on the smallest phone: the
 /// live trace. The view may scroll when Dynamic Type makes its intrinsic
 /// content taller than the viewport, but it never shrinks the trace below its
@@ -59,77 +110,157 @@ public struct GuidedForceStagePresentation: Equatable, Sendable {
 /// block reserves space in the fit estimate.
 public struct GuidedForceLayout: Equatable, Sendable {
     public let chartMinimumHeight: Double
+    /// #993: the trace stops absorbing the viewport's slack here. The chart
+    /// used to take `floor + everything left`, so any under-counted section
+    /// was spent on a taller chart instead of on keeping the controls on
+    /// screen; the cap bounds that.
+    public let chartMaximumHeight: Double
     public let sectionGap: Double
     public let horizontalPadding: Double
+    /// The static pre-measurement budget: what every fixed section needs at
+    /// this size, from the rendered heights measured on the smallest supported
+    /// phone (`GuidedForceLayout.measuredSectionFloors`).
     public let essentialContentHeight: Double
+    /// #993: the rendered essential height the view measured, once it has one.
+    /// It replaces the static budget in the fit decision, so a stale constant
+    /// can no longer claim a fit the screen does not have.
+    public let measuredEssentialHeight: Double?
     public let viewportHeight: Double
+    /// The per-section reservations that add up to `essentialContentHeight`.
+    public let sectionBudgets: [GuidedForceLayoutSectionBudget]
 
     public init(
         chartMinimumHeight: Double,
+        chartMaximumHeight: Double,
         sectionGap: Double,
         horizontalPadding: Double,
         essentialContentHeight: Double = 0,
-        viewportHeight: Double = 0
+        measuredEssentialHeight: Double? = nil,
+        viewportHeight: Double = 0,
+        sectionBudgets: [GuidedForceLayoutSectionBudget] = []
     ) {
         self.chartMinimumHeight = chartMinimumHeight
+        self.chartMaximumHeight = chartMaximumHeight
         self.sectionGap = sectionGap
         self.horizontalPadding = horizontalPadding
         self.essentialContentHeight = essentialContentHeight
+        self.measuredEssentialHeight = measuredEssentialHeight
         self.viewportHeight = viewportHeight
+        self.sectionBudgets = sectionBudgets
+    }
+
+    /// The height the fit decision is made from: the measured stack once the
+    /// view has reported one, the static budget until then.
+    public var resolvedEssentialHeight: Double {
+        measuredEssentialHeight ?? essentialContentHeight
     }
 
     public var essentialContentFits: Bool {
-        essentialContentHeight <= viewportHeight
+        resolvedEssentialHeight <= viewportHeight
     }
 
     /// A bounded chart height for the fitting layout. Compact or large-type
     /// layouts deliberately use the floor and let the surrounding scroll view
-    /// carry the overflow; roomy layouts give the trace the remaining block.
+    /// carry the overflow; roomy layouts give the trace the remaining block,
+    /// never more than `chartMaximumHeight`.
     public var flexibleChartHeight: Double {
         guard essentialContentFits else { return chartMinimumHeight }
-        return chartMinimumHeight + max(0, viewportHeight - essentialContentHeight)
+        let slack = max(0, viewportHeight - resolvedEssentialHeight)
+        return min(chartMinimumHeight + slack, chartMaximumHeight)
     }
+
+    public func reservedHeight(for section: GuidedForceLayoutSection) -> Double {
+        sectionBudgets.first { $0.section == section }?.reservedHeight ?? 0
+    }
+
+    /// #993: the fixed sections' rendered heights, measured on the smallest
+    /// supported phone — iPhone SE (3rd generation), 375×667 pt screen and
+    /// 375×647 pt safe-area rect — at the default text size. Evidence:
+    /// `docs/evidence/issue-993/`. The pre-#993 budget guessed these from
+    /// device-class constants and under-counted the SET REST phase banner
+    /// (160 reserved, 199 rendered) and the protocol identity header (46
+    /// reserved, 103 rendered), so the estimate claimed a fit for a stack that
+    /// overflowed and the controls row landed past the screen edge. A
+    /// reservation must never be smaller than what its section renders.
+    /// `chartHeader` is the live card's readout block above the trace (the
+    /// trace itself is the flexible `chartFloor` section).
+    public static let measuredSectionFloors: [GuidedForceLayoutSectionBudget] = [
+        GuidedForceLayoutSectionBudget(section: .topBar, reservedHeight: 56),
+        GuidedForceLayoutSectionBudget(section: .identityHeader, reservedHeight: 103),
+        GuidedForceLayoutSectionBudget(section: .phaseBanner, reservedHeight: 199),
+        GuidedForceLayoutSectionBudget(section: .statusRow, reservedHeight: 28),
+        GuidedForceLayoutSectionBudget(section: .targetCoach, reservedHeight: 93),
+        GuidedForceLayoutSectionBudget(section: .chartHeader, reservedHeight: 111),
+        GuidedForceLayoutSectionBudget(section: .controlsBar, reservedHeight: 64),
+    ]
+
+    /// The trace's intended visual maximum: below the point where the live
+    /// card starts crowding the fixed sections above it.
+    private static let maximumChartHeight = 240.0
+
+    /// The container's vertical padding (the stack's top pad and bottom pad)
+    /// that the static budget carries alongside the sections.
+    private static let verticalPadding = 20.0
+
+    /// The scroll stack's outer items are its six sections plus the live
+    /// card's readout and trace (one item): the controls bar sits outside
+    /// them, so the stack spends five gaps.
+    private static let stackGapCount = 5.0
 
     /// Resolves a compact layout from the actual available viewport. `textScale`
     /// is supplied by the SwiftUI caller so accessibility sizes reserve more
-    /// room without making the chart unusably small.
+    /// room without making the chart unusably small; `measurement` is the
+    /// rendered stack the view reported back, which takes over the fit decision
+    /// as soon as it exists.
     public static func resolve(
         width: Double,
         height: Double,
-        textScale: Double = 1
+        textScale: Double = 1,
+        measurement: GuidedForceLayoutMeasurement? = nil
     ) -> GuidedForceLayout {
         let safeWidth = max(240, width)
         let safeHeight = max(320, height)
         let safeTextScale = min(1.8, max(1, textScale))
         let padding = safeWidth < 360 ? 12 : 16
         let sectionGap = safeHeight < 520 ? 8.0 : 12.0
-        let bannerHeight = safeTextScale > 1.25
-            ? 176.0
-            : (safeHeight < 520 ? 132.0 : 160.0)
         let chartFloor = max(
             96,
             min(156, safeHeight * (safeTextScale > 1.25 ? 0.15 : 0.18))
         )
-        // #899: no bottom action circle anymore — the estimate covers the
-        // top bar, protocol identity header, phase banner, status row,
-        // target coach, live chart, and the pause/skip controls row. Keeping
-        // the estimate honest matters: a falsely-fitting layout would clip
-        // the controls instead of scrolling.
-        let essentialHeight = 52.0
-            + 46.0
-            + bannerHeight
-            + 44.0
-            + 84.0
-            + chartFloor
-            + 52.0
-            + (sectionGap * 6)
-            + 24.0
+        // #993: every fixed section reserves at least its measured rendered
+        // height, scaled by the type size so a larger text setting never
+        // reserves less than a smaller one. The chart floor keeps its own
+        // formula (it is a legibility floor, not a measured section).
+        let typeScale = max(1, textScale)
+        func reserved(_ section: GuidedForceLayoutSection) -> GuidedForceLayoutSectionBudget {
+            let floor = measuredSectionFloors.first { $0.section == section }?.reservedHeight ?? 0
+            return GuidedForceLayoutSectionBudget(
+                section: section,
+                reservedHeight: (floor * typeScale).rounded(.up)
+            )
+        }
+        let budgets = [
+            reserved(.topBar),
+            reserved(.identityHeader),
+            reserved(.phaseBanner),
+            reserved(.statusRow),
+            reserved(.targetCoach),
+            reserved(.chartHeader),
+            GuidedForceLayoutSectionBudget(section: .chartFloor, reservedHeight: chartFloor),
+            reserved(.controlsBar),
+        ]
+        let sections = budgets.map(\.reservedHeight).reduce(0, +)
+        let gapTotal = sectionGap * stackGapCount
+        let essentialHeight = sections + gapTotal + verticalPadding
         return GuidedForceLayout(
             chartMinimumHeight: chartFloor,
+            chartMaximumHeight: maximumChartHeight,
             sectionGap: sectionGap,
             horizontalPadding: Double(padding),
             essentialContentHeight: essentialHeight,
-            viewportHeight: safeHeight
+            measuredEssentialHeight: measurement?.essentialHeight(chartFloor: chartFloor),
+            viewportHeight: safeHeight,
+            sectionBudgets: budgets
         )
     }
 }

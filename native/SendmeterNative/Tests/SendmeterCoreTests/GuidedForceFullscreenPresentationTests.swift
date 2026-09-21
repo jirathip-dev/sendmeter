@@ -103,6 +103,146 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
         XCTAssertFalse(compactLandscape.essentialContentFits)
     }
 
+    // MARK: - #993: the budget must cover what the screen renders
+
+    /// #993: the rendered heights of every fixed section, measured on the
+    /// smallest supported phone (iPhone SE 3rd generation, 375×667 pt screen /
+    /// 375×647 pt safe-area rect, default text size) with the SET REST fixture
+    /// — `docs/evidence/issue-993/measurement-se3-default.log.gz`:
+    /// `topBar=56.0 identityHeader=103.0 phaseBanner=199.0 statusRow=27.5
+    /// targetCoach=92.5 liveChartCard=227.0 chart=116.5 controlsBar=64.0`
+    /// (the live card's readout is its 227.0 minus the 116.5 trace). Before
+    /// #993 the budget reserved 160 for the banner and 46 for the identity
+    /// header, so it claimed a fit for a stack that overflowed and the
+    /// controls row landed past the screen edge.
+    func testLayoutBudgetReservesTheMeasuredSectionFloorsOfTheSmallestPhone() {
+        let layout = GuidedForceLayout.resolve(width: 375, height: 647)
+        let measuredFloors: [GuidedForceLayoutSection: Double] = [
+            .topBar: 56.0,
+            .identityHeader: 103.0,
+            .phaseBanner: 199.0,
+            .statusRow: 27.5,
+            .targetCoach: 92.5,
+            .chartHeader: 110.5,
+            .controlsBar: 64.0,
+        ]
+        for (section, floor) in measuredFloors {
+            XCTAssertGreaterThanOrEqual(
+                layout.reservedHeight(for: section),
+                floor,
+                "\(section.rawValue) reserves less height than it renders on the smallest supported phone"
+            )
+        }
+        XCTAssertGreaterThanOrEqual(layout.reservedHeight(for: .chartFloor), layout.chartMinimumHeight)
+
+        // The budget is exactly the sections it claims to cover, the five gaps
+        // the scroll stack spends, and the container padding — no section can
+        // be dropped from the sum without failing here.
+        let sectionTotal = layout.sectionBudgets.map(\.reservedHeight).reduce(0, +)
+        XCTAssertEqual(
+            layout.essentialContentHeight,
+            sectionTotal + layout.sectionGap * 5 + 20,
+            accuracy: 0.001
+        )
+    }
+
+    /// #993: once the view has reported what it rendered, that measurement
+    /// decides the fit — a stack taller than the viewport is never claimed as
+    /// fitting, and the chart stays at its floor instead of absorbing the
+    /// difference.
+    func testMeasuredStackReplacesTheStaticBudgetInTheFitDecision() {
+        // The SE rest screen's measured stack: 785.0 of padded content with
+        // the trace at 116.5, plus the 64.0 pinned controls bar.
+        let seMeasurement = GuidedForceLayoutMeasurement(
+            scrollContentHeight: 785.0,
+            chartHeight: 116.5,
+            controlsBarHeight: 64.0
+        )
+
+        let smallest = GuidedForceLayout.resolve(width: 375, height: 647, measurement: seMeasurement)
+        XCTAssertFalse(smallest.essentialContentFits, "the measured stack overflows the smallest phone")
+        XCTAssertEqual(smallest.flexibleChartHeight, smallest.chartMinimumHeight)
+
+        // The same rendered stack on a viewport that genuinely has room: the
+        // trace grows into the slack but stops at its visual maximum.
+        let roomy = GuidedForceLayout.resolve(width: 402, height: 1000, measurement: seMeasurement)
+        XCTAssertTrue(roomy.essentialContentFits)
+        XCTAssertGreaterThan(roomy.flexibleChartHeight, roomy.chartMinimumHeight)
+        XCTAssertLessThanOrEqual(roomy.flexibleChartHeight, roomy.chartMaximumHeight)
+
+        // A static budget alone can still claim a fit the rendered screen does
+        // not have (this viewport's 890 pt budget fits in 900 pt, while the
+        // 900 pt stack measured there does not): the measurement must win.
+        let staticOnly = GuidedForceLayout.resolve(width: 375, height: 900)
+        XCTAssertTrue(staticOnly.essentialContentFits)
+        let overflowing = GuidedForceLayoutMeasurement(
+            scrollContentHeight: 900.0,
+            chartHeight: 116.5,
+            controlsBarHeight: 64.0
+        )
+        let measured = GuidedForceLayout.resolve(width: 375, height: 900, measurement: overflowing)
+        XCTAssertFalse(measured.essentialContentFits, "a rendered overflow must never be claimed as a fit")
+        XCTAssertEqual(measured.flexibleChartHeight, measured.chartMinimumHeight)
+    }
+
+    /// #993: the trace stops at its intended visual maximum instead of taking
+    /// every point the viewport has left.
+    func testFlexibleChartStopsAtItsVisualMaximum() {
+        let tall = GuidedForceLayout.resolve(width: 402, height: 1400)
+        XCTAssertTrue(tall.essentialContentFits)
+        XCTAssertEqual(tall.flexibleChartHeight, tall.chartMaximumHeight)
+        XCTAssertLessThan(
+            tall.flexibleChartHeight,
+            tall.chartMinimumHeight + (tall.viewportHeight - tall.essentialContentHeight)
+        )
+
+        for height in [320.0, 568, 647, 780, 932, 1400] {
+            let layout = GuidedForceLayout.resolve(width: 375, height: height)
+            XCTAssertGreaterThanOrEqual(layout.chartMaximumHeight, layout.chartMinimumHeight)
+            XCTAssertLessThanOrEqual(layout.flexibleChartHeight, layout.chartMaximumHeight)
+        }
+    }
+
+    /// #993: a larger text size reserves MORE, never less — the estimate must
+    /// not claim a fit an accessibility-sized stack does not have.
+    func testLargerTextReservesMoreAndNeverClaimsAFitOnTheSmallestPhone() {
+        let base = GuidedForceLayout.resolve(width: 375, height: 647)
+        let large = GuidedForceLayout.resolve(width: 375, height: 647, textScale: 1.5)
+        let accessibility = GuidedForceLayout.resolve(width: 375, height: 647, textScale: 3.1)
+
+        XCTAssertGreaterThan(large.essentialContentHeight, base.essentialContentHeight)
+        XCTAssertGreaterThan(accessibility.essentialContentHeight, large.essentialContentHeight)
+        XCTAssertFalse(large.essentialContentFits)
+        XCTAssertFalse(accessibility.essentialContentFits)
+    }
+
+    /// #993: the essential height does not depend on how tall the flexible
+    /// chart happens to be — the measurement substitutes the chart's floor for
+    /// the chart, so the fit decision cannot feed back into itself.
+    func testMeasurementKeepsTheFlexibleChartOutOfTheEssentialHeight() {
+        let chartFloor = 116.5
+        let longChart = GuidedForceLayoutMeasurement(
+            scrollContentHeight: 785.0,
+            chartHeight: 240.0,
+            controlsBarHeight: 64.0
+        )
+        let floorChart = GuidedForceLayoutMeasurement(
+            scrollContentHeight: 661.5,
+            chartHeight: 116.5,
+            controlsBarHeight: 64.0
+        )
+        XCTAssertEqual(
+            longChart.essentialHeight(chartFloor: chartFloor),
+            floorChart.essentialHeight(chartFloor: chartFloor),
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            longChart.essentialHeight(chartFloor: chartFloor),
+            785.0 - 240.0 + chartFloor + 64.0,
+            accuracy: 0.001
+        )
+    }
+
     func testTerminalClaimPreventsAdvanceAndRepeatedTerminalClaims() {
         var policy = GuidedForceSessionPolicy()
 
