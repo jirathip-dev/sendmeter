@@ -1374,13 +1374,7 @@ struct ForceView: View {
     /// zone derivation: the cached static fit for the active tag, if any.
     /// Scoped to the tag (both sides) like the card.
     private var zoneCurve: ZoneCurveInput? {
-        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !normalized.isEmpty else { return nil }
-        guard let curve = forceModel.tagCurves.first(where: {
-            $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
-                && $0.modality == "static"
-        }) else { return nil }
-        return ZoneCurveInput(curve)
+        ForceModel.zoneCurveInput(in: forceModel.tagCurves, tag: tag)
     }
 
     /// The set-1 target band used for the save-time zone (#750). Prefer the
@@ -1409,12 +1403,7 @@ struct ForceView: View {
     /// warmed for the session-end RPE prediction. It is intentionally read
     /// from the published cache rather than fitting in the view body.
     private var forceCurve: ForceCurveModel? {
-        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !normalized.isEmpty else { return nil }
-        return forceModel.tagCurves.first(where: {
-            $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
-                && $0.modality == "static"
-        })?.forceCurveModel
+        ForceModel.cachedStaticCurve(in: forceModel.tagCurves, tag: tag)?.forceCurveModel
     }
 
     private var progressTag: String? {
