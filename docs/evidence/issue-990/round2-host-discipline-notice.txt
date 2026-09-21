@@ -1,0 +1,67 @@
+#990 lane impl-990 round 2 — host-discipline provenance (pgrep pre-flight outputs)
+
+Round 2's brief (gate 5) requires one xcodebuild at a time host-wide, with a
+`pgrep -fl xcodebuild` pre-flight, and honest reporting of waits or contention.
+Six xcodebuild invocations ran in this round. This file preserves the pre-flight
+output that survived in the lane harness's background-process completion notices,
+verbatim, so the report's host-discipline paragraph is checkable rather than
+prose.
+
+Invocations that carried the pre-flight (5 of 6): AFTER focused leg, run-1
+CI-shape suite, flake-attribution focused run, base-control focused run,
+erased-suite run. Invocation without it (1 of 6): BEFORE focused leg (the
+lane's omission; its slot state is unverified, not "clean").
+
+## 1. AFTER focused leg (`round2-after-focused.log.gz`)
+
+The only process matched is this lane's own wrapper shell (its command text
+contains "xcodebuild"), so no sibling build was live:
+
+   93202 /bin/bash -c source /var/folders/4k/fbv06j2j5bbd3h4wgbwk1ccm0000gn/T/hermes-snap-8eec599d4034.sh >/dev/null 2>&1 || true
+   export AI_AGENT="${AI_AGENT:-hermes-agent}" HERMES_AGENT="${HERMES_AGENT:-true}"
+   export GIT_PAGER="${GIT_PAGER:-cat}" PAGER="${PAGER:-cat}"
+   PGREP_DONE
+   AFTER_FOCUSED_EXIT=0
+
+## 2. Run-1 CI-shape app-target suite (`round2-app-target-suite.log.gz`)
+
+Same single self-match, no sibling build:
+
+   93202 /bin/bash -c source /var/folders/4k/fbv06j2j5bbd3h4wgbwk1ccm0000gn/T/hermes-snap-8eec599d4034.sh >/dev/null 2>&1 || true
+   export AI_AGENT="${AI_AGENT:-hermes-agent}" HERMES_AGENT="${HERMES_AGENT:-true}"
+   export GIT_PAGER="${GIT_PAGER:-cat}" PAGER="${PAGER:-cat}"
+   PGREP_DONE
+   ROUND2_SUITE_EXIT=65
+
+## 3. Base-control focused run (`round2-base-control-focused.log.gz`)
+
+The pre-flight matched nothing at all — a clean slot:
+
+   (eval):1: can't change option: zle
+   (eval):1: can't change option: zle
+   PGREP_DONE
+   BASE_CONTENT_CHECK:
+   3326:                warmTagCurvesIfMissing(capturedBy: accountFetch)
+   7905:        warmTagCurvesIfMissing(capturedBy: accountFetch)
+   11747:                warmTagCurvesIfMissing(capturedBy: accountFetch)
+   be7bdb20a9b5414709a26ac09050cbfaacc40069
+   An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=405):
+   Unable to lookup in current state: Shutdown
+   UNINSTALL_EXIT=149
+   BASE_CONTROL_EXIT=65
+   RESTORE_CHECK:
+   RESTORE_DIFF_EMPTY_ABOVE
+   9c380cc4a8ceb1ee66d8564a1f965749eda6708f
+
+(The same output also carries the base-control leg's proof: the base
+`AppModel.swift` blob `be7bdb20…` was in the tree for that run, and the restore
+to the fixed blob `9c380cc4…` was verified with an empty
+`git diff HEAD -- <file>`.)
+
+## Not preserved
+
+- Flake-attribution focused run and erased-suite run: both commands included the
+  pre-flight, but their outputs were not captured in a completion notice, so
+  their slot state is unrecorded here (neither produced a timeout or
+  runner-attach failure).
+- BEFORE focused leg: the pre-flight was not included in the command at all.
