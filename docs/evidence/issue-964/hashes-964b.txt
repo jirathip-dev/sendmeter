@@ -1,0 +1,16 @@
+10e222dba15ee6c95ca60ee1b36d6000af1317e85b5b066b8d0516376e7acae2  docs/evidence/issue-964/964b-apptarget-focused.log.gz
+1239db507fa06d7f0d2fcd1f12acd72592a01a2202e51efc4c3ab7c53d0b9788  docs/evidence/issue-964/964b-apptarget-full-ci.log.gz
+c12bdeafdb4eaaa5bfd47690a80c0b2b072a7ac2c3a0873f1b1b1a4ee4242f48  docs/evidence/issue-964/964b-base-red.log.gz
+f795c2a66aeb59a859c58d5559bbc93ee7814c7730425825f22ac991959e7760  docs/evidence/issue-964/964b-check-static-base.log.gz
+cf45d2ea120400b7fc950517df4e0b9d6e47e61b1710b2e7a385f3693ba1821a  docs/evidence/issue-964/964b-check-static.log.gz
+2d7d01a3459692e1aaeb175a6f2e79ad2ccff9edbad8adbc1516be0ef2a2dce7  docs/evidence/issue-964/964b-core-focused-friendly-error.log.gz
+b04e3f1f31f6cb6349b5fb86b555b893aa3333b2841ca8fcf7eea020a29fcff5  docs/evidence/issue-964/964b-device-build.log.gz
+5073971fd0cf2fc5d45a4d4a283be6e9f28264d21ba5632b1cffeef106f77862  docs/evidence/issue-964/964b-device-install-retry.log.gz
+043a31db34c57fece46296adfbe628410736e6134a0202b5a784f617c0b1f1ba  docs/evidence/issue-964/964b-device-install-retry2.log.gz
+7b3da7b15a5e4eaa111b5d3ba701f0b5a56e35600dc74eb1a0e0301478af8d95  docs/evidence/issue-964/964b-device-install.log.gz
+2cd1ba3d8568d71ce2ccd47a2dfcbb7e4e7b0ff69e418b32c5841ae67a71c42f  docs/evidence/issue-964/964b-device-leg-retry.log.gz
+0d41ab76b4eca14884d0bb779a71a9283197eeb44b9bc1ae5574f5deba6af11b  docs/evidence/issue-964/964b-device-leg.log.gz
+cfe36c41fb9e31eed1c577c64529f57d9a624d53464aab93f5f00fd7ff976d7f  docs/evidence/issue-964/964b-head-transition-red.log.gz
+9979b43d7e7c13066f6406c6e5a03f5861224f7630b4cf7d71d6fe68933a9656  docs/evidence/issue-964/964b-justfast-attempt1.log.gz
+8c1b4298b477b499d4ef0053151210b0f308554260256f6efd59f62e945c5806  docs/evidence/issue-964/964b-device-log-attribution.txt
+fdb943b264fbda4c4896901f1b7c1f21689804d9baccb6c9dc38b92c623b60aa  docs/evidence/issue-964/Issue964bBaseRedTests.swift

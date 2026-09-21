@@ -41,6 +41,13 @@ public enum FriendlyErrorClass: Equatable, Sendable {
     case dataUnreadable
     /// #964: the Keychain-backed session store could not be reached.
     case secureStorageUnavailable
+    /// #964 round 2: the account-data load — the launch/foreground refresh
+    /// funnel — failed and this build cannot attribute the cause to a more
+    /// specific family. Deliberately NOT `.unknown`: the copy names the
+    /// operation and the retry re-runs the failed step, so a first-launch
+    /// data-load failure can never render the empty generic fallback the
+    /// owner saw on every cold start.
+    case loadFailed
     case unknown
 }
 
@@ -116,6 +123,8 @@ public enum UserFacingError {
             return "Sendmeter couldn\u{2019}t read some of its data. Update Sendmeter, then try again."
         case .secureStorageUnavailable:
             return "Sendmeter couldn\u{2019}t reach its saved sign-in on this iPhone. Reopen the app, then try again."
+        case .loadFailed:
+            return "Sendmeter couldn\u{2019}t load your data. Try again."
         case .unknown:
             return "Something went wrong while completing that. Try again."
         }
@@ -173,6 +182,29 @@ public enum UserFacingError {
             }
         }
         return Self.classification(for: BackendFailureReason(error: error))
+    }
+
+    /// #964 round 2: the account-data load funnel's classifier.
+    ///
+    /// The launch/foreground data load is the one path where the empty
+    /// `.unknown` fallback is never acceptable — the owner's device banner
+    /// ("Something went wrong while completing that.") was that fallback with
+    /// nothing actionable behind it, on every cold start. Every error the
+    /// taxonomy can name keeps its specific class; an error it cannot
+    /// attribute keeps the honest named `.loadFailed` instead of the empty
+    /// generic one. Callers that are NOT loading account data keep using
+    /// `classification(for:)`, where an internal-invariant breach may still
+    /// honestly read as `.unknown`.
+    public static func classification(forLoadFailure error: Error) -> FriendlyErrorClass {
+        let classification = classification(for: error)
+        return classification == .unknown ? .loadFailed : classification
+    }
+
+    /// The load funnel's copy, paired with its classifier so a caller cannot
+    /// mix the two (the banner and the Dashboard's retained class must always
+    /// agree).
+    public static func message(forLoadFailure error: Error) -> String {
+        message(for: classification(forLoadFailure: error))
     }
 
     /// Maps a quarantined rejection using its immutable classification, so
@@ -463,5 +495,24 @@ extension LocalCacheError: FriendlyErrorClassifying {
             // build asks for — the decode family, not an unexplained failure.
             return .dataUnreadable
         }
+    }
+}
+
+extension DeltaReadError: FriendlyErrorClassifying {
+    public var friendlyErrorClass: FriendlyErrorClass {
+        // #964 round 2: the delta reader fails closed — a page that is not in
+        // the `(updated_at, tie-break)` order this build asked for, a cursor
+        // that cannot advance, or a page budget that runs out. Either way the
+        // account's data could not be read on this pass, which is the decode
+        // family rather than an unexplained failure.
+        .dataUnreadable
+    }
+}
+
+extension CacheUnavailableReason: FriendlyErrorClassifying {
+    public var friendlyErrorClass: FriendlyErrorClass {
+        // #964 round 2: the local cache could not be prepared at launch. The
+        // reason's `detail` is diagnostics-ring data; it never reaches copy.
+        .cacheUnavailable
     }
 }
