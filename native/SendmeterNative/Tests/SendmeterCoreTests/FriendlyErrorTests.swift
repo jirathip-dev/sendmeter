@@ -45,6 +45,7 @@ final class FriendlyErrorTests: XCTestCase {
             (.cacheUnavailable, "Sendmeter couldn\u{2019}t read its saved data on this iPhone. Reopen the app, then try again."),
             (.dataUnreadable, "Sendmeter couldn\u{2019}t read some of its data. Update Sendmeter, then try again."),
             (.secureStorageUnavailable, "Sendmeter couldn\u{2019}t reach its saved sign-in on this iPhone. Reopen the app, then try again."),
+            (.loadFailed, "Sendmeter couldn\u{2019}t load your data. Try again."),
             (.unknown, "Something went wrong while completing that. Try again.")
         ]
         for (classification, expected) in expectations {
@@ -387,6 +388,140 @@ final class FriendlyErrorTests: XCTestCase {
         for (kind, expected) in expectations {
             XCTAssertEqual(UserFacingError.label(for: kind), expected)
             XCTAssertFalse(UserFacingError.label(for: kind).contains(kind.rawValue))
+        }
+    }
+
+    // MARK: - #964 round 2: the launch-path load funnel
+
+    /// The delta reader's fail-closed errors are a launch-path data-load
+    /// family: the page the app asked for is not in the shape/order it can
+    /// consume, or the read could not be completed in one pass. Before this
+    /// round they were `.unknown` — the copy the owner's device showed on
+    /// every cold start.
+    func testDeltaReadFailuresClassifyAsUnreadableData() {
+        let failures: [(String, DeltaReadError)] = [
+            ("outOfOrderPage", .outOfOrderPage),
+            ("cursorDidNotAdvance", .cursorDidNotAdvance),
+            ("pageBudgetExhausted", .pageBudgetExhausted(pageLimit: 64))
+        ]
+        for (name, error) in failures {
+            XCTAssertEqual(
+                UserFacingError.classification(for: error),
+                .dataUnreadable,
+                name
+            )
+            XCTAssertEqual(
+                UserFacingError.classification(forLoadFailure: error),
+                .dataUnreadable,
+                name
+            )
+            XCTAssertEqual(
+                UserFacingError.message(for: error),
+                UserFacingError.message(for: .dataUnreadable),
+                name
+            )
+            XCTAssertNotEqual(
+                UserFacingError.message(for: error),
+                UserFacingError.message(for: .unknown),
+                "\(name) must not read as the generic fallback"
+            )
+        }
+    }
+
+    /// A cache that could not be prepared at launch is the cache family, not
+    /// an unexplained failure — the reason's diagnostics detail never reaches
+    /// copy.
+    func testCachePreparationFailuresClassifyAsCacheUnavailable() {
+        for reason in [
+            CacheUnavailableReason.noSupportDirectory,
+            CacheUnavailableReason.openFailed("disk I/O error")
+        ] {
+            XCTAssertEqual(
+                UserFacingError.classification(for: reason),
+                .cacheUnavailable
+            )
+            XCTAssertEqual(
+                UserFacingError.message(for: reason),
+                UserFacingError.message(for: .cacheUnavailable)
+            )
+        }
+    }
+
+    /// The load funnel walks the launch chain's failure surface. Every family
+    /// the account-data load can throw has a NAMED class, and the ones this
+    /// build cannot attribute get `.loadFailed` — the empty `.unknown` copy is
+    /// unreachable from this path (that is the owner's banner, and it must
+    /// never be the outcome of a first-launch data-load failure).
+    func testLaunchPathLoadFailuresNeverClassifyAsUnknown() {
+        let opaqueRaw = RawSampleError(raw: "The operation could not be completed.")
+        let unexplainedHealthKit = NSError(domain: "com.apple.healthkit", code: 7)
+        let cases: [(String, Error, FriendlyErrorClass)] = [
+            ("offline", URLError(.notConnectedToInternet), .offline),
+            ("timeout", URLError(.timedOut), .timeout),
+            // A URLError code the taxonomy does not name (bad server response,
+            // cancelled, cannot-parse, …) still arrives here on a real load.
+            ("unmapped URLError code", URLError(.badServerResponse), .loadFailed),
+            ("decode", DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: [], debugDescription: "not in the correct format")
+            ), .dataUnreadable),
+            ("delta order", DeltaReadError.outOfOrderPage, .dataUnreadable),
+            ("delta cursor", DeltaReadError.cursorDidNotAdvance, .dataUnreadable),
+            ("delta budget", DeltaReadError.pageBudgetExhausted(pageLimit: 64), .dataUnreadable),
+            ("cache open", DatabaseError(
+                resultCode: .SQLITE_CANTOPEN,
+                message: "unable to open database file"
+            ), .cacheUnavailable),
+            ("cache payload", LocalCacheError.invalidPayload, .dataUnreadable),
+            ("cache write", LocalCacheError.invalidJSON, .cacheUnavailable),
+            ("cache prepare", CacheUnavailableReason.openFailed("disk I/O error"), .cacheUnavailable),
+            ("queue directory", DurableQueueError.invalidDirectory, .cacheUnavailable),
+            ("keychain", NSError(domain: NSOSStatusErrorDomain, code: -25300), .secureStorageUnavailable),
+            ("health permission", NSError(domain: "com.apple.healthkit", code: 4), .healthPermissionDenied),
+            ("health unexplained code", unexplainedHealthKit, .loadFailed),
+            ("opaque error", opaqueRaw, .loadFailed)
+        ]
+        for (name, error, expected) in cases {
+            let classification = UserFacingError.classification(forLoadFailure: error)
+            XCTAssertEqual(classification, expected, name)
+            XCTAssertNotEqual(classification, .unknown, name)
+            let message = UserFacingError.message(forLoadFailure: error)
+            XCTAssertNotEqual(message, UserFacingError.message(for: .unknown), name)
+            XCTAssertFalse(
+                message.localizedCaseInsensitiveContains("NSURLErrorDomain"),
+                name
+            )
+            XCTAssertFalse(message.localizedCaseInsensitiveContains("DeltaReadError"), name)
+            XCTAssertFalse(message.localizedCaseInsensitiveContains("SendmeterCore"), name)
+            XCTAssertFalse(message.localizedCaseInsensitiveContains("SQLITE"), name)
+        }
+
+        // The funnel is a lift, not a re-label: a class the taxonomy CAN name
+        // is never replaced, and the raw classifier's `.unknown` is still what
+        // non-load callers see for an unattributable error.
+        XCTAssertEqual(
+            UserFacingError.classification(for: opaqueRaw),
+            .unknown,
+            "the raw classifier's fallback is unchanged for non-load callers"
+        )
+        XCTAssertEqual(
+            UserFacingError.classification(forLoadFailure: URLError(.badServerResponse)),
+            .loadFailed
+        )
+        XCTAssertEqual(
+            UserFacingError.message(forLoadFailure: opaqueRaw),
+            UserFacingError.message(for: .loadFailed)
+        )
+    }
+
+    /// The named load class must not leak internals either.
+    func testLoadFailedCopyIsActionableAndLeakFree() {
+        let message = UserFacingError.message(for: .loadFailed)
+        XCTAssertEqual(message, "Sendmeter couldn\u{2019}t load your data. Try again.")
+        for token in ["Error", "domain", "code", "nil", "unknown", "NSURLError", "GRDB", "SQLite"] {
+            XCTAssertFalse(
+                message.localizedCaseInsensitiveContains(token),
+                "load copy must not carry \\(token)"
+            )
         }
     }
 }

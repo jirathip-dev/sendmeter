@@ -124,7 +124,12 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertTrue(topBar.contains("Button(\"End\", action: endSession)"))
         XCTAssertTrue(guidedView.contains("private func endSession()"))
         XCTAssertTrue(guidedView.contains("await session.stopOrFinish()"))
-        XCTAssertTrue(guidedSections.contains("controls(date: date)"))
+        // #993: the pause/skip row is still the same `controls(date:)` helper,
+        // but it is now rendered by the CONTAINER under the scroll view (so it
+        // stays on screen at every chart height) instead of as the stack's
+        // last scrolling section.
+        XCTAssertTrue(guidedView.contains("controls(date: date)"))
+        XCTAssertFalse(guidedSections.contains("controls(date: date)"))
     }
 
     /// #940: completion is an explicit prompt with its own inline action, and

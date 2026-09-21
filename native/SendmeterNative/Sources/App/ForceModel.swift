@@ -24,4 +24,33 @@ public final class ForceModel: ObservableObject {
     @Published public internal(set) var hasLoadedRecordings = false
 
     public init() {}
+
+    /// The cached static fit for `tag` in a published tag-curve list — the one
+    /// lookup the Force tab's zone gating, its curve card and the Focus-Next
+    /// tie-break consume.
+    ///
+    /// Both sides are normalized (trim + lowercased) because the cache key is
+    /// normalized while the published curve keeps the recordings' display tag.
+    /// Static-only by construction: a reverse-action (movement) fit is never
+    /// a hold-protocol reference (#990).
+    public static func cachedStaticCurve(
+        in curves: [TagForceCurve],
+        tag: String
+    ) -> TagForceCurve? {
+        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return nil }
+        return curves.first {
+            $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
+                && $0.modality == "static"
+        }
+    }
+
+    /// The force-curve signal that lookup produces — the exact value
+    /// `ForceRecordingContextCard` gates the four zone protocols on.
+    public static func zoneCurveInput(
+        in curves: [TagForceCurve],
+        tag: String
+    ) -> ZoneCurveInput? {
+        cachedStaticCurve(in: curves, tag: tag).map { ZoneCurveInput($0) }
+    }
 }

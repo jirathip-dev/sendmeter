@@ -1,0 +1,29 @@
+diff --git a/native/SendmeterNative/Sources/App/AppModel.swift b/native/SendmeterNative/Sources/App/AppModel.swift
+index be7bdb2..9c380cc 100644
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -3323,7 +3323,6 @@ public final class AppModel {
+                 // authoritative data again.
+                 dashboardLoadFailureClass = nil
+                 lastPartialRefreshFailure = nil
+-                warmTagCurvesIfMissing(capturedBy: accountFetch)
+             } else {
+                 recordPartialRefresh(
+                     outcomes: outcomes,
+@@ -3332,6 +3331,16 @@ public final class AppModel {
+                     capturedBy: accountFetch
+                 )
+             }
++            // #990: warm the tag curves whenever a recordings list was
++            // published, not only on a fully-successful sweep. The publication
++            // above clears every published curve (`invalidateTagCurveCache()`),
++            // so a partial pass used to leave a user with existing history
++            // curveless — all four zone protocols dimmed with "No reference
++            // curve" — until some other path (background sync, realtime
++            // reconcile, a save) happened to warm them again. The freshness
++            // stamp and the partial-refresh failure handling above stay gated
++            // on `didFullyRefresh`; the curve cache does not.
++            warmTagCurvesIfMissing(capturedBy: accountFetch)
+             // This is deliberately inside the private refresh path so cold
+             // bootstrap, foreground refresh, and mutation follow-ups all
+             // have one guaranteed publication point after authoritative data
