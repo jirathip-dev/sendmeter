@@ -446,6 +446,17 @@ public final class AppModel {
     /// blackout, so this — not the global banner — is where its retry lives.
     /// Cleared by a pass where every slice reconciled (or by an account reset).
     public private(set) var lastPartialRefreshFailure: RefreshFailureSummary?
+    /// #1004: what the most recent local-data repair did — an undecodable
+    /// stored payload whose authoritative copy is on the server was set aside
+    /// (raw bytes preserved) and its entity's cursor reset, so the next
+    /// refresh rebuilds it. This is the non-blocking surface for that work;
+    /// the launch-failure log carries the step. `nil` until a repair finds
+    /// something, and account-scoped like every other failure state here.
+    public private(set) var lastLocalDataRepair: LocalCacheRepairReport?
+    /// #1004: invalid rows already handled or reported, so a read that keeps
+    /// returning the same un-synced unreadable row does not repeat its notice
+    /// on every pass. Account-scoped (reset with the snapshot).
+    private var reportedInvalidRows: Set<LocalCacheInvalidRow> = []
     /// #964: true while the Dashboard should lead with its load-failure state:
     /// the last account-data load failed AND the account has no authoritative
     /// snapshot to render (`hasLoadedSessions` / `hasLoadedRecordings` are the
@@ -2180,6 +2191,15 @@ public final class AppModel {
             to: currentUserID,
             accountEpoch: accountEpoch
         ) else { return nil }
+        // #1004: an undecodable stored payload is repaired HERE, on the launch
+        // path that used to leave it silently unread (and unh healed) — the
+        // row's raw payload is set aside, the entity is refetched from the
+        // server, and a pending row is left exactly where it is.
+        await applyLocalDataRepair(
+            read.invalidRows,
+            accountUserID: accountUserID,
+            capturedBy: accountFetch
+        )
         let snapshot = read.snapshot
         let sessionsWereSynced = read.hasCompletedSync(.sessions)
         let recordingsWereSynced = read.hasCompletedSync(.recordings)
@@ -2729,6 +2749,72 @@ public final class AppModel {
             .failure,
             detail: "Local cache \(operation): \(error.localizedDescription)"
         )
+    }
+
+    // MARK: - Local data repair (#1004)
+
+    /// #1004: quarantines every stored payload this build cannot decode and
+    /// heals the entities it touched from the server.
+    ///
+    /// This is what the launch path does automatically (see
+    /// `hydrateCachedWorkspace`) and what the Settings affordance calls on
+    /// demand. It never touches an un-synced row: a pending row's only copy is
+    /// local, so it is reported, not moved.
+    @discardableResult
+    public func repairUnreadableLocalData() async -> LocalCacheRepairReport? {
+        guard cachedWorkspace != nil, let userID = currentUserID else { return nil }
+        guard let read = await readCoherentCache(accountUserID: userID) else { return nil }
+        return await applyLocalDataRepair(
+            read.invalidRows,
+            accountUserID: userID,
+            capturedBy: AccountScopedFetch(
+                accountUserID: userID,
+                accountEpoch: accountEpoch
+            )
+        )
+    }
+
+    /// The one repair applier. `CacheOffload` keeps the quarantine write off
+    /// the main actor, and the account/epoch captured before the await is
+    /// re-checked before anything is published — another account's repair can
+    /// never surface here.
+    @discardableResult
+    private func applyLocalDataRepair(
+        _ invalidRows: [LocalCacheInvalidRow],
+        accountUserID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> LocalCacheRepairReport? {
+        guard let workspace = cachedWorkspace else { return nil }
+        let newRows = invalidRows.filter { !reportedInvalidRows.contains($0) }
+        guard !newRows.isEmpty else { return nil }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+        let report: LocalCacheRepairReport
+        do {
+            report = try await CacheOffload.run {
+                try workspace.store.quarantineInvalidRows(
+                    newRows,
+                    accountUserID: accountUserID
+                )
+            }
+        } catch {
+            recordCacheFailure("local data quarantine", error)
+            return nil
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+        reportedInvalidRows.formUnion(newRows)
+        // The decode failure stays VISIBLE: the persisted launch-failure log
+        // names the step and the decode family exactly like the launch-path
+        // failures #964 added, and the notice below is the non-blocking
+        // surface. A silent no-op is what this issue forbids.
+        recordLaunchFailure("local-data-repair", LocalCacheError.invalidPayload)
+        lastLocalDataRepair = report
+        return report
     }
 
     /// #922: both published pending counts from ONE query, and both off the
@@ -12478,6 +12564,10 @@ public final class AppModel {
         isRetryingQueuedWrites = false
         queuedWritesRetryGate.reset()
         lastPartialRefreshFailure = nil
+        // #1004: another account's unreadable rows, and its repair notice,
+        // never carry into the next account's screens.
+        lastLocalDataRepair = nil
+        reportedInvalidRows = []
         publishForceProgressInputMutation(.accountReset)
         refreshingOwner = nil
         isRefreshing = false

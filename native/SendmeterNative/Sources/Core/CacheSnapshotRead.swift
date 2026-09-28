@@ -50,6 +50,27 @@ public struct LocalCachePendingRow: Hashable, Sendable {
 /// coherent: the delta a refresh fetches from the cursor in this read is
 /// reconciled against exactly the rows this read observed, and the snapshot a
 /// surface publishes cannot mix two different revisions.
+/// #1004: one stored row a coherent read could not decode under the type its
+/// entity asks for.
+///
+/// A coherent read reports these instead of silently skipping them, so the
+/// launch path can quarantine the row (preserving its raw payload) and heal it
+/// from the server, and so the failure stays visible. `isPending` is the data
+/// safety boundary: a pending row's only copy is local, so it is never
+/// quarantined or deleted — a real un-uploaded recording must never be lost to
+/// a repair.
+public struct LocalCacheInvalidRow: Hashable, Sendable {
+    public let entityType: LocalCacheEntityType
+    public let entityID: String
+    public let isPending: Bool
+
+    public init(entityType: LocalCacheEntityType, entityID: String, isPending: Bool) {
+        self.entityType = entityType
+        self.entityID = entityID
+        self.isPending = isPending
+    }
+}
+
 public struct LocalCacheSnapshotRead: Sendable {
     public let snapshot: CachedWorkspaceSnapshot
     public let revision: LocalCacheRevision
@@ -57,6 +78,8 @@ public struct LocalCacheSnapshotRead: Sendable {
     public let completedEntityTypes: Set<LocalCacheEntityType>
     public let purgeGenerations: [LocalCacheEntityType: Int64]
     public let pendingRows: [LocalCachePendingRow]
+    /// #1004: live rows this read could not decode (see `LocalCacheInvalidRow`).
+    public let invalidRows: [LocalCacheInvalidRow]
 
     public init(
         snapshot: CachedWorkspaceSnapshot,
@@ -64,7 +87,8 @@ public struct LocalCacheSnapshotRead: Sendable {
         cursors: [LocalCacheEntityType: String],
         completedEntityTypes: Set<LocalCacheEntityType>,
         purgeGenerations: [LocalCacheEntityType: Int64],
-        pendingRows: [LocalCachePendingRow]
+        pendingRows: [LocalCachePendingRow],
+        invalidRows: [LocalCacheInvalidRow] = []
     ) {
         self.snapshot = snapshot
         self.revision = revision
@@ -72,7 +96,11 @@ public struct LocalCacheSnapshotRead: Sendable {
         self.completedEntityTypes = completedEntityTypes
         self.purgeGenerations = purgeGenerations
         self.pendingRows = pendingRows
+        self.invalidRows = invalidRows
     }
+
+    /// True when the read skipped at least one undecodable stored row.
+    public var hasInvalidRows: Bool { !invalidRows.isEmpty }
 
     public func cursor(for entityType: LocalCacheEntityType) -> String? {
         cursors[entityType]

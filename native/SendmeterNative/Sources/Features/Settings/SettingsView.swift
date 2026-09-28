@@ -17,6 +17,9 @@ struct SettingsView: View {
     @State private var registeringPasskey = false
     @State private var sendingReset = false
     @State private var retryingQuarantined = false
+    /// #1004: the on-demand local-data repair (the launch path runs the same
+    /// pass automatically).
+    @State private var repairingLocalData = false
     @State private var discardConfirmation: QuarantinedWrite?
     /// #712: the passkey awaiting removal confirmation (server-side delete).
     @State private var pendingPasskeyRemoval: PasskeyListItem?
@@ -629,6 +632,34 @@ struct SettingsView: View {
                 .disabled(model.isRefreshing)
                 .accessibilityIdentifier("refresh-retry")
             }
+            // #1004: a stored payload this build cannot decode is set aside on
+            // the launch path automatically; this is the same repair on
+            // demand, and it is where the user sees what happened — including
+            // the guarantee that an unsynced item is never touched.
+            if let repair = model.lastLocalDataRepair, repair.didRepairAnything {
+                Text(repair.message)
+                    .font(.caption)
+                    .foregroundStyle(SendmeterStyle.caution)
+                    .accessibilityIdentifier("local-repair-notice")
+            }
+            Button {
+                repairingLocalData = true
+                Task {
+                    await model.repairUnreadableLocalData()
+                    repairingLocalData = false
+                }
+            } label: {
+                HStack {
+                    Label("Repair local data", systemImage: "wrench.and.screwdriver")
+                    Spacer()
+                    if repairingLocalData { ProgressView() }
+                }
+            }
+            .disabled(repairingLocalData)
+            .accessibilityIdentifier("local-repair")
+            Text("Sets aside anything on this iPhone that Sendmeter can\u{2019}t read and rebuilds it from your account. Anything that hasn\u{2019}t synced yet is never touched.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if let breadcrumb = model.queueBreadcrumbs.first {
                 LabeledContent("Most recent recovery", value: breadcrumb.leftQueueAt.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
