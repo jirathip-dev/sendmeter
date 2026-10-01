@@ -1,8 +1,6 @@
 self-hosted-runner:
-  labels:
-    - blacksmith-4vcpu-ubuntu-2404
-    - blacksmith-6vcpu-macos-26
+  labels: []
 
-# Blacksmith runner labels are private to this repository's CI provider; keep
-# them explicit so actionlint can validate workflow expressions without treating
-# the existing runner names as unknown labels.
+# Every workflow runs on GitHub-hosted runners (`ubuntu-latest`, `macos-26`),
+# which actionlint already knows; keep this list empty so any unknown or
+# custom runner label fails the lint instead of being silently allowed.

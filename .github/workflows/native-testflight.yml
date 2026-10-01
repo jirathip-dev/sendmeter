@@ -26,7 +26,7 @@ on:
     inputs:
       runner:
         description: "Runner label"
-        default: blacksmith-6vcpu-macos-26
+        default: macos-26
         type: string
 
 # Native and Capacitor TestFlight builds share the shipped build-number train;
@@ -41,7 +41,7 @@ permissions:
 
 jobs:
   gate:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       build: ${{ steps.decision.outputs.build }}
@@ -59,7 +59,7 @@ jobs:
   native-beta:
     needs: gate
     if: needs.gate.outputs.build == 'true'
-    runs-on: ${{ inputs.runner || 'blacksmith-6vcpu-macos-26' }}
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     environment: testflight
     timeout-minutes: 60
     steps:
@@ -97,8 +97,8 @@ jobs:
         env:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
 
-      # Record the image's Xcode; pin via DEVELOPER_DIR once the Blacksmith
-      # image inventory is known.
+      # Record the image's Xcode; pin via DEVELOPER_DIR once the GitHub-hosted
+      # macos-26 image inventory is known.
       - name: Xcode version
         run: xcodebuild -version
 
