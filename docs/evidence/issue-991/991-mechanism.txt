@@ -1,0 +1,117 @@
+#991 mechanism evidence — why the app-group store emitted an AnyUser source
+
+All quotes below are verbatim. Paths refer to the lane worktree
+`/Users/jirathip/.herdr/worktrees/sendmeter/impl-991`.
+
+## 1. Apple's CF source: a suite membership adds AnyUser domains
+
+Source: https://raw.githubusercontent.com/apple-oss-distributions/CF/main/CFApplicationPreferences.c
+(commit dc54c6bb1c1e5e0b9486c1d26dd5bef110b20bf3, 2021-10-06), function
+`_CFApplicationPreferencesAddSuitePreferences` (called by
+`CFPreferencesAddSuitePreferencesToApp` — the suite mechanism used by
+`UserDefaults(suiteName:)` / `addSuiteNamed:`):
+
+    domain = _CFPreferencesStandardDomain(suiteName, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    if (domain) { ... CFArrayInsertValueAtIndex(appPrefs->_search, idx, domain); ... }
+    domain = _CFPreferencesStandardDomain(suiteName, kCFPreferencesCurrentUser, kCFPreferencesCurrentHost);
+    if (domain) { ... CFArrayInsertValueAtIndex(appPrefs->_search, idx, domain); ... }
+
+    // Now the AnyUser domains
+    domain = _CFPreferencesStandardDomain(appPrefs->_appName, kCFPreferencesAnyUser, kCFPreferencesAnyHost);
+    ...
+    domain = _CFPreferencesStandardDomain(suiteName, kCFPreferencesAnyUser, kCFPreferencesAnyHost);
+    if (domain) {
+        __CFLock(&__CFApplicationPreferencesLock);
+        CFArrayInsertValueAtIndex(appPrefs->_search, idx, domain);
+        __CFUnlock(&__CFApplicationPreferencesLock);
+    }
+    domain = _CFPreferencesStandardDomain(suiteName, kCFPreferencesAnyUser, kCFPreferencesCurrentHost);
+    if (domain) {
+        __CFLock(&__CFApplicationPreferencesLock);
+        CFArrayInsertValueAtIndex(appPrefs->_search, idx, domain);
+        __CFUnlock(&__CFApplicationPreferencesLock);
+    }
+
+Every suite adds two CurrentUser domains AND two AnyUser domains for the
+suite name. `UserDefaults(suiteName:)` therefore registers a
+`group...`/`kCFPreferencesAnyUser` source next to the readable CurrentUser
+one. No *code* in this repository names `kCFPreferencesAnyUser`:
+
+    $ grep -rn --include='*.swift' "kCFPreferencesAnyUser" \
+        native/SendmeterNative/Sources native-plugins/sendlog-health-core/Sources ios/App
+    native-plugins/sendlog-health-core/Sources/SendLogHealthCore/ReadinessWidgetContract.swift:162:
+    /// first suite use — logging the kCFPreferencesAnyUser-with-a-container
+
+The single occurrence is the fix's own explanatory comment (comments are
+stripped by the wiring test's `code()` helper, so
+`ReadinessWidgetWiringTests.testPhonePrivacyManifestsMatchTheAppGroupCallPath`
+still pins the code text against it). The AnyUser axis came from the suite
+API itself, not from this repository.
+
+## 2. The refusal string exists in the iOS 26.5 simulator CoreFoundation
+
+Command: `otool -tV <iOS 26.5 simruntime>/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation > /tmp/cf-disasm.txt`
+(470,485 lines, 17,953,792 bytes), literal search:
+
+    $ sed -n '419397p' /tmp/cf-disasm.txt
+    0000000000194170	add	x0, x0, #0x3d ; literal pool for: "Using kCFPreferencesAnyUser with a container is only allowed for System Containers"
+
+That is the emitted string (`…, detaching from cfprefsd` is appended by the
+surrounding log format), i.e. the refusal is CoreFoundation's own guard on
+AnyUser sources in containerized processes.
+
+## 3. The modern search-list builder wires suite sources with the same shape
+
+Same binary, `__108-[_CFXPreferences(SearchListAdditions) withSearchListForIdentifier:container:cloudConfigurationURL:perform:]_block_invoke_2`
+(symbol line 365142 of /tmp/cf-disasm.txt). The block takes the suite
+identifier from `[x19, #0x40]` and wires sources in exactly the shape the OSS
+function above describes, including:
+
+    00000000001603e4	ldr	x1, [x19, #0x40]        ; identifier
+    00000000001603e8	mov	x2, x21                 ; user
+    00000000001603ec	mov	w3, #0x1                ; byHost: YES
+    00000000001603f0	mov	x4, #0x0                ; container: NIL
+    00000000001603f4	bl	"-[CFPrefsSearchListSource addSourceForIdentifier:user:byHost:container:]"
+    ...
+    0000000000160404	ldr	x1, [x19, #0x40]        ; identifier
+    0000000000160408	mov	x2, x21                 ; user
+    000000000016040c	bl	"-[CFPrefsSearchListSource addSuiteSourceForIdentifier:user:]"
+
+The `container: NIL` argument matches the device log's
+`…, Container: (null), …` and the `byHost: YES` argument matches its
+`ByHost: Yes`.
+
+## 4. The refused source comes from a read, not from suite construction
+
+`-[NSUserDefaults(NSUserDefaults) _initWithSuiteName:container:]` (Foundation,
+symbol line 2432203 of /tmp/fdn-disasm.txt) only stores the two values:
+
+    00000000009280d8	mov	x0, x21
+    00000000009280dc	mov	x2, x20
+    00000000009280e0	bl	"_objc_msgSend$_setContainer:"
+    00000000009280e4	mov	x0, x21
+    00000000009280e8	mov	x2, x19
+    00000000009280ec	bl	"_objc_msgSend$_setIdentifier:"
+
+No CFPreferences call happens at construction; the AnyUser source is created
+on the first read through that suite object. In the app,
+`ReadinessWidgetStore.appGroupStore` is constructed on the launch chain
+(`resetAccountState()` → `ReadinessWidgetBridge.reset(for:)`) and read at
+once — the process's first app-group read, milliseconds after the relay
+callback starts.
+
+## 5. Apple's WatchConnectivity framework references none of this
+
+Commands against the simulator binary
+`<runtime>/System/Library/Frameworks/WatchConnectivity.framework/WatchConnectivity`:
+
+    $ nm -u WatchConnectivity | grep -ciE "CFPreferences|UserDefaults"
+    0
+    $ otool -tV WatchConnectivity > /tmp/wc-disasm.txt   # 1,656,595 bytes
+    $ grep -ciE "CFPreferences|NSUserDefaults|UserDefaults|containerURL" /tmp/wc-disasm.txt
+    0
+
+No `CFPreferences*` symbol, no `UserDefaults` class use, no app-group
+container lookup — so the container lookup and the refused source seen on the
+callback thread in the device transcript are the app's own store use, not
+Apple's persistence inside `storeAppContext:`.

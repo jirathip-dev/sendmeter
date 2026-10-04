@@ -1,0 +1,46 @@
+#991 simulator probe — the CurrentUser CFPreferences access reads the same storage
+
+Before the source change, a temporary XCTest
+(`Tests/SendmeterNativeTests/Probe991Tests.swift`, deleted after the run)
+measured, inside the real app process on the iPhone 17 Pro simulator
+(`0E127B96-BF94-48E0-A61B-0C018D9D79C7`, iOS 26.5), whether an explicit
+`CFPreferences` CurrentUser read/write touches the same storage the App Group
+`UserDefaults(suiteName:)` object uses.
+
+Command:
+
+    cd native/SendmeterNative
+    xcodebuild test -project SendmeterNative.xcodeproj -scheme SendmeterNative \
+      -configuration Debug -destination "id=0E127B96-BF94-48E0-A61B-0C018D9D79C7" \
+      -only-testing:SendmeterNativeTests/Probe991Tests \
+      -derivedDataPath <worktree>/.xcode-derived CODE_SIGNING_ALLOWED=NO
+    # PROBE BUILD EXIT: 0
+
+Observed output (verbatim):
+
+    Test Case '-[SendmeterNativeTests.Probe991Tests testProbeAppGroupStorageIdentity]' started.
+    PROBE991 step1 suite-write done
+    PROBE991 step2 cf-read bytes=3 equalSuite=true
+    PROBE991 step3 cf-write suite-read equal=true bytes=3
+    PROBE991 step4 container=nil
+    Test Case '-[SendmeterNativeTests.Probe991Tests testProbeAppGroupStorageIdentity]' passed (0.005 seconds).
+
+Reading:
+
+* step1 wrote a value through `UserDefaults(suiteName: "group.com.jirathip.sendlog")`.
+* step2 read it back with `CFPreferencesCopyValue(..., kCFPreferencesCurrentUser, kCFPreferencesAnyHost)`
+  -> `equalSuite=true`: the two access paths share one storage on this
+  simulator.
+* step3 wrote through `CFPreferencesSetValue` (CurrentUser) and read it back
+  through the suite object -> `equal=true`: the storage is the same in both
+  directions, so swapping the store's access path changes no stored data.
+* step4 `containerURL(forSecurityApplicationGroupIdentifier:)` is nil on the
+  simulator: the simulator does not create an App Group container, so the
+  containerized-preferences refusal itself cannot be reproduced here — it is
+  exactly the device-only gate that produced the capture. The simulator
+  evidence therefore covers storage identity only; the refusal's absence on
+  device is what the owner-gated re-capture in `.report-991.md` must show.
+
+Raw log: the run log was `/tmp/probe991-xcodebuild.log` (3,647,569 bytes) on
+the lane host; the lines above are its complete `PROBE991` output plus the
+test result.

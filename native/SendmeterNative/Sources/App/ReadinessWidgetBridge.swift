@@ -37,10 +37,11 @@ enum ReadinessWidgetBridge {
             requestReload()
         }
 
-        // #991: the App Group access no longer detaches from cfprefsd, but a
-        // save that does not read back — unreachable container, protected
-        // plist — is exactly the silent widget degradation this path can
-        // still suffer. Persisted level (#992) so the device log can name it.
+        // #991: the App Group access now registers only a CurrentUser source,
+        // but a save that does not read back — unreachable container,
+        // protected plist — is exactly the silent widget degradation this
+        // path can still suffer. Persisted level (#992) so the device log
+        // can name it.
         if store.load() != snapshot {
             logger.notice(
                 "readiness widget publish: payload did not read back after save"
