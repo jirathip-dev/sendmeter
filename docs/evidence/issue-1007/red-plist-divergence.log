@@ -1,0 +1,255 @@
+warning: 'sendmeternative': found 61 file(s) which are unhandled; explicitly declare them as resources or exclude from the target
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/LiveActivityIntents.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Phases/PhasesView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/HealthKitService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/AppModel.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/StructuralHaptics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/IntentStubs.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/Haptics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Shared/ManualWorkoutActivityAttributes.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/SessionDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/DesignSystem.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutRestScheduler.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/MovementDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Auth/LoginView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/BackgroundSyncService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ForceModel.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/SendmeterNativeWidgetsBundle.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/SupabaseService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/SideAsymmetryCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Shared/GuidedProtocolActivityAttributes.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Settings/SettingsView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ReadinessWidgetBridge.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/AppThemeController.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutRestAlert.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/WeatherService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ActivityMixBar.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/Repositories.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/StaticCapacityDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/HistoryView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/SendmeterNativeApp.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/RealtimeService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/WatchConnectivityService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/SheetPresentation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/GuidedProtocolActivityManager.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutActivityManager.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/TindeqBluetooth.swift
+warning: 'sendmeternative': found 167 file(s) which are unhandled; explicitly declare them as resources or exclude from the target
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TrainingLoadInteraction.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/StructuralHapticDiagnostics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceCurveSelection.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/SideAsymmetryCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/TindeqBluetooth.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutRestScheduler.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AppTheme.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/PendingSessionWritePolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ZoneMix.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HealthRefreshPolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RecordingEditCoordinator.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HandsFreeForceController.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TagChipList.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceMotionPolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/BoxPlot.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/DirectWriteReplay.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ChartTheme.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RoutineUndo.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/BackgroundSyncService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AppleAuthNonce.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AuthDiagnostics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/Models.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceRecordingContextPolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WorkoutEngine.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TagCatalog.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/PendingRecordingOverlay.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ChartContrast.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LostRecordingNotice.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/Haptics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RecoveryInputs.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SheetPresentation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ForceModel.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/Repositories.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AppUnits.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/CachePreparation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/AppModel.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WatchCompletion.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WorkspaceSyncCoordinator.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceCurveEngine.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RoutineAudio.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ChartAxisLabelRule.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutRestAlert.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AsyncDeadline.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForegroundRefreshPolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceProgress.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AcwrStatusCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TrainingLoad.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HistoryTimeline.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RefreshSlicePlan.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ManualWorkoutLifecycleCoordinator.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/CachedWorkspace.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SignOutQueuePolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceLaunchRecovery.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/MutationRecoveryCoordinator.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GaugeSessionTracker.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HistoryDerivedData.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/HistoryView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/DeltaCursor.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RoutineGate.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RoutineRunnerContrast.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/SendmeterNativeWidgetsBundle.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AcwrProjection.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SessionFreshness.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HealthMetricReconciliation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/DateSupport.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ExerciseSideMode.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/RealtimeService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GaugeSessionSaveGate.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceCurvePlotGeometry.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Phases/PhasesView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ManualWorkoutActivityContent.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Shared/GuidedProtocolActivityAttributes.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/AppThemeController.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/MutationSyncStatus.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Auth/LoginView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ManualWorkoutRest.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceSaveOutcome.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/PurgeGenerationFailurePolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceDisconnectSalvage.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/OfflineQueue.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WatchMetadata.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AccountScopedFetch.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/Haptics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/StructuralHaptics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/BackgroundSyncEngine.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/PurgeGenerationResponse.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GuidedForceFullscreenPresentation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HistoryFilters.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WorkoutStats.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ErrorSurfacePolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ReadinessWidgetBridge.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HistorySelection.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/Metrics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceProtocolSelection.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ReadinessSyncPolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RoutineRunnerPresentation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SendConditions.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutActivityManager.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SendConditionsDetails.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/PhaseManager.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/LiveActivityIntents.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GaugeSessionRPE.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/HealthKitService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/SessionDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceEngine.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceTraceAccessibility.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/MovementDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/DeleteAccountConfirmationGate.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/IntentStubs.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/SendmeterNativeApp.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WorkoutRawTrace.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GuidedActivityMirror.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/DesignSystem.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/DashboardCardLayout.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/StaticCapacityDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceCurveTooltipPlacement.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TagCurveCachePolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/WatchConnectivityService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RealtimeListReconciler.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/QueueUploadCoordination.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TindeqConsistency.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Settings/SettingsView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/CacheSnapshotRead.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Shared/ManualWorkoutActivityAttributes.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LiveWorkoutMirror.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SplashDynoTimeline.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AuthRecovery.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/GuidedProtocolActivityManager.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SplashPresentationFloor.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TindeqSessionMerge.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/SupabaseService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HealthBackgroundSync.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/SheetPresentation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GuidedActivityContent.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/MassFormatting.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TrainingBlockGuidance.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ActivityMixBar.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift
+[0/1] Planning build
+Building for debugging...
+[0/2] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (7.24s)
+Test Suite 'Selected tests' started at 2569-10-04 11:50:10.521 AM.
+Test Suite 'SendmeterNativePackageTests.xctest' started at 2569-10-04 11:50:10.527 AM.
+Test Suite 'PublishableKeyParityTests' started at 2569-10-04 11:50:10.527 AM.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchBundledURLsMatch]' started.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchBundledURLsMatch]' passed (0.012 seconds).
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchCommittedPublishableKeysMatch]' started.
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/PublishableKeyParityTests.swift:51: error: -[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchCommittedPublishableKeysMatch] : XCTAssertEqual failed: ("sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp") is not equal to ("sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rq") - The phone and the Watch app must ship the same hosted publishable key (#1007): phone=sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp watch=sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rq
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchCommittedPublishableKeysMatch]' failed (3.181 seconds).
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testWatchSimulatorBranchUsesTheLocalStackKey]' started.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testWatchSimulatorBranchUsesTheLocalStackKey]' passed (0.003 seconds).
+Test Suite 'PublishableKeyParityTests' failed at 2569-10-04 11:50:13.725 AM.
+	 Executed 3 tests, with 1 failure (0 unexpected) in 3.195 (3.198) seconds
+Test Suite 'SendmeterNativePackageTests.xctest' failed at 2569-10-04 11:50:13.725 AM.
+	 Executed 3 tests, with 1 failure (0 unexpected) in 3.195 (3.198) seconds
+Test Suite 'Selected tests' failed at 2569-10-04 11:50:13.725 AM.
+	 Executed 3 tests, with 1 failure (0 unexpected) in 3.195 (3.204) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+RED_PLIST_EXIT=1

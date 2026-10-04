@@ -1,0 +1,23 @@
+Building for debugging...
+[0/2] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.34s)
+Test Suite 'Selected tests' started at 2569-10-04 11:50:20.751 AM.
+Test Suite 'SendmeterNativePackageTests.xctest' started at 2569-10-04 11:50:20.755 AM.
+Test Suite 'PublishableKeyParityTests' started at 2569-10-04 11:50:20.755 AM.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchBundledURLsMatch]' started.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchBundledURLsMatch]' passed (0.006 seconds).
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchCommittedPublishableKeysMatch]' started.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchCommittedPublishableKeysMatch]' passed (0.002 seconds).
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testWatchSimulatorBranchUsesTheLocalStackKey]' started.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testWatchSimulatorBranchUsesTheLocalStackKey]' passed (0.001 seconds).
+Test Suite 'PublishableKeyParityTests' passed at 2569-10-04 11:50:20.765 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.009 (0.010) seconds
+Test Suite 'SendmeterNativePackageTests.xctest' passed at 2569-10-04 11:50:20.765 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.009 (0.010) seconds
+Test Suite 'Selected tests' passed at 2569-10-04 11:50:20.766 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.009 (0.015) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.003 seconds.
+GREEN2_EXIT=0
