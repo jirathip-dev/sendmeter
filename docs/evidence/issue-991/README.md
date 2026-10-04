@@ -50,7 +50,8 @@ and `.report-991-fix2.md` (round 2, current) in the worktree root.
 | `fix2-core.log.gz` | `just core` on the fix head — 1510 tests, 0 failures, extended pin included (gzipped). |
 | `fix2-watch-core.log.gz` | The `package-tests` job's command run on macOS on the fix head (`swift test --package-path ios/App/SendLogWatchCore`) — exit 0, 600 tests (gzipped). |
 | `fix2-slop.log.gz` / `fix2-docs-check.log.gz` | `just slop` / `just docs-check` on the fix head — exit 0 (gzipped). |
-| `fix2-ci-run2-package-tests.log.gz` | The raw `package-tests` job log at the fix-round-2 head — the job verdict read and quoted in `.report-991-fix2.md`. |
+| `fix2-ci-run2-package-tests.log.gz` | The raw `package-tests` job log at the source head `310f1aa` (job 111442146702, completed success). The containing run was later marked run-level `cancelled` by concurrency when the next push arrived — the job had already completed; this log was captured before the cancellation. |
+| `fix2-ci-run3-package-tests.log.gz` | The raw `package-tests` job log at the tip `c12f44b` (job 111442718465, completed success) — same sources, re-verified on Linux. |
 | `SHA256SUMS` | Digests of every file in this directory. |
 
 Not included: the 3.6 MB raw probe `xcodebuild` log and the host disassembly
