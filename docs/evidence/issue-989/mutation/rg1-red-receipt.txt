@@ -1,0 +1,17 @@
+# mutated run tally (rg1-red.log, the run that built the scratch sources)
+Executed 7 tests, with 15 failures
+GuidedLaunchRecoveryAppTests.swift:475: error: -[SendmeterNativeTests.GuidedLaunchRecoveryAppTests testALegacyStoredPayloadIsSetAsideAndTheAppStillStartsASession] : failed - timed out after 
+GuidedLaunchRecoveryAppTests.swift:143: error: -[SendmeterNativeTests.GuidedLaunchRecoveryAppTests testALegacyStoredPayloadIsSetAsideAndTheAppStillStartsASession] : XCTUnwrap failed: expecte
+GuidedLaunchRecoveryAppTests.swift:475: error: -[SendmeterNativeTests.GuidedLaunchRecoveryAppTests testCaptureRecoveryAffordanceFrames] : failed - timed out after 60.001824708 seconds waitin
+GuidedLaunchRecoveryAppTests.swift:302: error: -[SendmeterNativeTests.GuidedLaunchRecoveryAppTests testCaptureRecoveryAffordanceFrames] : XCTAssertNotNil failed - fixture: the repair notice 
+GuidedProtocolCompletionTests.swift:62: error: -[SendmeterNativeTests.GuidedProtocolCompletionTests test941BackToBackProtocolsLogOneEntryWhenTheSessionEndsExplicitly] : failed - timed out af
+GuidedProtocolCompletionTests.swift:158: error: -[SendmeterNativeTests.GuidedProtocolCompletionTests test941BackToBackProtocolsLogOneEntryWhenTheSessionEndsExplicitly] : XCTAssertEqual faile
+GuidedProtocolCompletionTests.swift:159: error: -[SendmeterNativeTests.GuidedProtocolCompletionTests test941BackToBackProtocolsLogOneEntryWhenTheSessionEndsExplicitly] : XCTUnwrap failed: ex
+ManualWorkoutSaveOnceAppTests.swift:51: error: -[SendmeterNativeTests.ManualWorkoutSaveOnceAppTests testSavingTheSameFinishedWorkoutTwiceKeepsOneDurableSave] : failed - timed out after 60.00
+ManualWorkoutSaveOnceAppTests.swift:51: error: -[SendmeterNativeTests.ManualWorkoutSaveOnceAppTests testSavingTheSameFinishedWorkoutTwiceKeepsOneDurableSave] : failed - timed out after 60.00
+ManualWorkoutSaveOnceAppTests.swift:51: error: -[SendmeterNativeTests.ManualWorkoutSaveOnceAppTests testSavingTheSameFinishedWorkoutTwiceKeepsOneDurableSave] : failed - timed out after 60.01
+ManualWorkoutSaveOnceAppTests.swift:78: error: -[SendmeterNativeTests.ManualWorkoutSaveOnceAppTests testSavingTheSameFinishedWorkoutTwiceKeepsOneDurableSave] : XCTAssertEqual failed: ("0") i
+ManualWorkoutSaveOnceAppTests.swift:79: error: -[SendmeterNativeTests.ManualWorkoutSaveOnceAppTests testSavingTheSameFinishedWorkoutTwiceKeepsOneDurableSave] : XCTAssertEqual failed: ("0") i
+ManualWorkoutSaveOnceAppTests.swift:51: error: -[SendmeterNativeTests.ManualWorkoutSaveOnceAppTests testSavingTheSameFinishedWorkoutTwiceKeepsOneDurableSave] : failed - timed out after 60.00
+ManualWorkoutSaveOnceAppTests.swift:51: error: -[SendmeterNativeTests.ManualWorkoutSaveOnceAppTests testSavingTheSameFinishedWorkoutTwiceKeepsOneDurableSave] : failed - timed out after 60.01
+ManualWorkoutSaveOnceAppTests.swift:92: error: -[SendmeterNativeTests.ManualWorkoutSaveOnceAppTests testSavingTheSameFinishedWorkoutTwiceKeepsOneDurableSave] : XCTAssertEqual failed: ("0") i
