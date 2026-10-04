@@ -1,0 +1,4 @@
+pre-mutation (== restored) sha256:
+b8219afd248c0bf0ac9081b1ad998e94e711701b7247ef33fcd21eae46cfdf65  /Users/jirathip/.herdr/worktrees/sendmeter/impl-992/native/SendmeterNative/Sources/App/AppModel.swift
+mutated sha256 (production default -> PersistedFailureSink { _ in }):
+0677026e4b8a3cc913f45c59c9e66568f9fea731f373f3dff9a68255a45c3f09  /Users/jirathip/.herdr/worktrees/sendmeter/impl-992/native/SendmeterNative/Sources/App/AppModel.swift
