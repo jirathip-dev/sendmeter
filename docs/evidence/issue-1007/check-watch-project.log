@@ -1,0 +1,2 @@
+ruby scripts/assert-native-watch-project.rb
+native-watch-project: generated phone + Watch graph ownership verified

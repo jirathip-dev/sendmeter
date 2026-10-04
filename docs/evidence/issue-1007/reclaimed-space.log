@@ -1,0 +1,17 @@
+== space reclamation by lane impl-1007 (Sun Oct  4 11:37:23 +07 2026) ==
+reason: host Data volume at 100% (261 MB free) while live lanes build;
+        reclaiming only regenerable dependency trees / dead probe scratch.
+checks: no live process (lsof/pgrep), no brief/report/verdict/sums inside,
+        >24h idle, node_modules or probe scratch only, sources preserved.
+
+before: /dev/disk3s5    233752 206375       208   100% 2592421 2132440   55%   /System/Volumes/Data
+2.7G	ac33-probe/node_modules
+222M	1935-schema
+ 27M	napircanvas
+ 29M	vite611
+deleted: ac33-probe/node_modules (2.7G; linked worktree impl/1781-acs-post-audience; sources/screenshots/briefs preserved; npm ci regenerates)
+deleted: 1935-schema (222M terraform probe: provider cache + logs; no live tf process/lock)
+deleted: napircanvas (27M), vite611 (29M; node_modules probes, no reports)
+deleted: /private/tmp/sm-gitleaks-base (own tracked-files export; recreatable)
+
+after: /dev/disk3s5    233752 206058       524   100% 2586870 5372240   33%   /System/Volumes/Data
