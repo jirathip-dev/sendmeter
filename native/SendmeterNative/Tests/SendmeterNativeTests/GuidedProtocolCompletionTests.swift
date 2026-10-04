@@ -20,6 +20,17 @@ import Supabase
 /// and `AppModel` are app-target-only types; the harness mirrors
 /// `GuidedForceSideBehaviorTests` (stubbed Supabase transport, in-memory
 /// storage), with every wait bounded by a WALL-CLOCK deadline (#978).
+///
+/// #989: two residuals of the #978 hardening. (1) The seeded account is now
+/// UNIQUE PER MODEL. The fixture used to hardcode one UUID while the app
+/// writes a real, account-scoped GRDB cache inside the shared simulator app
+/// container — so a reused container hydrated the previous run's `tindeq`
+/// session row and the run counted rows it never created (measured 1→2→3→4
+/// across runs, resetting only when the container was cleared). (2) Every
+/// entry-count read is a deadline-bound wait. The count is a published
+/// snapshot and a concurrent hydration can replace the published list before
+/// its rows are re-added, so the AC1/AC2 reads wait for the count instead of
+/// asserting a single instant. Neither change touches what is asserted.
 final class GuidedProtocolCompletionTests: XCTestCase {
     /// #978: every wait in this file is bounded by a wall-clock deadline, never
     /// by a fixed iteration budget. The old shapes expired on a contended
@@ -111,6 +122,11 @@ final class GuidedProtocolCompletionTests: XCTestCase {
         XCTAssertTrue(second.isEnded)
 
         XCTAssertTrue(model.gaugeSessionTracker.isActive, "the session survives both protocols")
+        // #989 audit: this read needs no entry wait. The account is fresh per
+        // model and no protocol finish has logged anything yet, so the count
+        // is 0 whether or not a hydration of the (empty) account cache has
+        // landed — there is no published row for the race to hide. The waits
+        // belong on the reads that assert a row THIS run created, below.
         XCTAssertEqual(
             tindeqEntryCount(model),
             0,
@@ -127,6 +143,17 @@ final class GuidedProtocolCompletionTests: XCTestCase {
         await model.endGaugeSession()
 
         XCTAssertFalse(model.gaugeSessionTracker.isActive, "the explicit end closes the session")
+        // #989: the end's own save path publishes the entry and a concurrent
+        // hydration of the account cache can replace the published list
+        // before the optimistic row is re-added, so wait (deadline-bound) for
+        // the entry to reach the count this assertion means — one. A count
+        // that never arrives still fails, and expiry reports what was
+        // observed.
+        try await waitForTindeqEntries(
+            model,
+            count: 1,
+            "the explicit end's Tindeq History entry"
+        )
         let entries = model.sessions.filter { $0.type == "tindeq" }
         XCTAssertEqual(entries.count, 1, "#941 AC1: one gauge session ⇒ exactly one Tindeq entry")
         let entry = try XCTUnwrap(entries.first)
@@ -153,6 +180,16 @@ final class GuidedProtocolCompletionTests: XCTestCase {
         XCTAssertNotEqual(thirdGroup, groupID, "a new session after the end mints a new group")
         try await complete(third)
         await third.stopOrFinish()
+        // #989: the same published collection, re-read after the third
+        // protocol's save path — wait for the closed session's entry instead
+        // of asserting a single instant a hydration can replace. The
+        // assertion's meaning is unchanged: the count must settle at exactly
+        // one (the closed session's), so a duplicate still fails.
+        try await waitForTindeqEntries(
+            model,
+            count: 1,
+            "the closed session's one Tindeq History entry"
+        )
         XCTAssertEqual(
             tindeqEntryCount(model),
             1,
@@ -242,6 +279,55 @@ final class GuidedProtocolCompletionTests: XCTestCase {
     @MainActor
     private func tindeqEntryCount(_ model: AppModel) -> Int {
         model.sessions.filter { $0.type == "tindeq" }.count
+    }
+
+    /// #989: deadline-bound wait for the published Tindeq History entries to
+    /// hold `count` rows — the same shape #978 applied to the group rows.
+    /// `tindeqEntryCount` reads a published snapshot and a concurrent
+    /// hydration can replace it before the optimistic rows are re-added, so
+    /// the AC1/AC2 reads wait for the count instead of asserting an instant.
+    /// The deadline decides only how long that may take; a count that never
+    /// arrives still fails, with the state observed at expiry.
+    @MainActor
+    private func waitForTindeqEntries(
+        _ model: AppModel,
+        count: Int,
+        _ expectation: String
+    ) async throws {
+        try await waitUntil(
+            expectation,
+            isSatisfied: { model.sessions.filter { $0.type == "tindeq" }.count == count },
+            observed: { Self.tindeqEntryState(model) }
+        )
+    }
+
+    /// The state a wait for the Tindeq History entries expired on: every
+    /// published session with its type, group and pending/rejected state, the
+    /// live gauge group, the queued-write count and the durable queue file.
+    /// Together these separate "the entry was never logged" from "logged but
+    /// not published", and a hydrated row that belongs to another run's
+    /// container state from one this run created.
+    @MainActor
+    private static func tindeqEntryState(_ model: AppModel) -> String {
+        let rows = model.sessions
+            .map { entry in
+                var row = "\(shortID(entry.id))[\(entry.type)]"
+                if let group = entry.groupID { row += "@\(shortID(group))" }
+                if entry.pending { row += "|pending" }
+                if entry.rejected { row += "|rejected" }
+                return row
+            }
+            .joined(separator: ", ")
+        let entries = model.sessions.filter { $0.type == "tindeq" }
+        let fields = [
+            "tindeqEntries=\(entries.count)",
+            "sessions=\(model.sessions.count)",
+            "rows=[\(rows)]",
+            "liveGroup=\(shortID(model.gaugeSessionTracker.active?.groupID))",
+            "queuedWrites=\(model.queuedWriteCount)",
+            durableQueueState()
+        ]
+        return fields.joined(separator: ", ")
     }
 
     /// #978: deadline-bound wait for the published recordings to hold `count`
@@ -502,8 +588,17 @@ final class GuidedProtocolCompletionTests: XCTestCase {
         return fields.joined(separator: ", ")
     }
 
+    /// #989: the seeded account is UNIQUE PER MODEL. The fixture used to
+    /// hardcode one account while `AppModel` writes a real, account-scoped
+    /// GRDB cache inside the shared simulator app container, so a reused
+    /// container hydrated the previous run's `tindeq` session row into
+    /// `model.sessions` and every entry-count read counted rows this run never
+    /// created (measured 1→2→3→4 across runs; green again only after the
+    /// container was cleared). A fresh account per model cannot observe
+    /// another run's rows. Callers that need a shared account across two
+    /// models pass `userID:` explicitly.
     private static func makeSession(
-        userID: UUID = UUID(uuidString: "94000000-0000-0000-0000-000000000940")!,
+        userID: UUID = UUID(),
         sessionID: String = "session-1"
     ) -> Auth.Session {
         let payload = Data(
