@@ -21,7 +21,7 @@ c96de89f6579b660b17a76253bba115796f30eec50e9d2057c6e13188389bce2  ./fix2-h1-host
 5416aaff17347e3a19d70bf9b130806d61be27ecc05a889bf09016a1803cdc05  ./fix2-h2-host-red.log.gz
 28d1648fa330cf229ac4073c4560077061384c268e2cffd1071ff6a98238d81d  ./fix2-h3-host-green.log.gz
 ba902583521dae8a6125a627a9b1ef0fa4df2c8d394be288ea375a9d794d4caf  ./fix2-mutation-shas.txt
-94ce30df1515c3d2fe44d914954f0b75e0d2739f39297ed215580ebd1b60ef2e  ./fix2-parse-receipt.log
+5621addab03c3a99244a0a764ef01cca1fbd24dc0ceec41ee0f081c36797a15d  ./fix2-parse-receipt.log.gz
 3e1cefec4da7b7e6998be3cb20ecc87b3770eb77140cee3a6599fa7106e0c41e  ./fix2-reconciliation-receipt.log.gz
 fe0b64c4f9322a5894d87f1b08d0d2e45796cad4d28759b46b54a2c3a97c9449  ./fix2-slop-final.log.gz
 f7dccda94a47e9dd177c857e631b8596e8844a52032240f7380dd9630ad2477a  ./fix2-superseded-a1-sigterm.log.gz
