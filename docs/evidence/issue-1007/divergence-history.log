@@ -1,0 +1,82 @@
+# #1007 divergence history — raw git receipts
+date: Sun Oct  4 11:48:26 +07 2026
+note: the tail of the local-dev literal is redacted on assignment-shaped lines below (secret-scan gate,
+.gitleaks.toml); the full value is committed allowlisted at
+native/SendmeterNative/Tests/SendmeterCoreTests/PublishableKeyParityTests.swift:30 and the byte-identity
+statements are reproducible from that file (value sha256 9705102db0d5f99ee08daa19a73e510d9877a2a9add9369da247cbbe6c2a0140).
+head: 29e0505fe796443888651b2646e18c3c19850906
+
+## watch SupabaseConfig.plist — follow history
+e1d313d 2026-07-13 Migrate the watch app into a true iOS companion target
+d3aa517 2026-07-11 Add Send Log Watch: standalone watchOS companion app
+
+## plist: commits touching hosted value (eHRHTels)
+e1d313d 2026-07-13 Migrate the watch app into a true iOS companion target
+
+## plist: commits touching local value (ACJWlz)
+
+## watch service — follow history
+4247139 2026-08-28 #802 watch: watch-only readiness — on-watch HealthKit read, compute, direct sync, dual-source precedence (#852)
+4aff8a6 2026-08-07 native: anchor the façade pin's private test to the declaration (R2-F1-F3)
+887014f 2026-08-07 native: close the #502 review's pin bypasses (F1-F4)
+324b8bb 2026-08-07 native: seal the Supabase clients behind private façades (#502)
+12981f1 2026-07-27 auth: relay access tokens only, so no client can replay a refresh token (#265, #266) (#270)
+2b884d4 2026-07-25 fix: split native Supabase clients so neither can rotate the token (#196) (#208)
+03c861d 2026-07-22 Local dev environment: local Supabase stack, seed, and simulator wiring (#95) (#96)
+a7eef02 2026-07-14 Fix shared-session token war without disabling replay detection
+e1d313d 2026-07-13 Migrate the watch app into a true iOS companion target
+d3aa517 2026-07-11 Add Send Log Watch: standalone watchOS companion app
+
+## watch service: commits touching ACJWlz
+03c861d 2026-07-22 Local dev environment: local Supabase stack, seed, and simulator wiring (#95) (#96)
+
+## phone service: commits touching eHRHTels
+15a9f0b 2026-08-15 native: extract Swift rewrite payload as real files (10,472 LOC, 37 files, sha256-verified)
+
+## phone service: commits touching ACJWlz
+
+## key lines at key commits
+== 03c861d 2026-07-22 Local dev environment: local Supabase stack, seed, and simulator wiring (#95) (#96) ==
+-- plist:
+	<key>SUPABASE_ANON_KEY</key>
+	<string>sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp</string>
+-- watch service supabaseKey lines:
+24:            supabaseKey: "sb_publishable_ACJWlz…<value tail redacted for the secret-scan gate; same fixed CLI constant, full value at PublishableKeyParityTests.swift:30 (allowlisted)>",
+38:            supabaseKey: anonKey,
+-- phone publishableKey line:
+== 6203902 2026-08-28 #857 refactor: retire legacy web/Capacitor surface, reshape Node CI (#858) ==
+-- plist:
+	<key>SUPABASE_ANON_KEY</key>
+	<string>sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp</string>
+-- watch service supabaseKey lines:
+89:            supabaseKey: "sb_publishable_ACJWlz…<value tail redacted for the secret-scan gate; same fixed CLI constant, full value at PublishableKeyParityTests.swift:30 (allowlisted)>",
+103:            supabaseKey: anonKey,
+-- phone publishableKey line:
+12:    public static let publishableKey = "sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp"
+== e1d313d 2026-07-13 Migrate the watch app into a true iOS companion target ==
+-- plist:
+	<key>SUPABASE_ANON_KEY</key>
+	<string>sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp</string>
+-- watch service supabaseKey lines:
+16:        return SupabaseClient(supabaseURL: supabaseURL, supabaseKey: anonKey)
+-- phone publishableKey line:
+== d3aa517 2026-07-11 Add Send Log Watch: standalone watchOS companion app ==
+-- plist:
+-- watch service supabaseKey lines:
+-- phone publishableKey line:
+== d61e715 2026-10-04 chore: add MIT license ==
+-- plist:
+	<key>SUPABASE_ANON_KEY</key>
+	<string>sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp</string>
+-- watch service supabaseKey lines:
+89:            supabaseKey: "sb_publishable_ACJWlz…<value tail redacted for the secret-scan gate; same fixed CLI constant, full value at PublishableKeyParityTests.swift:30 (allowlisted)>",
+103:            supabaseKey: anonKey,
+-- phone publishableKey line:
+12:    public static let publishableKey = "sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp"
+
+## all committed sb_publishable_ occurrences at HEAD
+HEAD:docs/evidence/issue-1007/supabase-cli-pr4167-excerpts.txt:17:+	defaultPublishableKey = "sb_publishable_<value>"
+HEAD:ios/App/SendLogWatch Watch App/Resources/SupabaseConfig.plist:8:	<string>sb_publishable_<value></string>
+HEAD:ios/App/SendLogWatch Watch App/Services/SupabaseService.swift:89:            supabaseKey: "sb_publishable_<value>",
+HEAD:mcp/src/config.ts:11:  "sb_publishable_<value>";
+HEAD:native/SendmeterNative/Sources/Data/SupabaseService.swift:12:    public static let publishableKey = "sb_publishable_<value>"

@@ -1,0 +1,2 @@
+bash scripts/validate-anti-slop.sh
+Anti-slop config, wrapper, source path, and advisory CI wiring passed

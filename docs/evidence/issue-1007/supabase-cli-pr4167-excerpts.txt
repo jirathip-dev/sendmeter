@@ -1,0 +1,53 @@
+Supabase CLI source proof: the local-development publishable key used by the
+Watch app's simulator branch (#1007)
+========================================================================
+Source: https://github.com/supabase/cli/pull/4167  (feat: support publishable and secret key locally)
+Merged: 2025-09-17T09:00:02Z  merge_commit_sha: d1f473eed9f48c4a11a289a7605e746ac6786437
+Patch URL: https://patch-diff.githubusercontent.com/raw/supabase/cli/pull/4167.patch
+Patch sha256: 2fbc38416524d79931a93079ff3ed6d960d06da155313edbc39f21b643c292f9
+
+--- hunk: the fixed constant (pkg/config/apikeys.go) ---
+@@ -14,8 +14,39 @@ import (
+ 	"github.com/google/uuid"
+ )
+ 
++const (
++	defaultJwtSecret      = "super-secret-jwt-token-with-at-least-32-characters-long"
++	defaultJwtExpiry      = 1983812996
++	defaultPublishableKey = "<value redacted for the secret-scan gate; byte-identical to the Watch simulator literal; full value at native/SendmeterNative/Tests/SendmeterCoreTests/PublishableKeyParityTests.swift:30 (allowlisted); value sha256 9705102db0d5f99ee08daa19a73e510d9877a2a9add9369da247cbbe6c2a0140>"
++	defaultSecretKey      = "<redacted: default local secret key; not a project credential; value visible in the pinned patch sha256 above>"
++)
++
++type CustomClaims struct {
++	// Overrides Issuer to maintain json order when marshalling
++	Issuer string `json:"iss,omitempty"`
++	Ref    string `json:"ref,omitempty"`
++	Role   string `json:"role"`
+
+--- hunk: `supabase start` output labels it as the Publishable key ---
+ 			utils.Config.Api.ExternalUrl,
+-			utils.Config.Auth.AnonKey.Value,
++			utils.Config.Auth.SecretKey.Value,
+ 			fetcher.WithHTTPClient(NewKongClient()),
+ 			fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
+ 		)
+@@ -198,6 +203,8 @@ func PrettyPrint(w io.Writer, exclude ...string) {
+ 		DbURL:                    "          " + utils.Aqua("DB URL"),
+ 		StudioURL:                "      " + utils.Aqua("Studio URL"),
+ 		InbucketURL:              "    " + utils.Aqua("Inbucket URL"),
++		PublishableKey:           " " + utils.Aqua("Publishable key"),
++		SecretKey:                "      " + utils.Aqua("Secret key"),
+ 		JWTSecret:                "      " + utils.Aqua("JWT secret"),
+ 		AnonKey:                  "        " + utils.Aqua("anon key"),
+ 		ServiceRoleKey:           "" + utils.Aqua("service_role key"),
+@@ -207,11 +214,24 @@ func PrettyPrint(w io.Writer, exclude ...string) {
+ 	}
+ 	values := names.toValues(exclude...)
+ 	// Iterate through map in order of declared struct fields
++	t := reflect.TypeOf(names)
+ 	val := reflect.ValueOf(names)
+ 	for i := 0; i < val.NumField(); i++ {
+ 		k := val.Field(i).String()
++		if tag := t.Field(i).Tag.Get("env"); isDeprecated(tag) {
++			continue
++		}

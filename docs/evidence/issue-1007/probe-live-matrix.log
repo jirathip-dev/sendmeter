@@ -1,0 +1,12 @@
+== live probe matrix Sun Oct  4 11:33:12 +07 2026 ==
+endpoint: https://zznsqmcewtzlnfoiefkk.supabase.co
+
+-- key: phone/watch-hosted(eHRHTels)
+sessions:200
+bogus-column:400
+bogus-table:404
+
+-- key: watch-sim-local(ACJWlz)
+sessions:401
+bogus-column:401
+bogus-table:401
