@@ -115,6 +115,14 @@ final class ReadinessWidgetWiringTests: XCTestCase {
         XCTAssertTrue(contract.contains("kCFPreferencesCurrentUser"))
         XCTAssertFalse(contract.contains("kCFPreferencesAnyUser"))
         XCTAssertFalse(contract.contains("UserDefaults(suiteName:"))
+        // #991 fix round 1: the CFPreferences access stays guarded to
+        // platforms that have CoreFoundation, and appGroupStore keeps
+        // selecting it on Apple platforms (Linux gets the suite-backed
+        // fallback instead — `ReadinessWidgetFallbackDefaults`).
+        XCTAssertTrue(contract.contains("canImport(CoreFoundation)"))
+        XCTAssertTrue(
+            contract.contains("ReadinessWidgetAppGroupDefaults(appGroup: appGroup)")
+        )
         XCTAssertTrue(widget.contains("ReadinessWidgetStore.appGroupStore"))
         XCTAssertTrue(bridge.contains("store.save(snapshot)"))
     }

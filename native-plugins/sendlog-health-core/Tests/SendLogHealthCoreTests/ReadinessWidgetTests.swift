@@ -77,6 +77,7 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertNil(store.load())
     }
 
+#if canImport(CoreFoundation)
     func testAppGroupDefaultsRoundTripThroughAnExplicitCurrentUserDomain() throws {
         // #991: the production App Group accessor reads and writes the domain
         // through an explicit CurrentUser CFPreferences access — the only user
@@ -101,6 +102,57 @@ final class ReadinessWidgetTests: XCTestCase {
         )
 
         store.clear()
+        XCTAssertNil(store.load())
+    }
+#endif
+
+    func testFallbackDefaultsPreserveReadWriteAndNilSemantics() throws {
+        // #991 fix round 1: the non-CoreFoundation accessor Linux uses
+        // (`ReadinessWidgetFallbackDefaults`) is injected through the same
+        // protocol/store API, so the fallback is exercised here, not merely
+        // compiled. Guards: an empty domain reads as nil (no crash, no
+        // fabricated value), save -> load round-trips domain-wide (a second
+        // store over the same domain sees the same bytes), and clear returns
+        // the domain to nil.
+        let domain = "com.jirathip.sendlog.fallback-test.\(UUID().uuidString)"
+        let defaults = ReadinessWidgetFallbackDefaults(appGroup: domain)
+        let store = ReadinessWidgetStore(defaults: defaults)
+        defer {
+            defaults.removeObject(forKey: ReadinessWidgetStore.snapshotKey)
+            UserDefaults(suiteName: domain)?.removePersistentDomain(forName: domain)
+        }
+        let original = snapshot()
+
+        XCTAssertNil(store.load())
+
+        store.save(original)
+        XCTAssertEqual(store.load(), original)
+        XCTAssertEqual(
+            ReadinessWidgetStore(
+                defaults: ReadinessWidgetFallbackDefaults(appGroup: domain)
+            ).load(),
+            original
+        )
+
+        store.clear()
+        XCTAssertNil(store.load())
+    }
+
+    func testFallbackDefaultsWithoutASuiteDegradeToNilReadsAndNoOpWrites() {
+        // The missing-container seat: a suite that could not be created must
+        // read as nil and swallow writes — never crash, never fabricate.
+        let defaults = ReadinessWidgetFallbackDefaults(defaults: nil)
+        let store = ReadinessWidgetStore(defaults: defaults)
+
+        XCTAssertNil(defaults.data(forKey: ReadinessWidgetStore.snapshotKey))
+        XCTAssertNil(store.load())
+
+        store.save(snapshot())
+        defaults.set(Data([0x01]), forKey: ReadinessWidgetStore.snapshotKey)
+        defaults.removeObject(forKey: ReadinessWidgetStore.snapshotKey)
+        store.clear()
+
+        XCTAssertNil(defaults.data(forKey: ReadinessWidgetStore.snapshotKey))
         XCTAssertNil(store.load())
     }
 

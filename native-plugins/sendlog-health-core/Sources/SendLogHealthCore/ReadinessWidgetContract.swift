@@ -143,8 +143,11 @@ public enum ReadinessWidgetFreshness: Equatable, Sendable {
 }
 
 /// The three defaults operations the widget payload store needs. `UserDefaults`
-/// already satisfies it; the production App Group accessor substitutes an
-/// explicit `CFPreferences` implementation (`ReadinessWidgetAppGroupDefaults`).
+/// already satisfies it; the production App Group accessors substitute an
+/// explicit `CFPreferences` implementation (`ReadinessWidgetAppGroupDefaults`)
+/// on Apple platforms and a suite-backed implementation
+/// (`ReadinessWidgetFallbackDefaults`) where CoreFoundation does not exist
+/// (Linux) — same domain, key, and read-back semantics (#991 fix round 1).
 public protocol ReadinessWidgetDefaults {
     func data(forKey defaultName: String) -> Data?
     func set(_ value: Any?, forKey defaultName: String)
@@ -153,6 +156,7 @@ public protocol ReadinessWidgetDefaults {
 
 extension UserDefaults: ReadinessWidgetDefaults {}
 
+#if canImport(CoreFoundation)
 /// The App Group domain read and written with an explicit CurrentUser.
 ///
 /// `UserDefaults(suiteName:)` and `addSuiteNamed:` model a suite with AnyUser
@@ -164,7 +168,9 @@ extension UserDefaults: ReadinessWidgetDefaults {}
 /// domain through `CFPreferences` with kCFPreferencesCurrentUser registers
 /// only the CurrentUser source, which a sandboxed app may hold, and the
 /// domain still resolves to the App Group. Domain, key and plist schema are
-/// unchanged.
+/// unchanged. Compiled only where CoreFoundation exists; platforms without
+/// it (Linux) select `ReadinessWidgetFallbackDefaults` in `appGroupStore`
+/// instead (#991 fix round 1).
 public struct ReadinessWidgetAppGroupDefaults: ReadinessWidgetDefaults {
     public let appGroup: String
 
@@ -203,6 +209,7 @@ public struct ReadinessWidgetAppGroupDefaults: ReadinessWidgetDefaults {
         CFPreferencesAppSynchronize(appGroup as CFString)
     }
 }
+#endif
 
 /// The app process and the WidgetKit process both use this exact App Group
 /// payload. The injected-defaults initializer makes save/load/clear behavior
@@ -217,8 +224,18 @@ public final class ReadinessWidgetStore {
         self.defaults = defaults
     }
 
+    /// The production accessor. Apple platforms read and write through the
+    /// explicit CurrentUser CFPreferences access
+    /// (`ReadinessWidgetAppGroupDefaults`); platforms without CoreFoundation
+    /// (Linux — the `package-tests` container) use the suite-backed
+    /// `ReadinessWidgetFallbackDefaults`, which keeps the same domain, key
+    /// and nil-on-unreadable semantics (#991 fix round 1).
     public static var appGroupStore: ReadinessWidgetStore {
+        #if canImport(CoreFoundation)
         ReadinessWidgetStore(defaults: ReadinessWidgetAppGroupDefaults(appGroup: appGroup))
+        #else
+        ReadinessWidgetStore(defaults: ReadinessWidgetFallbackDefaults(appGroup: appGroup))
+        #endif
     }
 
     public func load() -> ReadinessWidgetSnapshot? {
