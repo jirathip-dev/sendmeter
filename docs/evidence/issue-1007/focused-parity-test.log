@@ -1,0 +1,1742 @@
+Fetching https://github.com/groue/GRDB.swift from cache
+Fetching https://github.com/apple/swift-asn1.git from cache
+Fetching https://github.com/pointfreeco/swift-concurrency-extras from cache
+Fetching https://github.com/pointfreeco/xctest-dynamic-overlay from cache
+Fetching https://github.com/apple/swift-log.git from cache
+Fetching https://github.com/supabase/supabase-swift from cache
+Fetching https://github.com/apple/swift-http-types.git from cache
+Fetched https://github.com/pointfreeco/xctest-dynamic-overlay from cache (1.13s)
+Fetched https://github.com/apple/swift-asn1.git from cache (1.13s)
+Fetched https://github.com/apple/swift-http-types.git from cache (1.13s)
+Fetched https://github.com/pointfreeco/swift-concurrency-extras from cache (1.14s)
+Fetching https://github.com/apple/swift-crypto.git from cache
+Fetched https://github.com/groue/GRDB.swift from cache (1.22s)
+Computing version for https://github.com/groue/GRDB.swift
+Fetched https://github.com/supabase/supabase-swift from cache (1.53s)
+Fetched https://github.com/apple/swift-log.git from cache (1.66s)
+Fetching https://github.com/pointfreeco/swift-clocks from cache
+Fetched https://github.com/apple/swift-crypto.git from cache (0.91s)
+Fetched https://github.com/pointfreeco/swift-clocks from cache (0.74s)
+Computed https://github.com/groue/GRDB.swift at 7.11.1 (3.89s)
+Creating working copy for https://github.com/groue/GRDB.swift
+Working copy of https://github.com/groue/GRDB.swift resolved at 7.11.1
+warning: 'sendmeternative': found 61 file(s) which are unhandled; explicitly declare them as resources or exclude from the target
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/AppThemeController.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutRestAlert.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/Haptics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/StaticCapacityDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/WeatherService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/HistoryView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/SendmeterNativeApp.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/WatchConnectivityService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/SessionDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/GuidedProtocolActivityManager.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/HealthKitService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ReadinessWidgetBridge.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/BackgroundSyncService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Shared/GuidedProtocolActivityAttributes.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutRestScheduler.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/AppModel.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/SupabaseService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/DesignSystem.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/SheetPresentation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Shared/ManualWorkoutActivityAttributes.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Settings/SettingsView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutActivityManager.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/StructuralHaptics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/SideAsymmetryCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/SendmeterNativeWidgetsBundle.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/Repositories.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/RealtimeService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/IntentStubs.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/LiveActivityIntents.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/TindeqBluetooth.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Auth/LoginView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ForceModel.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ActivityMixBar.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/MovementDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Phases/PhasesView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift
+warning: 'sendmeternative': found 167 file(s) which are unhandled; explicitly declare them as resources or exclude from the target
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/HistoryView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SendConditionsDetails.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HistorySelection.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WorkoutEngine.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HistoryFilters.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ReadinessSyncPolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Shared/GuidedProtocolActivityAttributes.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TrainingBlockGuidance.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/SideAsymmetryCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LostRecordingNotice.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/CacheSnapshotRead.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ErrorSurfacePolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LiveWorkoutMirror.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/DeleteAccountConfirmationGate.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/Models.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/CachedWorkspace.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/MutationSyncStatus.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/PurgeGenerationResponse.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceSaveOutcome.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GaugeSessionSaveGate.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TindeqSessionMerge.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceCurveEngine.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/PurgeGenerationFailurePolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/MutationRecoveryCoordinator.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SessionFreshness.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HealthBackgroundSync.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutRestScheduler.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/SheetPresentation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AuthDiagnostics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceCurveTooltipPlacement.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForegroundRefreshPolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceRecordingContextPolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TindeqConsistency.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WatchCompletion.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Auth/LoginView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/StaticCapacityDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceMotionPolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AppleAuthNonce.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RoutineUndo.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TagChipList.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WorkspaceSyncCoordinator.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceProtocolSelection.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/BoxPlot.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ForceModel.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HistoryDerivedData.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SignOutQueuePolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/DirectWriteReplay.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/PhaseManager.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutRestAlert.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SplashDynoTimeline.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/MassFormatting.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceLaunchRecovery.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GaugeSessionRPE.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RoutineRunnerContrast.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SplashPresentationFloor.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ChartContrast.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceProgress.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TrainingLoad.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HistoryTimeline.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TrainingLoadInteraction.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/Repositories.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RefreshSlicePlan.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/IntentStubs.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/BackgroundSyncService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ManualWorkoutRest.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/SendmeterNativeWidgetsBundle.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceCurveSelection.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AuthRecovery.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HandsFreeForceController.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/PendingSessionWritePolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceDisconnectSalvage.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/QueueUploadCoordination.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AppTheme.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/DateSupport.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SheetPresentation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceTraceAccessibility.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceCurvePlotGeometry.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/Haptics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ManualWorkoutActivityManager.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/DesignSystem.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ActivityMixBar.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GaugeSessionTracker.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ReadinessWidgetBridge.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Shared/ManualWorkoutActivityAttributes.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/StructuralHaptics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HealthRefreshPolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GuidedActivityMirror.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/Haptics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/BackgroundSyncEngine.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RealtimeListReconciler.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WorkoutRawTrace.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/CachePreparation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ForceEngine.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/ChartTheme.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GuidedActivityContent.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TagCatalog.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/GuidedProtocolActivityManager.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/AppThemeController.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AsyncDeadline.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AcwrStatusCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WorkoutStats.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/SendConditions.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ExerciseSideMode.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/GuidedForceFullscreenPresentation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AcwrProjection.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RecoveryInputs.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/SupabaseService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/LiveActivityIntents.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/HealthKitService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ChartAxisLabelRule.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Phases/PhasesView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/SessionDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/WatchConnectivityService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ManualWorkoutLifecycleCoordinator.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Settings/SettingsView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/HealthMetricReconciliation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AccountScopedFetch.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ZoneMix.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/WatchMetadata.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/Metrics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/AppModel.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Platform/TindeqBluetooth.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/TagCurveCachePolicy.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Data/RealtimeService.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/DashboardCardLayout.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/DeltaCursor.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RoutineRunnerPresentation.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RecordingEditCoordinator.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/StructuralHapticDiagnostics.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/App/SendmeterNativeApp.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Force/MovementDetailView.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/ManualWorkoutActivityContent.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/AppUnits.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/PendingRecordingOverlay.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RoutineGate.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/OfflineQueue.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift
+    /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/RoutineAudio.swift
+Building for debugging...
+[0/15] /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/.build/arm64-apple-macosx/debug/SendmeterNativePackageTests.derived/runner.swift
+[1/15] Write sources
+[1/15] Copying Fixtures
+[1/15] Write sources
+[1/15] Copying Info.plist
+[1/15] Write sources
+[1/15] Copying PrivacyInfo.xcprivacy
+[10/15] Write sources
+[12/15] Write swift-version--58304C5D6DBC2206.txt
+[14/177] Compiling SendLogHealthCore RecoveryTunables.swift
+[15/177] Compiling SendLogHealthCore RecoveryEngine.swift
+[16/177] Compiling SendLogHealthCore ReadinessWritePolicy.swift
+[17/177] Compiling SendLogHealthCore RecoveryModels.swift
+[18/177] Compiling SendLogHealthCore DateSupport.swift
+[19/177] Compiling SendLogHealthCore Acwr.swift
+[20/177] Compiling SendLogHealthCore BaselineBuilder.swift
+[21/177] Emitting module SendLogHealthCore
+[22/177] Compiling SendLogHealthCore ReadinessWidgetContract.swift
+[23/232] Compiling GRDB MutablePersistableRecord+Update.swift
+[24/232] Compiling GRDB MutablePersistableRecord+Upsert.swift
+[25/232] Compiling GRDB MutablePersistableRecord.swift
+[26/232] Compiling GRDB PersistableRecord+Insert.swift
+[27/232] Compiling GRDB PersistableRecord+Save.swift
+[28/232] Compiling GRDB PersistableRecord+Upsert.swift
+[29/232] Compiling GRDB PersistableRecord.swift
+[30/232] Compiling GRDB Record.swift
+[31/232] Compiling GRDB TableRecord.swift
+[32/232] Compiling GRDB CaseInsensitiveIdentifier.swift
+[33/232] Compiling GRDB Inflections+English.swift
+[34/232] Compiling GRDB Inflections.swift
+[35/232] Compiling GRDB Mutex.swift
+[36/232] Compiling GRDB OnDemandFuture.swift
+[37/232] Compiling GRDB OrderedDictionary.swift
+[38/232] Compiling GRDB Pool.swift
+[39/248] Compiling SendLogWatchCore PendingSyncCache.swift
+[40/248] Compiling SendLogWatchCore QuarantineBreadcrumb.swift
+[41/248] Compiling SendLogWatchCore QuarantineDiagnostics.swift
+[42/248] Compiling GRDB Data.swift
+[43/248] Compiling GRDB DatabaseDateComponents.swift
+[44/248] Compiling GRDB DatabaseValueConvertible+ReferenceConvertible.swift
+[45/248] Compiling GRDB Date.swift
+[46/248] Compiling GRDB Decimal.swift
+[47/248] Compiling GRDB NSData.swift
+[48/248] Compiling GRDB NSNull.swift
+[49/248] Compiling GRDB NSNumber.swift
+[50/248] Compiling GRDB NSString.swift
+[51/248] Compiling GRDB SQLiteDateParser.swift
+[52/248] Compiling GRDB URL.swift
+[53/248] Compiling GRDB UUID.swift
+[54/248] Compiling GRDB DatabaseValueConvertible+Decodable.swift
+[55/248] Compiling GRDB DatabaseValueConvertible+Encodable.swift
+[56/248] Emitting module GRDB
+[57/248] Compiling GRDB Database+SchemaDefinition.swift
+[58/248] Compiling GRDB ForeignKeyDefinition.swift
+[59/248] Compiling GRDB IndexDefinition.swift
+[60/248] Compiling GRDB TableAlteration.swift
+[61/248] Compiling GRDB TableDefinition.swift
+[62/248] Compiling GRDB VirtualTableModule.swift
+[63/248] Compiling GRDB TableRecord+Association.swift
+[64/248] Compiling GRDB TableRecord+QueryInterfaceRequest.swift
+[65/248] Compiling GRDB EncodableRecord+Encodable.swift
+[66/248] Compiling GRDB EncodableRecord.swift
+[67/248] Compiling GRDB FetchableRecord+Decodable.swift
+[68/248] Compiling GRDB FetchableRecord+TableRecord.swift
+[69/248] Compiling GRDB FetchableRecord.swift
+[70/248] Compiling GRDB MutablePersistableRecord+DAO.swift
+[71/248] Compiling GRDB MutablePersistableRecord+Delete.swift
+[72/248] Compiling GRDB MutablePersistableRecord+Insert.swift
+[73/248] Compiling GRDB MutablePersistableRecord+Save.swift
+[74/248] Compiling GRDB DatabaseValueConvertible+RawRepresentable.swift
+[75/248] Compiling GRDB JSONRequiredEncoder.swift
+[76/248] Compiling GRDB Optional.swift
+[77/248] Compiling GRDB StandardLibrary.swift
+[78/248] Compiling GRDB TransactionClock.swift
+[79/248] Compiling GRDB TransactionObserver.swift
+[80/248] Compiling GRDB WALSnapshot.swift
+[81/248] Compiling GRDB WALSnapshotTransaction.swift
+[82/248] Compiling GRDB Database+Dump.swift
+[83/248] Compiling GRDB DatabaseReader+dump.swift
+[84/248] Compiling GRDB DumpFormat.swift
+[85/248] Compiling GRDB DebugDumpFormat.swift
+[86/248] Compiling GRDB JSONDumpFormat.swift
+[87/248] Compiling GRDB LineDumpFormat.swift
+[88/248] Compiling GRDB ListDumpFormat.swift
+[89/248] Compiling GRDB QuoteDumpFormat.swift
+[90/248] Compiling GRDB FTS3.swift
+[91/248] Compiling GRDB ForeignKey.swift
+[92/248] Compiling GRDB Association.swift
+[93/248] Compiling GRDB AssociationAggregate.swift
+[94/248] Compiling GRDB BelongsToAssociation.swift
+[95/248] Compiling GRDB HasManyAssociation.swift
+[96/248] Compiling GRDB HasManyThroughAssociation.swift
+[97/248] Compiling GRDB HasOneAssociation.swift
+[98/248] Compiling GRDB HasOneThroughAssociation.swift
+[99/248] Compiling GRDB JoinAssociation.swift
+[100/248] Compiling GRDB CommonTableExpression.swift
+[101/248] Compiling GRDB QueryInterfaceRequest.swift
+[102/248] Compiling GRDB RequestProtocols.swift
+[103/248] Compiling GRDB Column.swift
+[104/248] Compiling GRDB DatabasePromise.swift
+[105/248] Compiling GRDB SQLAssociation.swift
+[106/248] Compiling GRDB SQLCollection.swift
+[107/248] Compiling GRDB SQLExpression.swift
+[108/248] Compiling GRDB SQLForeignKeyRequest.swift
+[109/248] Compiling GRDB SQLFunctions.swift
+[110/248] Compiling GRDB SQLOperators.swift
+[111/248] Compiling GRDB SQLOrdering.swift
+[112/248] Compiling GRDB SQLRelation.swift
+[113/248] Compiling GRDB SQLSelection.swift
+[114/248] Compiling GRDB SQLSubquery.swift
+[115/248] Compiling GRDB Table.swift
+[116/248] Compiling GRDB SQLColumnGenerator.swift
+[117/248] Compiling GRDB SQLGenerationContext.swift
+[118/248] Compiling GRDB SQLIndexGenerator.swift
+[119/248] Compiling GRDB SQLQueryGenerator.swift
+[120/248] Compiling GRDB SQLTableAlterationGenerator.swift
+[121/248] Compiling GRDB SQLTableGenerator.swift
+[122/248] Compiling GRDB TableAlias.swift
+[123/248] Compiling GRDB SQLInterpolation+QueryInterface.swift
+[124/248] Compiling GRDB ColumnDefinition.swift
+[125/248] Compiling GRDB ReadWriteLock.swift
+[126/248] Compiling GRDB ReceiveValuesOn.swift
+[127/248] Compiling GRDB Refinable.swift
+[128/248] Compiling GRDB Utils.swift
+[129/248] Compiling GRDB DatabaseCancellable.swift
+[130/248] Compiling GRDB ValueConcurrentObserver.swift
+[131/248] Compiling GRDB ValueWriteOnlyObserver.swift
+[132/248] Compiling GRDB Fetch.swift
+[133/248] Compiling GRDB Map.swift
+[134/248] Compiling GRDB RemoveDuplicates.swift
+[135/248] Compiling GRDB Trace.swift
+[136/248] Compiling GRDB ValueReducer.swift
+[137/248] Compiling GRDB SharedValueObservation.swift
+[138/248] Compiling GRDB ValueObservation.swift
+[139/248] Compiling GRDB ValueObservationScheduler.swift
+[140/248] Compiling GRDB resource_bundle_accessor.swift
+[141/248] Compiling SendLogWatchCore TindeqProtocol.swift
+[142/248] Compiling SendLogWatchCore TindeqRecordingLimit.swift
+[143/248] Compiling SendLogWatchCore TindeqSalvagePolicy.swift
+[144/248] Compiling SendLogWatchCore Tunables.swift
+[145/248] Compiling SendLogWatchCore UploadErrorPolicy.swift
+[146/248] Compiling SendLogWatchCore WatchApplicationContext.swift
+[147/253] Compiling SendLogWatchCore ACWR.swift
+[148/253] Compiling SendLogWatchCore AttemptDetector.swift
+[149/253] Compiling SendLogWatchCore BackendFailureReason.swift
+[150/253] Compiling SendLogWatchCore CoalescingDrain.swift
+[151/253] Compiling SendLogWatchCore DirectBeatRetryPolicy.swift
+[152/253] Compiling SendLogWatchCore ErrorText.swift
+[153/253] Emitting module SendLogWatchCore
+[154/253] Compiling SendLogWatchCore WatchBuildReport.swift
+[155/253] Compiling SendLogWatchCore WatchDesign.swift
+[156/253] Compiling SendLogWatchCore WatchHealthCompute.swift
+[157/253] Compiling SendLogWatchCore WatchHealthMorningRefresh.swift
+[158/253] Compiling SendLogWatchCore WatchHealthReconcile.swift
+[159/253] Compiling SendLogWatchCore WatchNavigation.swift
+[160/253] Compiling SendLogWatchCore GuidedForceRunState.swift
+[161/253] Compiling SendLogWatchCore GuidedForceRunTiming.swift
+[162/253] Compiling SendLogWatchCore HandsFreeForce.swift
+[163/253] Compiling SendLogWatchCore HealthMetricPrecedence.swift
+[164/253] Compiling SendLogWatchCore HeartRateTimeline.swift
+[165/253] Compiling SendLogWatchCore LiveMirrorProtocol.swift
+[166/253] Compiling SendLogWatchCore EvictingWrite.swift
+[167/253] Compiling SendLogWatchCore FakeTindeq.swift
+[168/253] Compiling SendLogWatchCore ForceBeatWindow.swift
+[169/253] Compiling SendLogWatchCore ForceFinishPolicy.swift
+[170/253] Compiling SendLogWatchCore ForcePeakHapticTracker.swift
+[171/253] Compiling SendLogWatchCore ForceProtocol.swift
+[172/253] Compiling SendLogWatchCore ForceProtocolSyncCopy.swift
+[173/253] Compiling SendLogWatchCore ForceRuntimePolicy.swift
+[174/253] Compiling SendLogWatchCore ForceSidePolicy.swift
+[175/253] Compiling SendLogWatchCore GuidedForceHapticPolicy.swift
+[176/253] Compiling SendLogWatchCore GuidedForcePersistence.swift
+[177/253] Compiling SendLogWatchCore GuidedForcePolicy.swift
+[178/253] Compiling SendLogWatchCore QueueRetrySchedule.swift
+[179/253] Compiling SendLogWatchCore RPEDepletion.swift
+[180/253] Compiling SendLogWatchCore RPEModel.swift
+[181/253] Compiling SendLogWatchCore ReadinessConcurrency.swift
+[182/253] Compiling SendLogWatchCore ReadinessRefresh.swift
+[183/253] Compiling SendLogWatchCore ReadinessWatchBridge.swift
+[184/253] Compiling SendLogWatchCore SendmeterIconSymbol.swift
+[185/253] Compiling SendLogWatchCore SessionRelay.swift
+[186/253] Compiling SendLogWatchCore StatusPresentation.swift
+[187/253] Compiling SendLogWatchCore SyncFreshness.swift
+[188/253] Compiling SendLogWatchCore TagFetchPolicy.swift
+[189/253] Compiling SendLogWatchCore TagReconciliation.swift
+[190/253] Compiling SendLogWatchCore Models.swift
+[191/253] Compiling SendLogWatchCore MovementSetMetrics.swift
+[192/253] Compiling SendLogWatchCore PendingQueuePolicy.swift
+[196/253] Compiling SendLogWatchCore WorkoutCompletedReport.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WorkoutPartialSettleGate.swift:57:14: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+55 |     public func waitForCurrent() async {
+56 |         let task: Task<Void, Never>?
+57 |         lock.lock()
+   |              `- warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+58 |         task = current
+59 |         lock.unlock()
+
+Foundation.NSLock.lock:2:11: note: 'lock()' declared here
+1 | class NSLock {
+2 | open func lock()}
+  |           `- note: 'lock()' declared here
+3 | 
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WorkoutPartialSettleGate.swift:59:14: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+57 |         lock.lock()
+58 |         task = current
+59 |         lock.unlock()
+   |              `- warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+60 |         guard let task else { return }
+61 |         await task.value
+
+Foundation.NSLock.unlock:2:11: note: 'unlock()' declared here
+1 | class NSLock {
+2 | open func unlock()}
+  |           `- note: 'unlock()' declared here
+3 | 
+[197/253] Compiling SendLogWatchCore WorkoutLifecycle.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WorkoutPartialSettleGate.swift:57:14: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+55 |     public func waitForCurrent() async {
+56 |         let task: Task<Void, Never>?
+57 |         lock.lock()
+   |              `- warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+58 |         task = current
+59 |         lock.unlock()
+
+Foundation.NSLock.lock:2:11: note: 'lock()' declared here
+1 | class NSLock {
+2 | open func lock()}
+  |           `- note: 'lock()' declared here
+3 | 
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WorkoutPartialSettleGate.swift:59:14: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+57 |         lock.lock()
+58 |         task = current
+59 |         lock.unlock()
+   |              `- warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+60 |         guard let task else { return }
+61 |         await task.value
+
+Foundation.NSLock.unlock:2:11: note: 'unlock()' declared here
+1 | class NSLock {
+2 | open func unlock()}
+  |           `- note: 'unlock()' declared here
+3 | 
+[198/253] Compiling SendLogWatchCore WorkoutPartialSettleGate.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WorkoutPartialSettleGate.swift:57:14: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+55 |     public func waitForCurrent() async {
+56 |         let task: Task<Void, Never>?
+57 |         lock.lock()
+   |              `- warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+58 |         task = current
+59 |         lock.unlock()
+
+Foundation.NSLock.lock:2:11: note: 'lock()' declared here
+1 | class NSLock {
+2 | open func lock()}
+  |           `- note: 'lock()' declared here
+3 | 
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WorkoutPartialSettleGate.swift:59:14: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+57 |         lock.lock()
+58 |         task = current
+59 |         lock.unlock()
+   |              `- warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+60 |         guard let task else { return }
+61 |         await task.value
+
+Foundation.NSLock.unlock:2:11: note: 'unlock()' declared here
+1 | class NSLock {
+2 | open func unlock()}
+  |           `- note: 'unlock()' declared here
+3 | 
+[199/253] Compiling SendLogWatchCore WorkoutPhaseFill.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WorkoutPartialSettleGate.swift:57:14: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+55 |     public func waitForCurrent() async {
+56 |         let task: Task<Void, Never>?
+57 |         lock.lock()
+   |              `- warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+58 |         task = current
+59 |         lock.unlock()
+
+Foundation.NSLock.lock:2:11: note: 'lock()' declared here
+1 | class NSLock {
+2 | open func lock()}
+  |           `- note: 'lock()' declared here
+3 | 
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WorkoutPartialSettleGate.swift:59:14: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+57 |         lock.lock()
+58 |         task = current
+59 |         lock.unlock()
+   |              `- warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+60 |         guard let task else { return }
+61 |         await task.value
+
+Foundation.NSLock.unlock:2:11: note: 'unlock()' declared here
+1 | class NSLock {
+2 | open func unlock()}
+  |           `- note: 'unlock()' declared here
+3 | 
+[200/253] Compiling SendLogWatchCore WorkoutScreenSelection.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WorkoutPartialSettleGate.swift:57:14: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+55 |     public func waitForCurrent() async {
+56 |         let task: Task<Void, Never>?
+57 |         lock.lock()
+   |              `- warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+58 |         task = current
+59 |         lock.unlock()
+
+Foundation.NSLock.lock:2:11: note: 'lock()' declared here
+1 | class NSLock {
+2 | open func lock()}
+  |           `- note: 'lock()' declared here
+3 | 
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore/Sources/SendLogWatchCore/WorkoutPartialSettleGate.swift:59:14: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+57 |         lock.lock()
+58 |         task = current
+59 |         lock.unlock()
+   |              `- warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+60 |         guard let task else { return }
+61 |         await task.value
+
+Foundation.NSLock.unlock:2:11: note: 'unlock()' declared here
+1 | class NSLock {
+2 | open func unlock()}
+  |           `- note: 'unlock()' declared here
+3 | 
+[252/351] Compiling SendmeterCore ForceProtocolSelection.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[253/351] Compiling SendmeterCore ForceRecordingContextPolicy.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[254/351] Compiling SendmeterCore ForceSaveOutcome.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[255/351] Compiling SendmeterCore ForceTraceAccessibility.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[256/351] Compiling SendmeterCore ForegroundRefreshPolicy.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[257/351] Compiling SendmeterCore FriendlyError.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[258/351] Compiling SendmeterCore GaugeSessionRPE.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[259/351] Compiling SendmeterCore GaugeSessionSaveGate.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[260/351] Compiling SendmeterCore GaugeSessionTracker.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[261/351] Compiling SendmeterCore GuidedActivityContent.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[262/351] Compiling SendmeterCore GuidedActivityMirror.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[263/361] Emitting module SendmeterCore
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/FriendlyError.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | import SendLogWatchCore
+  4 | 
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[264/361] Compiling SendmeterCore GuidedForceFullscreenPresentation.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[265/361] Compiling SendmeterCore HandsFreeForceController.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[266/361] Compiling SendmeterCore Haptics.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[267/361] Compiling SendmeterCore HealthBackgroundSync.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[268/361] Compiling SendmeterCore HealthMetricReconciliation.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[269/361] Compiling SendmeterCore HealthRefreshPolicy.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[270/361] Compiling SendmeterCore HistoryDerivedData.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[271/361] Compiling SendmeterCore HistoryFilters.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[272/361] Compiling SendmeterCore HistorySelection.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[273/361] Compiling SendmeterCore HistoryTimeline.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[274/361] Compiling SendmeterCore KeepAwake.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/KeepAwake.swift:50:9: warning: no 'async' operations occur within 'await' expression
+48 |     /// so it can never release a hold another consumer still has.
+49 |     public func reassert() async {
+50 |         await apply()
+   |         `- warning: no 'async' operations occur within 'await' expression
+51 |     }
+52 | 
+[275/361] Compiling SendmeterCore RecoveryInputs.swift
+[276/361] Compiling SendmeterCore RefreshSlicePlan.swift
+[277/361] Compiling SendmeterCore RoutineAudio.swift
+[278/361] Compiling SendmeterCore RoutineGate.swift
+[279/361] Compiling SendmeterCore RoutineRunnerContrast.swift
+[280/361] Compiling SendmeterCore RoutineRunnerPresentation.swift
+[281/361] Compiling SendmeterCore RoutineUndo.swift
+[282/361] Compiling SendmeterCore SendConditions.swift
+[283/361] Compiling SendmeterCore SendConditionsDetails.swift
+[284/361] Compiling SendmeterCore SessionFreshness.swift
+[285/361] Compiling SendmeterCore SheetPresentation.swift
+[286/361] Compiling SendmeterCore SignOutQueuePolicy.swift
+[287/361] Compiling SendmeterCore SplashDynoTimeline.swift
+[288/361] Compiling SendmeterCore SplashPresentationFloor.swift
+[289/361] Compiling SendmeterCore StructuralHapticDiagnostics.swift
+[290/361] Compiling SendmeterCore TagCatalog.swift
+[291/361] Compiling SendmeterCore TagChipList.swift
+[292/361] Compiling SendmeterCore TagCurveCachePolicy.swift
+[293/361] Compiling SendmeterCore TindeqConsistency.swift
+[294/361] Compiling SendmeterCore TindeqSessionMerge.swift
+[295/361] Compiling SendmeterCore BoxPlot.swift
+[296/361] Compiling SendmeterCore CachePreparation.swift
+[297/361] Compiling SendmeterCore CacheSnapshotRead.swift
+[298/361] Compiling SendmeterCore CachedWorkspace.swift
+[299/361] Compiling SendmeterCore ChartAxisLabelRule.swift
+[300/361] Compiling SendmeterCore ChartContrast.swift
+[301/361] Compiling SendmeterCore DashboardCardLayout.swift
+[302/361] Compiling SendmeterCore DateSupport.swift
+[303/361] Compiling SendmeterCore DeleteAccountConfirmationGate.swift
+[304/361] Compiling SendmeterCore DeltaCursor.swift
+[305/361] Compiling SendmeterCore DirectWriteReplay.swift
+[306/361] Compiling SendmeterCore TrainingBlockGuidance.swift
+[307/361] Compiling SendmeterCore TrainingLoad.swift
+[308/361] Compiling SendmeterCore TrainingLoadInteraction.swift
+[309/361] Compiling SendmeterCore WatchCompletion.swift
+[310/361] Compiling SendmeterCore WatchMetadata.swift
+[311/361] Compiling SendmeterCore WorkoutEngine.swift
+[312/361] Compiling SendmeterCore WorkoutRawTrace.swift
+[313/361] Compiling SendmeterCore WorkoutStats.swift
+[314/361] Compiling SendmeterCore WorkspaceSyncCoordinator.swift
+[315/361] Compiling SendmeterCore ZoneMix.swift
+[316/361] Compiling SendmeterCore ErrorSurfacePolicy.swift
+[317/361] Compiling SendmeterCore ExerciseSideMode.swift
+[318/361] Compiling SendmeterCore ForceCurveEngine.swift
+[319/361] Compiling SendmeterCore ForceCurvePlotGeometry.swift
+[320/361] Compiling SendmeterCore ForceCurveSelection.swift
+[321/361] Compiling SendmeterCore ForceCurveTooltipPlacement.swift
+[322/361] Compiling SendmeterCore ForceDisconnectSalvage.swift
+[323/361] Compiling SendmeterCore ForceEngine.swift
+[324/361] Compiling SendmeterCore ForceLaunchRecovery.swift
+[325/361] Compiling SendmeterCore ForceMotionPolicy.swift
+[326/361] Compiling SendmeterCore ForceProgress.swift
+[327/361] Compiling SendmeterCore MutationSyncStatus.swift
+[328/361] Compiling SendmeterCore OfflineQueue.swift
+[329/361] Compiling SendmeterCore PendingRecordingOverlay.swift
+[330/361] Compiling SendmeterCore PendingSessionWritePolicy.swift
+[331/361] Compiling SendmeterCore PhaseManager.swift
+[332/361] Compiling SendmeterCore PurgeGenerationFailurePolicy.swift
+[333/361] Compiling SendmeterCore PurgeGenerationResponse.swift
+[334/361] Compiling SendmeterCore QueueUploadCoordination.swift
+[335/361] Compiling SendmeterCore ReadinessSyncPolicy.swift
+[336/361] Compiling SendmeterCore RealtimeListReconciler.swift
+[337/361] Compiling SendmeterCore RecordingEditCoordinator.swift
+[338/361] Compiling SendmeterCore ChartTheme.swift
+[339/361] Compiling SendmeterCore AccountScopedFetch.swift
+[340/361] Compiling SendmeterCore AcwrProjection.swift
+[341/361] Compiling SendmeterCore AcwrStatusCard.swift
+[342/361] Compiling SendmeterCore AppTheme.swift
+[343/361] Compiling SendmeterCore AppUnits.swift
+[344/361] Compiling SendmeterCore AppleAuthNonce.swift
+[345/361] Compiling SendmeterCore AsyncDeadline.swift
+[346/361] Compiling SendmeterCore AuthDiagnostics.swift
+[347/361] Compiling SendmeterCore AuthRecovery.swift
+[348/361] Compiling SendmeterCore BackgroundSyncEngine.swift
+[349/361] Compiling SendmeterCore LiveWorkoutMirror.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[350/361] Compiling SendmeterCore LocalCacheRepair.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[351/361] Compiling SendmeterCore LocalCacheStore.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[352/361] Compiling SendmeterCore LostRecordingNotice.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[353/361] Compiling SendmeterCore ManualWorkoutActivityContent.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[354/361] Compiling SendmeterCore ManualWorkoutLifecycleCoordinator.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[355/361] Compiling SendmeterCore ManualWorkoutRest.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[356/361] Compiling SendmeterCore MassFormatting.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[357/361] Compiling SendmeterCore Metrics.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[358/361] Compiling SendmeterCore Models.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[359/361] Compiling SendmeterCore MutationRecoveryCoordinator.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheRepair.swift:2:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  1 | import Foundation
+  2 | @_implementationOnly import GRDB
+    |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+  3 | 
+  4 | /// #1004: one row whose raw payload was set aside because this build could not
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Sources/Core/LocalCacheStore.swift:7:22: warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   5 | // ActivityMixBar.swift; `@_implementationOnly` is intentional here even though
+   6 | // Swift currently warns about it in non-library-evolution builds.
+   7 | @_implementationOnly import GRDB
+     |                      `- warning: using '@_implementationOnly' without enabling library evolution for 'SendmeterCore' may lead to instability during execution [#ImplementationOnlyDeprecated]
+   8 | 
+   9 | /// The raw rows of one coherent read, kept opaque outside the store.
+
+[#ImplementationOnlyDeprecated]: <https://docs.swift.org/compiler/documentation/diagnostics/implementation-only-deprecated>
+[360/491] Compiling SendmeterWeather WeatherService.swift
+[361/491] Emitting module SendmeterWeather
+[362/493] Emitting module SendmeterCoreTests
+[363/507] Emitting module SendmeterWeatherTests
+[364/507] Compiling SendmeterWeatherTests WeatherServiceTests.swift
+[365/507] Compiling SendmeterCoreTests PagedDeltaEntityShapeTests.swift
+[366/507] Compiling SendmeterCoreTests PagedDeltaPublicationBoundaryTests.swift
+[367/507] Compiling SendmeterCoreTests PagedDeltaTestFixtures.swift
+[368/507] Compiling SendmeterCoreTests PendingRecordingOverlayTests.swift
+[369/507] Compiling SendmeterCoreTests PendingSessionWritePolicyTests.swift
+[370/507] Compiling SendmeterCoreTests PhaseManagerTests.swift
+[371/507] Compiling SendmeterCoreTests PhaseTransitionReplayTests.swift
+[372/507] Compiling SendmeterCoreTests PublishableKeyParityTests.swift
+[373/507] Compiling SendmeterCoreTests PurgeGenerationFailurePolicyTests.swift
+[374/507] Compiling SendmeterCoreTests QueueRetryPolicyTests.swift
+[375/507] Compiling SendmeterCoreTests QueueUploadCoordinationTests.swift
+[376/507] Compiling SendmeterCoreTests ReadinessAcwrParityTests.swift
+[377/507] Compiling SendmeterCoreTests ReadinessSyncPolicyTests.swift
+[378/507] Compiling SendmeterCoreTests ReadinessWidgetWiringTests.swift
+[379/507] Compiling SendmeterCoreTests ForceCurvePlotGeometryTests.swift
+[380/507] Compiling SendmeterCoreTests ForceCurveSelectionTests.swift
+[381/507] Compiling SendmeterCoreTests ForceCurveTooltipPlacementTests.swift
+[382/507] Compiling SendmeterCoreTests ForceDisconnectSalvageTests.swift
+[383/507] Compiling SendmeterCoreTests ForceEmptyStateArtworkWiringTests.swift
+[384/507] Compiling SendmeterCoreTests ForceEngineTests.swift
+[385/507] Compiling SendmeterCoreTests ForceMotionPolicyTests.swift
+[386/507] Compiling SendmeterCoreTests ForceMotionWiringTests.swift
+[387/507] Compiling SendmeterCoreTests ForceProgressTests.swift
+[388/507] Compiling SendmeterCoreTests ForceProgressWiringTests.swift
+[389/507] Compiling SendmeterCoreTests ForceProtocolSelectionTests.swift
+[390/507] Compiling SendmeterCoreTests ForceProtocolSidePolicyTests.swift
+[391/507] Compiling SendmeterCoreTests ForceRecordingContextPolicyTests.swift
+[392/507] Compiling SendmeterCoreTests ForceRecoveryActionPolicyTests.swift
+[393/507] Compiling SendmeterCoreTests SignOutQueuePolicyTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[394/507] Compiling SendmeterCoreTests SplashDynoTimelineTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[395/507] Compiling SendmeterCoreTests SplashPresentationFloorTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[396/507] Compiling SendmeterCoreTests SplashPresentationWiringTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[397/507] Compiling SendmeterCoreTests StructuralHapticDiagnosticsTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[398/507] Compiling SendmeterCoreTests TabGlyphRenderingWiringTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[399/507] Compiling SendmeterCoreTests TabMascotWiringTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[400/507] Compiling SendmeterCoreTests TagCatalogTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[401/507] Compiling SendmeterCoreTests TagCurveCachePolicyTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[402/507] Compiling SendmeterCoreTests TagMutationReplayTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[403/507] Compiling SendmeterCoreTests TindeqConsistencyTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[404/507] Compiling SendmeterCoreTests TindeqSessionMergeTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[405/507] Compiling SendmeterCoreTests ToastLifecycleTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[406/507] Compiling SendmeterCoreTests TrainingBalanceTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/SignOutQueuePolicyTests.swift:285:21: warning: result of 'try?' is unused [#no-usage]
+283 |                 var failureAt = now
+284 |                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+285 |                     try? await queue.markFailure(
+    |                     `- warning: result of 'try?' is unused [#no-usage]
+286 |                         id: quarantineCandidate.id,
+287 |                         accountUserID: accountUserID,
+[407/507] Compiling SendmeterCoreTests ForceSaveOutcomeTests.swift
+[408/507] Compiling SendmeterCoreTests ForceTagChipsTests.swift
+[409/507] Compiling SendmeterCoreTests ForceTraceChartDomainWiringTests.swift
+[410/507] Compiling SendmeterCoreTests ForegroundRefreshPolicyTests.swift
+[411/507] Compiling SendmeterCoreTests FriendlyErrorTests.swift
+[412/507] Compiling SendmeterCoreTests GaugeSessionRPETests.swift
+[413/507] Compiling SendmeterCoreTests GaugeSessionTrackerTests.swift
+[414/507] Compiling SendmeterCoreTests GuidedActivityContentTests.swift
+[415/507] Compiling SendmeterCoreTests GuidedForceFullscreenPresentationTests.swift
+[416/507] Compiling SendmeterCoreTests GuidedLaunchLifecycleTests.swift
+[417/507] Compiling SendmeterCoreTests HandsFreeForceControllerTests.swift
+[418/507] Compiling SendmeterCoreTests HapticsTests.swift
+[419/507] Compiling SendmeterCoreTests HealthBackgroundSyncTests.swift
+[420/507] Compiling SendmeterCoreTests HealthMetricReconciliationTests.swift
+[421/507] Compiling SendmeterCoreTests ChartThemeTests.swift
+[422/507] Compiling SendmeterCoreTests CoherentCacheReadTests.swift
+[423/507] Compiling SendmeterCoreTests DashboardCardLayoutTests.swift
+[424/507] Compiling SendmeterCoreTests DateSupportTests.swift
+[425/507] Compiling SendmeterCoreTests DeleteAccountConfirmationGateTests.swift
+[426/507] Compiling SendmeterCoreTests DeltaPageReaderTests.swift
+[427/507] Compiling SendmeterCoreTests DirectWriteReplayTests.swift
+[428/507] Compiling SendmeterCoreTests EmptyStateWiringTests.swift
+[429/507] Compiling SendmeterCoreTests ErrorSurfacePolicyTests.swift
+[430/507] Compiling SendmeterCoreTests ExerciseSideModeTests.swift
+[431/507] Compiling SendmeterCoreTests ForceAccessibilityWiringTests.swift
+[432/507] Compiling SendmeterCoreTests ForceChartYDomainTests.swift
+[433/507] Compiling SendmeterCoreTests ForceCurveAxisWiringTests.swift
+[434/507] Compiling SendmeterCoreTests ForceCurveEngineTests.swift
+[435/507] Compiling SendmeterCoreTests HealthRefreshPolicyTests.swift
+[436/507] Compiling SendmeterCoreTests HealthWriteReplayTests.swift
+[437/507] Compiling SendmeterCoreTests HeatmapWiringTests.swift
+[438/507] Compiling SendmeterCoreTests HeroMetricWiringTests.swift
+[439/507] Compiling SendmeterCoreTests HistoryDerivedDataBenchmarkTests.swift
+[440/507] Compiling SendmeterCoreTests HistoryDerivedDataTests.swift
+[441/507] Compiling SendmeterCoreTests HistoryDerivedDataWiringTests.swift
+[442/507] Compiling SendmeterCoreTests HistoryFiltersTests.swift
+[443/507] Compiling SendmeterCoreTests HistoryLegacyBaseline.swift
+[444/507] Compiling SendmeterCoreTests HistorySelectionTests.swift
+[445/507] Compiling SendmeterCoreTests HistoryTapDetailWiringTests.swift
+[446/507] Compiling SendmeterCoreTests HistoryTimelineTests.swift
+[447/507] Compiling SendmeterCoreTests KeepAwakeTests.swift
+[448/507] Compiling SendmeterCoreTests LiveWorkoutMirrorTests.swift
+[449/507] Compiling SendmeterCoreTests TrainingBlockGuidanceTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[450/507] Compiling SendmeterCoreTests TrainingLoadInteractionTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[451/507] Compiling SendmeterCoreTests TrainingLoadSheetAxisWiringTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[452/507] Compiling SendmeterCoreTests TrainingLoadTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[453/507] Compiling SendmeterCoreTests WatchCompletionTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[454/507] Compiling SendmeterCoreTests WatchMetadataTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[455/507] Compiling SendmeterCoreTests WorkoutChartAxisWiringTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[456/507] Compiling SendmeterCoreTests WorkoutEngineTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[457/507] Compiling SendmeterCoreTests WorkoutRawTraceTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[458/507] Compiling SendmeterCoreTests WorkoutStatsTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[459/507] Compiling SendmeterCoreTests WorkspaceSyncCoordinatorTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[460/507] Compiling SendmeterCoreTests ZoneIntensityTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[461/507] Compiling SendmeterCoreTests ZoneMixTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[462/507] Compiling SendmeterCoreTests resource_bundle_accessor.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/ZoneMixTests.swift:134:13: warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+132 |     func testIsRecoveredRecordingRequiresConjunction() {
+133 |         // Salvage blob: zone nil + protocolRunID nil + matching note.
+134 |         let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+    |             `- warning: initialization of immutable value 'blob' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+135 |         let blobWithNote = TindeqRecording(
+136 |             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+[463/507] Compiling SendmeterCoreTests RealtimeListReconcilerTests.swift
+[464/507] Compiling SendmeterCoreTests RecordingEditTests.swift
+[465/507] Compiling SendmeterCoreTests RecoveryInputsTests.swift
+[466/507] Compiling SendmeterCoreTests RecoveryInputsWiringTests.swift
+[467/507] Compiling SendmeterCoreTests RefreshSlicePlanTests.swift
+[468/507] Compiling SendmeterCoreTests RoutineAudioTests.swift
+[469/507] Compiling SendmeterCoreTests RoutineGateTests.swift
+[470/507] Compiling SendmeterCoreTests RoutineRunnerPresentationTests.swift
+[471/507] Compiling SendmeterCoreTests RoutineUndoTests.swift
+[472/507] Compiling SendmeterCoreTests SendConditionsDetailTests.swift
+[473/507] Compiling SendmeterCoreTests SendConditionsTests.swift
+[474/507] Compiling SendmeterCoreTests ServerRejectionClassificationTests.swift
+[475/507] Compiling SendmeterCoreTests SessionFreshnessTests.swift
+[476/507] Compiling SendmeterCoreTests SessionTypeCatalogTests.swift
+[477/507] Compiling SendmeterCoreTests AccountScopedFetchTests.swift
+[478/507] Compiling SendmeterCoreTests AcwrProjectionTests.swift
+[479/507] Compiling SendmeterCoreTests AcwrStatusCardTests.swift
+[480/507] Compiling SendmeterCoreTests AppModelSplitTests.swift
+[481/507] Compiling SendmeterCoreTests AppThemeTests.swift
+[482/507] Compiling SendmeterCoreTests AppUnitsTests.swift
+[483/507] Compiling SendmeterCoreTests AppleAuthNonceTests.swift
+[484/507] Compiling SendmeterCoreTests AsyncDeadlineTests.swift
+[485/507] Compiling SendmeterCoreTests AuthDiagnosticsTests.swift
+[486/507] Compiling SendmeterCoreTests AuthRecoveryTests.swift
+[487/507] Compiling SendmeterCoreTests BackgroundSyncEngineTests.swift
+[488/507] Compiling SendmeterCoreTests BoxPlotTests.swift
+[489/507] Compiling SendmeterCoreTests CachePreparationTests.swift
+[490/507] Compiling SendmeterCoreTests CachedWorkspaceTests.swift
+[491/507] Compiling SendmeterCoreTests ChartAxisLabelRuleTests.swift
+[492/507] Compiling SendmeterCoreTests LocalCacheRepairTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[493/507] Compiling SendmeterCoreTests LocalCacheStoreTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[494/507] Compiling SendmeterCoreTests LogSessionToolbarRelocationWiringTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[495/507] Compiling SendmeterCoreTests LostRecordingNoticeTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[496/507] Compiling SendmeterCoreTests ManualWorkoutActivityContentTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[497/507] Compiling SendmeterCoreTests ManualWorkoutLifecycleCoordinatorTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[498/507] Compiling SendmeterCoreTests ManualWorkoutRestTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[499/507] Compiling SendmeterCoreTests MassFormattingTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[500/507] Compiling SendmeterCoreTests MetricsTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[501/507] Compiling SendmeterCoreTests MutationRecoveryCoordinatorTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[502/507] Compiling SendmeterCoreTests MutationSyncStatusTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[503/507] Compiling SendmeterCoreTests OfflineQueueTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[504/507] Compiling SendmeterCoreTests PagedDeltaCacheTests.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[505/507] Compiling SendmeterCoreTests PagedDeltaEntityFixtures.swift
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/MutationSyncStatusTests.swift:202:13: warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+200 |         // disable B's retry: B's inputs carry only B's own measured pass.
+201 |         let accountA = UUID()
+202 |         let accountB = UUID()
+    |             `- warning: initialization of immutable value 'accountB' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+203 |         let outcomeA = MutationRetryOutcome(
+204 |             accountUserID: accountA,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:362:13: warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 360 |         var now = Date(timeIntervalSince1970: 1_000)
+ 361 |         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+ 362 |         for attempt in 1...many {
+     |             `- warning: immutable value 'attempt' was never used; consider replacing with '_' or removing it [#no-usage]
+ 363 |             try await queue.markFailure(
+ 364 |                 id: item.id,
+
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/OfflineQueueTests.swift:1014:17: warning: result of 'try?' is unused [#no-usage]
+1012 |             var now = Date(timeIntervalSince1970: 10_000)
+1013 |             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+1014 |                 try? await queue.markFailure(
+     |                 `- warning: result of 'try?' is unused [#no-usage]
+1015 |                     id: delete.id,
+1016 |                     accountUserID: user,
+[506/509] Emitting module SendmeterNativePackageTests
+[507/509] Compiling SendmeterNativePackageTests runner.swift
+[507/509] Write Objects.LinkFileList
+[508/509] Linking SendmeterNativePackageTests
+Build complete! (85.88s)
+Test Suite 'Selected tests' started at 2569-10-04 11:49:21.394 AM.
+Test Suite 'SendmeterNativePackageTests.xctest' started at 2569-10-04 11:49:21.397 AM.
+Test Suite 'PublishableKeyParityTests' started at 2569-10-04 11:49:21.397 AM.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchBundledURLsMatch]' started.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchBundledURLsMatch]' passed (0.006 seconds).
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchCommittedPublishableKeysMatch]' started.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchCommittedPublishableKeysMatch]' passed (0.001 seconds).
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testWatchSimulatorBranchUsesTheLocalStackKey]' started.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testWatchSimulatorBranchUsesTheLocalStackKey]' passed (0.001 seconds).
+Test Suite 'PublishableKeyParityTests' passed at 2569-10-04 11:49:21.405 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.007 (0.008) seconds
+Test Suite 'SendmeterNativePackageTests.xctest' passed at 2569-10-04 11:49:21.405 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.007 (0.008) seconds
+Test Suite 'Selected tests' passed at 2569-10-04 11:49:21.405 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.007 (0.011) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+FOCUSED_EXIT=0

@@ -1,0 +1,33 @@
+== #1007 live probe matrix (raw) ==
+date: Sun Oct  4 11:51:16 +07 2026
+endpoint: https://zznsqmcewtzlnfoiefkk.supabase.co
+key labels: hosted = plist value (== phone publishableKey); local = watch simulator-branch constant; bogus = synthetic control
+
+-- key: hosted
+$ curl -sS -o /dev/null -w 'sessions:%{http_code}\n' -H "apikey: $KEY" -H "Authorization: Bearer $KEY" '<endpoint>/rest/v1/sessions?select=*&limit=1'
+sessions:200
+$ ... sessions?select=bogus_col&limit=1
+bogus-column:400
+$ ... no_such_table_xyz?select=*&limit=1
+bogus-table:404
+
+-- key: local
+$ curl -sS -o /dev/null -w 'sessions:%{http_code}\n' -H "apikey: $KEY" -H "Authorization: Bearer $KEY" '<endpoint>/rest/v1/sessions?select=*&limit=1'
+sessions:401
+$ ... sessions?select=bogus_col&limit=1
+bogus-column:401
+$ ... no_such_table_xyz?select=*&limit=1
+bogus-table:401
+$ response body (first 240 bytes; a 401 body proves the API answered, not a broken path):
+{"message":"Invalid API key","hint":"Double check the provided API key for typos. This API key might also be owned by another Supabase project."}
+
+-- key: bogus
+$ curl -sS -o /dev/null -w 'sessions:%{http_code}\n' -H "apikey: $KEY" -H "Authorization: Bearer $KEY" '<endpoint>/rest/v1/sessions?select=*&limit=1'
+sessions:401
+$ ... sessions?select=bogus_col&limit=1
+bogus-column:401
+$ ... no_such_table_xyz?select=*&limit=1
+bogus-table:401
+$ response body (first 240 bytes; a 401 body proves the API answered, not a broken path):
+{"message":"Invalid API key","hint":"Double check your API key."}
+

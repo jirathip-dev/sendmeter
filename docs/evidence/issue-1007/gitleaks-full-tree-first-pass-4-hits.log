@@ -1,0 +1,8 @@
+== gitleaks full committed-surface scan ==
+gitleaks: 8.30.1
+surface: git archive HEAD == cb32c3600a9f6e8e53be2d49473a318e60732376
+command: gitleaks detect --source . --no-git --config .gitleaks.toml --redact --no-banner --exit-code=1 --report-format json --report-path <evidence>/gitleaks-full-tree.json
+
+[90m12:12PM[0m [32mINF[0m [1mscanned ~10994938 bytes (10.99 MB) in 1.09s[0m
+[90m12:12PM[0m [33mWRN[0m [1mleaks found: 4[0m
+GITLEAKS_FULL_TREE_EXIT=1

@@ -1,0 +1,37 @@
+# run 37179622828 (PR #1004 head c3b72591) — re-run of the failed attempt, job 'iOS Simulator build / Build and test native app target'
+# decisive lines (verbatim, tab -> ' | '):
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:08.4037770Z  |  Executed 8 tests, with 0 failures (0 unexpected) in 159.962 (160.003) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:08.6658530Z  |  Executed 5 tests, with 0 failures (0 unexpected) in 0.145 (0.199) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:15.9634400Z  |  Executed 4 tests, with 0 failures (0 unexpected) in 7.370 (7.373) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:21.0267200Z  |  Executed 3 tests, with 0 failures (0 unexpected) in 4.837 (4.839) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:25.7073570Z  |  Executed 7 tests, with 0 failures (0 unexpected) in 4.179 (4.185) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:26.2731660Z  |  Executed 10 tests, with 0 failures (0 unexpected) in 0.944 (0.948) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:28.7542080Z  |  Executed 5 tests, with 0 failures (0 unexpected) in 2.852 (2.854) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:30.0504940Z  |  Executed 3 tests, with 0 failures (0 unexpected) in 1.209 (1.211) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:30.6971190Z  |  Executed 3 tests, with 0 failures (0 unexpected) in 0.558 (0.561) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:30.8399700Z  |  Executed 8 tests, with 0 failures (0 unexpected) in 0.128 (0.149) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:31.4208430Z /Users/runner/work/sendmeter/sendmeter/native/SendmeterNative/Tests/SendmeterNativeTests/GuidedLaunchRecoveryAppTests.swift:115: error: -[SendmeterNativeTests.GuidedLaunchRecoveryAppTests testALegacyStoredPayloadIsSetAsideAndTheAppStillStartsASession] : XCTAssertEqual failed: ("0") is not equal to ("1")
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:31.4314750Z /Users/runner/work/sendmeter/sendmeter/native/SendmeterNative/Tests/SendmeterNativeTests/GuidedLaunchRecoveryAppTests.swift:116: error: -[SendmeterNativeTests.GuidedLaunchRecoveryAppTests testALegacyStoredPayloadIsSetAsideAndTheAppStillStartsASession] : XCTAssertEqual failed: ("[]") is not equal to ("[SendmeterCore.LocalCacheEntityType.recordings]")
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:31.4330180Z /Users/runner/work/sendmeter/sendmeter/native/SendmeterNative/Tests/SendmeterNativeTests/GuidedLaunchRecoveryAppTests.swift:117: error: -[SendmeterNativeTests.GuidedLaunchRecoveryAppTests testALegacyStoredPayloadIsSetAsideAndTheAppStillStartsASession] : XCTUnwrap failed: expected non-nil value of type "QuarantinedCacheRow"
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:31.4495540Z Test Case '-[SendmeterNativeTests.GuidedLaunchRecoveryAppTests testALegacyStoredPayloadIsSetAsideAndTheAppStillStartsASession]' failed (0.767 seconds).
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:34.1010850Z  |  Executed 3 tests, with 3 failures (0 unexpected) in 3.335 (3.336) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:35.0279620Z  |  Executed 3 tests, with 0 failures (0 unexpected) in 0.771 (0.795) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:17:47.0704940Z  |  Executed 9 tests, with 0 failures (0 unexpected) in 12.235 (12.257) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:35.0020110Z  |  Executed 3 tests, with 0 failures (0 unexpected) in 47.804 (47.807) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:35.1248620Z  |  Executed 4 tests, with 0 failures (0 unexpected) in 0.107 (0.118) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:35.3047010Z  |  Executed 12 tests, with 0 failures (0 unexpected) in 0.176 (0.180) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:35.3698140Z  |  Executed 4 tests, with 0 failures (0 unexpected) in 0.032 (0.034) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:36.2272620Z  |  Executed 9 tests, with 0 failures (0 unexpected) in 0.874 (0.877) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:36.2303920Z  |  Executed 3 tests, with 0 failures (0 unexpected) in 0.010 (0.011) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:36.2352120Z  |  Executed 3 tests, with 0 failures (0 unexpected) in 0.007 (0.008) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:36.2518110Z  |  Executed 2 tests, with 0 failures (0 unexpected) in 0.016 (0.017) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:36.3674230Z  |  Executed 6 tests, with 0 failures (0 unexpected) in 0.113 (0.115) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:36.6649180Z  |  Executed 6 tests, with 0 failures (0 unexpected) in 0.240 (0.242) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:38.4448480Z  |  Executed 12 tests, with 0 failures (0 unexpected) in 1.827 (1.834) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:43.8787320Z  |  Executed 13 tests, with 0 failures (0 unexpected) in 1.206 (1.211) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:44.0184040Z  |  Executed 3 tests, with 0 failures (0 unexpected) in 0.280 (0.282) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:56.8743060Z  |  Executed 8 tests, with 0 failures (0 unexpected) in 13.547 (13.552) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:18:57.0460160Z  |  Executed 5 tests, with 0 failures (0 unexpected) in 0.017 (0.035) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:19:06.9408360Z  |  Executed 5 tests, with 0 failures (0 unexpected) in 10.024 (10.026) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:19:06.9413590Z  |  Executed 171 tests, with 3 failures (0 unexpected) in 278.306 (278.587) seconds
+iOS Simulator build | Build and test native app target | 2026-10-04T06:19:06.9421320Z  |  Executed 171 tests, with 3 failures (0 unexpected) in 278.306 (278.589) seconds

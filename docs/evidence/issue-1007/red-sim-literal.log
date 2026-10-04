@@ -1,0 +1,24 @@
+Building for debugging...
+[0/2] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.54s)
+Test Suite 'Selected tests' started at 2569-10-04 11:50:18.412 AM.
+Test Suite 'SendmeterNativePackageTests.xctest' started at 2569-10-04 11:50:18.416 AM.
+Test Suite 'PublishableKeyParityTests' started at 2569-10-04 11:50:18.416 AM.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchBundledURLsMatch]' started.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchBundledURLsMatch]' passed (0.007 seconds).
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchCommittedPublishableKeysMatch]' started.
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testPhoneAndWatchCommittedPublishableKeysMatch]' passed (0.002 seconds).
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testWatchSimulatorBranchUsesTheLocalStackKey]' started.
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative/Tests/SendmeterCoreTests/PublishableKeyParityTests.swift:76: error: -[SendmeterCoreTests.PublishableKeyParityTests testWatchSimulatorBranchUsesTheLocalStackKey] : XCTAssertEqual failed: ("sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaX") is not equal to ("sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH") - The Watch simulator branch must use the Supabase CLI's fixed local-development publishable key (#1007); got sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaX
+Test Case '-[SendmeterCoreTests.PublishableKeyParityTests testWatchSimulatorBranchUsesTheLocalStackKey]' failed (0.045 seconds).
+Test Suite 'PublishableKeyParityTests' failed at 2569-10-04 11:50:18.471 AM.
+	 Executed 3 tests, with 1 failure (0 unexpected) in 0.054 (0.055) seconds
+Test Suite 'SendmeterNativePackageTests.xctest' failed at 2569-10-04 11:50:18.471 AM.
+	 Executed 3 tests, with 1 failure (0 unexpected) in 0.054 (0.055) seconds
+Test Suite 'Selected tests' failed at 2569-10-04 11:50:18.471 AM.
+	 Executed 3 tests, with 1 failure (0 unexpected) in 0.054 (0.059) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+RED_SIM_EXIT=1

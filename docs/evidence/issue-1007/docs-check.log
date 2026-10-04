@@ -1,0 +1,13 @@
+bash scripts/check-docs-stale-commands.sh
+docs-stale-commands: scanned 11 current entrypoints, 9 historical files, 23 retired-command patterns
+  historical (allowlisted): docs/architecture/857-removal-inventory.md — the #857 removal inventory — names every retired surface on purpose (17 retired-name hits)
+  historical (allowlisted): docs/app-store-checklist.md — Capacitor-era sections are banner-marked superseded; the screenshot lane section is banner-marked historical (8 retired-name hits)
+  historical (allowlisted): docs/error-monitoring.md — documents the retired web error-monitoring layer; banner-marked (16 retired-name hits)
+  historical (allowlisted): docs/parity-gauntlet-brief.md — historical gauntlet brief (completed batch); banner-marked (2 retired-name hits)
+  historical (allowlisted): docs/ci/dependabot-fanout.md — records the retired CI/deploy surface (1 retired-name hit)
+  historical (allowlisted): docs/dependency-security.md — records the retired root lockfile/Capacitor graph (2 retired-name hits)
+  historical (allowlisted): FINDINGS-663.md — dated findings record (pre-#857) (3 retired-name hits)
+  historical (allowlisted): PERF-671.md — dated measurement record (pre-#857) (1 retired-name hit)
+  historical (allowlisted): RELEASE_NOTES.md — changelog — historical entries legitimately name retired surfaces (0 retired-name hits)
+docs-stale-commands: OK — current entrypoints name no retired command, and every referenced recipe/workflow/script/doc exists
+DOCS_CHECK_EXIT=0
