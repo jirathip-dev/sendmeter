@@ -33,10 +33,13 @@ import Supabase
 /// write looks for `deleted_at IS NULL`, legitimately finds nothing and
 /// publishes an EMPTY report (measured on CI: `quarantinedCount=0`,
 /// `healedEntityTypes=[]`, `:115/:116/:117` red on every PR). The two tests
-/// that observe the repair wait for `bootState == .signedIn` — the bootstrap
-/// pass returned — before driving their own refresh, so the row is
-/// quarantined by exactly the pass they assert and no second pass can
-/// interleave between a read and its quarantine. Assertions unchanged.
+/// that observe the repair wait (deadline-bound) for the launch pass to
+/// publish it — `lastLocalDataRepair != nil` — before driving their own
+/// refresh: the pass that owns the seeded row has then already quarantined
+/// it, and no second pass can interleave a tombstone between a read and its
+/// quarantine. (`bootState == .signedIn` is NOT a usable gate here: the
+/// bootstrap's tail can hold it at `.loading`, measured, while the repair has
+/// long published.) Assertions unchanged.
 @MainActor
 final class GuidedLaunchRecoveryAppTests: XCTestCase {
     private let userID = UUID()
@@ -111,13 +114,18 @@ final class GuidedLaunchRecoveryAppTests: XCTestCase {
         server.seedHistory(tag: "FDP", side: "left")
         let model = try await makeSignedInModel(server: server)
 
-        // #989: let the account bootstrap's own refresh pass return before
-        // this test drives its own (see the class note): two overlapping
-        // passes let the bootstrap's full recordings reconcile tombstone the
-        // seeded row before the launch repair's quarantine write can find it.
+        // #989: settle the launch pass before driving this test's own refresh
+        // (see the class note). The account bootstrap's refresh runs
+        // hydrate → repair → reconcile; the repair report means the seeded row
+        // was already quarantined by the pass that owns it, so this test's
+        // refresh cannot interleave a tombstone between the repair's read and
+        // its offloaded quarantine write. (Not `bootState == .signedIn`: the
+        // bootstrap's tail — passkeys, queue drain, realtime join — can hold
+        // the boot state at `.loading` in this harness, measured, while the
+        // repair has long since published.)
         try await waitUntil(
-            "the account bootstrap to finish (bootState == .signedIn)",
-            isSatisfied: { model.bootState == .signedIn },
+            "the launch repair to publish its report",
+            isSatisfied: { model.lastLocalDataRepair != nil },
             observed: { bootstrapState(model) }
         )
         await model.refreshAll(showSpinner: false)
@@ -282,12 +290,12 @@ final class GuidedLaunchRecoveryAppTests: XCTestCase {
         let server = FakeRecoveryPostgREST()
         server.seedHistory(tag: "FDP", side: "left")
         let model = try await makeSignedInModel(server: server)
-        // #989: the same bootstrap-settle gate as the legacy-payload test —
-        // this test asserts the repair notice exists, which a second
-        // overlapping pass's tombstone can otherwise take away.
+        // #989: the same launch-settle gate as the legacy-payload test — this
+        // test asserts the repair notice exists, which a second overlapping
+        // pass's tombstone can otherwise take away before it lands.
         try await waitUntil(
-            "the account bootstrap to finish (bootState == .signedIn)",
-            isSatisfied: { model.bootState == .signedIn },
+            "the launch repair to publish its report",
+            isSatisfied: { model.lastLocalDataRepair != nil },
             observed: { bootstrapState(model) }
         )
         await model.refreshAll(showSpinner: false)
