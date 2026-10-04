@@ -7,13 +7,16 @@ Containers, detaching from cfprefsd` on every cold launch, and its fix:
 explicit `kCFPreferencesCurrentUser` `CFPreferences` access
 (`ReadinessWidgetAppGroupDefaults` in
 `native-plugins/sendlog-health-core/Sources/SendLogHealthCore/ReadinessWidgetContract.swift`).
-Fix round 1 (#991 fixed the Linux `package-tests` job that could not compile
-that access): the CF accessor is compiled only where CoreFoundation exists
-(`#if canImport(CoreFoundation)`); platforms without it select the
+Fix rounds 1–2: the CF accessor is compiled only on Apple targets
+(`#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)`).
+Round 1's `canImport(CoreFoundation)` module-availability guard was wrong —
+Linux ships a CoreFoundation *subset* without CFString/CFPreferences, and the
+ios-ci `package-tests` container compiled the block; corrected in round 2 —
+see `fix2-guard-truth-table.txt`. Every other platform selects the
 Foundation-only `ReadinessWidgetFallbackDefaults` — same domain, key and
-nil-on-unreadable semantics — see `fix1-linux-static-guarantee.txt`.
-Full write-ups: `.report-991.md` (round 0) and `.report-991-fix1.md`
-(fix round 1) in the worktree root.
+nil-on-unreadable semantics.
+Full write-ups: `.report-991.md` (round 0), `.report-991-fix1.md` (round 1)
+and `.report-991-fix2.md` (round 2, current) in the worktree root.
 
 | file | what it is |
 |---|---|
@@ -38,6 +41,16 @@ Full write-ups: `.report-991.md` (round 0) and `.report-991-fix1.md`
 | `fix1-slop.log.gz` | `just slop` — exit 0 (gzipped). |
 | `fix1-docs-check.log.gz` | `just docs-check` — exit 0 (gzipped). |
 | `fix1-watch-core.log.gz` | The failing CI job's own command run on macOS (`swift test --package-path ios/App/SendLogWatchCore`) — exit 0, 600 tests, 0 failures (gzipped). |
+| `fix2-guard-truth-table.txt` | Fix round 2: the guard's truth table (per-target branch and why), the probe/SIL commands actually run, the per-platform selection summary, and the Linux-side static guarantee. |
+| `fix2-sil-selection-{macosx,iphoneos,iphonesimulator,watchos,watchsimulator}.txt` | The compiled `appGroupStore.getter` SIL body per Apple SDK — each allocates `ReadinessWidgetAppGroupDefaults` (the CoreFoundation accessor), zero errors. |
+| `fix2-ci-run1-package-tests.log.gz` | The raw `package-tests` job log at head `2acdf482` (job 111439538188): the Linux container compiled the round-1 `canImport(CoreFoundation)` block — 80 `cannot find` errors at ReadinessWidgetContract.swift:182-209. The raw evidence that supersedes `fix1-linux-static-guarantee.txt`'s Linux claim. |
+| `fix2-wiring-pin-red.log.gz` | Fix round 2 RED: the pin (os() guard + no-canImport assertions) against the pre-fix source state — exit 1, five assertion failures at lines 114/115/117/125/129 (gzipped). |
+| `fix2-wiring-pin-green.log.gz` | Fix round 2 GREEN: same filter on the fix head — exit 0, test passed (gzipped). |
+| `fix2-health-core.log.gz` | `just health-core` on the fix head: 70 tests (incl. the new `testAppGroupStoreSelectsThePlatformAccessor`), 0 failures (gzipped). |
+| `fix2-core.log.gz` | `just core` on the fix head — 1510 tests, 0 failures, extended pin included (gzipped). |
+| `fix2-watch-core.log.gz` | The `package-tests` job's command run on macOS on the fix head (`swift test --package-path ios/App/SendLogWatchCore`) — exit 0, 600 tests (gzipped). |
+| `fix2-slop.log.gz` / `fix2-docs-check.log.gz` | `just slop` / `just docs-check` on the fix head — exit 0 (gzipped). |
+| `fix2-ci-run2-package-tests.log.gz` | The raw `package-tests` job log at the fix-round-2 head — the job verdict read and quoted in `.report-991-fix2.md`. |
 | `SHA256SUMS` | Digests of every file in this directory. |
 
 Not included: the 3.6 MB raw probe `xcodebuild` log and the host disassembly

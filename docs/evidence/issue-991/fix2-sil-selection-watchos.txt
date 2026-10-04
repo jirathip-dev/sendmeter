@@ -1,0 +1,26 @@
+// static ReadinessWidgetStore.appGroupStore.getter
+// Isolation: unspecified
+sil @$s17SendLogHealthCore20ReadinessWidgetStoreC08appGroupG0ACvgZ : $@convention(method) (@thick ReadinessWidgetStore.Type) -> @owned ReadinessWidgetStore {
+// %0 "self"                                      // user: %1
+bb0(%0 : $@thick ReadinessWidgetStore.Type):
+  debug_value %0, let, name "self", argno 1       // id: %1
+  %2 = metatype $@thick ReadinessWidgetStore.Type // user: %15
+  %3 = alloc_stack $any ReadinessWidgetDefaults   // users: %16, %15, %12
+  %4 = metatype $@thin ReadinessWidgetAppGroupDefaults.Type // user: %11
+  // function_ref ReadinessWidgetStore.appGroup.unsafeMutableAddressor
+  %5 = function_ref @$s17SendLogHealthCore20ReadinessWidgetStoreC8appGroupSSvau : $@convention(thin) () -> Builtin.RawPointer // user: %6
+  %6 = apply %5() : $@convention(thin) () -> Builtin.RawPointer // user: %7
+  %7 = pointer_to_address %6 to [strict] $*String // user: %8
+  %8 = load %7                                    // users: %11, %9
+  retain_value %8                                 // id: %9
+  // function_ref ReadinessWidgetAppGroupDefaults.init(appGroup:)
+  %10 = function_ref @$s17SendLogHealthCore31ReadinessWidgetAppGroupDefaultsV03appH0ACSS_tcfC : $@convention(method) (@owned String, @thin ReadinessWidgetAppGroupDefaults.Type) -> @owned ReadinessWidgetAppGroupDefaults // user: %11
+  %11 = apply %10(%8, %4) : $@convention(method) (@owned String, @thin ReadinessWidgetAppGroupDefaults.Type) -> @owned ReadinessWidgetAppGroupDefaults // user: %13
+  %12 = init_existential_addr %3, $ReadinessWidgetAppGroupDefaults // user: %13
+  store %11 to %12                                // id: %13
+  // function_ref ReadinessWidgetStore.__allocating_init(defaults:)
+  %14 = function_ref @$s17SendLogHealthCore20ReadinessWidgetStoreC8defaultsAcA0eF8Defaults_p_tcfC : $@convention(method) (@in any ReadinessWidgetDefaults, @thick ReadinessWidgetStore.Type) -> @owned ReadinessWidgetStore // user: %15
+  %15 = apply %14(%3, %2) : $@convention(method) (@in any ReadinessWidgetDefaults, @thick ReadinessWidgetStore.Type) -> @owned ReadinessWidgetStore // user: %17
+  dealloc_stack %3                                // id: %16
+  return %15                                      // id: %17
+} // end sil function '$s17SendLogHealthCore20ReadinessWidgetStoreC08appGroupG0ACvgZ'
