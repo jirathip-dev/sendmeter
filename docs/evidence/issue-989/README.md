@@ -4,7 +4,7 @@ Intermittent reds of the SendmeterNative **app-target** suite
 (`Tests/SendmeterNativeTests`), and the isolation/robustness fixes that make
 the named offenders deterministic.
 
-Head this evidence describes: `286d5bd` (branch `impl-989`, base `d61e715`; the two head commits after `4690079` are the evidence/report commits themselves).
+Head this evidence describes: `286d5bd` (branch `impl-989`, base `d61e715`; the head commits after `4690079` are the evidence/report commits themselves).
 
 ## Layout
 
