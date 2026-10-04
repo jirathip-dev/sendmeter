@@ -70,6 +70,7 @@ its verification are described in `.report-1004b-fix1.md`; the logs it rests on:
 |---|---|---|
 | `hosted-ci-attempt-1-failures.log` | full job logs via `gh api …/runs/37179622828/attempts/1/logs` (read-only) | **171 tests, 5 failures** — the fence's `:297` 15s timeout + `:86` cascade, and the three pre-existing `GuidedLaunchRecoveryAppTests` `:115/:116/:117` lines, verbatim |
 | `hosted-ci-attempt-2-failures.log` | …`/attempts/2/logs` | **171 tests, 3 failures** — only the pre-existing class; the fence passed on this attempt; lines verbatim |
+| `hosted-ci-run-37187109467-at-0576887.log` | job log via `gh api …/jobs/111391303567/logs` (read-only) — the job that ran the **fix-round head** `0576887` | **this lane's class green on the runner (3/3, no waits)**; the job's only failing tests are the pre-existing `GuidedLaunchRecoveryAppTests` class `:115/:116/:117` (#989); also captures the still-present `step=cache-prepare … cacheUnavailable` runner line the fence now handles deterministically |
 | `app-tests-04-repro-dirty.log` | full suite, dirty container, pre-fix | `EXIT=65` — the pre-existing stale-container class in a sibling suite (3 × `test941…`); this lane's class 3/3 green |
 | `app-tests-05-fixed-focused.log` | focused, dirty, v1 fix | `EXIT=0`; 3/0 |
 | `red-probe-m5-release-touches-recording.log` | **M5**: `ForceView.teardown()` mutated to delete the newest recording in the released session's settlement | `EXIT=65`; 2 failures — the fence detects a data-touching release; `ForceView.swift` restored byte-exact (`sha256 d8d47ee1…`) |
