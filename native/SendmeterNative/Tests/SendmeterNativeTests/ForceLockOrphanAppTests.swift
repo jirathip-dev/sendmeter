@@ -54,7 +54,59 @@ final class ForceLockOrphanAppTests: XCTestCase {
             StubURLProtocol.reply = (statusCode: 200, body: Data("[]".utf8))
         }
 
-        let publishedBeforeSave = Set(model.recordings.map(\.id))
+        // FIX ROUND 1 — the determinism seam (hosted CI run 37179622828
+        // attempt 1: "timed out after 15s waiting for the offline save to
+        // publish its recording; observed recordings=[]"). The save publishes
+        // the recording LOCALLY — `cacheUpsertLocal` marks the pending row in
+        // the app's store (AppModel.swift:4516) and `insertPendingRecording` +
+        // `mergeRecordings` publish it in memory (:4531/:4533) — but the
+        // local write silently no-ops until the store's preparation flight has
+        // opened it (`guard let cachedWorkspace else { return nil }`, :2343),
+        // and every refresh pass re-derives the published list FROM the store
+        // (:2216, overlay rebuild :2230). Two app-owned asynchronous steps can
+        // therefore land around the save: the store open (a save before it
+        // misses its local row) and the account bootstrap's refresh pass
+        // (:1971/:1976 — its hydration can have read the store before the
+        // save's local write and assign after it, republishing a list without
+        // the row). The old fence could only poll the outcome in a 15-second
+        // wall-clock budget — green on a warm container, red on the runner's
+        // cold one. This fence now makes publication deterministic instead:
+        // it joins the SAME store-preparation flight every lifecycle
+        // entrypoint joins (#921, :2680), waits for the bootstrap pass the
+        // harness's own seeded session starts to reach its recorded failure
+        // (the offline stub guarantees one, and it is recorded only after
+        // that pass has published), then drives its OWN publication — an
+        // awaited offline refresh pass — so the reads below observe state the
+        // test established, not a race.
+        StubURLProtocol.reply = (
+            statusCode: 500,
+            body: Data(#"{"message":"host offline"}"#.utf8)
+        )
+        defer {
+            StubURLProtocol.reply = (statusCode: 200, body: Data("[]".utf8))
+        }
+
+        await model.prepareCacheIfNeeded()
+        XCTAssertTrue(
+            model.cacheReadiness.isReady,
+            "the local store must be open for the save to have a published copy; cacheReadiness=\(model.cacheReadiness)"
+        )
+        try await waitUntil(
+            "the account bootstrap's refresh pass to finish",
+            isSatisfied: {
+                model.lastPartialRefreshFailure != nil
+                    || model.dashboardLoadFailureClass != nil
+            },
+            observed: {
+                "lastPartialRefreshFailure=\(String(describing: model.lastPartialRefreshFailure)) "
+                    + "dashboardLoadFailureClass=\(String(describing: model.dashboardLoadFailureClass))"
+            }
+        )
+
+        let idsBeforeSave = try Self.durableQueueItemIDs(
+            Self.durableQueueData(),
+            payloadCase: "recording"
+        )
         let persisted = await model.saveForceSummary(
             Self.summary(),
             tag: "FDP",
@@ -67,33 +119,33 @@ final class ForceLockOrphanAppTests: XCTestCase {
         )
         XCTAssertTrue(persisted, "an offline save must still persist durably")
 
-        // The saved recording is the one the model gained; the queue item's
-        // id IS the recording's id (`DurableQueueItem(id: recording.id,
-        // ...)`), so one identity crosses all three surfaces: durable row,
-        // published recording, device bookkeeping.
-        var savedID: UUID?
-        try await waitUntil(
-            "the offline save to publish its recording",
-            timeout: .seconds(15),
-            isSatisfied: {
-                savedID = model.recordings.map(\.id).first {
-                    !publishedBeforeSave.contains($0)
-                }
-                return savedID != nil
-            },
-            observed: { "recordings=\(model.recordings.map(\.id))" }
+        // The saved recording is the NEW recording-payload row in the queue
+        // file — the artifact this test owns, read in the same main-actor turn
+        // around the save. The queue item's id IS the recording's id
+        // (`DurableQueueItem(id: recording.id, ...)`), so one identity
+        // crosses all three surfaces: durable row, published recording,
+        // device bookkeeping.
+        let idsAfterSave = try Self.durableQueueItemIDs(
+            Self.durableQueueData(),
+            payloadCase: "recording"
         )
-        let recordingID = try XCTUnwrap(savedID)
+        let newIDs = Set(idsAfterSave).subtracting(idsBeforeSave)
+        guard newIDs.count == 1, let recordingID = newIDs.first else {
+            XCTFail(
+                "the offline save must leave exactly one new recording row in the durable queue; before=\(idsBeforeSave) after=\(idsAfterSave) new=\(newIDs)"
+            )
+            return
+        }
 
-        var idsBeforeRelease: [UUID] = []
-        try await waitUntil(
-            "the un-synced row to be pending in the durable queue",
-            timeout: .seconds(15),
-            isSatisfied: {
-                idsBeforeRelease = (try? Self.durableQueueItemIDs(Self.durableQueueData())) ?? []
-                return idsBeforeRelease.contains(recordingID)
-            },
-            observed: { "queue ids=\(idsBeforeRelease)" }
+        // Drive the publication the test owns: an awaited offline refresh pass
+        // over the store the save wrote. Its hydration reads the store AFTER
+        // the save's local write, so the store-backed list it publishes
+        // carries the pending row — and because every later pass reads that
+        // same store, the row is stable from here on without any deadline.
+        await model.refreshAll(showSpinner: false)
+        XCTAssertTrue(
+            model.recordings.contains { $0.id == recordingID },
+            "the save's pending recording must be published once the store and the bootstrap pass are settled — the subject the release must keep; recordings=\(model.recordings.map(\.id))"
         )
 
         // End the protocol the way the resume card's End does: the terminal
@@ -254,12 +306,23 @@ final class ForceLockOrphanAppTests: XCTestCase {
     }
 
     /// Every queued item's identity, read from the queue file's own JSON.
-    private static func durableQueueItemIDs(_ data: Data) throws -> [UUID] {
+    /// With `payloadCase`, only items whose `PendingWrite` enum payload is
+    /// that case (the single-key encoding, e.g. `{"recording": …}`) are
+    /// returned — a save's row is the `recording` case.
+    private static func durableQueueItemIDs(
+        _ data: Data,
+        payloadCase: String? = nil
+    ) throws -> [UUID] {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = root["items"] as? [[String: Any]]
         else { return [] }
         return items.compactMap { item in
-            (item["id"] as? String).flatMap(UUID.init(uuidString:))
+            if let payloadCase {
+                guard let payload = item["payload"] as? [String: Any],
+                      payload[payloadCase] != nil
+                else { return nil }
+            }
+            return (item["id"] as? String).flatMap(UUID.init(uuidString:))
         }
     }
 

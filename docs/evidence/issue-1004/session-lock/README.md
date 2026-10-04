@@ -57,3 +57,32 @@ This is a simulator render, not a device screenshot.
 - The device-log capture that would name the failing payload from the owner's unit (issue
   half 3) — still unavailable on this host; the report §4 gives the one command that
   produces it.
+
+## FIX ROUND 1 (hosted-CI red at `c3b72591`) — added logs, same conventions
+
+The round-1 fence failed the hosted app-target job (run 37179622828: attempt 1 = 171 tests /
+5 failures, two of them this lane's; attempt 2 = 171 / 3, all the pre-existing
+`GuidedLaunchRecoveryAppTests` class). The fix (the fence's determinism seam in
+`Tests/SendmeterNativeTests/ForceLockOrphanAppTests.swift`; product code byte-unchanged) and
+its verification are described in `.report-1004b-fix1.md`; the logs it rests on:
+
+| Log (`.log.gz`) | Command / run | What it covers |
+|---|---|---|
+| `hosted-ci-attempt-1-failures.log` | full job logs via `gh api …/runs/37179622828/attempts/1/logs` (read-only) | **171 tests, 5 failures** — the fence's `:297` 15s timeout + `:86` cascade, and the three pre-existing `GuidedLaunchRecoveryAppTests` `:115/:116/:117` lines, verbatim |
+| `hosted-ci-attempt-2-failures.log` | …`/attempts/2/logs` | **171 tests, 3 failures** — only the pre-existing class; the fence passed on this attempt; lines verbatim |
+| `app-tests-04-repro-dirty.log` | full suite, dirty container, pre-fix | `EXIT=65` — the pre-existing stale-container class in a sibling suite (3 × `test941…`); this lane's class 3/3 green |
+| `app-tests-05-fixed-focused.log` | focused, dirty, v1 fix | `EXIT=0`; 3/0 |
+| `red-probe-m5-release-touches-recording.log` | **M5**: `ForceView.teardown()` mutated to delete the newest recording in the released session's settlement | `EXIT=65`; 2 failures — the fence detects a data-touching release; `ForceView.swift` restored byte-exact (`sha256 d8d47ee1…`) |
+| `app-tests-05b-focused-post-restore.log` | focused, dirty, after the byte-exact restore | `EXIT=0`; 3/0 |
+| `app-tests-06-dirty-full.log` | full suite, dirty, v1 | `EXIT=65` — sibling `test941…` ×3 + one `AccountSwitchInFlightAppTests` case aborted by a test-process crash under shared-sim contention; this lane's class 3/3 green; legacy test green |
+| `ab-legacy-isolated.log` | `GuidedLaunchRecoveryAppTests.testALegacyStoredPayload…` run **isolated** (A/B arm) | `EXIT=0`; 1/0 — the neighbour-correlation dismissal's second arm (§6 of the fix report) |
+| `app-tests-07-erased-full.log` | full suite, **erased** container, v1 | `EXIT=65` — this lane's fence `:133`/`:178` `recordings=[]`: the CI symptom **reproduced locally**; drove the final fix (stage 2 in §3/§4 of the fix report) |
+| `app-tests-08-fixed-erased-focused.log` | focused, **erased**, final fix | `EXIT=0`; 3/0 |
+| `app-tests-09-fixed-dirty-focused.log` | focused, dirty, final fix | `EXIT=0`; 3/0 |
+| `app-tests-10-final-dirty-full.log` | full suite, dirty, final fix | `** TEST SUCCEEDED **`, `EXIT=0` — **171 tests, 0 failures** |
+| `app-tests-11-final-erased-full.log` | full suite, **erased** (the hosted job's own shape), final fix | `** TEST SUCCEEDED **`, `EXIT=0` — **171 tests, 0 failures** |
+| `core-focused-05.log` | `swift test --filter ForceLockOrphan` at the final tree | `EXIT=0`; 12 tests / 0 failures |
+| `slop-fix1.log` / `docscheck-fix1.log` | `just slop` / `just docs-check` at the final tree | `EXIT=0` both |
+
+`SHA256SUMS` above pins every `.log.gz` and the PNG; `shasum -a 256 -c SHA256SUMS` verifies
+the whole set.
