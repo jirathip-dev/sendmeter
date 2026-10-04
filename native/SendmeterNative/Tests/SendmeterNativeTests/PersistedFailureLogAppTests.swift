@@ -40,7 +40,7 @@ final class PersistedFailureLogAppTests: XCTestCase {
         server.goOffline()
         let model = try await makeSignedInModel(server: server)
         let capture = FailureLineCapture()
-        model.persistedFailureSink = capture.sink
+        model.persistedFailureSink = PersistedFailureSink(capture.sink)
 
         await model.refreshAll(showSpinner: false)
 
@@ -88,7 +88,7 @@ final class PersistedFailureLogAppTests: XCTestCase {
             "fixture: the first load must publish authoritative last-good data"
         )
         let capture = FailureLineCapture()
-        model.persistedFailureSink = capture.sink
+        model.persistedFailureSink = PersistedFailureSink(capture.sink)
 
         // #842/#923: only the health-metrics slice fails; every other group
         // publishes, so the pass is partial and the global banner must stay
@@ -127,7 +127,7 @@ final class PersistedFailureLogAppTests: XCTestCase {
         let model = try await makeSignedInModel(server: server)
         await model.refreshAll(showSpinner: false)
         let capture = FailureLineCapture()
-        model.persistedFailureSink = capture.sink
+        model.persistedFailureSink = PersistedFailureSink(capture.sink)
 
         server.goOffline()
         let preset = Self.preset(name: "Persisted Failure Probe")
@@ -165,7 +165,7 @@ final class PersistedFailureLogAppTests: XCTestCase {
         let server = FakeFailureLogPostgREST()
         let model = try await makeSignedInModel(server: server)
         let capture = FailureLineCapture()
-        model.persistedFailureSink = capture.sink
+        model.persistedFailureSink = PersistedFailureSink(capture.sink)
 
         await model.refreshAll(showSpinner: false)
         // Let the bootstrap refresh that shares this funnel settle before
@@ -177,6 +177,29 @@ final class PersistedFailureLogAppTests: XCTestCase {
         XCTAssertTrue(
             capture.lines.isEmpty,
             "a successful cold launch must emit no failure lines: \(capture.lines.map(\.message))"
+        )
+    }
+
+    // MARK: - F2: the production default itself must be witnessed
+
+    /// The adversarial review's F2 mutation substituted the model's default
+    /// sink with a no-op and no suite blinked. This is the witness: a freshly
+    /// built model must still hold the production binding — substituting a
+    /// capture (or a no-op) flips `isProduction` false, so that mutation goes
+    /// RED here.
+    @MainActor
+    func testFreshModelStillCarriesTheProductionFailureSink() async throws {
+        let server = FakeFailureLogPostgREST()
+        let model = try await makeSignedInModel(server: server)
+
+        XCTAssertTrue(
+            model.persistedFailureSink.isProduction,
+            """
+            a freshly built AppModel must keep the production failure sink; \
+            if this fails, the default was tampered with or replaced by a \
+            no-op and every persisted failure line would be silent on-device \
+            while the rest of the suite stays green (F2)
+            """
         )
     }
 

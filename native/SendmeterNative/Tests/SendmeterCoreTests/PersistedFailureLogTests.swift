@@ -81,4 +81,30 @@ final class PersistedFailureLogTests: XCTestCase {
             )
         )
     }
+
+    /// #992 F2: the binding carries its own production identity, so a test can
+    /// tell the real emitter from a substituted capture or a no-op — the exact
+    /// mutation that killed the old bare-closure default while everything
+    /// stayed green.
+    @MainActor
+    func testProductionSinkReportsItselfAndStubsDoNot() {
+        XCTAssertTrue(
+            PersistedFailureSink.production.isProduction,
+            "the shipped default must identify as the production binding"
+        )
+        var captured: [PersistedFailureLine] = []
+        let stub = PersistedFailureSink { captured.append($0) }
+        XCTAssertFalse(stub.isProduction, "a test capture must never claim production")
+        let silent = PersistedFailureSink { _ in }
+        XCTAssertFalse(silent.isProduction, "a no-op must never claim production")
+
+        let line = PersistedFailureLog.line(
+            channel: .syncReplayFailure,
+            operation: "probe",
+            error: URLError(.timedOut),
+            surfaced: false
+        )
+        stub(line)
+        XCTAssertEqual(captured.map(\.operation), ["probe"])
+    }
 }

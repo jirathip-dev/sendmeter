@@ -540,13 +540,15 @@ public final class AppModel {
     @ObservationIgnored private let healthService: HealthKitService
     @ObservationIgnored private let watchService: WatchConnectivityService
     @ObservationIgnored public let realtime: RealtimeService
-    /// #992: the sink every persisted failure line goes through. Production
-    /// defaults to the os.Logger emission (`PersistedFailureLog.emit`); the
+    /// #992: the binding every persisted failure line goes through. Production
+    /// defaults to `PersistedFailureSink.production` (the os.Logger emission);
     /// app-target tests substitute a capture and assert the emitted
     /// operation/domain/code/class/surfaced fields as behaviour — the #992
-    /// proof deliberately never reads source tokens.
+    /// proof deliberately never reads source tokens. The F2 witness test
+    /// asserts a fresh model still holds the production binding, so a
+    /// substituted or no-op default goes RED.
     @ObservationIgnored
-    var persistedFailureSink: @MainActor (PersistedFailureLine) -> Void = PersistedFailureLog.emit
+    var persistedFailureSink: PersistedFailureSink = .production
     /// #631: Send Conditions (SL-69) — Open-Meteo current weather + local
     /// climate, fetched + cached by the platform service.
     @ObservationIgnored private let weatherService: WeatherService
@@ -972,12 +974,22 @@ public final class AppModel {
         // The durable queue is a small JSON file owned by `DurableQueue`; its
         // read is not the database open this issue moves and is measured in
         // docs/evidence/issue-921/first-frame-timings.txt.
+        // #992 F1: a queue that cannot OPEN (corrupt file, directory I/O) used
+        // to be swallowed here — every later enqueue then silently no-ops and
+        // nothing in the log named why. The error is kept and recorded right
+        // after all stored properties exist (below).
+        var queueOpenFailure: Error?
         self.queue = support.flatMap { directory in
-            try? DurableQueue(
-                directoryURL: directory,
-                filename: "pending-writes.json",
-                breadcrumbLimit: 10
-            )
+            do {
+                return try DurableQueue(
+                    directoryURL: directory,
+                    filename: "pending-writes.json",
+                    breadcrumbLimit: 10
+                )
+            } catch {
+                queueOpenFailure = error
+                return nil
+            }
         }
         // Start the single flight without awaiting it, so opening and
         // migrating the store overlaps the auth round-trip instead of
@@ -1088,6 +1100,13 @@ public final class AppModel {
             for await (event, session) in auth.client.auth.authStateChanges {
                 await self.handleAuthEvent(event, session: session)
             }
+        }
+
+        // #992 F1: the queue-open failure deferred above — every stored
+        // property now exists, so the line can go through the same sink as
+        // every other sync/replay failure.
+        if let queueOpenFailure {
+            recordSyncReplayFailure("queue-open", queueOpenFailure, surfaced: false)
         }
     }
 
@@ -3915,6 +3934,13 @@ public final class AppModel {
             // been persisted. Roll it back only for the account that made the
             // receipt; a sign-out/user switch must never refresh old-account
             // data into the new account's model.
+            // #992 F1: the queue-file write that failed here used to be
+            // silent; the `SendmeterNative`/12 throw above is the designed
+            // already-completed race, not a failure.
+            let nsError = error as NSError
+            if nsError.domain != "SendmeterNative" || nsError.code != 12 {
+                recordSyncReplayFailure("session-delete-undo", error, surfaced: false)
+            }
             let currentAccount = self.currentUserID
             _ = routineUndo.rollbackClaim(receipt, currentUserID: currentAccount)
             guard accountFetch.canApply(
@@ -4779,6 +4805,10 @@ public final class AppModel {
             try tindeq.armHandsFree()
         } catch {
             handsFree.handleDisconnected()
+            // #992 F1: this failure reaches the user as a banner but used to
+            // leave no persisted trace; the line names the arming failure
+            // itself (domain/code) alongside the banner copy.
+            recordSyncReplayFailure("hands-free-arm", error, surfaced: true)
             errorMessage = UserFacingError.message(for: error)
         }
     }
@@ -7888,7 +7918,14 @@ public final class AppModel {
                 workspace: workspace,
                 forcePurgeReconcile: forcePurgeReconcile,
                 purgeGeneration: remotePurgeGeneration
-            )
+            ),
+            recordFailure: { [weak self] entityType, error in
+                self?.recordSyncReplayFailure(
+                    "background-sync:\(entityType.rawValue)",
+                    error,
+                    surfaced: false
+                )
+            }
         )
         let outcome = await BackgroundSyncEngine.run(run)
         if case .completed = outcome {
@@ -8856,6 +8893,11 @@ public final class AppModel {
             serverValues = try await fetchServerValues()
         } catch {
             guard !Task.isCancelled else { return false }
+            // #992 F1: a failed authoritative read defers the whole legacy
+            // adoption rather than guessing; the deferral is the site's
+            // contract, and the read failure is now named so a device
+            // transcript can tell 'still deferred' from 'migrated'.
+            recordSyncReplayFailure("legacy-direct-writes", error, surfaced: false)
             return false
         }
         guard accountFetch.canApply(
@@ -9020,7 +9062,9 @@ public final class AppModel {
                 .first
         } catch {
             // A failed authoritative read defers the whole sweep rather than
-            // resolving anything on a guess.
+            // resolving anything on a guess. #992 F1: named so the transcript
+            // shows the sweep is still deferred.
+            recordSyncReplayFailure("legacy-phase-residues", error, surfaced: false)
             return false
         }
         guard accountFetch.canApply(
@@ -9165,7 +9209,9 @@ public final class AppModel {
             serverTags = try await repository.fetchTagMetadata()
         } catch {
             // A failed authoritative read defers the whole sweep rather than
-            // resolving anything on a guess.
+            // resolving anything on a guess. #992 F1: named so the transcript
+            // shows the sweep is still deferred.
+            recordSyncReplayFailure("legacy-tag-residues", error, surfaced: false)
             return false
         }
         guard accountFetch.canApply(
@@ -9458,7 +9504,9 @@ public final class AppModel {
             )
         } catch {
             // A failed authoritative read defers the whole sweep rather than
-            // resolving anything on a guess.
+            // resolving anything on a guess. #992 F1: named so the transcript
+            // shows the sweep is still deferred.
+            recordSyncReplayFailure("legacy-health-residues", error, surfaced: false)
             return false
         }
         guard accountFetch.canApply(
@@ -11732,9 +11780,11 @@ public final class AppModel {
         } catch let error as URLError where error.code == .cancelled {
             return
         } catch {
-            // Deliberately keep the last accepted mirror row and swallow this
-            // best-effort fallback failure; it is not an auth event.
-            _ = error
+            // Deliberately keep the last accepted mirror row — this is the
+            // dropped-realtime-socket fallback refetch, best-effort by
+            // design. #992: the degradation is still named in the persisted
+            // log so a device transcript can tell it from a healthy pass.
+            recordSyncReplayFailure("live-workout-refetch", error, surfaced: false)
         }
     }
 

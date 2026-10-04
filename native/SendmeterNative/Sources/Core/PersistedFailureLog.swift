@@ -145,3 +145,40 @@ public enum PersistedFailureLog {
         )
     }
 }
+
+/// #992 F2: the injectable binding for failure lines, carried as a VALUE
+/// rather than a bare closure so that "is this still the production emitter?"
+/// is assertable.
+///
+/// The adversarial review killed `AppModel`'s default by replacing it with a
+/// no-op (`= { _ in }`) and every suite stayed green — the seam could not see
+/// its own production binding go silent. A test now asserts a freshly built
+/// model's sink reports ``isProduction``; substituting a capture (or a no-op)
+/// flips it false, so the same mutation goes RED. `PersistedFailureLog.emit`
+/// itself is still the one place the os_log call lives.
+public struct PersistedFailureSink {
+    private let emit: @MainActor (PersistedFailureLine) -> Void
+
+    /// True only for ``production``. A test-supplied capture must be built
+    /// with the default (`false`) so it cannot masquerade as production.
+    public let isProduction: Bool
+
+    public init(
+        _ emit: @escaping @MainActor (PersistedFailureLine) -> Void,
+        isProduction: Bool = false
+    ) {
+        self.emit = emit
+        self.isProduction = isProduction
+    }
+
+    /// The production binding every model/service starts with.
+    public static let production = PersistedFailureSink(
+        PersistedFailureLog.emit,
+        isProduction: true
+    )
+
+    @MainActor
+    public func callAsFunction(_ line: PersistedFailureLine) {
+        emit(line)
+    }
+}
