@@ -18,8 +18,8 @@ import Supabase
 /// * a failed launch-path refresh emits a `launch-failure` line whose fields
 ///   name the step, the bridged error domain/code, the taxonomy class and
 ///   `surfaced: true` (the banner really carries the failure),
-/// * a suppressed refresh (last-good data on screen) carries `surfaced:
-///   false`,
+/// * a partial refresh (one group failed while the others published) carries
+///   `surfaced: false`,
 /// * a failed durable-queue upload emits a `sync-replay-failure` line with
 ///   `surfaced: false` (an automatic drain is deliberately silent),
 /// * a successful cold refresh emits no failure line at all.
@@ -44,7 +44,13 @@ final class PersistedFailureLogAppTests: XCTestCase {
 
         await model.refreshAll(showSpinner: false)
 
-        let line = try await waitForLine(capture, where: { $0.operation == "refresh" })
+        // With the whole transport down every slice fails; the recorded
+        // representative is the first failed slice in the plan's stable order
+        // (`sessions`).
+        let line = try await waitForLine(
+            capture,
+            where: { $0.operation == "refresh-slice:sessions" }
+        )
         XCTAssertEqual(line.channel, .launchFailure)
         XCTAssertEqual(
             line.level,
@@ -58,7 +64,9 @@ final class PersistedFailureLogAppTests: XCTestCase {
             line.surfaced,
             "with nothing loaded this failure is the banner case"
         )
-        XCTAssertTrue(line.message.hasPrefix("launch failure step=refresh "))
+        XCTAssertTrue(
+            line.message.hasPrefix("launch failure step=refresh-slice:sessions ")
+        )
         XCTAssertTrue(line.message.contains("domain=NSURLErrorDomain"))
         XCTAssertTrue(line.message.contains("surfaced=true"))
 
@@ -71,7 +79,7 @@ final class PersistedFailureLogAppTests: XCTestCase {
     // MARK: - launch failure: the suppressed case
 
     @MainActor
-    func testSuppressedRefreshFailureCarriesSurfacedFalse() async throws {
+    func testPartialRefreshFailureCarriesSurfacedFalseBehindLastGoodData() async throws {
         let server = FakeFailureLogPostgREST()
         let model = try await makeSignedInModel(server: server)
         await model.refreshAll(showSpinner: false)
@@ -82,18 +90,33 @@ final class PersistedFailureLogAppTests: XCTestCase {
         let capture = FailureLineCapture()
         model.persistedFailureSink = capture.sink
 
-        server.goOffline()
+        // #842/#923: only the health-metrics slice fails; every other group
+        // publishes, so the pass is partial and the global banner must stay
+        // away — the scoped failure row is the surface instead.
+        server.failRequests(containing: "rest/v1/health_metrics")
         await model.refreshAll(showSpinner: false)
 
-        let line = try await waitForLine(capture, where: { $0.operation == "refresh" })
+        let line = try await waitForLine(
+            capture,
+            where: { $0.operation == "refresh-slice:healthMetrics" }
+        )
         XCTAssertEqual(line.channel, .launchFailure)
         XCTAssertEqual(line.level, .notice)
+        XCTAssertEqual(line.domain, NSURLErrorDomain)
+        XCTAssertEqual(line.code, URLError.Code.notConnectedToInternet.rawValue)
         XCTAssertEqual(line.classification, "offline")
         XCTAssertFalse(
             line.surfaced,
-            "last-good data keeps the banner away — the line must say so"
+            "a partial pass that published the other groups is suppressed behind last-good data"
         )
-        XCTAssertNil(model.errorMessage, "witness: no banner was raised")
+        XCTAssertTrue(line.message.contains("surfaced=false"))
+
+        // Witness: the scoped failure row IS what the partial pass left
+        // behind (that is the surface the suppressed line points at).
+        XCTAssertEqual(
+            model.lastPartialRefreshFailure?.groups,
+            [.healthMetrics]
+        )
     }
 
     // MARK: - sync/replay: a failed durable-queue upload
@@ -325,10 +348,21 @@ final class PersistedFailureLogAppTests: XCTestCase {
 private final class FakeFailureLogPostgREST: @unchecked Sendable {
     private let lock = NSLock()
     private var online = true
+    private var failingPaths: Set<String> = []
 
     func goOffline() {
         lock.lock()
         online = false
+        lock.unlock()
+    }
+
+    /// Fails every request whose path contains `fragment` at the transport
+    /// layer (the `URLError(.notConnectedToInternet)` shape) while every
+    /// other request keeps answering — the partial-pass setup behind #842's
+    /// suppressed banner: one slice fails, the rest publish.
+    func failRequests(containing fragment: String) {
+        lock.lock()
+        failingPaths.insert(fragment)
         lock.unlock()
     }
 
@@ -344,6 +378,8 @@ private final class FakeFailureLogPostgREST: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard online else { return nil }
+        let path = request.url?.path ?? ""
+        guard !failingPaths.contains(where: { path.contains($0) }) else { return nil }
         return (200, Data("[]".utf8))
     }
 }
