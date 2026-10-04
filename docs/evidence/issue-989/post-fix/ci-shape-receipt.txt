@@ -1,0 +1,5 @@
+# CI-shape full app-target suite (native-swift.yml job shape), final head, clone sim DCBADF10
+	 Executed 168 tests, with 0 failures (0 unexpected) in 261.050 (261.243) seconds
+	 Executed 168 tests, with 0 failures (0 unexpected) in 261.050 (261.244) seconds
+** TEST SUCCEEDED **
+RAW_EXIT=0

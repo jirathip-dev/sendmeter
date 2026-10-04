@@ -1,0 +1,3 @@
+R1 RAW=65
+R2 RAW=65
+R3 RAW=0

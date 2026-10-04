@@ -1,0 +1,47 @@
+--- /Users/jirathip/.herdr/worktrees/sendmeter/impl-989/native/SendmeterNative/Sources/App/AppModel.swift	2026-10-04 12:26:02
++++ /Users/jirathip/impl989-redgreen/native/SendmeterNative/Sources/App/AppModel.swift	2026-10-04 16:28:26
+@@ -2195,11 +2195,8 @@
+         // path that used to leave it silently unread (and unh healed) — the
+         // row's raw payload is set aside, the entity is refetched from the
+         // server, and a pending row is left exactly where it is.
+-        await applyLocalDataRepair(
+-            read.invalidRows,
+-            accountUserID: accountUserID,
+-            capturedBy: accountFetch
+-        )
++        // #989 RED PROBE (scratch copy): the launch-path repair is disabled —
++        // the repair-observing tests must fail on the nil report.
+         let snapshot = read.snapshot
+         let sessionsWereSynced = read.hasCompletedSync(.sessions)
+         let recordingsWereSynced = read.hasCompletedSync(.recordings)
+@@ -4267,7 +4264,11 @@
+             accountUserID: userID,
+             payload: PendingWrite.workout(draft)
+         )
+-        if !(await enqueueAndUpload(item, capturedBy: accountFetch)) {
++        // #989 RED PROBE (scratch copy): the durable enqueue is disabled —
++        // the hardened durable-intent waits must expire and fail.
++        _ = item
++        let enqueued = false
++        if !enqueued {
+             guard accountFetch.canApply(
+                 to: currentUserID,
+                 accountEpoch: accountEpoch
+@@ -4636,13 +4637,10 @@
+             note: GaugeSessionNote.build(recordings: groupRecordings),
+             phase: settings.currentPhase
+         )
+-        let ok = await enqueueSession(
+-            draft: draft,
+-            id: UUID(),
+-            rpeConfirmed: false,
+-            groupID: ended.groupID,
+-            capturedBy: accountFetch
+-        )
++        // #989 RED PROBE (scratch copy): the explicit end no longer logs the
++        // session — the hardened AC1/AC2 waits must expire and fail.
++        _ = draft
++        let ok = false
+         guard expectedScope == nil || accountScope == expectedScope,
+               accountFetch.canApply(
+                   to: currentUserID,
