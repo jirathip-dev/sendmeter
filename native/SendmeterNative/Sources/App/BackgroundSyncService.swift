@@ -53,6 +53,20 @@ public enum BackgroundSyncService {
             lastSubmittedAt = now
         } catch {
             lastSubmittedAt = nil
+            // #992 F1.3: the submit failure used to be swallowed with no line
+            // and no surface. Scheduling is a launch/sync path (registered at
+            // launch, re-armed on task completion/expiration), so a rejected
+            // schedule must be nameable in a device transcript. Emitted
+            // through the production logger directly: this runs off-main from
+            // BGTask handlers, and the emission audit ring observes it.
+            PersistedFailureLog.emit(
+                PersistedFailureLog.line(
+                    channel: .syncReplayFailure,
+                    operation: "background-schedule",
+                    error: error,
+                    surfaced: false
+                )
+            )
         }
     }
 

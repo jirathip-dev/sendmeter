@@ -115,7 +115,13 @@ public enum PersistedFailureLog {
     /// Writes one line at its own level. Everything but `.notice` is invisible
     /// to a persisted-only transcript, which is exactly why production raises
     /// failures at `.notice`.
+    ///
+    /// The line is recorded in the emission audit (below) first — the #992
+    /// round-2 review showed that a witness which cannot observe the production
+    /// path's output cannot detect a silently-tampered production logger, so
+    /// this function is the observation point.
     public static func emit(_ line: PersistedFailureLine) {
+        recordForAudit(line)
         let logger = line.channel == .launchFailure ? launchLogger : syncReplayLogger
         switch line.level {
         case .notice:
@@ -143,6 +149,44 @@ public enum PersistedFailureLog {
             surfaced: surfaced,
             classification: String(describing: UserFacingError.classification(for: error))
         )
+    }
+
+    // MARK: - Emission audit (#992 F2, round 2)
+
+    private static let auditLock = NSLock()
+    private static var auditedEmissions: [PersistedFailureLine] = []
+    private static var auditedEmissionCount = 0
+    /// The audit keeps the most recent lines only — failures are rare, and a
+    /// test needs to find its own line, not the whole history.
+    private static let auditLimit = 32
+
+    private static func recordForAudit(_ line: PersistedFailureLine) {
+        auditLock.lock()
+        defer { auditLock.unlock() }
+        auditedEmissionCount += 1
+        auditedEmissions.append(line)
+        if auditedEmissions.count > auditLimit {
+            auditedEmissions.removeFirst(auditedEmissions.count - auditLimit)
+        }
+    }
+
+    /// The most recent lines that actually passed through ``emit``, oldest
+    /// first. The production binding (``PersistedFailureSink/production``) and
+    /// every direct emit call record here, so a test can drive a REAL failure
+    /// through the UNSUBSTITUTED production path and assert what was emitted:
+    /// the round-2 review's M2 mutation (the production emitter replaced by a
+    /// dead closure while `isProduction` stays `true`) cannot satisfy it.
+    public static func recentEmissions(limit: Int = 8) -> [PersistedFailureLine] {
+        auditLock.lock()
+        defer { auditLock.unlock() }
+        return Array(auditedEmissions.suffix(max(0, limit)))
+    }
+
+    /// Total lines that passed through ``emit`` in this process.
+    public static func emissionCount() -> Int {
+        auditLock.lock()
+        defer { auditLock.unlock() }
+        return auditedEmissionCount
     }
 }
 

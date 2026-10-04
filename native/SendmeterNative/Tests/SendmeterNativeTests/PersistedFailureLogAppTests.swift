@@ -203,6 +203,36 @@ final class PersistedFailureLogAppTests: XCTestCase {
         )
     }
 
+    /// #992 round 2: the production path end-to-end. No sink substitution — a
+    /// real failure driven through the fresh model's default (production)
+    /// binding must land in the emission audit, so a production emitter
+    /// silenced by mutation (M2: dead closure, `isProduction` still true)
+    /// cannot leave this suite green.
+    @MainActor
+    func testRealFailureThroughTheProductionSinkReachesTheAuditRing() async throws {
+        let server = FakeFailureLogPostgREST()
+        server.goOffline()
+        let model = try await makeSignedInModel(server: server)
+        XCTAssertTrue(
+            model.persistedFailureSink.isProduction,
+            "this witness must run against the production binding (no substitution)"
+        )
+
+        await model.refreshAll(showSpinner: false)
+
+        let audited = await waitForAuditedLine(where: { $0.operation == "refresh-slice:sessions" })
+        let line = try XCTUnwrap(
+            audited,
+            "the real failure never reached the emission audit — the production path is silent (M2)"
+        )
+        XCTAssertEqual(line.channel, .launchFailure)
+        XCTAssertEqual(line.level, .notice)
+        XCTAssertEqual(line.domain, NSURLErrorDomain)
+        XCTAssertEqual(line.code, URLError.Code.notConnectedToInternet.rawValue)
+        XCTAssertEqual(line.classification, "offline")
+        XCTAssertTrue(line.surfaced)
+    }
+
     // MARK: - Line capture (the seam the app routes every emission through)
 
     @MainActor
@@ -229,6 +259,21 @@ final class PersistedFailureLogAppTests: XCTestCase {
             capture.lines.first(where: predicate),
             "no persisted failure line matched within the deadline; captured: \(capture.lines.map(\.message))"
         )
+    }
+
+    /// Waits for a line that reached the PRODUCTION path's emission audit
+    /// (no substituted sink involved) — the #992 round-2 witness seam.
+    @MainActor
+    private func waitForAuditedLine(
+        where predicate: (PersistedFailureLine) -> Bool
+    ) async -> PersistedFailureLine? {
+        for _ in 0..<600 {
+            if let match = PersistedFailureLog.recentEmissions(limit: 32).last(where: predicate) {
+                return match
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return nil
     }
 
     @MainActor

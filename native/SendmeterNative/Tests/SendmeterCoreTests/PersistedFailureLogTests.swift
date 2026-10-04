@@ -107,4 +107,34 @@ final class PersistedFailureLogTests: XCTestCase {
         stub(line)
         XCTAssertEqual(captured.map(\.operation), ["probe"])
     }
+
+    /// #992 round 2: the production path's EMISSION must be observable. The
+    /// round-2 review's M2 mutation (`.production`'s emitter replaced by
+    /// `{ _ in }` while `isProduction` stays `true`) satisfied both earlier
+    /// witnesses; this one drives the production binding itself and asserts
+    /// the line reached the emitter's audit — a dead emitter cannot satisfy it.
+    @MainActor
+    func testProductionSinkEmissionReachesTheAuditRing() {
+        let before = PersistedFailureLog.emissionCount()
+        let line = PersistedFailureLog.line(
+            channel: .syncReplayFailure,
+            operation: "production-emit-witness",
+            error: URLError(.timedOut),
+            surfaced: false
+        )
+
+        PersistedFailureSink.production(line)
+
+        XCTAssertEqual(
+            PersistedFailureLog.emissionCount(),
+            before + 1,
+            "the production binding must reach `PersistedFailureLog.emit`; an emitter that stays silent while reporting isProduction=true (M2) must fail here"
+        )
+        XCTAssertTrue(
+            PersistedFailureLog.recentEmissions().contains(where: {
+                $0.operation == "production-emit-witness"
+            }),
+            "the emitted line must be visible in the emission audit"
+        )
+    }
 }
