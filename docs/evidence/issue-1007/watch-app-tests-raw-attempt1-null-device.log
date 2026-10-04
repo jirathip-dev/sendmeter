@@ -1,0 +1,4 @@
+cd native/SendmeterNative && UDID=$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries[] | select(.key | contains("watchOS")) | .value[]] | first | .udid') && xcrun simctl bootstatus "$UDID" -b && xcodebuild test -project SendmeterNative.xcodeproj -scheme 'SendLogWatch Watch App' -configuration Debug -destination "id=$UDID" -only-testing:SendLogWatchTests CODE_SIGNING_ALLOWED=NO
+Invalid device: null
+error: recipe `watch-app-tests` failed on line 80 with exit code 148
+WATCH_APP_TESTS_RAW_EXIT=148

@@ -1,0 +1,79 @@
+# #1007 built-artifact inspection (Sun Oct  4 12:11:56 +07 2026)
+derivedData: /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/.xcode-derived
+NOTE: Debug configs place the app's code in 'SendLogWatch Watch App.debug.dylib'; the
+      no-suffix executable is a launcher stub. Both files are checked below.
+
+===== Debug-watchos =====
+total 85728
+-rw-r--r--@ 1 jirathip  staff    854376 Oct  4 11:55 Assets.car
+-rw-r--r--@ 1 jirathip  staff      1440 Oct  4 11:55 Info.plist
+-rw-r--r--@ 1 jirathip  staff         8 Oct  4 11:55 PkgInfo
+drwxr-xr-x@ 3 jirathip  staff        96 Oct  4 11:55 PlugIns
+-rw-r--r--@ 1 jirathip  staff      3365 Oct  4 11:55 PrivacyInfo.xcprivacy
+-rwxr-xr-x@ 1 jirathip  staff    170992 Oct  4 11:55 SendLogWatch Watch App
+-rwxr-xr-x@ 1 jirathip  staff  42778552 Oct  4 11:55 SendLogWatch Watch App.debug.dylib
+-rw-r--r--@ 1 jirathip  staff       175 Oct  4 11:55 SupabaseConfig.plist
+-rwxr-xr-x@ 1 jirathip  staff     65608 Oct  4 11:55 __preview.dylib
+drwxr-xr-x@ 4 jirathip  staff       128 Oct  4 11:55 swift-crypto_Crypto.bundle
+-- bundled SupabaseConfig.plist:
+{
+  "SUPABASE_ANON_KEY" => "sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp"
+  "SUPABASE_URL" => "https://zznsqmcewtzlnfoiefkk.supabase.co"
+}
+-- strings -a 'SendLogWatch Watch App' | grep -n sb_publishable_ :
+   (no sb_publishable_ substring)
+--   full local-dev value (ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH) occurrences: 0
+--   full hosted value    (eHRHTelsNVGOcURw4q9a1Q_r6sas-rp) occurrences: 0
+-- strings -a 'SendLogWatch Watch App.debug.dylib' | grep -n sb_publishable_ :
+19141:sb_publishable_
+38697:sb_publishable_
+--   full local-dev value (ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH) occurrences: 0
+--   full hosted value    (eHRHTelsNVGOcURw4q9a1Q_r6sas-rp) occurrences: 0
+
+===== Release-watchos =====
+total 52472
+-rw-r--r--@ 1 jirathip  staff    854376 Oct  4 11:57 Assets.car
+-rw-r--r--@ 1 jirathip  staff      1426 Oct  4 11:58 Info.plist
+-rw-r--r--@ 1 jirathip  staff         8 Oct  4 11:58 PkgInfo
+drwxr-xr-x@ 3 jirathip  staff        96 Oct  4 11:58 PlugIns
+-rw-r--r--@ 1 jirathip  staff      3365 Oct  4 11:57 PrivacyInfo.xcprivacy
+-rwxr-xr-x@ 1 jirathip  staff  25990640 Oct  4 11:58 SendLogWatch Watch App
+-rw-r--r--@ 1 jirathip  staff       175 Oct  4 11:57 SupabaseConfig.plist
+drwxr-xr-x@ 4 jirathip  staff       128 Oct  4 11:57 swift-crypto_Crypto.bundle
+-- bundled SupabaseConfig.plist:
+{
+  "SUPABASE_ANON_KEY" => "sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp"
+  "SUPABASE_URL" => "https://zznsqmcewtzlnfoiefkk.supabase.co"
+}
+-- strings -a 'SendLogWatch Watch App' | grep -n sb_publishable_ :
+19167:sb_publishable_
+40387:sb_publishable_
+--   full local-dev value (ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH) occurrences: 0
+--   full hosted value    (eHRHTelsNVGOcURw4q9a1Q_r6sas-rp) occurrences: 0
+
+===== Debug-watchsimulator =====
+total 19640
+-rw-r--r--@  1 jirathip  staff   854376 Oct  4 12:10 Assets.car
+drwxr-xr-x@ 21 jirathip  staff      672 Oct  4 12:09 Frameworks
+-rw-r--r--@  1 jirathip  staff     1463 Oct  4 12:01 Info.plist
+-rw-r--r--@  1 jirathip  staff        8 Oct  4 12:01 PkgInfo
+drwxr-xr-x@  4 jirathip  staff      128 Oct  4 12:10 PlugIns
+-rw-r--r--@  1 jirathip  staff     3365 Oct  4 12:09 PrivacyInfo.xcprivacy
+-rwxr-xr-x@  1 jirathip  staff    40360 Oct  4 12:09 SendLogWatch Watch App
+-rwxr-xr-x@  1 jirathip  staff  9119568 Oct  4 12:09 SendLogWatch Watch App.debug.dylib
+-rw-r--r--@  1 jirathip  staff      175 Oct  4 12:00 SupabaseConfig.plist
+-rwxr-xr-x@  1 jirathip  staff    16768 Oct  4 12:09 __preview.dylib
+drwxr-xr-x@  4 jirathip  staff      128 Oct  4 12:09 swift-crypto_Crypto.bundle
+-- bundled SupabaseConfig.plist:
+{
+  "SUPABASE_ANON_KEY" => "sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp"
+  "SUPABASE_URL" => "https://zznsqmcewtzlnfoiefkk.supabase.co"
+}
+-- strings -a 'SendLogWatch Watch App' | grep -n sb_publishable_ :
+   (no sb_publishable_ substring)
+--   full local-dev value (ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH) occurrences: 0
+--   full hosted value    (eHRHTelsNVGOcURw4q9a1Q_r6sas-rp) occurrences: 0
+-- strings -a 'SendLogWatch Watch App.debug.dylib' | grep -n sb_publishable_ :
+2715:sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH
+--   full local-dev value (ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH) occurrences: 1
+--   full hosted value    (eHRHTelsNVGOcURw4q9a1Q_r6sas-rp) occurrences: 0
