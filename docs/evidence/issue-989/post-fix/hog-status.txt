@@ -1,0 +1,4 @@
+yes=0 dd=4 pidfiles=0 load={ 52.41 51.42 53.98 }
+yes=0 dd=4 pidfiles=0 load={ 53.55 51.75 54.04 }
+yes=0 dd=0 pidfiles=0 load={ 17.56 35.65 46.94 }
+yes=0 dd=0 pidfiles=0 load={ 24.53 36.20 46.94 }

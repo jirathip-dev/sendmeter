@@ -1,0 +1,11 @@
+Q2 RAW=0
+Q3 RAW=65
+Q4 RAW=0
+Q5 RAW=65
+Q6 RAW=65
+INFRA on Q6 — rebooting sim
+Q7 RAW=0
+Q8 RAW=65
+INFRA on Q8 — rebooting sim
+Q9 RAW=65
+Q10 RAW=0

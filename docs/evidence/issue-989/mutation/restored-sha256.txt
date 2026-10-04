@@ -1,0 +1,2 @@
+5c43afc700d8ff034db840c703c11dbffe23a77979ae4a7ce0dd1fab119f2c48  /Users/jirathip/impl989-redgreen/native/SendmeterNative/Sources/App/AppModel.swift
+5c43afc700d8ff034db840c703c11dbffe23a77979ae4a7ce0dd1fab119f2c48  /Users/jirathip/.herdr/worktrees/sendmeter/impl-989/native/SendmeterNative/Sources/App/AppModel.swift
