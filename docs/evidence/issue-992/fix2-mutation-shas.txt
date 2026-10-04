@@ -1,0 +1,8 @@
+== FIX ROUND 2 mutation shas (PersistedFailureLog.swift)
+host  H1 head:      f983c7422e17d94478b7b66e1ce720dd215e0b91a3e55667ef21b6df7c4d2a66
+host  H2 mutated:   d82e51cc21a394c2dbcabde77d20d0b1537fda64e3d28c8387a634c212e5033e
+host  H3 restored:  f983c7422e17d94478b7b66e1ce720dd215e0b91a3e55667ef21b6df7c4d2a66
+app   B1 head:      f983c7422e17d94478b7b66e1ce720dd215e0b91a3e55667ef21b6df7c4d2a66
+app   B2 mutated:   d82e51cc21a394c2dbcabde77d20d0b1537fda64e3d28c8387a634c212e5033e
+app   B3 restored:  f983c7422e17d94478b7b66e1ce720dd215e0b91a3e55667ef21b6df7c4d2a66
+(H2 and B2 are the same mutation: .production emitter -> { _ in }, isProduction stays true)
