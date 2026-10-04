@@ -751,6 +751,55 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
         XCTAssertEqual(paused.phase, .paused)
         XCTAssertTrue(GuidedForceFullscreenPresentation.rendersTargetCoach(phase: paused.phase))
     }
+
+    /// #998: the chart's growth must not be resolved from the measured stack —
+    /// a measurement-driven growth let the chart's own height feed back into
+    /// the next measurement and produced a two-state layout cycle on the
+    /// iPhone 17 Pro's rest screen (chart 151.7 ↔ 168.7 and the cover never
+    /// drawing; probe churned at ~100 renders/second,
+    /// `docs/evidence/issue-998/`). The slack is resolved from the static
+    /// budget, so two different measurements of the same viewport resolve the
+    /// same chart height — while the FIT still consumes the measurement, and
+    /// a genuinely roomy viewport still grows the trace to its cap.
+    func testChartGrowthResolvesFromTheStaticBudgetSoAMeasurementCannotMoveIt() {
+        let first = GuidedForceLayoutMeasurement(
+            scrollContentHeight: 697.0,
+            chartHeight: 151.7,
+            controlsBarHeight: 64.0
+        )
+        let second = GuidedForceLayoutMeasurement(
+            scrollContentHeight: 731.0,
+            chartHeight: 168.7,
+            controlsBarHeight: 64.0
+        )
+
+        // Both measured stacks fit, and the static budget does not: the chart
+        // stays at its floor for BOTH — the measurement cannot move it.
+        let firstFit = GuidedForceLayout.resolve(width: 402, height: 800, measurement: first)
+        let secondFit = GuidedForceLayout.resolve(width: 402, height: 800, measurement: second)
+        XCTAssertTrue(firstFit.essentialContentFits)
+        XCTAssertTrue(secondFit.essentialContentFits)
+        XCTAssertEqual(firstFit.flexibleChartHeight, secondFit.flexibleChartHeight)
+        XCTAssertEqual(firstFit.flexibleChartHeight, firstFit.chartMinimumHeight)
+
+        // A viewport the static budget genuinely has room for still grows the
+        // trace, and growth still stops at the visual maximum.
+        let roomy = GuidedForceLayout.resolve(width: 402, height: 1000, measurement: second)
+        XCTAssertTrue(roomy.essentialContentFits)
+        XCTAssertEqual(roomy.flexibleChartHeight, roomy.chartMaximumHeight)
+
+        // The measurement still owns the fit decision: a measured stack that
+        // overflows keeps the trace at its floor no matter how much static
+        // room the viewport appears to have.
+        let overflowing = GuidedForceLayoutMeasurement(
+            scrollContentHeight: 1100.0,
+            chartHeight: 140.0,
+            controlsBarHeight: 64.0
+        )
+        let tight = GuidedForceLayout.resolve(width: 402, height: 1000, measurement: overflowing)
+        XCTAssertFalse(tight.essentialContentFits, "the measured overflow must still win the fit")
+        XCTAssertEqual(tight.flexibleChartHeight, tight.chartMinimumHeight)
+    }
 }
 
 @MainActor

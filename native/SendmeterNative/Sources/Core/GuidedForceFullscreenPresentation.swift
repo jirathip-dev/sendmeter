@@ -163,9 +163,19 @@ public struct GuidedForceLayout: Equatable, Sendable {
     /// layouts deliberately use the floor and let the surrounding scroll view
     /// carry the overflow; roomy layouts give the trace the remaining block,
     /// never more than `chartMaximumHeight`.
+    ///
+    /// #998: the growth is resolved against the STATIC budget, not the
+    /// measured stack. A measured-driven growth made the chart height depend
+    /// on a quantity the chart itself moves: on a state whose measurement
+    /// happens to land it fed back as a two-state cycle (chart 151.7 ↔ 168.7
+    /// at ~100 renders/second, the cover never drawing) — reproduced on the
+    /// iPhone 17 Pro's rest screen, `docs/evidence/issue-998/`. The static
+    /// budget cannot be moved by the chart, so the growth is a pure function
+    /// of the viewport; the fit gate and the essential height still consume
+    /// the measurement exactly as #993 shipped (`resolvedEssentialHeight`).
     public var flexibleChartHeight: Double {
         guard essentialContentFits else { return chartMinimumHeight }
-        let slack = max(0, viewportHeight - resolvedEssentialHeight)
+        let slack = max(0, viewportHeight - essentialContentHeight)
         return min(chartMinimumHeight + slack, chartMaximumHeight)
     }
 
