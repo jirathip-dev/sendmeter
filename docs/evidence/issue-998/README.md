@@ -21,7 +21,7 @@ xcodebuild -project native/SendmeterNative/SendmeterNative.xcodeproj \
 Every measurement log proves the installed app against that hash before and
 after the capture (`shasum -a 256` of the built and installed dylib).
 
-## Measurement legs (`measurement-<device>-<size>-<state>.log` + `.png`)
+## Measurement legs (`measurement-<device>-<size>-<state>.log.gz` + `.png`)
 
 Fixture: `--guided-force-fixture=<rest|work> --guided-force-fixture-measure`,
 the #993 harness (`ForceView.swift`, section `GuidedForceMeasurementProbe`).
@@ -34,7 +34,7 @@ the #993 harness (`ForceView.swift`, section `GuidedForceMeasurementProbe`).
 | `measurement-pro17-default-rest` | iPhone 17 Pro, 402×778 | default | SET REST | 685.4 / 778 | true |
 | `measurement-pro17-default-hold` | iPhone 17 Pro, 402×778 | default | HOLD | 806.4 / 778 | false |
 
-`measurement-pro17-default-rest-prefix-churn.log` and
+`measurement-pro17-default-rest-prefix-churn.log.gz` and
 `-prefix-blank-capture.png` are the **pre-fix** capture from the first slice
 (`deb2923`): with the rest screen fitting, the measured-driven chart growth
 oscillated (chart 151.7 ↔ 168.7, ~100 probe prints/second across 40 s) and the
@@ -45,22 +45,22 @@ static budget; the same leg is stable afterwards (2 probe lines, screen drawn).
 
 | log | gate | raw exit |
 |---|---|---|
-| `just-list.log` | `just --list` | 0 |
-| `just-slop.log` | `just slop` | 0 |
-| `just-core.log` | `just core` (1513 tests) | 0 |
-| `just-gen.log` | `just gen` | 0 (project.yml untouched) |
-| `build-ios-recipe.log` | `just build-ios` raw recipe | 74 (documented host condition: default DerivedData path) |
-| `build-ios-authority.log` | first-slice authority build (`deb2923`) | 0, BUILD SUCCEEDED |
-| `build-ios-authority-final.log` | final-head authority build | 0, BUILD SUCCEEDED |
+| `just-list.log.gz` | `just --list` | 0 |
+| `just-slop.log.gz` | `just slop` | 0 |
+| `just-core.log.gz` | `just core` (1513 tests) | 0 |
+| `just-gen.log.gz` | `just gen` | 0 (project.yml untouched) |
+| `build-ios-recipe.log.gz` | `just build-ios` raw recipe | 74 (documented host condition: default DerivedData path) |
+| `build-ios-authority.log.gz` | first-slice authority build (`deb2923`) | 0, BUILD SUCCEEDED |
+| `build-ios-authority-final.log.gz` | final-head authority build | 0, BUILD SUCCEEDED |
 | `app-target-suite*.log.gz` | CI-shape `xcodebuild test -only-testing:SendmeterNativeTests` | final head: **0 — TEST SUCCEEDED, 171 tests, 0 failures** |
 
 ## RED/GREEN receipts
 
-- `red-coach-during-rest-mutation.log` — mutant renders the coach during
+- `red-coach-during-rest-mutation.log.gz` — mutant renders the coach during
   `.rest`; `testTargetCoachRendersOnlyWhileAPullIsMeasured` fails (raw exit 1)
   with `("true") is not equal to ("false") - rest must not render the Target
   Coach`; restored → pass, raw exit 0.
-- `red-chart-growth-measurement-feedback.log` — mutant resolves the chart
+- `red-chart-growth-measurement-feedback.log.gz` — mutant resolves the chart
   growth from the measured stack again;
   `testChartGrowthResolvesFromTheStaticBudgetSoAMeasurementCannotMoveIt` fails
   (raw exit 1, 2 failures); restored → pass, raw exit 0.
