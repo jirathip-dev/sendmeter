@@ -1644,6 +1644,26 @@ struct ForceView: View {
         guidedSessionIsActive || guidedLaunch.inFlight
     }
 
+    /// #1004 (session-lock): who the guided lock belongs to, attributed from
+    /// what this surface can read. An ended session is the orphan — it can
+    /// neither resume nor end again, yet it still holds every control below.
+    private var guidedLockOwner: ForceGuidedLockOwner {
+        ForceLockOrphanPolicy.owner(
+            ForceGuidedLockReadState(
+                sessionPresent: guidedSessionIsActive,
+                sessionEnded: guidedSession?.isEnded == true,
+                launchInFlight: guidedLaunch.inFlight
+            )
+        )
+    }
+
+    /// #1004 (session-lock): true exactly when the lock has no live owner.
+    /// The release affordance renders on this and nothing else, so "locked
+    /// with no live owner" always has a way out on screen.
+    private var guidedLockOrphaned: Bool {
+        ForceLockOrphanPolicy.requiresRelease(guidedLockOwner)
+    }
+
     /// The best single-pull peak for the active tag/side (web `maxF`) — the
     /// fallback reference for the Prehab protocol and the gate for the
     /// maintenance chips when no static fit is cached (#710).
@@ -1887,6 +1907,19 @@ struct ForceView: View {
                         }
                     }
 
+                    // #1004 (session-lock): the orphaned guided lock. The
+                    // resume card above hides once its session has ENDED
+                    // (nothing left to resume or end), but the session object
+                    // still holds `guidedControlsLocked` — so this is the one
+                    // affordance that clears it, rendered exactly when no
+                    // live owner remains.
+                    if guidedLockOrphaned {
+                        GuidedSessionReleaseCard {
+                            Haptics.shared.tap()
+                            releaseFinishedGuidedSession()
+                        }
+                    }
+
                     // #903: the redesigned Configure → Operate order — the
                     // recording-context card (movement & side decision row,
                     // protocol list / armed hero + bound load module) leads
@@ -1900,6 +1933,7 @@ struct ForceView: View {
                         handsFreeMeasuring: model.handsFree.isMeasuring,
                         protocolArmed: selectedPreset != nil,
                         guidedSessionActive: guidedControlsLocked,
+                        guidedLockOrphaned: guidedLockOrphaned,
                         recoveryControls: ForceRecoveryActionPolicy.controls(
                             state: ForceRecoveryControlsState(
                                 hasUnsavedRecording: model.tindeq.hasUnsavedRecording,
@@ -2220,17 +2254,34 @@ struct ForceView: View {
         guidedSession = nil
     }
 
+    /// #1004 (session-lock): the user's release for an orphaned guided lock.
+    ///
+    /// Only an ENDED session may be released — a live one keeps its own
+    /// resume/end affordances — and the release only JOINS the durable
+    /// terminal flight that session already ran, then clears the view state
+    /// that was holding the screen. It never writes, deletes or cursor-resets
+    /// anything: an un-synced pull stays in the durable queue, a pull still
+    /// held by the device stays on its own recovery card, and the session's
+    /// completed/partial salvage was already decided when it claimed its
+    /// terminal outcome.
+    private func releaseFinishedGuidedSession() {
+        guard let session = guidedSession, session.isEnded else { return }
+        Task {
+            await session.teardown()
+            guard session.isEnded, guidedSession?.id == session.id else { return }
+            clearGuidedSession(session)
+        }
+    }
+
     private func teardownGuidedSessionIfNeeded() {
         guard let session = guidedSession else { return }
         if session.isEnded {
             // A terminal claim cancels the ticker/activity synchronously, but
             // the owner callback must remain registered until its durable
             // flight settles so an auth reset can still join that flight.
-            Task {
-                await session.teardown()
-                guard session.isEnded, guidedSession?.id == session.id else { return }
-                clearGuidedSession(session)
-            }
+            // #1004 (session-lock): the user's own release runs the SAME
+            // path, so an orphaned lock has exactly one implementation.
+            releaseFinishedGuidedSession()
             return
         }
         Task {
@@ -2736,6 +2787,36 @@ struct GuidedLaunchFailureCard: View {
     }
 }
 
+/// #1004 (session-lock): the release for a guided lock whose owner has
+/// already ended — the one affordance that clears a Force surface held by a
+/// session that can neither resume nor end. Internal (not `private`) for the
+/// same reason as `GuidedLaunchFailureCard`: the render-evidence test
+/// captures THIS component rather than a copy of its copy.
+struct GuidedSessionReleaseCard: View {
+    let onRelease: () -> Void
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(ForceLockOrphanPolicy.releaseHeading, systemImage: "lock.slash")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(SendmeterStyle.caution)
+                Text(ForceLockOrphanPolicy.releaseNotice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(action: onRelease) {
+                    Label(ForceLockOrphanPolicy.releaseTitle, systemImage: "lock.open")
+                }
+                .hapticButtonStyle(.bordered)
+                .accessibilityIdentifier("guided-session-release")
+                .accessibilityHint(ForceLockOrphanPolicy.releaseHint)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
 private struct GuidedForceResumeCard: View {
     @ObservedObject var session: GuidedForceProtocolSession
     let onResume: () -> Void
@@ -2786,6 +2867,10 @@ private struct ForceDeviceCard: View {
     let handsFreeMeasuring: Bool
     let protocolArmed: Bool
     let guidedSessionActive: Bool
+    /// #1004 (session-lock): true when that session has already ENDED — the
+    /// lock has no live owner, so the row names the release instead of a
+    /// resume/end that no longer exists.
+    let guidedLockOrphaned: Bool
     /// #1004: the held-pull recovery controls, decided by one policy so Save
     /// and Discard can never be disabled at the same time as Start.
     let recoveryControls: ForceRecoveryControls
@@ -2974,7 +3059,9 @@ private struct ForceDeviceCard: View {
 
                 if guidedSessionActive {
                     Label(
-                        "Guided protocol active — resume or end it above",
+                        guidedLockOrphaned
+                            ? ForceLockOrphanPolicy.orphanedLockLabel
+                            : ForceLockOrphanPolicy.activeLockLabel,
                         systemImage: "lock.fill"
                     )
                     .font(.caption.weight(.semibold))
