@@ -1,0 +1,59 @@
+Raw device-transcript lines (build 55 capture, 2026-09-21), quoted verbatim from
+~/.config/fleet-operations/run/sendmeter/gauntlet-20260918/evidence/964-device-log-transcript.txt
+
+== launch 1 (pid 5642), signed-out relay then signed-in relay ==
+2026-09-21 07:33:59.571 Df Sendmeter[5642:169bb1] [com.apple.wcd:WC] -[WCSession updateApplicationContext:error:]_block_invoke size: 67
+2026-09-21 07:33:59.571 Df Sendmeter[5642:169bb1] [com.apple.wcd:WC] -[WCSession storeAppContext:withAppContextData:]
+2026-09-21 07:33:59.580 Df Sendmeter[5642:169bb1] [com.apple.wcd:WC] -[WCSession updateApplicationContext:error:]_block_invoke
+2026-09-21 07:33:59.581 Df Sendmeter[5642:169bb1] [com.apple.wcd:WC] NSData *WCSerializePayloadDictionary(NSDictionary<NSString *,id> *__strong, NSError *__autoreleasing *) success: YES
+2026-09-21 07:33:59.581 Df Sendmeter[5642:169bb1] [com.apple.wcd:WC] BOOL WCIsSizeAcceptableForType(WCPayloadType, NSInteger) acceptable: YES, type: 1, size: 1377
+2026-09-21 07:33:59.581 Df Sendmeter[5642:169bb1] [com.apple.wcd:WC] -[WCSession updateApplicationContext:error:]_block_invoke size: 1377
+2026-09-21 07:33:59.581 Df Sendmeter[5642:169bb1] [com.apple.wcd:WC] -[WCSession storeAppContext:withAppContextData:]
+2026-09-21 07:33:59.581 Df Sendmeter[5642:169be3] [com.apple.foundation.filecoordination:presenter] Adding presenter 3ECB065F-5936-4A7E-BC18-ACB0A5855132 for URL: <private>
+2026-09-21 07:33:59.581 A  Sendmeter[5642:169bb1] (libsystem_containermanager.dylib) container_create_or_lookup_app_group_path_by_app_group_identifier
+2026-09-21 07:33:59.581 Df Sendmeter[5642:169bb1] [com.apple.containermanager:xpc] Requesting app group container lookup; personaid = 1000, type = DEFAULT, name = DD606002-F8EB-484F-8B1C-85A45D45EEB8, origin [pid = 0, personaid = 0], proximate [pid = 0, personaid = 0], identifier = <private>, euid = 501, uid = 501, platform = 2
+2026-09-21 07:33:59.583 Df Sendmeter[5642:169bb1] [com.apple.containermanager:sandbox] Consumed sandbox extension; path = [<private>], handle = 1
+2026-09-21 07:33:59.583 Df Sendmeter[5642:169bb1] [com.apple.containermanager:unspecified] container_create_or_lookup_app_group_path_by_app_group_identifier: success
+2026-09-21 07:33:59.584 E  Sendmeter[5642:169bb1] [com.apple.defaults:User Defaults] Couldn't read values in CFPrefsPlistSource<0x112dc6180> (Domain: group.com.jirathip.sendlog, User: kCFPreferencesAnyUser, ByHost: Yes, Container: (null), Contents Need Refresh: Yes): Using kCFPreferencesAnyUser with a container is only allowed for System Containers, detaching from cfprefsd
+
+== launch 2 (pid 5758) ==
+2026-09-21 07:41:22.339 Df Sendmeter[5758:16c19a] [com.apple.wcd:WC] -[WCSession updateApplicationContext:error:]_block_invoke size: 67
+2026-09-21 07:41:22.345 Df Sendmeter[5758:16c19a] [com.apple.wcd:WC] BOOL WCIsSizeAcceptableForType(WCPayloadType, NSInteger) acceptable: YES, type: 1, size: 1376
+2026-09-21 07:41:22.345 Df Sendmeter[5758:16c19a] [com.apple.wcd:WC] -[WCSession updateApplicationContext:error:]_block_invoke size: 1376
+2026-09-21 07:41:22.345 Df Sendmeter[5758:16c19a] [com.apple.wcd:WC] -[WCSession storeAppContext:withAppContextData:]
+2026-09-21 07:41:22.345 A  Sendmeter[5758:16c19a] (libsystem_containermanager.dylib) container_create_or_lookup_app_group_path_by_app_group_identifier
+2026-09-21 07:41:22.345 Df Sendmeter[5758:16c19a] [com.apple.containermanager:xpc] Requesting app group container lookup; personaid = 1000, type = DEFAULT, name = DD606002-F8EB-484F-8B1C-85A45D45EEB8, origin [pid = 0, personaid = 0], proximate [pid = 0, personaid = 0], identifier = <private>, euid = 501, uid = 501, platform = 2
+2026-09-21 07:41:22.346 Df Sendmeter[5758:16c19a] [com.apple.containermanager:sandbox] Consumed sandbox extension; path = [<private>], handle = 1
+2026-09-21 07:41:22.346 Df Sendmeter[5758:16c19a] [com.apple.containermanager:unspecified] container_create_or_lookup_app_group_path_by_app_group_identifier: success
+2026-09-21 07:41:22.347 E  Sendmeter[5758:16c19a] [com.apple.defaults:User Defaults] Couldn't read values in CFPrefsPlistSource<0x10878fc80> (Domain: group.com.jirathip.sendlog, User: kCFPreferencesAnyUser, ByHost: Yes, Container: (null), Contents Need Refresh: Yes): Using kCFPreferencesAnyUser with a container is only allowed for System Containers, detaching from cfprefsd
+
+== occurrences of the refused source, all four cold launches ==
+2026-09-21 07:33:59.584 E  Sendmeter[5642:169bb1] [com.apple.defaults:User Defaults] Couldn't read values in CFPrefsPlistSource<0x112dc6180> (Domain: group.com.jirathip.sendlog, User: kCFPreferencesAnyUser, ByHost: Yes, Container: (null), Contents Need Refresh: Yes): Using kCFPreferencesAnyUser with a container is only allowed for System Containers, detaching from cfprefsd
+2026-09-21 07:41:22.347 E  Sendmeter[5758:16c19a] [com.apple.defaults:User Defaults] Couldn't read values in CFPrefsPlistSource<0x10878fc80> (Domain: group.com.jirathip.sendlog, User: kCFPreferencesAnyUser, ByHost: Yes, Container: (null), Contents Need Refresh: Yes): Using kCFPreferencesAnyUser with a container is only allowed for System Containers, detaching from cfprefsd
+2026-09-21 07:42:25.954 E  Sendmeter[5763:16c621] [com.apple.defaults:User Defaults] Couldn't read values in CFPrefsPlistSource<0x10b9f6400> (Domain: group.com.jirathip.sendlog, User: kCFPreferencesAnyUser, ByHost: Yes, Container: (null), Contents Need Refresh: Yes): Using kCFPreferencesAnyUser with a container is only allowed for System Containers, detaching from cfprefsd
+2026-09-21 07:45:45.919 E  Sendmeter[5773:16cf45] [com.apple.defaults:User Defaults] Couldn't read values in CFPrefsPlistSource<0x10a78fb80> (Domain: group.com.jirathip.sendlog, User: kCFPreferencesAnyUser, ByHost: Yes, Container: (null), Contents Need Refresh: Yes): Using kCFPreferencesAnyUser with a container is only allowed for System Containers, detaching from cfprefsd
+
+Re-derivation (#991):
+
+* Four cold launches, four occurrences — one refused source per process, on
+  the same thread as the app's own WatchConnectivity relay call, 1-3 ms
+  after `-[WCSession updateApplicationContext:error:]_block_invoke size: ...`
+  and `storeAppContext:`.
+* Between the relay and the refusal, the SAME thread (169bb1/16c19a/16c621/16cf45)
+  runs the app-group container lookup: `container_create_or_lookup_app_group_path_by_app_group_identifier`
+  -> `Consumed sandbox extension` -> `success`. Apple's WatchConnectivity
+  framework does not reference CFPreferences, UserDefaults, suite APIs or the
+  app-group container API (see 991-mechanism.txt), and its own persistence
+  work runs on its own queue (169be3 in launch 1: `foundation.filecoordination:presenter`).
+  So the container lookup and the refused source are created by this app's
+  own code on the callback thread.
+* The signed-out relay (UA size 67, launch 1 line 244 / launch 2 line 24789)
+  is followed by no app-group access at all: after it, no container lookup
+  and no refused source. The app-group access only follows the SIGNED-IN
+  relay, i.e. the branch that reaches `resetAccountState()` ->
+  `ReadinessWidgetBridge.reset(for:)` -> `ReadinessWidgetStore.appGroupStore`
+  (health-core `ReadinessWidgetContract.swift`), the first app-group suite use
+  of the process.
+* Later relays in the same process (launch 1 line 571 onward) show no
+  additional refused source: cfprefsd refuses the AnyUser source once per
+  process and the source then serves in direct mode.

@@ -105,7 +105,30 @@ final class ReadinessWidgetWiringTests: XCTestCase {
         let bridge = code(source("Sources/App/ReadinessWidgetBridge.swift"))
         let widget = code(source("Sources/Widgets/ReadinessWidget.swift"))
         XCTAssertTrue(contract.contains("public static let appGroup ="))
-        XCTAssertTrue(contract.contains("UserDefaults(suiteName: appGroup)"))
+        // #991: the App Group payload is read and written through an explicit
+        // CurrentUser CFPreferences access. The suite APIs
+        // (`UserDefaults(suiteName:)`, `addSuiteNamed:`) register AnyUser
+        // domains next to the CurrentUser ones, and a containerized process
+        // may not read an AnyUser source — the read that detached from
+        // cfprefsd on every cold launch.
+        XCTAssertTrue(contract.contains("CFPreferencesCopyValue("))
+        XCTAssertTrue(contract.contains("kCFPreferencesCurrentUser"))
+        XCTAssertFalse(contract.contains("kCFPreferencesAnyUser"))
+        XCTAssertFalse(contract.contains("UserDefaults(suiteName:"))
+        // #991 fix rounds 1–2: the CFPreferences access stays compiled only on
+        // Apple targets, via an os() guard — NOT a module-availability guard
+        // (a Linux build ships a CoreFoundation subset without CFString or
+        // the CFPreferences functions, so `canImport(CoreFoundation)` is TRUE
+        // there and let the round-1 block compile on Linux). appGroupStore
+        // keeps selecting it on Apple platforms; Linux gets the suite-backed
+        // fallback (`ReadinessWidgetFallbackDefaults`).
+        XCTAssertTrue(
+            contract.contains("#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)")
+        )
+        XCTAssertFalse(contract.contains("canImport(CoreFoundation)"))
+        XCTAssertTrue(
+            contract.contains("ReadinessWidgetAppGroupDefaults(appGroup: appGroup)")
+        )
         XCTAssertTrue(widget.contains("ReadinessWidgetStore.appGroupStore"))
         XCTAssertTrue(bridge.contains("store.save(snapshot)"))
     }
