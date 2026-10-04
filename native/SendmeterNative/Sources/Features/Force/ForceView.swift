@@ -870,7 +870,14 @@ private struct GuidedForceProtocolView: View {
                 accent: accent
             )
             statusRow(accent: accent)
-            targetCoach
+            // #998: the coach is a measurement aid. During a rest (or any
+            // other non-measuring phase) it only repeated the target and range
+            // the protocol card above already shows, while costing its
+            // measured 92.5 pt — the phase → content mapping in Core decides,
+            // so the drop is testable off-device.
+            if GuidedForceFullscreenPresentation.rendersTargetCoach(phase: presentation.phase) {
+                targetCoach
+            }
             liveChart(chartHeight: chartHeight)
         }
         // #993: the presented cover's frame IS the safe-area rect — measured
