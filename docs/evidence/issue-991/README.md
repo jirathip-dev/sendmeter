@@ -7,7 +7,13 @@ Containers, detaching from cfprefsd` on every cold launch, and its fix:
 explicit `kCFPreferencesCurrentUser` `CFPreferences` access
 (`ReadinessWidgetAppGroupDefaults` in
 `native-plugins/sendlog-health-core/Sources/SendLogHealthCore/ReadinessWidgetContract.swift`).
-Full write-up: `.report-991.md` in the worktree root.
+Fix round 1 (#991 fixed the Linux `package-tests` job that could not compile
+that access): the CF accessor is compiled only where CoreFoundation exists
+(`#if canImport(CoreFoundation)`); platforms without it select the
+Foundation-only `ReadinessWidgetFallbackDefaults` — same domain, key and
+nil-on-unreadable semantics — see `fix1-linux-static-guarantee.txt`.
+Full write-ups: `.report-991.md` (round 0) and `.report-991-fix1.md`
+(fix round 1) in the worktree root.
 
 | file | what it is |
 |---|---|
@@ -23,6 +29,15 @@ Full write-up: `.report-991.md` in the worktree root.
 | `app-target-suite-01.log.gz` | The app-target CI-shape `xcodebuild test … -only-testing:SendmeterNativeTests -derivedDataPath …` run (flock-serialized). Contains the raw command line and the raw exit at the end (`APP_SUITE_EXIT=65`; the red is the pre-existing #941 test — see `app-target-base-red-ci.txt`; gzipped). |
 | `app-target-base-red-ci.txt` | The same app-target job failing on hosted CI for the exact lane base (run 37197803088, the #1009 merge) — raw failing-test lines; base-identity for the red. |
 | `app-target-suite-02.log.gz` | Full app-target suite re-run on the lane's own freshly created simulator (`impl991-pro17`), because the shared simulator was concurrently exercised by the review-989 lane re-running the same flaky classes. `APP_SUITE_RERUN_EXIT=0` — 172 tests, 0 failures (the app-target gate result of record; gzipped). |
+| `fix1-linux-static-guarantee.txt` | Fix round 1: the Linux `package-tests` failure and the platform-split static guarantee — the only CF-bearing code sits behind `#if canImport(CoreFoundation)`, the `#else` branch and the fallback file are CF-symbol-free, module imports are Foundation-only, and what could not be run here (no Linux toolchain/SDK, no Docker daemon). |
+| `fix1-wiring-pin-red.log.gz` | Fix round 1 RED: the current pin (with the two platform-split assertions) against the complete pre-fix source state (base contract + fallback file absent, clean rebuild) — exit 1, five assertion failures at lines 114/115/117/122/123 (gzipped). |
+| `fix1-wiring-pin-green.log.gz` | Fix round 1 GREEN: same filter against the split contract — exit 0, test passed (gzipped). |
+| `fix1-health-core.log.gz` | `just health-core` after the split: 69 tests (67 + the 2 new fallback tests), 0 failures (gzipped). |
+| `fix1-health-core-fallback-filter.log.gz` | Focused run of the two new `ReadinessWidgetFallbackDefaults` tests — both passed (gzipped). |
+| `fix1-core.log.gz` | `just core` after the split — 1510 tests, 0 failures, including the extended wiring pin (gzipped). |
+| `fix1-slop.log.gz` | `just slop` — exit 0 (gzipped). |
+| `fix1-docs-check.log.gz` | `just docs-check` — exit 0 (gzipped). |
+| `fix1-watch-core.log.gz` | The failing CI job's own command run on macOS (`swift test --package-path ios/App/SendLogWatchCore`) — exit 0, 600 tests, 0 failures (gzipped). |
 | `SHA256SUMS` | Digests of every file in this directory. |
 
 Not included: the 3.6 MB raw probe `xcodebuild` log and the host disassembly

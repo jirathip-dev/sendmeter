@@ -1,0 +1,49 @@
+#991 fix round 1 — Linux platform-split static guarantee (2026-10-04 12:47 UTC)
+
+The failing CI job: `.github/workflows/ios-ci.yml` `package-tests`
+(`container: swift:6.3`, ubuntu-latest) runs
+`swift test --package-path ios/App/SendLogWatchCore`; the watch package
+depends on sendlog-health-core, so the whole SendLogHealthCore module must
+COMPILE on Linux. At head 44c9e33 the job failed with
+`cannot find type 'CFString' in scope` (ReadinessWidgetContract.swift:197-203).
+The fix splits the module: the CoreFoundation accessor is compiled only where
+CoreFoundation exists; Linux compiles a Foundation-only fallback accessor.
+
+## What was verified, and how (host = macOS, Apple Swift 6.3.3)
+
+1. The only CoreFoundation-bearing code sits inside
+   `#if canImport(CoreFoundation)` (the first guarded block,
+   ReadinessWidgetContract.swift; block of 54 lines).
+   Comment-stripped references to CF symbols OUTSIDE that block: 1
+   -> ['#if canImport(CoreFoundation)'].
+   (The single remaining "CoreFoundation" token in that scan is the second
+   guard line `#if canImport(CoreFoundation)` inside `appGroupStore` itself —
+   a directive, not a symbol use; on Linux it selects the `#else` branch.)
+2. `canImport(CoreFoundation)` is false on Linux: the original CI failure
+   itself is the evidence — CFString/CFPreferences did not resolve in the
+   swift:6.3 Linux image. On macOS it is true: the CF struct builds
+   (`swift build` exit 0) and its behaviour test runs inside the same guard
+   (health-core suite, 69 tests, 0 failures).
+3. The `#else` branch (the Linux selection) is exactly:
+       ReadinessWidgetStore(defaults: ReadinessWidgetFallbackDefaults(appGroup: appGroup))
+   — no CoreFoundation symbols in it.
+4. The fallback file (ReadinessWidgetFallbackDefaults.swift) references CF
+   symbols in comment-stripped code: 0. Its doc comment names the
+   CoreFoundation APIs it substitutes for, which is why the raw file text
+   mentions them.
+5. Imports across the whole module: `import Foundation` only (all 9 files) — no
+   Darwin/CoreFoundation/SwiftUI/HealthKit anywhere in Sources/.
+6. The CI job's exact command was run on macOS (the deltas on Linux are only
+   the ones gated above): `swift test --package-path ios/App/SendLogWatchCore`
+   exit 0, 600 tests, 0 failures.
+
+## What could NOT be run here (disclosed, not fabricated)
+
+- No Linux toolchain/SDK is installed on this host (`swift sdk list`:
+  "No Swift SDKs are currently installed."; swift --version target
+  arm64-apple-macosx26.0), and the Docker daemon is not running
+  (`docker info` -> "failed to connect to the docker API at
+  unix:///var/run/docker.sock"; no podman/nerdctl). Starting a VM/daemon is
+  a host-level change this lane does not make. The Linux compile is therefore
+  NOT executed here; the static guarantee above plus the hosted `package-tests`
+  job are the authority.
