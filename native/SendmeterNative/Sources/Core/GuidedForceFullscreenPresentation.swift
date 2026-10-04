@@ -422,6 +422,25 @@ public enum GuidedForceFullscreenPresentation {
     /// #941 keeps that session live after the protocol ends.
     public static let completionDetail = "Protocol complete · Done returns to your session"
 
+    /// #998: the guided full-screen's phase → content rule for the one section
+    /// whose presence changes with the phase — the Target Coach. It renders
+    /// while a pull is being measured (a hold or a reverse-action out/return
+    /// work stage, including a paused one: pause is only reachable from a work
+    /// stage, #899) and leaves the stack for the transition and rest phases —
+    /// `prepare`, `switchSide`, both rest flavours, and the completed panel —
+    /// where it only repeated the target and range the protocol card above it
+    /// already shows while spending its measured 92.5 pt of height
+    /// (`docs/evidence/issue-998/`). Exhaustive on purpose: a new phase must
+    /// be classified here, not defaulted.
+    public static func rendersTargetCoach(phase: GuidedForcePhase) -> Bool {
+        switch phase {
+        case .hold, .reverseOut, .reverseReturn, .paused:
+            return true
+        case .prepare, .switchSide, .rest, .setRest, .complete:
+            return false
+        }
+    }
+
     /// Maps a native stage to the large phase banner. Reverse Action is stored
     /// as one continuous work stage so that it persists one set per recording;
     /// the direction boundary is therefore derived from the stage-local clock
