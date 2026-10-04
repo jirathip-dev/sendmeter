@@ -1,0 +1,5 @@
+# Install-identity proof — the launched app IS the build under test (Debug code lives in the .dylib)
+udid=576C8256-67A3-4E54-BF32-57E633CD925A
+shasum -a 256 "<sim container>/Sendmeter.app/Sendmeter.debug.dylib" ".xcode-derived/Build/Products/Debug-iphonesimulator/Sendmeter.app/Sendmeter.debug.dylib"
+7211af8c6c1c7268668bb1042b9bef7556ab4bbc2e0ede82c9452f3717ca43cb  .../Bundle/Application/695F8E57-4AB1-4107-A2ED-49327EC08652/Sendmeter.app/Sendmeter.debug.dylib
+7211af8c6c1c7268668bb1042b9bef7556ab4bbc2e0ede82c9452f3717ca43cb  .xcode-derived/Build/Products/Debug-iphonesimulator/Sendmeter.app/Sendmeter.debug.dylib

@@ -1,0 +1,191 @@
+file	line	disposition	note
+Sources/App/AppModel.swift	989	RAISED (sync/replay)	queue-open (F1): init DurableQueue open; error kept and recorded at init end
+Sources/App/AppModel.swift	1126	NOT-SAME-SHAPE: cancellation / timing	splash presentation floor timing wait
+Sources/App/AppModel.swift	1569	RAISED (launch funnel)	registerPasskey catch -> surface() (banner)
+Sources/App/AppModel.swift	1594	RAISED (launch funnel)	loadPasskeys catch -> surface() (banner)
+Sources/App/AppModel.swift	1618	RAISED (launch funnel)	removePasskey catch -> surface() (banner)
+Sources/App/AppModel.swift	1785	RAISED (launch funnel)	updatePassword catch -> surface() (banner)
+Sources/App/AppModel.swift	1813	RAISED (launch funnel)	sendPasswordResetEmail catch -> surface() (banner)
+Sources/App/AppModel.swift	1966	RAISED (launch funnel)	handleAuthEvent -> handleAuthSessionFailure() -> surface()
+Sources/App/AppModel.swift	2065	RAISED (launch funnel)	handleAuthEvent -> handleAuthSessionFailure() -> surface()
+Sources/App/AppModel.swift	2196	UNRAISED: epoch guard	watch session relay: stale-epoch drop; AuthRecoveryError -> handleAuthSessionFailure (surface); else relays nil (watch family, site-table B)
+Sources/App/AppModel.swift	2401	UNRAISED: cache diagnostics ring	recordCacheFailure('cache local upsert')
+Sources/App/AppModel.swift	2423	UNRAISED: cache diagnostics ring	recordCacheFailure('cache server upsert')
+Sources/App/AppModel.swift	2445	UNRAISED: cache diagnostics ring	recordCacheFailure('cache local delete')
+Sources/App/AppModel.swift	2483	UNRAISED: cache diagnostics ring	recordCacheFailure('cache confirmation')
+Sources/App/AppModel.swift	2511	UNRAISED: cache diagnostics ring	recordCacheFailure('cache delete confirmation')
+Sources/App/AppModel.swift	2657	UNRAISED: cache read guard	cacheConfirmationRevisions read guard (try? localRevision)
+Sources/App/AppModel.swift	2682	UNRAISED: cache read guard	phaseTransitionRevisions read guard (try? pendingEntityIDs)
+Sources/App/AppModel.swift	2692	UNRAISED: cache read guard	phaseTransitionRevisions read guard (try? localRevision)
+Sources/App/AppModel.swift	2849	UNRAISED: cache diagnostics ring	recordCacheFailure('local data quarantine')
+Sources/App/AppModel.swift	2879	UNRAISED: cache diagnostics ring	recordCacheFailure('cache pending count')
+Sources/App/AppModel.swift	2954	NOT-SAME-SHAPE: returned status / rethrow	fetchSlice returns .failure; consumed by the slice funnel (refresh-slice sites)
+Sources/App/AppModel.swift	3486	RAISED (launch funnel)	refreshAll catch -> surface()/banner + last-known cache
+Sources/App/AppModel.swift	3590	RAISED (launch funnel)	refreshTrash catch -> surface()
+Sources/App/AppModel.swift	3735	UNRAISED: epoch guard	updateSession: stale-epoch guard, optimistic pending marker dropped
+Sources/App/AppModel.swift	3812	UNRAISED: epoch guard	deleteSession: stale-epoch guard, optimistic state rolled back
+Sources/App/AppModel.swift	3932	RAISED (sync/replay)	session-delete-undo (F1, queue-file write leg; SendmeterNative/12 carved out)
+Sources/App/AppModel.swift	4017	RAISED (launch funnel)	restoreSession catch -> surface()
+Sources/App/AppModel.swift	4050	RAISED (launch funnel)	purgeSession catch -> surface()
+Sources/App/AppModel.swift	4806	RAISED (sync/replay)	hands-free-arm (F1)
+Sources/App/AppModel.swift	5265	UNRAISED: view fan-out	fetchRecordingSamples try? (force-curve overlay fan-out)
+Sources/App/AppModel.swift	5346	UNRAISED: view fan-out	fetchRecordingSamples try? (force references fan-out)
+Sources/App/AppModel.swift	5792	UNRAISED: epoch guard	deleteRecording: stale-epoch guard; tombstone kept for the queued delete path
+Sources/App/AppModel.swift	5977	RAISED (launch funnel)	restoreRecording catch -> surface()
+Sources/App/AppModel.swift	6007	NOT-SAME-SHAPE: designed / documented outcome	purgeRecording: tombstone kept by design; queued delete path owns retrying (in-code)
+Sources/App/AppModel.swift	6066	RAISED (launch funnel)	linkRecordings catch -> surface()
+Sources/App/AppModel.swift	6334	UNRAISED: epoch guard	createSessionFromRecordings: epoch guard + recovery branches confirm the server row / clear the optimistic marker
+Sources/App/AppModel.swift	6566	NOT-SAME-SHAPE: cancellation / timing	syncHealth CancellationError
+Sources/App/AppModel.swift	6568	RAISED (launch funnel)	syncHealth catch -> recordHealthSyncFailure + surface()
+Sources/App/AppModel.swift	6722	NOT-SAME-SHAPE: cancellation / timing	silentHealthRefresh CancellationError
+Sources/App/AppModel.swift	6724	NOT-SAME-SHAPE: cancellation / timing	silentHealthRefresh URLError.cancelled
+Sources/App/AppModel.swift	6726	UNRAISED: health state	silentHealthRefresh: last reading kept, .failed health observation (row is the surface)
+Sources/App/AppModel.swift	6829	NOT-SAME-SHAPE: cancellation / timing	runMorningHealthRefreshPass CancellationError
+Sources/App/AppModel.swift	6832	NOT-SAME-SHAPE: cancellation / timing	runMorningHealthRefreshPass URLError.cancelled
+Sources/App/AppModel.swift	6835	UNRAISED: health state	runMorningHealthRefreshPass: finish + health-state row
+Sources/App/AppModel.swift	7002	NOT-SAME-SHAPE: cancellation / timing	performWatchReadinessRefresh CancellationError
+Sources/App/AppModel.swift	7004	NOT-SAME-SHAPE: returned status / rethrow	performWatchReadinessRefresh returns .failed() to the watch requester
+Sources/App/AppModel.swift	7177	NOT-SAME-SHAPE: cancellation / timing	computeAndPublishReadiness: superseded/cancelled recompute dropped
+Sources/App/AppModel.swift	7286	NOT-SAME-SHAPE: cancellation / timing	computeAndPublishReadiness: superseded/cancelled recompute dropped
+Sources/App/AppModel.swift	7379	NOT-SAME-SHAPE: returned status / rethrow	computeAndPublishReadiness rethrows into the readiness pass -> health row/banner
+Sources/App/AppModel.swift	7466	NOT-SAME-SHAPE: designed / documented outcome	loadMorningHealthProgress: corrupt marker dropped (in-code documented; safe direction)
+Sources/App/AppModel.swift	7490	NOT-SAME-SHAPE: returned status / rethrow	persistMorningHealthProgress returns false (window bookkeeping)
+Sources/App/AppModel.swift	7565	UNRAISED: cache diagnostics ring	recordCacheFailure('cache delete account')
+Sources/App/AppModel.swift	7594	RAISED (launch funnel)	deleteAccount catch -> surface() under the purge boundary
+Sources/App/AppModel.swift	8163	RAISED (launch funnel)	enqueueAndUpload catch -> surface()
+Sources/App/AppModel.swift	8379	RAISED (launch funnel)	performLegacyRecordingEditMigration catch -> surface()
+Sources/App/AppModel.swift	8558	UNRAISED: cache read guard	confirmDirectWriteSaved read guard (try? localRevision)
+Sources/App/AppModel.swift	8645	RAISED (launch funnel)	terminalizeDirectWrite catch -> surface()
+Sources/App/AppModel.swift	8779	RAISED (launch funnel)	enqueueDirectWrite catch -> surface()
+Sources/App/AppModel.swift	8875	UNRAISED: cache read guard	adoptLegacyDirectWrites read guard (try? pendingEntityIDs)
+Sources/App/AppModel.swift	8880	UNRAISED: cache read guard	adoptLegacyDirectWrites read guard (try? pendingEntityIDs)
+Sources/App/AppModel.swift	8894	RAISED (sync/replay)	legacy-direct-writes (F1): failed authoritative read defers the adoption
+Sources/App/AppModel.swift	8954	UNRAISED: cache read guard	migrateLegacyDirectWrites try? loadOne
+Sources/App/AppModel.swift	8974	UNRAISED: cache read guard	migrateLegacyDirectWrites try? loadOne
+Sources/App/AppModel.swift	9034	UNRAISED: cache read guard	recoverLegacyPhaseResidues read guard
+Sources/App/AppModel.swift	9039	UNRAISED: cache read guard	recoverLegacyPhaseResidues read guard
+Sources/App/AppModel.swift	9043	UNRAISED: cache read guard	recoverLegacyPhaseResidues read guard
+Sources/App/AppModel.swift	9063	RAISED (sync/replay)	legacy-phase-residues (F1): sweep defers
+Sources/App/AppModel.swift	9076	UNRAISED: cache read guard	recoverLegacyPhaseResidues read guard
+Sources/App/AppModel.swift	9095	UNRAISED: cache read guard	recoverLegacyPhaseResidues try? loadOne
+Sources/App/AppModel.swift	9133	UNRAISED: cache read guard	recoverLegacyPhaseResidues read guard
+Sources/App/AppModel.swift	9137	UNRAISED: cache read guard	recoverLegacyPhaseResidues try? loadOne
+Sources/App/AppModel.swift	9192	UNRAISED: cache read guard	recoverLegacyTagResidues read guard
+Sources/App/AppModel.swift	9210	RAISED (sync/replay)	legacy-tag-residues (F1): sweep defers
+Sources/App/AppModel.swift	9222	UNRAISED: cache read guard	recoverLegacyTagResidues read guard
+Sources/App/AppModel.swift	9227	UNRAISED: cache read guard	recoverLegacyTagResidues try? loadOne
+Sources/App/AppModel.swift	9369	UNRAISED: cache read guard	settleHealthWrite read guard
+Sources/App/AppModel.swift	9431	NOT-SAME-SHAPE: designed / documented outcome	completeHealthWriteIntent: DurableQueueError.itemNotFound = terminal state the call wanted (in-code)
+Sources/App/AppModel.swift	9433	RAISED (launch funnel)	completeHealthWriteIntent catch -> surface()
+Sources/App/AppModel.swift	9485	UNRAISED: cache read guard	recoverLegacyHealthResidues read guard
+Sources/App/AppModel.swift	9505	RAISED (sync/replay)	legacy-health-residues (F1): sweep defers
+Sources/App/AppModel.swift	9517	UNRAISED: cache read guard	recoverLegacyHealthResidues read guard
+Sources/App/AppModel.swift	9523	UNRAISED: cache read guard	recoverLegacyHealthResidues try? loadOne
+Sources/App/AppModel.swift	9684	UNRAISED: cache read guard	confirmPhaseTransition read guard
+Sources/App/AppModel.swift	9689	UNRAISED: cache read guard	confirmPhaseTransition read guard
+Sources/App/AppModel.swift	9699	UNRAISED: cache read guard	confirmPhaseTransition read guard
+Sources/App/AppModel.swift	9722	UNRAISED: cache read guard	confirmPhaseTransition try? loadOne
+Sources/App/AppModel.swift	9778	UNRAISED: cache read guard	confirmPhaseTransition read guard
+Sources/App/AppModel.swift	9803	UNRAISED: cache read guard	confirmPhaseTransition read guard
+Sources/App/AppModel.swift	9920	UNRAISED: cache read guard	settleTagMutation read guard
+Sources/App/AppModel.swift	9944	UNRAISED: cache read guard	settleTagMutation read guard
+Sources/App/AppModel.swift	9979	UNRAISED: cache read guard	settleTagMutation read guard
+Sources/App/AppModel.swift	10010	UNRAISED: cache diagnostics ring	recordCacheFailure('cache cursor reset')
+Sources/App/AppModel.swift	10928	NOT-SAME-SHAPE: returned status / rethrow	upload: rethrow branch (itemNotFound suppressed only for the saved-toast case) into the recording catch
+Sources/App/AppModel.swift	10983	RAISED (sync/replay)	queue-upload:<payload> (A2 site 6)
+Sources/App/AppModel.swift	11404	RAISED (launch funnel)	discardQuarantinedWrite catch -> surface()
+Sources/App/AppModel.swift	11523	UNRAISED: cache diagnostics ring	recordCacheFailure('watch completion lookup')
+Sources/App/AppModel.swift	11641	UNRAISED: cache diagnostics ring	recordCacheFailure('watch completion adoption')
+Sources/App/AppModel.swift	11688	UNRAISED: cache diagnostics ring	recordCacheFailure('watch completion adoption verify')
+Sources/App/AppModel.swift	11778	NOT-SAME-SHAPE: cancellation / timing	refreshLiveWorkoutRow CancellationError
+Sources/App/AppModel.swift	11780	NOT-SAME-SHAPE: cancellation / timing	refreshLiveWorkoutRow URLError.cancelled
+Sources/App/AppModel.swift	11782	RAISED (sync/replay)	live-workout-refetch (F1)
+Sources/App/AppModel.swift	11802	NOT-SAME-SHAPE: cancellation / timing	live mirror ticker sleep
+Sources/App/AppModel.swift	11839	NOT-SAME-SHAPE: cancellation / timing	reconcile window wait
+Sources/App/AppModel.swift	11980	NOT-SAME-SHAPE: cancellation / timing	refreshReconcileSlices CancellationError
+Sources/App/AppModel.swift	11982	NOT-SAME-SHAPE: cancellation / timing	refreshReconcileSlices URLError.cancelled
+Sources/App/AppModel.swift	11984	RAISED (sync/replay)	realtime-reconcile (A2 site 7)
+Sources/App/AppModel.swift	12135	RAISED (launch funnel)	restorePendingWrites catch -> surface()
+Sources/App/AppModel.swift	12759	RAISED (launch funnel)	AppModel.perform(_:) catch -> surface()
+Sources/App/BackgroundSyncService.swift	54	RAISED (sync/replay)	background-schedule (F2): BGTaskScheduler submit catch
+Sources/App/GuidedProtocolActivityManager.swift	84	UNRAISED: self-healing retry	ActivityKit mirror start; guarded re-drive on the presentation path; absent card visible
+Sources/App/Haptics.swift	205	NOT-SAME-SHAPE: cancellation / timing	haptic settle timing sleep
+Sources/App/Haptics.swift	238	NOT-SAME-SHAPE: cancellation / timing	haptic timing sleep
+Sources/App/ManualWorkoutActivityManager.swift	70	UNRAISED: self-healing retry	ActivityKit mirror start; sync(engine:) retries on structural transitions
+Sources/App/ManualWorkoutActivityManager.swift	160	UNRAISED: best-effort persistence	activity event decode best-effort
+Sources/App/ManualWorkoutActivityManager.swift	187	UNRAISED: best-effort persistence	activity event encode best-effort
+Sources/App/ManualWorkoutRestScheduler.swift	145	NOT-SAME-SHAPE: designed / documented outcome	notification permission = user decision; status shown in settings
+Sources/App/ManualWorkoutRestScheduler.swift	271	NOT-SAME-SHAPE: cancellation / timing	scheduler sleep wait
+Sources/App/SendmeterNativeApp.swift	164	NOT-SAME-SHAPE: designed / documented outcome	toast lifecycle auto-dismiss hop (UI-only)
+Sources/App/SendmeterNativeApp.swift	465	NOT-SAME-SHAPE: cancellation / timing	launch-screen timing sleep
+Sources/Core/AsyncDeadline.swift	43	NOT-SAME-SHAPE: cancellation / timing	deadline race timing wait
+Sources/Core/AuthDiagnostics.swift	154	UNRAISED: cache diagnostics ring	diagnostics ring read (lossy by design; ring IS the surface)
+Sources/Core/AuthDiagnostics.swift	157	UNRAISED: cache diagnostics ring	diagnostics ring decode
+Sources/Core/AuthDiagnostics.swift	163	UNRAISED: cache diagnostics ring	diagnostics ring encode
+Sources/Core/AuthDiagnostics.swift	164	UNRAISED: cache diagnostics ring	diagnostics ring write (best-effort)
+Sources/Core/AuthRecovery.swift	88	UNRAISED: defensive decode	JWT claims defensive decode (server decides usability)
+Sources/Core/BackgroundSyncEngine.swift	104	RAISED (sync/replay)	background-sync:<entity> (F1): prepare failure recorded before .failed
+Sources/Core/BackgroundSyncEngine.swift	119	RAISED (sync/replay)	background-sync:<entity> (F1): apply failure recorded before .failed
+Sources/Core/CachePreparation.swift	223	NOT-SAME-SHAPE: returned status / rethrow	.failure(.openFailed) consumed by the cache-prepare funnel (A1 site 1)
+Sources/Core/DateSupport.swift	53	UNRAISED: defensive decode	day-style parse fallback (nil -> plain fallback)
+Sources/Core/LocalCacheStore.swift	417	UNRAISED: cache read guard	invalid payload enumerated -> repair funnel (A1 site 2)
+Sources/Core/LocalCacheStore.swift	464	UNRAISED: cache read guard	CacheLoadOneResult(value: nil, invalid: true) -> repair funnel
+Sources/Core/LocalCacheStore.swift	564	UNRAISED: cache read guard	invalid row enumerated -> repair funnel
+Sources/Core/LocalCacheStore.swift	585	UNRAISED: cache read guard	invalid row enumerated -> repair funnel
+Sources/Core/LocalCacheStore.swift	1656	NOT-SAME-SHAPE: returned status / rethrow	rethrows LocalCacheError.invalidPayload into the repair funnel
+Sources/Core/LostRecordingNotice.swift	77	UNRAISED: best-effort persistence	notice encode best-effort (not persisted)
+Sources/Core/LostRecordingNotice.swift	93	UNRAISED: best-effort persistence	notice decode best-effort (no notice)
+Sources/Core/ManualWorkoutActivityContent.swift	65	NOT-SAME-SHAPE: designed / documented outcome	duplicate/stale lock-screen delivery ignored (in-code)
+Sources/Core/ManualWorkoutLifecycleCoordinator.swift	238	NOT-SAME-SHAPE: returned status / rethrow	refusal outcome returned (refusalMessage rendered)
+Sources/Core/MutationRecoveryCoordinator.swift	601	UNRAISED: cache diagnostics ring	onFailure -> recordCacheFailure ring
+Sources/Core/MutationRecoveryCoordinator.swift	670	UNRAISED: cache diagnostics ring	onFailure -> recordCacheFailure ring
+Sources/Core/MutationRecoveryCoordinator.swift	709	UNRAISED: cache diagnostics ring	onFailure -> recordCacheFailure ring
+Sources/Core/RoutineAudio.swift	123	NOT-SAME-SHAPE: comment / string (regex noise)	comment mentioning 'catch'
+Sources/Core/RoutineAudio.swift	140	NOT-SAME-SHAPE: comment / string (regex noise)	comment mentioning 'catch'
+Sources/Core/RoutineGate.swift	127	NOT-SAME-SHAPE: comment / string (regex noise)	comment mentioning 'catch'
+Sources/Core/RoutineGate.swift	373	UNRAISED: best-effort persistence	persisted routine-run decode; nil = no persisted run
+Sources/Core/RoutineGate.swift	377	UNRAISED: best-effort persistence	persisted routine-run encode; failure = not persisted
+Sources/Core/SignOutQueuePolicy.swift	113	NOT-SAME-SHAPE: returned status / rethrow	returned (outcome, error) tuple
+Sources/Core/WorkspaceSyncCoordinator.swift	292	NOT-SAME-SHAPE: returned status / rethrow	PurgeGenerationResolution carries endpointFailure (documented quiet; foreground refresh reports)
+Sources/Core/WorkspaceSyncCoordinator.swift	313	UNRAISED: cache diagnostics ring	onFailure('cache cursor read') -> ring
+Sources/Core/WorkspaceSyncCoordinator.swift	335	UNRAISED: cache diagnostics ring	onFailure('cache purge-generation read') -> ring
+Sources/Core/WorkspaceSyncCoordinator.swift	356	UNRAISED: cache diagnostics ring	onFailure('cache read') -> ring
+Sources/Core/WorkspaceSyncCoordinator.swift	397	UNRAISED: cache diagnostics ring	onFailure('cache entity reconcile') -> ring
+Sources/Core/WorkspaceSyncCoordinator.swift	457	UNRAISED: cache diagnostics ring	onFailure('cache realtime publish') -> ring; full-network fallback
+Sources/Data/RealtimeService.swift	107	RAISED (sync/replay)	realtime-subscribe (F2): join failure, previously silent
+Sources/Data/Repositories.swift	1194	NOT-SAME-SHAPE: designed / documented outcome	23505/409 dedupe: fetch existing row (in-code)
+Sources/Data/Repositories.swift	1520	NOT-SAME-SHAPE: designed / documented outcome	23505/409 dedupe: fetch existing row (in-code)
+Sources/Data/Repositories.swift	1624	NOT-SAME-SHAPE: returned status / rethrow	rethrow (lands in the caller's funnel)
+Sources/Data/SupabaseService.swift	85	UNRAISED: auth sidecar	sidecar directory creation; the auth failure itself rethrows at the boundary
+Sources/Data/SupabaseService.swift	158	NOT-SAME-SHAPE: returned status / rethrow	guardedAuthCall rethrow (ring recorded; flows to sites 3/6)
+Sources/Data/SupabaseService.swift	282	NOT-SAME-SHAPE: returned status / rethrow	guardedAuthCall rethrow (ring recorded; flows to sites 3/6)
+Sources/Data/SupabaseService.swift	613	UNRAISED: auth sidecar	poisoned-session local removal; re-checked after the attempt
+Sources/Data/SupabaseService.swift	697	UNRAISED: defensive decode	one-or-many decode fallback (accepts both shapes)
+Sources/Data/SupabaseService.swift	912	UNRAISED: error-body decode fallback	error-body decode fallback; PostgRESTError still thrown
+Sources/Data/SupabaseService.swift	999	UNRAISED: error-body decode fallback	error-body decode fallback; PostgRESTError still thrown
+Sources/Features/Force/ForceView.swift	284	NOT-SAME-SHAPE: cancellation / timing	view timing sleep
+Sources/Features/Force/ForceView.swift	3184	UNRAISED: live view surface	refuseAction(message) at the tap (Force view: outside the fix fence)
+Sources/Features/Force/ForceView.swift	3194	UNRAISED: live view surface	refuseAction(message) at the tap (Force view: outside the fix fence)
+Sources/Features/History/HistoryView.swift	1169	UNRAISED: live view surface	model.errorMessage set at the tap (banner; no persisted line)
+Sources/Features/History/SessionDetailView.swift	440	NOT-SAME-SHAPE: cancellation / timing	CancellationError (popped mid-fetch)
+Sources/Features/History/SessionDetailView.swift	444	NOT-SAME-SHAPE: cancellation / timing	URLError.cancelled
+Sources/Features/History/SessionDetailView.swift	447	UNRAISED: live view surface	traceState = .failed at the tap (view renders it)
+Sources/Features/History/SessionDetailView.swift	461	UNRAISED: view fan-out	fetchRecordingSamples fan-out
+Sources/Features/Phases/PhasesView.swift	236	NOT-SAME-SHAPE: cancellation / timing	view timing sleep
+Sources/Features/Workout/ManualWorkoutFullscreen.swift	312	UNRAISED: live view surface	errorMessage + refusal haptic at the tap
+Sources/Features/Workout/WorkoutView.swift	190	NOT-SAME-SHAPE: cancellation / timing	view timing sleep
+Sources/Features/Workout/WorkoutView.swift	505	UNRAISED: live view surface	model.errorMessage set at the tap
+Sources/Features/Workout/WorkoutView.swift	1122	NOT-SAME-SHAPE: comment / string (regex noise)	comment mentioning 'catch'
+Sources/Platform/HealthKitService.swift	190	UNRAISED: health state	lastError set; rendered on the health surface
+Sources/Platform/TindeqBluetooth.swift	230	FENCE: flagged, not changed	try? write(.stop) BLE (outside this lane's change set)
+Sources/Platform/TindeqBluetooth.swift	547	FENCE: flagged, not changed	try? refreshBattery() BLE (outside this lane's change set)
+Sources/Platform/WatchConnectivityService.swift	246	RAISED (sync/replay)	watch-transmit (A2 site 8)
+Sources/Platform/WatchConnectivityService.swift	247	NOT-SAME-SHAPE: comment / string (regex noise)	#992 comment mentioning try?
+Sources/Platform/WatchConnectivityService.swift	430	UNRAISED: best-effort persistence	completion inbox encode (local cache)
+Sources/Platform/WatchConnectivityService.swift	439	UNRAISED: best-effort persistence	completion inbox decode (local cache)
+Sources/Platform/WeatherService.swift	164	RAISED (sync/replay)	weather-climate (F1): suppressible archive failure, now named
+Sources/Platform/WeatherService.swift	191	RAISED (sync/replay)	weather-refresh (F1): outer catch, surfaced = card verdict
+Sources/Platform/WeatherService.swift	282	UNRAISED: best-effort persistence	CachedReading decode (in-memory value refetched every foreground)
+Sources/Platform/WeatherService.swift	287	UNRAISED: best-effort persistence	CachedReading encode (plain Codable guard)
+Sources/Platform/WeatherService.swift	295	UNRAISED: best-effort persistence	CachedClimate decode (in-memory value refetched)
+Sources/Platform/WeatherService.swift	302	UNRAISED: best-effort persistence	CachedClimate encode (plain Codable guard)

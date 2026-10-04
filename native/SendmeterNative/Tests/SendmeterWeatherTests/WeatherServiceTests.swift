@@ -167,6 +167,79 @@ final class WeatherServiceTests: XCTestCase {
         XCTAssertEqual(service.conditions?.fetchedAt, retryDate)
     }
 
+    // MARK: - #992 F1: the weather path names its failures
+
+    func testFailedRefreshWithNothingCachedRecordsSurfacedLine() async throws {
+        http.enqueue(
+            host: Self.forecastHost,
+            result: .failure(URLError(.notConnectedToInternet))
+        )
+        let service = makeService()
+        var lines: [PersistedFailureLine] = []
+        service.persistedFailureSink = PersistedFailureSink { lines.append($0) }
+
+        let refreshed = await service.refresh()
+
+        XCTAssertFalse(refreshed)
+        XCTAssertTrue(service.failed)
+        XCTAssertEqual(lines.count, 1)
+        let line = try XCTUnwrap(lines.first)
+        XCTAssertEqual(line.channel, .syncReplayFailure)
+        XCTAssertEqual(line.operation, "weather-refresh")
+        XCTAssertEqual(line.level, .notice, "the line must persist in the default log")
+        XCTAssertEqual(line.domain, NSURLErrorDomain)
+        XCTAssertEqual(line.code, URLError.Code.notConnectedToInternet.rawValue)
+        XCTAssertEqual(line.classification, "offline")
+        XCTAssertTrue(line.surfaced, "with nothing cached the card shows Unavailable")
+    }
+
+    func testSuppressedRefreshKeepsCachedReadingAndRecordsUnsurfacedLine() async throws {
+        enqueueSuccessfulCurrentAndArchive()
+        let service = makeService()
+        let primed = await service.refresh()
+        XCTAssertTrue(primed)
+        let cached = try XCTUnwrap(service.conditions)
+        var lines: [PersistedFailureLine] = []
+        service.persistedFailureSink = PersistedFailureSink { lines.append($0) }
+
+        clock.date = fixedDate.addingTimeInterval(60)
+        http.enqueue(host: Self.forecastHost, result: .failure(URLError(.timedOut)))
+        let refreshed = await service.refresh(trigger: .manual)
+
+        XCTAssertFalse(refreshed)
+        XCTAssertFalse(service.failed, "the cached reading keeps the card up")
+        XCTAssertEqual(service.conditions?.fetchedAt, cached.fetchedAt)
+        XCTAssertEqual(
+            lines.map(\.operation),
+            ["weather-refresh"],
+            "exactly one line; a cached reading means the failure is suppressed"
+        )
+        let line = try XCTUnwrap(lines.first)
+        XCTAssertEqual(line.domain, NSURLErrorDomain)
+        XCTAssertEqual(line.code, URLError.Code.timedOut.rawValue)
+        XCTAssertFalse(line.surfaced, "last-good data on screen suppresses the failure")
+    }
+
+    func testArchiveFailureAloneRecordsUnsurfacedClimateLine() async throws {
+        http.enqueue(host: Self.forecastHost, result: .success(Self.currentPayload))
+        http.enqueue(
+            host: Self.archiveHost,
+            result: .failure(URLError(.cannotLoadFromNetwork))
+        )
+        let service = makeService()
+        var lines: [PersistedFailureLine] = []
+        service.persistedFailureSink = PersistedFailureSink { lines.append($0) }
+
+        let refreshed = await service.refresh()
+
+        XCTAssertTrue(refreshed)
+        XCTAssertFalse(service.failed)
+        XCTAssertEqual(lines.map(\.operation), ["weather-climate"])
+        let line = try XCTUnwrap(lines.first)
+        XCTAssertEqual(line.code, URLError.Code.cannotLoadFromNetwork.rawValue)
+        XCTAssertFalse(line.surfaced)
+    }
+
     private func makeService() -> WeatherService {
         WeatherService(
             defaults: defaults,

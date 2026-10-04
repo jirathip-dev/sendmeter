@@ -241,7 +241,22 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
         var payload = outgoingContext
         payload["relayId"] = UUID().uuidString
         payload["relayedAt"] = Date().timeIntervalSince1970
-        try? session.updateApplicationContext(payload)
+        do {
+            try session.updateApplicationContext(payload)
+        } catch {
+            // #992: a failed watch transmit used to be a silent `try?`. Watch
+            // delivery is device-only (a simulator cannot pair a watch), so a
+            // persisted `.notice` line is the only trace a device transcript
+            // can carry; the relay is best-effort and never surfaced.
+            PersistedFailureLog.emit(
+                PersistedFailureLog.line(
+                    channel: .syncReplayFailure,
+                    operation: "watch-transmit",
+                    error: error,
+                    surfaced: false
+                )
+            )
+        }
         if guaranteed { session.transferUserInfo(payload) }
     }
 

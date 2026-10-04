@@ -10,6 +10,23 @@ final class BackgroundSyncEngineTests: XCTestCase {
         var count = 0
     }
 
+    private final class RecordedFailures: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [(entityType: LocalCacheEntityType, error: Error)] = []
+
+        func append(_ entityType: LocalCacheEntityType, _ error: Error) {
+            lock.lock()
+            defer { lock.unlock() }
+            entries.append((entityType, error))
+        }
+
+        func snapshot() -> [(entityType: LocalCacheEntityType, error: Error)] {
+            lock.lock()
+            defer { lock.unlock() }
+            return entries
+        }
+    }
+
     private final class OrderLog: @unchecked Sendable {
         private let lock = NSLock()
         private var entries: [String] = []
@@ -43,14 +60,16 @@ final class BackgroundSyncEngineTests: XCTestCase {
     private func run(
         isCurrent: @escaping @MainActor @Sendable (UUID, UInt64) -> Bool,
         drain: @escaping @MainActor @Sendable () async -> Void,
-        operations: [BackgroundSyncOperation]
+        operations: [BackgroundSyncOperation],
+        recordFailure: @escaping @MainActor @Sendable (LocalCacheEntityType, Error) -> Void = { _, _ in }
     ) -> BackgroundSyncRun {
         BackgroundSyncRun(
             accountUserID: account,
             accountEpoch: 1,
             isCurrent: isCurrent,
             drain: drain,
-            operations: operations
+            operations: operations,
+            recordFailure: recordFailure
         )
     }
 
@@ -86,7 +105,8 @@ final class BackgroundSyncEngineTests: XCTestCase {
             drain: {
                 drained.count += 1
             },
-            operations: []
+            operations: [],
+            recordFailure: { _, _ in }
         )
 
         let work = Task { await BackgroundSyncEngine.run(run) }
@@ -121,7 +141,8 @@ final class BackgroundSyncEngineTests: XCTestCase {
             drain: {
                 liveScope.current = false
             },
-            operations: run.operations
+            operations: run.operations,
+            recordFailure: { _, _ in }
         )
 
         let outcome = await BackgroundSyncEngine.run(switchedRun)
@@ -145,7 +166,8 @@ final class BackgroundSyncEngineTests: XCTestCase {
                         applied.count += 1
                     }
                 }
-            ]
+            ],
+            recordFailure: { _, _ in }
         )
 
         let outcome = await BackgroundSyncEngine.run(run)
@@ -183,7 +205,8 @@ final class BackgroundSyncEngineTests: XCTestCase {
                         )
                     }
                 }
-            ]
+            ],
+            recordFailure: { _, _ in }
         )
 
         let work = Task { await BackgroundSyncEngine.run(run) }
@@ -229,7 +252,8 @@ final class BackgroundSyncEngineTests: XCTestCase {
                         )
                     }
                 }
-            ]
+            ],
+            recordFailure: { _, _ in }
         )
 
         let outcome = await BackgroundSyncEngine.run(run)
@@ -246,6 +270,59 @@ final class BackgroundSyncEngineTests: XCTestCase {
             try workspace.load(accountUserID: account).sessions,
             [session()]
         )
+    }
+
+    /// #992 F1: a failed operation is named through `recordFailure` (entity +
+    /// error) before the coarse `.failed` outcome loses the error — a
+    /// background pass used to fail with nothing in the persisted log.
+    func testFailedPrepareRecordsEntityAndErrorBeforeOutcome() async {
+        struct Boom: Error, Equatable { let code: Int }
+        let records = RecordedFailures()
+        let run = run(
+            isCurrent: { _, _ in true },
+            drain: {},
+            operations: [
+                BackgroundSyncOperation(entityType: .healthMetrics) {
+                    throw Boom(code: 7)
+                }
+            ],
+            recordFailure: { entityType, error in
+                records.append(entityType, error)
+            }
+        )
+
+        let outcome = await BackgroundSyncEngine.run(run)
+
+        XCTAssertEqual(outcome, .failed)
+        XCTAssertEqual(records.snapshot().map(\.entityType), [.healthMetrics])
+        XCTAssertEqual((records.snapshot().first?.error as? Boom)?.code, 7)
+    }
+
+    /// The apply-failure leg of the same witness: the entity is still named
+    /// when the failure happens after every page was fetched.
+    func testFailedApplyRecordsEntityAndErrorBeforeOutcome() async {
+        struct Boom: Error, Equatable { let code: Int }
+        let records = RecordedFailures()
+        let run = run(
+            isCurrent: { _, _ in true },
+            drain: {},
+            operations: [
+                BackgroundSyncOperation(entityType: .sessions) {
+                    BackgroundSyncPreparedOperation {
+                        throw Boom(code: 9)
+                    }
+                }
+            ],
+            recordFailure: { entityType, error in
+                records.append(entityType, error)
+            }
+        )
+
+        let outcome = await BackgroundSyncEngine.run(run)
+
+        XCTAssertEqual(outcome, .failed)
+        XCTAssertEqual(records.snapshot().map(\.entityType), [.sessions])
+        XCTAssertEqual((records.snapshot().first?.error as? Boom)?.code, 9)
     }
 }
 

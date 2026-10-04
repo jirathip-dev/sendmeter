@@ -268,7 +268,8 @@ final class PagedDeltaPublicationBoundaryTests: XCTestCase {
             accountEpoch: 0,
             isCurrent: { userID, epoch in userID == live.userID && epoch == live.epoch },
             drain: {},
-            operations: [operation]
+            operations: [operation],
+            recordFailure: { _, _ in }
         ))
 
         XCTAssertEqual(outcome, .accountChanged)
@@ -308,7 +309,8 @@ final class PagedDeltaPublicationBoundaryTests: XCTestCase {
             accountEpoch: 0,
             isCurrent: { userID, epoch in userID == live.userID && epoch == live.epoch },
             drain: {},
-            operations: [operation]
+            operations: [operation],
+            recordFailure: { _, _ in }
         ))
 
         XCTAssertEqual(outcome, .completed(1))

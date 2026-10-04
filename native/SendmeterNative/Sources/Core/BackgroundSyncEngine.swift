@@ -38,19 +38,26 @@ public struct BackgroundSyncRun: @unchecked Sendable {
     public let isCurrent: @MainActor @Sendable (UUID, UInt64) -> Bool
     public let drain: @MainActor @Sendable () async -> Void
     public let operations: [BackgroundSyncOperation]
+    /// #992 F1: the outcome enum carries no error, so the engine names a
+    /// failed operation here before returning `.failed` — a background pass
+    /// used to fail with nothing in the persisted log. Required (no silent
+    /// default): a caller must decide where its pass failures are recorded.
+    public let recordFailure: @MainActor @Sendable (LocalCacheEntityType, Error) -> Void
 
     public init(
         accountUserID: UUID,
         accountEpoch: UInt64,
         isCurrent: @escaping @MainActor @Sendable (UUID, UInt64) -> Bool,
         drain: @escaping @MainActor @Sendable () async -> Void,
-        operations: [BackgroundSyncOperation]
+        operations: [BackgroundSyncOperation],
+        recordFailure: @escaping @MainActor @Sendable (LocalCacheEntityType, Error) -> Void
     ) {
         self.accountUserID = accountUserID
         self.accountEpoch = accountEpoch
         self.isCurrent = isCurrent
         self.drain = drain
         self.operations = operations
+        self.recordFailure = recordFailure
     }
 }
 
@@ -95,7 +102,11 @@ public enum BackgroundSyncEngine {
             do {
                 prepared = try await operation.prepare()
             } catch {
-                return Task.isCancelled ? .cancelled : .failed
+                guard !Task.isCancelled else { return .cancelled }
+                // #992 F1: name the failed entity before the coarse `.failed`
+                // outcome loses the error with the pass.
+                run.recordFailure(operation.entityType, error)
+                return .failed
             }
 
             guard run.isCurrent(run.accountUserID, run.accountEpoch) else {
@@ -106,7 +117,9 @@ public enum BackgroundSyncEngine {
             do {
                 try await prepared.apply()
             } catch {
-                return Task.isCancelled ? .cancelled : .failed
+                guard !Task.isCancelled else { return .cancelled }
+                run.recordFailure(operation.entityType, error)
+                return .failed
             }
 
             guard run.isCurrent(run.accountUserID, run.accountEpoch) else {
