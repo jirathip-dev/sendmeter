@@ -1,0 +1,8 @@
+# pre-fix focused run2 — GuidedProtocolCompletionTests + ManualWorkoutSaveOnceAppTests, reused container, no fix
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-989/native/SendmeterNative/Tests/SendmeterNativeTests/GuidedProtocolCompletionTests.swift:114: error: -[SendmeterNativeTests.GuidedProtocolCompletionTests test941BackToBackProtocolsLogOneEntryWhenTheSessionEndsExplicitly] : XCTAssertEqual failed: ("2") is not equal to ("0") - #941 AC1: no protocol finish may log a History entry on its own
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-989/native/SendmeterNative/Tests/SendmeterNativeTests/GuidedProtocolCompletionTests.swift:131: error: -[SendmeterNativeTests.GuidedProtocolCompletionTests test941BackToBackProtocolsLogOneEntryWhenTheSessionEndsExplicitly] : XCTAssertEqual failed: ("3") is not equal to ("1") - #941 AC1: one gauge session ⇒ exactly one Tindeq entry
+/Users/jirathip/.herdr/worktrees/sendmeter/impl-989/native/SendmeterNative/Tests/SendmeterNativeTests/GuidedProtocolCompletionTests.swift:156: error: -[SendmeterNativeTests.GuidedProtocolCompletionTests test941BackToBackProtocolsLogOneEntryWhenTheSessionEndsExplicitly] : XCTAssertEqual failed: ("3") is not equal to ("1") - #941 AC2: a later completion must not duplicate the closed session's entry
+	 Executed 3 tests, with 3 failures (0 unexpected) in 0.386 (0.389) seconds
+	 Executed 4 tests, with 3 failures (0 unexpected) in 0.455 (0.478) seconds
+	 Executed 4 tests, with 3 failures (0 unexpected) in 0.455 (0.488) seconds
+RAW_EXIT=65
