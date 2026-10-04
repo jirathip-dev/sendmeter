@@ -1,0 +1,13 @@
+diff --git a/native/SendmeterNative/Sources/App/AppModel.swift b/native/SendmeterNative/Sources/App/AppModel.swift
+index 32c57b0..f3507f7 100644
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -12773,7 +12773,7 @@ public final class AppModel {
+                 channel: .launchFailure,
+                 operation: step,
+                 error: error,
+-                surfaced: surfaced
++                surfaced: false
+             )
+         )
+     }
