@@ -77,6 +77,33 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertNil(store.load())
     }
 
+    func testAppGroupDefaultsRoundTripThroughAnExplicitCurrentUserDomain() throws {
+        // #991: the production App Group accessor reads and writes the domain
+        // through an explicit CurrentUser CFPreferences access — the only user
+        // axis a containerized process may hold. A test domain (never the real
+        // App Group) exercises the same read/write/remove trio.
+        let domain = "com.jirathip.sendlog.contract-test.\(UUID().uuidString)"
+        let defaults = ReadinessWidgetAppGroupDefaults(appGroup: domain)
+        let store = ReadinessWidgetStore(defaults: defaults)
+        defer { defaults.removeObject(forKey: ReadinessWidgetStore.snapshotKey) }
+        let original = snapshot()
+
+        XCTAssertNil(store.load())
+
+        store.save(original)
+        XCTAssertEqual(store.load(), original)
+        let stored = try XCTUnwrap(
+            defaults.data(forKey: ReadinessWidgetStore.snapshotKey)
+        )
+        XCTAssertEqual(
+            try JSONDecoder().decode(ReadinessWidgetSnapshot.self, from: stored),
+            original
+        )
+
+        store.clear()
+        XCTAssertNil(store.load())
+    }
+
     func testNoDataDoesNotBecomeZeroOrRetainAZone() {
         let noData = snapshot(
             readiness: nil,
@@ -292,7 +319,11 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertEqual(store.load(), valid)
     }
 
-    func testAppGroupStoreFactoryUsesSharedSuite() {
+    func testAppGroupStoreFactoryUsesTheSharedDomain() {
+        // #991: the factory hands back a store over the App Group *domain*,
+        // read through an explicit CurrentUser CFPreferences access, rather
+        // than a `UserDefaults` suite whose AnyUser domains a containerized
+        // process may not read.
         XCTAssertNotNil(ReadinessWidgetStore.appGroupStore)
         XCTAssertEqual(ReadinessWidgetStore.appGroup, "group.com.jirathip.sendlog")
         XCTAssertEqual(

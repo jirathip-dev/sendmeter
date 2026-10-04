@@ -105,7 +105,16 @@ final class ReadinessWidgetWiringTests: XCTestCase {
         let bridge = code(source("Sources/App/ReadinessWidgetBridge.swift"))
         let widget = code(source("Sources/Widgets/ReadinessWidget.swift"))
         XCTAssertTrue(contract.contains("public static let appGroup ="))
-        XCTAssertTrue(contract.contains("UserDefaults(suiteName: appGroup)"))
+        // #991: the App Group payload is read and written through an explicit
+        // CurrentUser CFPreferences access. The suite APIs
+        // (`UserDefaults(suiteName:)`, `addSuiteNamed:`) register AnyUser
+        // domains next to the CurrentUser ones, and a containerized process
+        // may not read an AnyUser source — the read that detached from
+        // cfprefsd on every cold launch.
+        XCTAssertTrue(contract.contains("CFPreferencesCopyValue("))
+        XCTAssertTrue(contract.contains("kCFPreferencesCurrentUser"))
+        XCTAssertFalse(contract.contains("kCFPreferencesAnyUser"))
+        XCTAssertFalse(contract.contains("UserDefaults(suiteName:"))
         XCTAssertTrue(widget.contains("ReadinessWidgetStore.appGroupStore"))
         XCTAssertTrue(bridge.contains("store.save(snapshot)"))
     }

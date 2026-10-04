@@ -3,15 +3,17 @@ import SendLogHealthCore
 import XCTest
 @testable import Sendmeter
 
-/// #964 round 2 — the App Group read qualification.
+/// #964 round 2 / #991 — the App Group read qualification.
 ///
 /// The device capture's only app-specific failure was Apple's defaults
 /// machinery reading `group.com.jirathip.sendlog` on 4/4 cold launches, ~80 ms
-/// after process start. The orchestrator's candidate source was our
-/// `UserDefaults(suiteName:)` site (`ReadinessWidgetStore.appGroupStore`,
-/// consumed by `ReadinessWidgetBridge`). These tests measure what that read
-/// actually does — the test host is the real app, so the real App Group
-/// entitlement is in force:
+/// after process start, and #991 re-derived the ordering: the failing read is
+/// our own `ReadinessWidgetStore.appGroupStore` use on the launch chain
+/// (`resetAccountState` → `ReadinessWidgetBridge.reset`), where
+/// `UserDefaults(suiteName:)` registers AnyUser suite domains that a
+/// containerized process may not read, so cfprefsd refuses the source and the
+/// read detaches from cfprefsd. These tests run in the real app process and
+/// measure what the (now explicit CurrentUser `CFPreferences`) read does:
 ///
 /// * the read returns the stored payload (save → load round-trips through the
 ///   real App Group container, and a second store instance sees the same
@@ -20,16 +22,15 @@ import XCTest
 ///   than a cached value,
 /// * the app's own publication path (`ReadinessWidgetBridge.publish`) lands in
 ///   that same container,
-/// * and the failure mode is a NIL READ, never a throw: an unentitled suite
-///   still round-trips inside the process, its payload is not visible through
-///   the App Group, and a suite with nothing stored simply reads as nil. There
-///   is no thrown error anywhere on this path for a banner to catch.
+/// * and the failure mode is a NIL READ, never a throw: a suite with nothing
+///   stored simply reads as nil. There is no thrown error anywhere on this
+///   path for a banner to catch.
 ///
-/// The device-log attribution itself (the CFPrefs line is emitted by Apple's
-/// `-[WCSession storeAppContext:withAppContextData:]`, immediately after our
-/// `try? session.updateApplicationContext(payload)` at
-/// `Sources/Platform/WatchConnectivityService.swift:244`) is committed as
-/// `docs/evidence/issue-964/964b-device-log-attribution.txt`.
+/// A simulator cannot exercise the device's containerized-preferences gate
+/// (there is no App Group container here — `containerURL(forSecurityApplicationGroupIdentifier:)`
+/// returns nil while the group domain still round-trips as an ordinary
+/// suite), so the detached-cfprefsd symptom itself is owner-gated in
+/// `docs/evidence/issue-991/`.
 final class ReadinessWidgetAppGroupReadTests: XCTestCase {
     private let userID = UUID()
 
@@ -99,7 +100,7 @@ final class ReadinessWidgetAppGroupReadTests: XCTestCase {
         )
 
         ReadinessWidgetBridge.clear()
-        XCTAssertNil(ReadinessWidgetStore.appGroupStore?.load())
+        XCTAssertNil(ReadinessWidgetStore.appGroupStore.load())
     }
 
     func testAppGroupReadOfAnUnavailableSuiteIsANilReadNotAnError() throws {
@@ -132,5 +133,43 @@ final class ReadinessWidgetAppGroupReadTests: XCTestCase {
         let emptyDefaults = try XCTUnwrap(UserDefaults(suiteName: emptySuite))
         defer { emptyDefaults.removePersistentDomain(forName: emptySuite) }
         XCTAssertNil(ReadinessWidgetStore(defaults: emptyDefaults).load())
+    }
+
+    func testAppGroupPayloadLivesInTheCurrentUserDomainTheStoreReads() throws {
+        // #991: the store reads and writes the App Group domain through
+        // CFPreferences with an explicit CurrentUser — the only user axis a
+        // sandboxed process may hold for a container. Failure mode this
+        // guards: the payload ends up somewhere that read cannot see it
+        // (per-process storage, a different container, the refused AnyUser
+        // axis), which would show as "no data yet" in the widget while the
+        // app believes it published.
+        let store = ReadinessWidgetStore.appGroupStore
+        let seeded = snapshot(epoch: 21)
+        defer { store.clear() }
+
+        store.save(seeded)
+        let stored = try XCTUnwrap(
+            CFPreferencesCopyValue(
+                ReadinessWidgetStore.snapshotKey as CFString,
+                ReadinessWidgetStore.appGroup as CFString,
+                kCFPreferencesCurrentUser,
+                kCFPreferencesAnyHost
+            ) as? Data
+        )
+        XCTAssertEqual(
+            try JSONDecoder().decode(ReadinessWidgetSnapshot.self, from: stored),
+            seeded
+        )
+        XCTAssertEqual(store.load(), seeded)
+
+        store.clear()
+        XCTAssertNil(
+            CFPreferencesCopyValue(
+                ReadinessWidgetStore.snapshotKey as CFString,
+                ReadinessWidgetStore.appGroup as CFString,
+                kCFPreferencesCurrentUser,
+                kCFPreferencesAnyHost
+            )
+        )
     }
 }

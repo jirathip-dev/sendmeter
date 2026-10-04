@@ -142,22 +142,83 @@ public enum ReadinessWidgetFreshness: Equatable, Sendable {
     case invalid
 }
 
+/// The three defaults operations the widget payload store needs. `UserDefaults`
+/// already satisfies it; the production App Group accessor substitutes an
+/// explicit `CFPreferences` implementation (`ReadinessWidgetAppGroupDefaults`).
+public protocol ReadinessWidgetDefaults {
+    func data(forKey defaultName: String) -> Data?
+    func set(_ value: Any?, forKey defaultName: String)
+    func removeObject(forKey defaultName: String)
+}
+
+extension UserDefaults: ReadinessWidgetDefaults {}
+
+/// The App Group domain read and written with an explicit CurrentUser.
+///
+/// `UserDefaults(suiteName:)` and `addSuiteNamed:` model a suite with AnyUser
+/// domains next to the CurrentUser ones (CFApplicationPreferences.c,
+/// `_CFPreferencesStandardDomainSetSuite`). A containerized process may not
+/// read an AnyUser source, so cfprefsd refuses it — once per process, on the
+/// first suite use — logging the kCFPreferencesAnyUser-with-a-container
+/// message and detaching that source (#991). Requesting the same App Group
+/// domain through `CFPreferences` with kCFPreferencesCurrentUser registers
+/// only the CurrentUser source, which a sandboxed app may hold, and the
+/// domain still resolves to the App Group. Domain, key and plist schema are
+/// unchanged.
+public struct ReadinessWidgetAppGroupDefaults: ReadinessWidgetDefaults {
+    public let appGroup: String
+
+    public init(appGroup: String) {
+        self.appGroup = appGroup
+    }
+
+    public func data(forKey defaultName: String) -> Data? {
+        CFPreferencesCopyValue(
+            defaultName as CFString,
+            appGroup as CFString,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesAnyHost
+        ) as? Data
+    }
+
+    public func set(_ value: Any?, forKey defaultName: String) {
+        CFPreferencesSetValue(
+            defaultName as CFString,
+            value as CFPropertyList?,
+            appGroup as CFString,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesAnyHost
+        )
+        CFPreferencesAppSynchronize(appGroup as CFString)
+    }
+
+    public func removeObject(forKey defaultName: String) {
+        CFPreferencesSetValue(
+            defaultName as CFString,
+            nil,
+            appGroup as CFString,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesAnyHost
+        )
+        CFPreferencesAppSynchronize(appGroup as CFString)
+    }
+}
+
 /// The app process and the WidgetKit process both use this exact App Group
-/// payload. The injected `UserDefaults` initializer makes save/load/clear
-/// behavior testable without touching a user's real App Group in tests.
+/// payload. The injected-defaults initializer makes save/load/clear behavior
+/// testable without touching a user's real App Group in tests.
 public final class ReadinessWidgetStore {
     public static let appGroup = "group.com.jirathip.sendlog"
     public static let snapshotKey = "sendmeter.readiness-widget.snapshot"
 
-    private let defaults: UserDefaults
+    private let defaults: ReadinessWidgetDefaults
 
-    public init(defaults: UserDefaults) {
+    public init(defaults: ReadinessWidgetDefaults) {
         self.defaults = defaults
     }
 
-    public static var appGroupStore: ReadinessWidgetStore? {
-        guard let defaults = UserDefaults(suiteName: appGroup) else { return nil }
-        return ReadinessWidgetStore(defaults: defaults)
+    public static var appGroupStore: ReadinessWidgetStore {
+        ReadinessWidgetStore(defaults: ReadinessWidgetAppGroupDefaults(appGroup: appGroup))
     }
 
     public func load() -> ReadinessWidgetSnapshot? {
