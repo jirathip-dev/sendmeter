@@ -115,11 +115,17 @@ final class ReadinessWidgetWiringTests: XCTestCase {
         XCTAssertTrue(contract.contains("kCFPreferencesCurrentUser"))
         XCTAssertFalse(contract.contains("kCFPreferencesAnyUser"))
         XCTAssertFalse(contract.contains("UserDefaults(suiteName:"))
-        // #991 fix round 1: the CFPreferences access stays guarded to
-        // platforms that have CoreFoundation, and appGroupStore keeps
-        // selecting it on Apple platforms (Linux gets the suite-backed
-        // fallback instead — `ReadinessWidgetFallbackDefaults`).
-        XCTAssertTrue(contract.contains("canImport(CoreFoundation)"))
+        // #991 fix rounds 1–2: the CFPreferences access stays compiled only on
+        // Apple targets, via an os() guard — NOT a module-availability guard
+        // (a Linux build ships a CoreFoundation subset without CFString or
+        // the CFPreferences functions, so `canImport(CoreFoundation)` is TRUE
+        // there and let the round-1 block compile on Linux). appGroupStore
+        // keeps selecting it on Apple platforms; Linux gets the suite-backed
+        // fallback (`ReadinessWidgetFallbackDefaults`).
+        XCTAssertTrue(
+            contract.contains("#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)")
+        )
+        XCTAssertFalse(contract.contains("canImport(CoreFoundation)"))
         XCTAssertTrue(
             contract.contains("ReadinessWidgetAppGroupDefaults(appGroup: appGroup)")
         )

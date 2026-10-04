@@ -2,11 +2,15 @@ import Foundation
 
 /// The suite-backed App Group accessor for platforms without CoreFoundation.
 ///
-/// #991 fix round 1: `ReadinessWidgetAppGroupDefaults` needs CoreFoundation
-/// (`CFPreferencesCopyValue` and friends), which Linux does not ship — the
+/// #991 fix rounds 1–2: `ReadinessWidgetAppGroupDefaults` needs the full
+/// Apple CoreFoundation (`CFPreferencesCopyValue` and friends); a Linux build
+/// ships only a CoreFoundation subset (no CFString, no CFPreferences), so
+/// `canImport(CoreFoundation)` is true there and is NOT a usable guard. The
 /// `package-tests` CI job builds this module inside a `swift:6.3` container
-/// through the watch package. `ReadinessWidgetStore.appGroupStore` therefore
-/// selects this accessor where `canImport(CoreFoundation)` is false.
+/// through the watch package; `ReadinessWidgetStore.appGroupStore` therefore
+/// selects this accessor on every non-Apple target, where the
+/// `os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)` target
+/// guard is false.
 ///
 /// It preserves the store contract exactly: the same App Group domain and
 /// key, save → load round-trips, and a domain that holds nothing — or a

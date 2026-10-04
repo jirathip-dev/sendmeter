@@ -77,7 +77,7 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertNil(store.load())
     }
 
-#if canImport(CoreFoundation)
+#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
     func testAppGroupDefaultsRoundTripThroughAnExplicitCurrentUserDomain() throws {
         // #991: the production App Group accessor reads and writes the domain
         // through an explicit CurrentUser CFPreferences access — the only user
@@ -105,6 +105,22 @@ final class ReadinessWidgetTests: XCTestCase {
         XCTAssertNil(store.load())
     }
 #endif
+
+    func testAppGroupStoreSelectsThePlatformAccessor() {
+        // #991 fix round 2: prove the SELECTION on this host, not just the
+        // source text. On an Apple build `appGroupStore` must carry the
+        // CoreFoundation accessor; a non-Apple build (Linux) must carry the
+        // fallback. (On Linux the os() guard also enforces this at compile
+        // time; this test asserts the running platform's branch.)
+        let store = ReadinessWidgetStore.appGroupStore
+        XCTAssertFalse(store.defaults is UserDefaults)
+        #if os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
+        XCTAssertTrue(store.defaults is ReadinessWidgetAppGroupDefaults)
+        XCTAssertFalse(store.defaults is ReadinessWidgetFallbackDefaults)
+        #else
+        XCTAssertTrue(store.defaults is ReadinessWidgetFallbackDefaults)
+        #endif
+    }
 
     func testFallbackDefaultsPreserveReadWriteAndNilSemantics() throws {
         // #991 fix round 1: the non-CoreFoundation accessor Linux uses

@@ -145,9 +145,10 @@ public enum ReadinessWidgetFreshness: Equatable, Sendable {
 /// The three defaults operations the widget payload store needs. `UserDefaults`
 /// already satisfies it; the production App Group accessors substitute an
 /// explicit `CFPreferences` implementation (`ReadinessWidgetAppGroupDefaults`)
-/// on Apple platforms and a suite-backed implementation
-/// (`ReadinessWidgetFallbackDefaults`) where CoreFoundation does not exist
-/// (Linux) — same domain, key, and read-back semantics (#991 fix round 1).
+/// on Apple platforms — selected by the `os(macOS) || os(iOS) || os(watchOS)
+/// || os(tvOS) || os(visionOS)` target guard — and a suite-backed
+/// implementation (`ReadinessWidgetFallbackDefaults`) everywhere else
+/// (Linux). Same domain, key, and read-back semantics (#991 fix rounds 1–2).
 public protocol ReadinessWidgetDefaults {
     func data(forKey defaultName: String) -> Data?
     func set(_ value: Any?, forKey defaultName: String)
@@ -156,7 +157,7 @@ public protocol ReadinessWidgetDefaults {
 
 extension UserDefaults: ReadinessWidgetDefaults {}
 
-#if canImport(CoreFoundation)
+#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
 /// The App Group domain read and written with an explicit CurrentUser.
 ///
 /// `UserDefaults(suiteName:)` and `addSuiteNamed:` model a suite with AnyUser
@@ -168,9 +169,11 @@ extension UserDefaults: ReadinessWidgetDefaults {}
 /// domain through `CFPreferences` with kCFPreferencesCurrentUser registers
 /// only the CurrentUser source, which a sandboxed app may hold, and the
 /// domain still resolves to the App Group. Domain, key and plist schema are
-/// unchanged. Compiled only where CoreFoundation exists; platforms without
-/// it (Linux) select `ReadinessWidgetFallbackDefaults` in `appGroupStore`
-/// instead (#991 fix round 1).
+/// unchanged. Compiled only on Apple targets (#991 fix round 2 — a Linux
+/// build ships a CoreFoundation *subset* without CFString or the
+/// CFPreferences functions, so module availability is not a usable guard);
+/// every other platform selects `ReadinessWidgetFallbackDefaults` in
+/// `appGroupStore` instead.
 public struct ReadinessWidgetAppGroupDefaults: ReadinessWidgetDefaults {
     public let appGroup: String
 
@@ -218,20 +221,23 @@ public final class ReadinessWidgetStore {
     public static let appGroup = "group.com.jirathip.sendlog"
     public static let snapshotKey = "sendmeter.readiness-widget.snapshot"
 
-    private let defaults: ReadinessWidgetDefaults
+    /// Internal, not private: the host tests assert which accessor
+    /// `appGroupStore` selected on this platform (#991 fix round 2).
+    let defaults: ReadinessWidgetDefaults
 
     public init(defaults: ReadinessWidgetDefaults) {
         self.defaults = defaults
     }
 
-    /// The production accessor. Apple platforms read and write through the
+    /// The production accessor. Apple targets read and write through the
     /// explicit CurrentUser CFPreferences access
-    /// (`ReadinessWidgetAppGroupDefaults`); platforms without CoreFoundation
-    /// (Linux — the `package-tests` container) use the suite-backed
+    /// (`ReadinessWidgetAppGroupDefaults`); every other platform (Linux — the
+    /// `package-tests` container builds there) uses the suite-backed
     /// `ReadinessWidgetFallbackDefaults`, which keeps the same domain, key
-    /// and nil-on-unreadable semantics (#991 fix round 1).
+    /// and nil-on-unreadable semantics (#991 fix round 1, guard corrected in
+    /// round 2 to an os() target check).
     public static var appGroupStore: ReadinessWidgetStore {
-        #if canImport(CoreFoundation)
+        #if os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
         ReadinessWidgetStore(defaults: ReadinessWidgetAppGroupDefaults(appGroup: appGroup))
         #else
         ReadinessWidgetStore(defaults: ReadinessWidgetFallbackDefaults(appGroup: appGroup))
