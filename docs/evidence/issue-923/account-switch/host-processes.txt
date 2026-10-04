@@ -1,0 +1,7 @@
+closeout receipts (owner build-gate hold), 2026-10-04T12:38:31Z
+pgrep -x xcodebuild: 8913  # the only hit is pid 8913, a PEER lane's run in /tmp/rev989-mutation; this lane never started its xcodebuild (runner was killed while host-waiting)
+pgrep -x yes: none
+pgrep -x dd: none
+my sim: impl923-sim impl923-sim (EB65C55F-4F88-49CC-AD85-F968DE08AA22) (Shutdown) 
+peer/dev sims booted (not mine): impl-989-sim (DCBADF10-B3C6-42D1-A5C7-D848830822F9) (Booted)  iphone17pro-sendmeter (0E127B96-BF94-48E0-A61B-0C018D9D79C7) (Booted)  
+df: /dev/disk3s5   228Gi   167Gi    31Gi    85%    2.6M  328M    1%   /System/Volumes/Data
