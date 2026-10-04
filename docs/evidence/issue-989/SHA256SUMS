@@ -1,14 +1,14 @@
 f3f65ab72b6f033da4c7dd581ea6ee5bca33a3e6ab9de1c112a2c9abb96270be  ./README.md
 1318f3b97a37186f1cf0c7f49a3297010302d6a9bf2b4ce9c6d76fc95bf3a66b  ./ci/ci-37179622828-rerun-full.log.gz
 fa3614c05fb2d378418eb364d56b534273d2e9153c7cfae41cfb8c32938a337d  ./ci/ci-37179622828-rerun-receipt.txt
-8186f131f3ddfc2f35c6058e54803d8333ecfe55e1a28db75a1ad4cb70ceb32d  ./gates/just-check-watch-project.log
+582560b11c6418ae38d31b1859e74ebc1fd87f3dbbdb814e61d2601ebba97868  ./gates/just-check-watch-project.log.gz
 262b33851a28fc8d958d198af665345ec50064ee1651335b7e6990850aa1544e  ./gates/just-core-final.log.gz
 7510b40674df97de69159957f9b25eb7d0cf4b11e84879c950369e843cdea122  ./gates/just-core-final2.log.gz
 ec8701522717e07ac90b1d7c8895a31c7c667b528bd5b130fe3645594948241b  ./gates/just-core-final3.log.gz
 5ce95a87b0d812c74b747c388e53ca232af78bfe791f43189c92e7e190163718  ./gates/just-core-hang1.log.gz
 c15585ccdf22240d6e39f9775dddf04f07118362dc9b5c8410e351f07a975192  ./gates/just-core-retry1.log.gz
-aeb336f256b0b3e4958a3fe2916e204eaf44e9a5774e90668383a682befe2f62  ./gates/just-gen.log
-14a10328e11e61cf5a565318748c9f9b80bbe5892d19bcc975f0988958f36e77  ./gates/just-gen2.log
+918a27c5304641b012c96aca4ca366d16d07ed184b89ad8ea6eead4c4bf2a62e  ./gates/just-gen.log.gz
+73f975492ba23d45a6d9374cdab7c5cd719f49033946b6fc011ec59a5fa54613  ./gates/just-gen2.log.gz
 0a3e5b8cb643cfd701bc85401d82b84beb2b4b442a5c3f0a02206348ece8a425  ./gates/just-list.txt
 71bcc40a31b2f022287a1ac57449600896fd1f0cb9ad624588fb1535b2ecd40e  ./mutation/red-mutation.diff
 2c507d52bade148d8b44f1fb98880b7cf44b5a94adbf2a5ac2707a4188f3362c  ./mutation/restored-sha256.txt
