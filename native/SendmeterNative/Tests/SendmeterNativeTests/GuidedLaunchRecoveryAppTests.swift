@@ -22,6 +22,21 @@ import Supabase
 ///   `AppModel.resolveForceTargetPlan` → `forceReferences` →
 ///   `SendmeterRepository.fetchRecordingSamples`. The retry is then driven
 ///   through the same chain with the preset the failure carries.
+///
+/// #989: the tests must not sample two OVERLAPPING launch passes.
+/// `makeSignedInModel` returns as soon as `currentUserID` is set, so the
+/// account bootstrap's own `refreshAll` (hydrate → launch repair → reconcile)
+/// is still in flight when a test calls `refreshAll` itself. The bootstrap's
+/// full recordings reconcile then tombstones every cached row the server
+/// snapshot does not carry (`payload='{}'`, `deleted_at` set) — including the
+/// seeded legacy row — and the launch repair, whose offloaded quarantine
+/// write looks for `deleted_at IS NULL`, legitimately finds nothing and
+/// publishes an EMPTY report (measured on CI: `quarantinedCount=0`,
+/// `healedEntityTypes=[]`, `:115/:116/:117` red on every PR). The two tests
+/// that observe the repair wait for `bootState == .signedIn` — the bootstrap
+/// pass returned — before driving their own refresh, so the row is
+/// quarantined by exactly the pass they assert and no second pass can
+/// interleave between a read and its quarantine. Assertions unchanged.
 @MainActor
 final class GuidedLaunchRecoveryAppTests: XCTestCase {
     private let userID = UUID()
@@ -96,6 +111,15 @@ final class GuidedLaunchRecoveryAppTests: XCTestCase {
         server.seedHistory(tag: "FDP", side: "left")
         let model = try await makeSignedInModel(server: server)
 
+        // #989: let the account bootstrap's own refresh pass return before
+        // this test drives its own (see the class note): two overlapping
+        // passes let the bootstrap's full recordings reconcile tombstone the
+        // seeded row before the launch repair's quarantine write can find it.
+        try await waitUntil(
+            "the account bootstrap to finish (bootState == .signedIn)",
+            isSatisfied: { model.bootState == .signedIn },
+            observed: { bootstrapState(model) }
+        )
         await model.refreshAll(showSpinner: false)
 
         // The app launched: the authoritative history reconciled through the
@@ -258,6 +282,14 @@ final class GuidedLaunchRecoveryAppTests: XCTestCase {
         let server = FakeRecoveryPostgREST()
         server.seedHistory(tag: "FDP", side: "left")
         let model = try await makeSignedInModel(server: server)
+        // #989: the same bootstrap-settle gate as the legacy-payload test —
+        // this test asserts the repair notice exists, which a second
+        // overlapping pass's tombstone can otherwise take away.
+        try await waitUntil(
+            "the account bootstrap to finish (bootState == .signedIn)",
+            isSatisfied: { model.bootState == .signedIn },
+            observed: { bootstrapState(model) }
+        )
         await model.refreshAll(showSpinner: false)
         XCTAssertNotNil(model.lastLocalDataRepair, "fixture: the repair notice is on screen")
 
@@ -410,6 +442,42 @@ final class GuidedLaunchRecoveryAppTests: XCTestCase {
 
     // MARK: - Harness
 
+    /// #989/#978: every wait is bounded by a wall-clock deadline, never by a
+    /// fixed iteration budget. The deadline decides only how long a wait may
+    /// take; what is asserted never changes, and expiry reports the state
+    /// actually observed.
+    private static let waitDeadline: Duration = .seconds(60)
+
+    /// Polls `isSatisfied` until it holds or `timeout` elapses, then fails the
+    /// test with the elapsed time and the state `observed`.
+    @MainActor
+    private func waitUntil(
+        _ expectation: String,
+        timeout: Duration = GuidedLaunchRecoveryAppTests.waitDeadline,
+        isSatisfied: @MainActor () -> Bool,
+        observed: @MainActor () -> String
+    ) async throws {
+        let started = ContinuousClock.now
+        while ContinuousClock.now - started < timeout {
+            if isSatisfied() { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        guard isSatisfied() else {
+            let elapsed = ContinuousClock.now - started
+            XCTFail("timed out after \(elapsed) waiting for \(expectation); observed \(observed())")
+            return
+        }
+    }
+
+    /// The state a bootstrap-settle wait expired on.
+    @MainActor
+    private func bootstrapState(_ model: AppModel) -> String {
+        let repair = model.lastLocalDataRepair
+            .map { "count=\($0.quarantinedCount), healed=\($0.healedEntityTypes)" }
+            ?? "nil"
+        return "bootState=\(String(describing: model.bootState)), lastLocalDataRepair=\(repair)"
+    }
+
     private func makeSignedInModel(server: FakeRecoveryPostgREST) async throws -> AppModel {
         let suite = "GuidedLaunchRecoveryAppTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -454,11 +522,13 @@ final class GuidedLaunchRecoveryAppTests: XCTestCase {
             cacheStorageSeams: seams
         )
 
-        var waited = 0
-        while model.currentUserID == nil, waited < 200 {
-            waited += 1
-            await Task.yield()
-        }
+        // #989: deadline-bound, not a fixed yield budget — a contended runner
+        // must report the state it timed out on instead of silently giving up.
+        try await waitUntil(
+            "the seeded auth session to become currentUserID",
+            isSatisfied: { model.currentUserID != nil },
+            observed: { "currentUserID=\(model.currentUserID?.uuidString ?? "nil")" }
+        )
         XCTAssertNotNil(model.currentUserID, "seeded auth session never became currentUserID")
         return model
     }
