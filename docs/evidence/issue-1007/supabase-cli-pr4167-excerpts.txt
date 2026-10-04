@@ -14,7 +14,7 @@ Patch sha256: 2fbc38416524d79931a93079ff3ed6d960d06da155313edbc39f21b643c292f9
 +const (
 +	defaultJwtSecret      = "super-secret-jwt-token-with-at-least-32-characters-long"
 +	defaultJwtExpiry      = 1983812996
-+	defaultPublishableKey = "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH"
++	defaultPublishableKey = "<value redacted for the secret-scan gate; byte-identical to the Watch simulator literal; full value at native/SendmeterNative/Tests/SendmeterCoreTests/PublishableKeyParityTests.swift:30 (allowlisted); value sha256 9705102db0d5f99ee08daa19a73e510d9877a2a9add9369da247cbbe6c2a0140>"
 +	defaultSecretKey      = "<redacted: default local secret key; not a project credential; value visible in the pinned patch sha256 above>"
 +)
 +
