@@ -1102,6 +1102,15 @@ public final class AppModel {
             }
         }
 
+        // #980: the credential seam presents only the account this model is
+        // publishing. The SDK stores a new session before the auth-event loop
+        // above processes that boundary, so this provider is what stops an
+        // outgoing account's in-flight work from being stamped with the
+        // incoming account's credential (`AuthService.ensureFreshSession`).
+        auth.publishedAccountUserIDProvider = { [weak self] in
+            self?.currentUserID
+        }
+
         // #992 F1: the queue-open failure deferred above — every stored
         // property now exists, so the line can go through the same sink as
         // every other sync/replay failure.

@@ -504,7 +504,8 @@ final class AccountSwitchInFlightAppTests: XCTestCase {
                 + "bootstrapOutstanding=\(bootstrapHold.isOutstanding) "
                 + "insertOutstanding=\(firstInsert.isOutstanding) "
                 + "retryArrived=\(retryArrived) "
-                + "crossed=\(crossed.map { "\($0.method) \($0.path)" })"
+                + "crossed=\(crossed.map { "\($0.method) \($0.path)" }) "
+                + "refusedLocally=\(capturedFailures.map(\.operation))"
         )
         XCTAssertTrue(
             crossed.isEmpty,
