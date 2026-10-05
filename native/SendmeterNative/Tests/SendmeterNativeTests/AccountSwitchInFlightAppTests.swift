@@ -380,6 +380,180 @@ final class AccountSwitchInFlightAppTests: XCTestCase {
         XCTAssertEqual(queueCount(for: accountA), 1, "A's intent stays owned by A")
     }
 
+    // MARK: - #980: the pre-event credential window
+
+    /// #980: the SDK stores the new account's session BEFORE the model's
+    /// auth-event loop handles `.signedIn` (`AppModel.handleAuthEvent` runs
+    /// serially on `authStateChanges`, and it is parked inside account A's
+    /// `.initialSession` bootstrap while the held request is suspended).
+    /// Signing in as B in that window leaves the SDK's credential source
+    /// holding B's session while `currentUserID` is still A — so any
+    /// A-owned work that reaches the transport in this window would be built
+    /// with B's bearer (`AuthService.ensureFreshSession` reads the live SDK
+    /// session).
+    ///
+    /// This test opens that window deliberately, releases an A-owned durable
+    /// retry inside it, and asserts the credentials the retry actually goes
+    /// out with — plus that the window was real (both holds still outstanding
+    /// at the switch, `currentUserID` still A).
+    func testAPreEventWindowRetryNeverCarriesTheUnacceptedAccountsBearer() async throws {
+        let harness = try await makeHarness(holdBootstrap: true)
+        let model = harness.model
+        let server = harness.server
+        guard let bootstrapHold = harness.bootstrapHold else {
+            XCTFail("the window harness must hold the bootstrap request")
+            return
+        }
+        defer { cleanUp(harness) }
+        defer { bootstrapHold.release(status: 200, body: Data("[]".utf8)) }
+
+        // The window's premise: A's bootstrap is parked inside the auth-event
+        // loop and its own request is genuinely UNANSWERED. An instantly
+        // released hold (the #933 invalidated run) would show
+        // `isOutstanding == false` right here.
+        XCTAssertEqual(model.currentUserID, accountA)
+        XCTAssertEqual(
+            model.bootState,
+            .loading,
+            "A's bootstrap is still inside handleAuthEvent(.initialSession)"
+        )
+        XCTAssertTrue(
+            bootstrapHold.isOutstanding,
+            "the window is held open by a genuinely suspended bootstrap request"
+        )
+
+        var capturedFailures: [PersistedFailureLine] = []
+        model.persistedFailureSink = PersistedFailureSink { line in
+            capturedFailures.append(line)
+        }
+
+        let presetA = Self.makePreset(name: "pre-event window \(UUID().uuidString)")
+        var rewritten = presetA
+        rewritten.name = "\(presetA.name) revised"
+
+        // A's durable write, in flight before the switch.
+        let firstInsert = server.holdNext(method: "POST", pathSuffix: "/tindeq_presets")
+        let accepted = await model.savePreset(presetA, isNew: true)
+        XCTAssertTrue(accepted, "A's durable intent must be persisted")
+        await expectEntry(firstInsert, "A's insert must reach the transport", server: server)
+        XCTAssertTrue(
+            firstInsert.isOutstanding,
+            "A's insert is genuinely suspended, not merely requested"
+        )
+        XCTAssertEqual(
+            bearerAccountName(server.loggedRequests.last {
+                $0.method == "POST" && $0.path.hasSuffix("/tindeq_presets")
+            }?.bearer),
+            "account A's",
+            "the pre-switch request is A's and carries A's credential"
+        )
+
+        // Re-author the same queue identity while the first request is in
+        // flight: the completing upload's defer then has a replacement to
+        // re-attempt. That retry is the request this test observes.
+        let rewrittenAccepted = await model.savePreset(rewritten, isNew: false)
+        XCTAssertTrue(rewrittenAccepted, "A's replacement intent must be persisted")
+
+        // --- THE WINDOW ----------------------------------------------------
+        // The SDK stores B's session here. The model's auth-event loop is
+        // still parked in A's bootstrap, so the `.signedIn` event queues up
+        // behind the held request and `currentUserID` stays A.
+        server.signInUserID = accountB
+        await model.signIn(email: "\(accountB.uuidString)@example.test", password: "probe-password")
+
+        XCTAssertEqual(
+            harness.authClient.currentSession?.user.id,
+            accountB,
+            "the SDK's credential source already holds B's session"
+        )
+        XCTAssertEqual(
+            model.currentUserID,
+            accountA,
+            "the model has not processed .signedIn yet — this is the window"
+        )
+        XCTAssertTrue(bootstrapHold.isOutstanding, "the window is still held open")
+        XCTAssertTrue(firstInsert.isOutstanding, "A's insert is still in flight at the switch")
+
+        // Release A's insert; its defer re-attempts the replacement NOW, while
+        // the model still publishes A.
+        let retryHold = server.holdNext(method: "POST", pathSuffix: "/tindeq_presets")
+        firstInsert.release(status: 201, body: presetRowJSON(name: rewritten.name))
+        let retryArrived = await retryHold.waitForEntry(timeout: 15)
+        // Bound the wait for whichever outcome this build produces: the retry
+        // reaching the transport (pre-fix) or its local refusal (post-fix).
+        try await waitUntil("the window retry settled", timeout: 15) {
+            retryArrived || !capturedFailures.isEmpty
+        }
+        try await waitForQuietLog(server)
+
+        // Sampled INSIDE the window: every request the transport has seen so
+        // far arrived while the model published account A.
+        let requestsAtSample = server.loggedRequests.count
+        let windowRequests = Array(server.loggedRequests.prefix(requestsAtSample))
+        let crossed = windowRequests.filter { request in
+            request.bearer == "Bearer \(Self.accessToken(for: accountB))"
+                && !request.path.contains("/auth/v1/")
+        }
+        // The committed log must carry the window's own state, not only its
+        // failures: holds still outstanding, who the model publishes, who the
+        // SDK would hand out, and where the retry went. Account ids and hold
+        // states only — never token text.
+        print(
+            "[#980] window sample: currentUserID=\(model.currentUserID?.uuidString ?? "nil") "
+                + "sdkSessionUser=\(harness.authClient.currentSession?.user.id.uuidString ?? "nil") "
+                + "bootstrapOutstanding=\(bootstrapHold.isOutstanding) "
+                + "insertOutstanding=\(firstInsert.isOutstanding) "
+                + "retryArrived=\(retryArrived) "
+                + "crossed=\(crossed.map { "\($0.method) \($0.path)" }) "
+                + "refusedLocally=\(capturedFailures.map(\.operation))"
+        )
+        XCTAssertTrue(
+            crossed.isEmpty,
+            """
+            an A-owned request must never reach the backend with the unaccepted \
+            account's credential: crossed=\(crossed.map { "\($0.method) \($0.path)" }), \
+            retryArrived=\(retryArrived), \
+            currentUserID=\(String(describing: model.currentUserID)), \
+            sdkSession=\(String(describing: harness.authClient.currentSession?.user.id)), \
+            transport saw \(server.requestSummary)
+            """
+        )
+        XCTAssertEqual(
+            model.currentUserID,
+            accountA,
+            "the sample must be taken inside the window"
+        )
+
+        // The retry must have run and been refused before the transport — a
+        // green run in which it was never attempted would prove nothing.
+        let refusals = capturedFailures.filter { $0.operation == "queue-upload:preset" }
+        XCTAssertFalse(
+            refusals.isEmpty,
+            """
+            the window retry must be attempted and refused locally \
+            (retryArrived=\(retryArrived)); \
+            attempted=\(capturedFailures.map(\.operation))
+            """
+        )
+
+        // --- Unwind: let the queued `.signedIn` through and settle B. -------
+        retryHold.release(status: 201, body: presetRowJSON(name: rewritten.name))
+        bootstrapHold.release(status: 200, body: Data("[]".utf8))
+        try await waitUntil("account B became currentUserID", timeout: 120) {
+            model.currentUserID == self.accountB
+        }
+        try await waitUntil("account B's bootstrap finished", timeout: 120) {
+            model.bootState == .signedIn
+                && model.isRefreshing == false
+                && model.isLoadingData == false
+        }
+        XCTAssertEqual(
+            queueCount(for: accountA),
+            1,
+            "A's intent stays owned by A — an unaccepted account's credential must not acknowledge it"
+        )
+    }
+
     // MARK: - Harness
 
     private struct Harness {
@@ -388,6 +562,13 @@ final class AccountSwitchInFlightAppTests: XCTestCase {
         let directory: URL
         let seededSessionID: UUID
         let lateRowID: UUID
+        /// #980: the SDK's own credential store, so a test can assert what the
+        /// SDK would hand a request built at this moment.
+        let authClient: AuthClient
+        /// #980: non-nil only for the window harness — the bootstrap request
+        /// whose suspension parks the auth-event loop inside account A's
+        /// `.initialSession` handling.
+        let bootstrapHold: AccountSwitchPostgREST.Hold?
     }
 
     /// Sends a real `.signedIn` through the SDK's `authStateChanges` by signing
@@ -422,8 +603,19 @@ final class AccountSwitchInFlightAppTests: XCTestCase {
         XCTAssertTrue(arrived, "\(description) — transport saw \(server.requestSummary)")
     }
 
+    /// Names which fixture account a logged request's bearer belongs to,
+    /// WITHOUT printing the credential: the lane's logs are committed, so no
+    /// token text (even the deterministic fixture JWT) goes into a message.
+    private func bearerAccountName(_ bearer: String?) -> String {
+        guard let bearer else { return "no" }
+        if bearer == "Bearer \(Self.accessToken(for: accountA))" { return "account A's" }
+        if bearer == "Bearer \(Self.accessToken(for: accountB))" { return "account B's" }
+        return "an unexpected"
+    }
+
     private func makeHarness(
-        beforeSnapshotRead: @escaping @Sendable () async -> Void = {}
+        beforeSnapshotRead: @escaping @Sendable () async -> Void = {},
+        holdBootstrap: Bool = false
     ) async throws -> Harness {
         let seededSessionID = UUID()
         let directory = FileManager.default.temporaryDirectory
@@ -438,6 +630,15 @@ final class AccountSwitchInFlightAppTests: XCTestCase {
 
         let server = AccountSwitchPostgREST()
         server.signInUserID = accountA
+        // #980: when the test needs the pre-event window, the bootstrap's own
+        // sessions request is registered as a hold BEFORE the model exists, so
+        // no request can slip past it. `handleAuthEvent(.initialSession)` is
+        // serial on the auth-event loop and awaits this request, so the loop
+        // parks here — with `authSession` already set to account A — until the
+        // test releases it.
+        let bootstrapHold: AccountSwitchPostgREST.Hold? = holdBootstrap
+            ? server.holdNext(method: "GET", pathSuffix: "/rest/v1/sessions")
+            : nil
         let suite = "AccountSwitchInFlightAppTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         let storage = SwitchAuthStorage()
@@ -493,15 +694,29 @@ final class AccountSwitchInFlightAppTests: XCTestCase {
         try await waitUntil("the seeded account A session became currentUserID", timeout: 90) {
             model.currentUserID == self.accountA
         }
-        try await waitUntil("account A's bootstrap finished", timeout: 120) {
-            model.bootState == .signedIn && model.hasLoadedSessions && model.isRefreshing == false
+        if let bootstrapHold {
+            // #980: the window harness stops HERE. Account A is the published
+            // account and the auth-event loop is parked inside A's bootstrap;
+            // the bootstrap request must be genuinely suspended, not merely
+            // requested.
+            let entered = await bootstrapHold.waitForEntry(timeout: 120)
+            XCTAssertTrue(
+                entered,
+                "the bootstrap sessions request must be held open — transport saw \(server.requestSummary)"
+            )
+        } else {
+            try await waitUntil("account A's bootstrap finished", timeout: 120) {
+                model.bootState == .signedIn && model.hasLoadedSessions && model.isRefreshing == false
+            }
         }
         return Harness(
             model: model,
             server: server,
             directory: directory,
             seededSessionID: seededSessionID,
-            lateRowID: UUID()
+            lateRowID: UUID(),
+            authClient: client.auth,
+            bootstrapHold: bootstrapHold
         )
     }
 
@@ -760,6 +975,17 @@ private final class AccountSwitchPostgREST: @unchecked Sendable {
             stateLock.lock()
             defer { stateLock.unlock() }
             return entered
+        }
+
+        /// #980: whether the matching request has reached the transport and is
+        /// still UN-ANSWERED — i.e. the hold really holds. A hold that released
+        /// instantly (the #933 invalidated-run bug) reads `false` here even
+        /// when `hasEntered` is true, so a window built on it would be a
+        /// fabricated one.
+        var isOutstanding: Bool {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return entered && !delivered
         }
 
         fileprivate func suspend(_ urlProtocol: AccountSwitchProtocol, request: URLRequest) {
