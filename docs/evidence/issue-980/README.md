@@ -38,6 +38,7 @@ both hold states, `retryArrived`, `crossed` and `refusedLocally`.
 | `coherent-cache-standalone.log.gz` | The attempt-1 offender standalone at the same head: **passed (4.786 s)**, raw exit 0. |
 | `just-fast.log.gz` | `just fast` raw exit 0 — anti-slop passed; core **1523 / 0**, watch-core **600 / 0**, health-core **70 / 0**. |
 | `docs-check.log.gz` | `bash scripts/check-docs-stale-commands.sh` raw exit 0. |
+| `check-static.log.gz` | `just check-static` raw exit **1** — pre-existing at base ("Generated project is missing the Force source: ManualForceFullscreen.swift"); not wired into `just ci`. |
 | `check-watch-project.log.gz` | `just check-watch-project` raw exit 0 ("generated phone + Watch graph ownership verified"). |
 | `git-diff-check.log.gz` | `git diff --check` and `git diff --cached --check` raw exit 0. |
 | `SHA256SUMS` | sha256 of every committed file in this directory. |
