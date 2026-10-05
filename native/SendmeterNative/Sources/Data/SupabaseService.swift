@@ -34,6 +34,29 @@ public enum PasskeyPresentation {
     }
 }
 
+/// #980: a credential-selection refusal — deliberately NOT a `ServerRejection`
+/// and not an `AuthRecoveryError`.
+///
+/// Raised when the SDK's stored session belongs to an account the app is not
+/// publishing yet: the window between the SDK storing a new account's session
+/// and `AppModel.handleAuthEvent` processing that boundary. Nothing is cleared
+/// and nothing is signed out; the caller's work fails retryably and runs again
+/// under its own account once the boundary lands. The queue's own
+/// classification reads `ServerRejectionClassifying`, so this type
+/// deliberately does not conform to it: a refusal keeps the item's plain
+/// retryable backoff and never spends a quarantine budget on the app's own
+/// race.
+struct AuthCredentialWindowRefusal: Error, Equatable {
+    let publishedAccountUserID: UUID
+    let candidateUserID: UUID
+}
+
+extension AuthCredentialWindowRefusal: LocalizedError {
+    var errorDescription: String? {
+        "The stored session belongs to an account the app is not currently publishing."
+    }
+}
+
 @MainActor
 public final class AuthService {
     public let client: SupabaseClient
@@ -54,6 +77,18 @@ public final class AuthService {
     /// Dedupe the local self-heal sign-out. The rejection marker is persisted
     /// before this task is created, so a relaunch cannot retry the same poison.
     private var poisonedSessionRecoveryTask: Task<Void, Never>?
+    /// #980: the account the app currently PUBLISHES, supplied by `AppModel`
+    /// after construction (its `currentUserID` — the same value its
+    /// account/epoch publication fences read). `nil` means there is no
+    /// published identity to enforce: a bare `AuthService` (tests, previews)
+    /// or a signed-out app.
+    ///
+    /// The SDK stores a new session BEFORE the auth-event loop processes the
+    /// boundary, so for a moment the stored credential belongs to the incoming
+    /// account while the app still owns work for the outgoing one. The one
+    /// token-bearing seam (`ensureFreshSession`) must never hand that incoming
+    /// credential to the outgoing account's work.
+    var publishedAccountUserIDProvider: (@MainActor () -> UUID?)?
 
     public init(
         client: SupabaseClient = SupabaseEnvironment.client,
@@ -118,6 +153,7 @@ public final class AuthService {
                 )
             }
             if !SessionFreshness.needsRefresh(expiresAt: current.expiresAt) {
+                try requirePublishedAccount(current)
                 return current
             }
         }
@@ -154,6 +190,7 @@ public final class AuthService {
             // The refresh boundary (supabase-swift's `.tokenRefreshed`) is
             // recorded by `AppModel.handleAuthEvent`; this guard records only
             // failures so a single refresh is never counted twice.
+            try requirePublishedAccount(session)
             return session
         } catch {
             let decision = recoveryDecision(for: error)
@@ -168,6 +205,25 @@ public final class AuthService {
             record(.failure, diagnosticDetail(for: error))
             throw error
         }
+    }
+
+    /// #980: refuses a session that belongs to an account the app is not
+    /// currently publishing. Synchronous on purpose: the provider reads live
+    /// `@MainActor` state, with no `await` between session selection and this
+    /// check.
+    ///
+    /// This is deliberately NOT an auth guard tightening: nothing is cleared,
+    /// nothing is signed out, and a `nil` provider (no published identity to
+    /// enforce) skips the check entirely. It only prevents the app's own
+    /// pre-boundary window from stamping the outgoing account's work with the
+    /// incoming account's credential.
+    private func requirePublishedAccount(_ session: Auth.Session) throws {
+        guard let published = publishedAccountUserIDProvider?(),
+              published != session.user.id else { return }
+        throw AuthCredentialWindowRefusal(
+            publishedAccountUserID: published,
+            candidateUserID: session.user.id
+        )
     }
 
     /// Validates a session delivered by the SDK's auth event stream before it
