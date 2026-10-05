@@ -1,0 +1,69 @@
+#991 fix round 2 — guard truth table, selection proof, static guarantee (2026-10-04 13:02 UTC)
+
+Round 1 shipped `#if canImport(CoreFoundation)`; the ios-ci `package-tests` job (run 37203412812,
+job 111439538188, at head 2acdf482) compiled that block ON LINUX — 80 `cannot find` errors at
+ReadinessWidgetContract.swift:182-209 for CFString / CFPropertyList / CFPreferencesCopyValue /
+CFPreferencesSetValue / CFPreferencesAppSynchronize / kCFPreferencesCurrentUser / kCFPreferencesAnyHost.
+So `canImport(CoreFoundation)` is TRUE on Linux: swift-corelibs-foundation ships a CoreFoundation
+SUBSET without those symbols. Round 2 replaces the module-availability guard with a target guard:
+
+    #if os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
+
+(present 2x in ReadinessWidgetContract.swift: the accessor's compile guard and the
+`appGroupStore` selection site; the health-core test gate uses the same condition.)
+
+## Truth table
+
+| target | branch | why the symbol availability matches | proof |
+|---|---|---|---|
+| macOS (host, arm64-apple-macosx26.0) | APPLE — CF accessor | os(macOS) true; full CF | probe SIL + module getter SIL, both run here |
+| iOS device (arm64-apple-ios26.0) | APPLE — CF accessor | os(iOS) true; full CF | probe SIL + module getter SIL, both run here |
+| iOS simulator (arm64-apple-ios26.0-simulator) | APPLE — CF accessor | os(iOS) true for simulator triples | probe SIL + module getter SIL |
+| watchOS (arm64-apple-watchos26.0) | APPLE — CF accessor | os(watchOS) true; full CF | probe SIL + module getter SIL |
+| watchOS simulator (–simulator triple) | APPLE — CF accessor | os(watchOS) true for simulator triples | probe SIL + module getter SIL |
+| Linux (swift:6.3 container, package-tests job) | FALLBACK — suite accessor | os() is a target-triple condition: a Linux build is os(Linux), which none of the five alternatives names — the Apple branch is unreachable by construction, whatever modules Linux ships | not runnable here (no Linux toolchain/SDK; no Docker daemon) — the hosted package-tests job is the authority; its verdict at the head of this commit is quoted in .report-991-fix2.md |
+
+`#if !os(Linux)` alone was not used (the brief forbids it and it would silently exclude other
+non-Apple targets); `canImport(Darwin)` was not used because round 1's failure mode was exactly an
+availability-condition assumption about Linux module content — os() cannot be fooled by module content.
+
+## Local proof commands (all run on this host, Apple Swift 6.3.3)
+
+Guard probe (a one-constant file compiled per SDK; the SIL string literal shows the branch taken):
+
+    xcrun --sdk <sdk> swiftc -parse-as-library -emit-sil -sdk $(xcrun --sdk <sdk> --show-sdk-path) \
+        -target <triple> /tmp/fix2-guardprobe.swift | grep -oE '"APPLE"|"FALLBACK"'
+
+    macosx (arm64-apple-macosx26.0) -> "APPLE"
+    iphoneos (arm64-apple-ios26.0) -> "APPLE"
+    iphonesimulator (arm64-apple-ios26.0-simulator) -> "APPLE"
+    watchos (arm64-apple-watchos26.0) -> "APPLE"
+    watchsimulator (arm64-apple-watchos26.0-simulator) -> "APPLE"
+
+Accessor selection (SIL of the real module sources; the `appGroupStore.getter` body calls the
+selected initializer):
+
+    xcrun --sdk <sdk> swiftc -parse-as-library -emit-sil -module-name SendLogHealthCore -sdk <sdk-path> \
+        -target <triple> native-plugins/sendlog-health-core/Sources/SendLogHealthCore/*.swift \
+        | awk '/appGroupStore.getter$/{f=1} f{print} f&&/end sil function/{exit}'
+
+Selections observed in the getter bodies (full extracts: fix2-sil-selection-<sdk>.txt):
+
+    macosx: ReadinessWidgetAppGroupDefaults  (errors: 0)
+    iphoneos: ReadinessWidgetAppGroupDefaults  (errors: 0)
+    iphonesimulator: ReadinessWidgetAppGroupDefaults  (errors: 0)
+    watchos: ReadinessWidgetAppGroupDefaults  (errors: 0)
+    watchsimulator: ReadinessWidgetAppGroupDefaults  (errors: 0)
+
+Runtime assertion on this host: health-core test `testAppGroupStoreSelectsThePlatformAccessor`
+asserts `ReadinessWidgetStore.appGroupStore.defaults is ReadinessWidgetAppGroupDefaults` (and is NOT
+a bare UserDefaults / the fallback); the Linux `#else` of that test asserts the fallback when it runs there.
+
+## Static guarantee for the Linux side (cannot be compiled here)
+
+- The `appGroupStore` `#else` branch is exactly `ReadinessWidgetStore(defaults: ReadinessWidgetFallbackDefaults(appGroup: appGroup))` — no CF symbols.
+- ReadinessWidgetFallbackDefaults.swift: CF-symbol references in comment-stripped code: 0 (they appear only in its doc comment).
+- The module imports Foundation only (all 9 files); no Darwin/CoreFoundation/SwiftUI/HealthKit imports.
+- Disclosed: no Linux toolchain/SDK is installed on this host (`swift sdk list` -> none) and the Docker
+  daemon is not running, so the Linux compile is NOT executed here; the hosted `package-tests` job is the authority.
+

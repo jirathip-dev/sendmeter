@@ -54,6 +54,10 @@ Asia/Bangkok schedule readings and the alternate UTC reading; recorded
 | Runner class | Blacksmith | Blacksmith 4-vCPU Ubuntu (`blacksmith-4vcpu-ubuntu-2404`); no macOS native job allocated for the MCP-only change |
 | GitHub-billable minutes | 0 | 0 (timing API reports 0 ms billable; Blacksmith-side charge stays separate, as before) |
 
+The runner rows above record the measurement window. Since 2026-10-02 every
+workflow runs on GitHub-hosted runners (`ubuntu-latest`, `macos-26`) instead of
+Blacksmith, so the 0 GitHub-billable-minute figures do not describe current runs.
+
 The single in-window PR ran only its relevant gates — `quality` (MCP) and
 `Secret scan` (gitleaks) — and skipped the macOS native/iOS job, so the
 path-aware classifier worked as designed for the MCP-only change. Coverage is

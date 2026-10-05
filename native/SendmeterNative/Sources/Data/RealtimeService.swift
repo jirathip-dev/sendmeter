@@ -112,6 +112,20 @@ public final class RealtimeService: ObservableObject {
             // instances this request created, identity-checked so a newer
             // request's reused instances survive (#626 review).
             await abandon(workoutChannel, dataChannel)
+            // #992 round 2: this join failure used to be silent. Realtime is
+            // best-effort by design (the pull path covers the data), but a
+            // device-only defect where realtime never joins must be nameable
+            // in the persisted transcript — emitted through the production
+            // logger directly (off the injectable sink; the emission audit
+            // ring observes it).
+            PersistedFailureLog.emit(
+                PersistedFailureLog.line(
+                    channel: .syncReplayFailure,
+                    operation: "realtime-subscribe",
+                    error: error,
+                    surfaced: false
+                )
+            )
         }
     }
 

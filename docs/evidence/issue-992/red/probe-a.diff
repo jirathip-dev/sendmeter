@@ -1,0 +1,13 @@
+diff --git a/native/SendmeterNative/Sources/Core/PersistedFailureLog.swift b/native/SendmeterNative/Sources/Core/PersistedFailureLog.swift
+index fbcf41b..79bd9c3 100644
+--- a/native/SendmeterNative/Sources/Core/PersistedFailureLog.swift
++++ b/native/SendmeterNative/Sources/Core/PersistedFailureLog.swift
+@@ -62,7 +62,7 @@ public struct PersistedFailureLine: Equatable, Sendable {
+ 
+     public init(
+         channel: Channel,
+-        level: Level = .notice,
++        level: Level = .debug,
+         operation: String,
+         domain: String,
+         code: Int,

@@ -95,9 +95,12 @@ public enum SignOutQueuePolicy {
         signOut: @escaping () async throws -> Void,
         timeout: TimeInterval = drainTimeout
     ) async -> (outcome: SignOutDrainOutcome?, signOutError: Error?) {
-        let (uploaded, timedOut) = await withDeadline(timeout: timeout, fallback: 0) {
+        // #1004: the bounded await is shared with the guided launch.
+        let raced = await AsyncDeadline.race(timeout: timeout, fallback: 0) {
             await drain(userId)
         }
+        let uploaded = raced.value
+        let timedOut = raced.timedOut
         let remaining = await countRemaining(userId)
         if remaining > 0 {
             if await askAboutRemainder(remaining) == .cancel {
@@ -112,71 +115,4 @@ public enum SignOutQueuePolicy {
         }
     }
 
-    private enum DeadlineRace<T: Sendable>: Sendable {
-        case finished(T)
-        case timedOut
-    }
-
-    /// Resolve to `fallback` if `work` hasn't settled within `timeout`. The
-    /// work is NOT cancelled — there is no way to cancel an in-flight insert —
-    /// it just stops being waited on (the web's `withDeadline` is the same
-    /// decision, for the same reason: an insert that lands after the deadline
-    /// removes its own entry, and one that lands after `signOut()` fails and
-    /// leaves the entry exactly where it was). Exactly-once resumption is
-    /// guarded by the lock; the loser of the race becomes a no-op.
-    private static func withDeadline<T: Sendable>(
-        timeout: TimeInterval,
-        fallback: T,
-        work: @escaping @Sendable () async -> T
-    ) async -> (value: T, timedOut: Bool) {
-        guard timeout > 0 else { return (fallback, true) }
-        let box = DeadlineBox(fallback: fallback)
-        return await withCheckedContinuation { continuation in
-            box.setup(continuation: continuation)
-            Task {
-                box.finish(.finished(await work()))
-            }
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                box.finish(.timedOut)
-            }
-        }
-    }
-
-    /// The two unstructured tasks above share one resumption point; `finish`
-    /// must be called at most once. `@unchecked Sendable` is sound because
-    /// every mutation is under the lock.
-    private final class DeadlineBox<T: Sendable>: @unchecked Sendable {
-        private let lock = NSLock()
-        private var resumed = false
-        private var continuation: CheckedContinuation<(value: T, timedOut: Bool), Never>?
-        private let fallback: T
-
-        init(fallback: T) {
-            self.fallback = fallback
-        }
-
-        func setup(continuation: CheckedContinuation<(value: T, timedOut: Bool), Never>) {
-            lock.lock()
-            self.continuation = continuation
-            lock.unlock()
-        }
-
-        func finish(_ race: DeadlineRace<T>) {
-            lock.lock()
-            guard !resumed, let continuation else {
-                lock.unlock()
-                return
-            }
-            resumed = true
-            self.continuation = nil
-            lock.unlock()
-            switch race {
-            case let .finished(value):
-                continuation.resume(returning: (value, false))
-            case .timedOut:
-                continuation.resume(returning: (fallback, true))
-            }
-        }
-    }
 }

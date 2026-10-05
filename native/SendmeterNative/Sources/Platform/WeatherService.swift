@@ -107,6 +107,11 @@ public final class WeatherService: ObservableObject {
     private let refreshPolicy = WeatherRefreshPolicy()
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
+    /// #992 F1: the weather refresh is one of the sync-adjacent paths whose
+    /// failure the card suppresses when data is already on screen; the line
+    /// goes through the same injectable binding `AppModel` uses (tests
+    /// substitute a capture here too).
+    var persistedFailureSink: PersistedFailureSink = .production
 
     public init(
         defaults: UserDefaults = .standard,
@@ -159,7 +164,17 @@ public final class WeatherService: ObservableObject {
             } catch {
                 // ERA5 is context only. A successful current reading remains
                 // useful when the archive is unavailable, exactly like web.
+                // #992 F1: named anyway — the suppressible half of the weather
+                // path used to be silent on-device.
                 climate = nil
+                persistedFailureSink(
+                    PersistedFailureLog.line(
+                        channel: .syncReplayFailure,
+                        operation: "weather-climate",
+                        error: error,
+                        surfaced: false
+                    )
+                )
             }
 
             let fresh = SendConditionsScore.makeConditions(
@@ -175,6 +190,20 @@ public final class WeatherService: ObservableObject {
             return true
         } catch {
             failed = conditions == nil
+            // #992 F1: the whole weather refresh (location or current
+            // conditions) failed; `surfaced` mirrors the card decision above
+            // so the persisted line and the card agree. The suppression half
+            // is `weather-climate`; every external failure in this service is
+            // now named — the archive may be down while the reading still
+            // works, and both facts reach the device log.
+            persistedFailureSink(
+                PersistedFailureLog.line(
+                    channel: .syncReplayFailure,
+                    operation: "weather-refresh",
+                    error: error,
+                    surfaced: failed
+                )
+            )
             return false
         }
     }

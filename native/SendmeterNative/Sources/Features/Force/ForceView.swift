@@ -870,7 +870,14 @@ private struct GuidedForceProtocolView: View {
                 accent: accent
             )
             statusRow(accent: accent)
-            targetCoach
+            // #998: the coach is a measurement aid. During a rest (or any
+            // other non-measuring phase) it only repeated the target and range
+            // the protocol card above already shows, while costing its
+            // measured 92.5 pt — the phase → content mapping in Core decides,
+            // so the drop is testable off-device.
+            if GuidedForceFullscreenPresentation.rendersTargetCoach(phase: presentation.phase) {
+                targetCoach
+            }
             liveChart(chartHeight: chartHeight)
         }
         // #993: the presented cover's frame IS the safe-area rect — measured
@@ -1357,7 +1364,13 @@ struct ForceView: View {
     @State private var guidedSession: GuidedForceProtocolSession?
     @State private var guidedFullscreenPresented = false
     @State private var guidedMinimizeRequested = false
-    @State private var guidedLaunchInFlight = false
+    /// #1004: the launch attempt's own identity owns the in-flight flag — a
+    /// resolution that never settles can no longer leave Start locked.
+    @State private var guidedLaunch = GuidedLaunchLifecycle()
+    /// #1004: the last save attempt for the currently held pull failed, so the
+    /// recovery card offers discard explicitly instead of leaving the user to
+    /// guess that it is still available.
+    @State private var recoverySaveFailed = false
     @State private var selectedTargetPlan = ForceTargetPlan.empty
     @State private var resolvingTargets = false
     @State private var savingSummary = false
@@ -1635,7 +1648,27 @@ struct ForceView: View {
     }
 
     private var guidedControlsLocked: Bool {
-        guidedSessionIsActive || guidedLaunchInFlight
+        guidedSessionIsActive || guidedLaunch.inFlight
+    }
+
+    /// #1004 (session-lock): who the guided lock belongs to, attributed from
+    /// what this surface can read. An ended session is the orphan — it can
+    /// neither resume nor end again, yet it still holds every control below.
+    private var guidedLockOwner: ForceGuidedLockOwner {
+        ForceLockOrphanPolicy.owner(
+            ForceGuidedLockReadState(
+                sessionPresent: guidedSessionIsActive,
+                sessionEnded: guidedSession?.isEnded == true,
+                launchInFlight: guidedLaunch.inFlight
+            )
+        )
+    }
+
+    /// #1004 (session-lock): true exactly when the lock has no live owner.
+    /// The release affordance renders on this and nothing else, so "locked
+    /// with no live owner" always has a way out on screen.
+    private var guidedLockOrphaned: Bool {
+        ForceLockOrphanPolicy.requiresRelease(guidedLockOwner)
     }
 
     /// The best single-pull peak for the active tag/side (web `maxF`) — the
@@ -1661,7 +1694,7 @@ struct ForceView: View {
     /// one place. Arming is just a selection — the connection/unsaved-recording
     /// guard belongs to Start, not the pick.
     private func applySelection(_ selection: ForceProtocolSelection) {
-        guard !guidedSessionIsActive, !guidedLaunchInFlight else { return }
+        guard !guidedSessionIsActive, !guidedLaunch.inFlight else { return }
         switch selection {
         case .free:
             selectedPresetID = nil
@@ -1871,6 +1904,29 @@ struct ForceView: View {
                         }
                     }
 
+                    // #1004: a launch that did not start says WHY and offers
+                    // the retry that re-runs it — never a disabled control
+                    // with no explanation.
+                    if let failure = guidedLaunch.failure {
+                        GuidedLaunchFailureCard(failure: failure) {
+                            Haptics.shared.tap()
+                            retryGuidedLaunch()
+                        }
+                    }
+
+                    // #1004 (session-lock): the orphaned guided lock. The
+                    // resume card above hides once its session has ENDED
+                    // (nothing left to resume or end), but the session object
+                    // still holds `guidedControlsLocked` — so this is the one
+                    // affordance that clears it, rendered exactly when no
+                    // live owner remains.
+                    if guidedLockOrphaned {
+                        GuidedSessionReleaseCard {
+                            Haptics.shared.tap()
+                            releaseFinishedGuidedSession()
+                        }
+                    }
+
                     // #903: the redesigned Configure → Operate order — the
                     // recording-context card (movement & side decision row,
                     // protocol list / armed hero + bound load module) leads
@@ -1884,6 +1940,15 @@ struct ForceView: View {
                         handsFreeMeasuring: model.handsFree.isMeasuring,
                         protocolArmed: selectedPreset != nil,
                         guidedSessionActive: guidedControlsLocked,
+                        guidedLockOrphaned: guidedLockOrphaned,
+                        recoveryControls: ForceRecoveryActionPolicy.controls(
+                            state: ForceRecoveryControlsState(
+                                hasUnsavedRecording: model.tindeq.hasUnsavedRecording,
+                                saving: savingSummary,
+                                sessionActive: guidedControlsLocked,
+                                saveFailed: recoverySaveFailed
+                            )
+                        ),
                         targetBand: selectedTargetReferenceBand,
                         resolvingTarget: resolvingTargets,
                         savingSummary: savingSummary,
@@ -1914,8 +1979,16 @@ struct ForceView: View {
                         },
                         saveCompleted: saveCompleted,
                         saveRecovered: saveRecovered,
-                        discardCompleted: { model.tindeq.clearCompletedRecording() },
-                        discardRecovered: { model.tindeq.clearInterruptedRecording() }
+                        discardCompleted: {
+                            model.tindeq.clearCompletedRecording()
+                            // #1004: the held pull is gone, so its failed-save
+                            // notice must not outlive it into the next pull.
+                            recoverySaveFailed = false
+                        },
+                        discardRecovered: {
+                            model.tindeq.clearInterruptedRecording()
+                            recoverySaveFailed = false
+                        }
                     )
 
                     // #903: Focus Next (training balance) leaves the
@@ -1998,7 +2071,7 @@ struct ForceView: View {
                             Haptics.shared.playGesture(.medium)
                             Task { await model.deletePreset(preset) }
                         },
-                        disabled: guidedSessionIsActive || guidedLaunchInFlight
+                        disabled: guidedSessionIsActive || guidedLaunch.inFlight
                     )
 
                     RecentForceCard(recordings: Array(model.recordings.prefix(8)))
@@ -2188,17 +2261,34 @@ struct ForceView: View {
         guidedSession = nil
     }
 
+    /// #1004 (session-lock): the user's release for an orphaned guided lock.
+    ///
+    /// Only an ENDED session may be released — a live one keeps its own
+    /// resume/end affordances — and the release only JOINS the durable
+    /// terminal flight that session already ran, then clears the view state
+    /// that was holding the screen. It never writes, deletes or cursor-resets
+    /// anything: an un-synced pull stays in the durable queue, a pull still
+    /// held by the device stays on its own recovery card, and the session's
+    /// completed/partial salvage was already decided when it claimed its
+    /// terminal outcome.
+    private func releaseFinishedGuidedSession() {
+        guard let session = guidedSession, session.isEnded else { return }
+        Task {
+            await session.teardown()
+            guard session.isEnded, guidedSession?.id == session.id else { return }
+            clearGuidedSession(session)
+        }
+    }
+
     private func teardownGuidedSessionIfNeeded() {
         guard let session = guidedSession else { return }
         if session.isEnded {
             // A terminal claim cancels the ticker/activity synchronously, but
             // the owner callback must remain registered until its durable
             // flight settles so an auth reset can still join that flight.
-            Task {
-                await session.teardown()
-                guard session.isEnded, guidedSession?.id == session.id else { return }
-                clearGuidedSession(session)
-            }
+            // #1004 (session-lock): the user's own release runs the SAME
+            // path, so an orphaned lock has exactly one implementation.
+            releaseFinishedGuidedSession()
             return
         }
         Task {
@@ -2302,6 +2392,9 @@ struct ForceView: View {
         let saveAccountScope = model.accountScope
         savingSummary = true
         savingSummaryFlightID = saveFlightID
+        // #1004: a fresh attempt clears the previous failure notice; a failure
+        // below re-arms it so the card can offer discard explicitly.
+        recoverySaveFailed = false
         // #678: a recovered/salvaged rep persists the tag/side LOCKED at
         // recording start (web #298) and carries the recovered note, not a
         // "· Recovered" suffix on the tag — the note is what History shows,
@@ -2340,6 +2433,7 @@ struct ForceView: View {
                 return
             }
             if enqueued {
+                recoverySaveFailed = false
                 model.tindeq.clearCompletedRecording()
                 if recovered {
                     model.tindeq.clearInterruptedRecording()
@@ -2347,6 +2441,11 @@ struct ForceView: View {
                     // into the next Start/Arm.
                     model.clearForceRecordingLock()
                 }
+            } else {
+                // #1004: the pull is still held (a failed save leaves the
+                // summary with the device), so the card must OFFER discard
+                // rather than leave the user to infer it.
+                recoverySaveFailed = true
             }
             savingSummary = false
             savingSummaryFlightID = nil
@@ -2439,7 +2538,7 @@ struct ForceView: View {
     }
 
     private func launch(_ preset: TindeqPreset) {
-        guard !guidedSessionIsActive, !guidedLaunchInFlight else {
+        guard !guidedSessionIsActive, !guidedLaunch.inFlight else {
             refuseAction("Resume or end the active guided protocol before starting another.")
             return
         }
@@ -2484,10 +2583,14 @@ struct ForceView: View {
         let launchSelection = selectedSelection
         let launchZoneCurve = zoneCurve
         let launchAccountScope = model.accountScope
-        guidedLaunchInFlight = true
+        // #1004: the attempt owns the flag. Every exit below settles it —
+        // including the deadline — so no path can leave Start locked, and the
+        // only path that shows a failure is the one that has a retry.
+        recoverySaveFailed = false
+        let attemptID = guidedLaunch.begin(preset: preset)
         resolvingTargets = true
         Task {
-            let session = await Self.makeGuidedLaunchSession(
+            let resolution = await Self.resolveGuidedLaunch(
                 model: model,
                 preset: preset,
                 tag: launchTag,
@@ -2496,23 +2599,35 @@ struct ForceView: View {
                 selection: launchSelection,
                 zoneCurve: launchZoneCurve
             )
+            guard guidedLaunch.owns(attemptID) else { return }
             guard !Task.isCancelled,
-                  guidedLaunchInFlight,
                   model.accountScope == launchAccountScope,
                   targetResolutionKey == launchResolutionKey,
                   selectedPreset?.id == preset.id,
                   !guidedSessionIsActive,
                   guidedSession == nil
             else {
-                guidedLaunchInFlight = false
+                guidedLaunch.settle(attemptID, outcome: .superseded)
                 if targetResolutionKey == launchResolutionKey {
                     resolvingTargets = false
                 }
                 return
             }
+            guard case .resolved(let session) = resolution else {
+                // The awaited resolution never settled. The attempt is over,
+                // the reason is on screen, and the retry re-runs it.
+                guidedLaunch.settle(
+                    attemptID,
+                    outcome: .timedOut(
+                        loadFailureClass: model.dashboardLoadFailureClass
+                    )
+                )
+                resolvingTargets = false
+                return
+            }
             switch forceRecordingDecision(for: .guidedProtocol) {
             case .refusedActiveRecording:
-                guidedLaunchInFlight = false
+                guidedLaunch.settle(attemptID, outcome: .superseded)
                 resolvingTargets = false
                 refuseActiveForceRecording(for: .guidedProtocol)
                 return
@@ -2526,9 +2641,63 @@ struct ForceView: View {
             guidedSession = session
             registerGuidedTeardown(for: session)
             guidedMinimizeRequested = false
-            guidedLaunchInFlight = false
+            guidedLaunch.settle(attemptID, outcome: .launched)
             guidedFullscreenPresented = true
         }
+    }
+
+    /// #1004: how long one guided-launch attempt may await target resolution.
+    /// Generous enough for a cold cache plus the reference fetch, short enough
+    /// that a resolution which never settles cannot keep the primary action
+    /// disabled for the life of the process.
+    static let guidedLaunchTimeout: TimeInterval = 12
+
+    /// The bounded launch-resolution seam.
+    enum GuidedLaunchResolution {
+        case resolved(GuidedForceProtocolSession)
+        case timedOut
+    }
+
+    /// The REAL launch-resolution chain (`makeGuidedLaunchSession` — the same
+    /// producer → async resolution → session construction boundary `launch()`
+    /// runs) wrapped in ONE deadline. Extracted so a test can drive the real
+    /// path with a resolution that never settles and assert the attempt
+    /// settles with a retryable failure instead of leaking the flag.
+    @MainActor
+    static func resolveGuidedLaunch(
+        model: AppModel,
+        preset: TindeqPreset,
+        tag: String,
+        sideMode: ExerciseSideMode,
+        side: TindeqSide,
+        selection: ForceProtocolSelection,
+        zoneCurve: ZoneCurveInput?,
+        timeout: TimeInterval = ForceView.guidedLaunchTimeout
+    ) async -> GuidedLaunchResolution {
+        let raced = await AsyncDeadline.race(
+            timeout: timeout,
+            fallback: Optional<GuidedForceProtocolSession>.none
+        ) {
+            await makeGuidedLaunchSession(
+                model: model,
+                preset: preset,
+                tag: tag,
+                sideMode: sideMode,
+                side: side,
+                selection: selection,
+                zoneCurve: zoneCurve
+            )
+        }
+        guard let session = raced.value else { return .timedOut }
+        return .resolved(session)
+    }
+
+    /// Re-runs the attempt that failed. It is the same `launch` entry point —
+    /// including its guards — with the preset the attempt was for, not
+    /// whatever happens to be selected now.
+    private func retryGuidedLaunch() {
+        guard let preset = guidedLaunch.retryPreset else { return }
+        launch(preset)
     }
 
     /// The guided-launch boundary chain (#874/#899): normalize the picker's
@@ -2592,6 +2761,69 @@ struct ForceView: View {
     }
 }
 
+/// #1004: one guided launch that did not start. The requirement is exactly
+/// this pair — the user sees WHY, and the retry re-runs the attempt.
+///
+/// Internal (not `private`) so the render-evidence test can capture THIS
+/// component — the recovery affordance the issue asks for a screenshot of —
+/// instead of a copy of its copy.
+struct GuidedLaunchFailureCard: View {
+    let failure: GuidedLaunchFailure
+    let onRetry: () -> Void
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Guided protocol didn\u{2019}t start", systemImage: "exclamationmark.triangle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(SendmeterStyle.caution)
+                Text(failure.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(action: onRetry) {
+                    Label(ForceRecoveryActionPolicy.guidedLaunchRetryTitle, systemImage: "arrow.clockwise")
+                }
+                .hapticButtonStyle(.bordered)
+                .disabled(!failure.isRetryable)
+                .accessibilityIdentifier("guided-launch-retry")
+                .accessibilityHint("Runs the guided protocol launch again")
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// #1004 (session-lock): the release for a guided lock whose owner has
+/// already ended — the one affordance that clears a Force surface held by a
+/// session that can neither resume nor end. Internal (not `private`) for the
+/// same reason as `GuidedLaunchFailureCard`: the render-evidence test
+/// captures THIS component rather than a copy of its copy.
+struct GuidedSessionReleaseCard: View {
+    let onRelease: () -> Void
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(ForceLockOrphanPolicy.releaseHeading, systemImage: "lock.slash")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(SendmeterStyle.caution)
+                Text(ForceLockOrphanPolicy.releaseNotice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(action: onRelease) {
+                    Label(ForceLockOrphanPolicy.releaseTitle, systemImage: "lock.open")
+                }
+                .hapticButtonStyle(.bordered)
+                .accessibilityIdentifier("guided-session-release")
+                .accessibilityHint(ForceLockOrphanPolicy.releaseHint)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
 private struct GuidedForceResumeCard: View {
     @ObservedObject var session: GuidedForceProtocolSession
     let onResume: () -> Void
@@ -2642,6 +2874,13 @@ private struct ForceDeviceCard: View {
     let handsFreeMeasuring: Bool
     let protocolArmed: Bool
     let guidedSessionActive: Bool
+    /// #1004 (session-lock): true when that session has already ENDED — the
+    /// lock has no live owner, so the row names the release instead of a
+    /// resume/end that no longer exists.
+    let guidedLockOrphaned: Bool
+    /// #1004: the held-pull recovery controls, decided by one policy so Save
+    /// and Discard can never be disabled at the same time as Start.
+    let recoveryControls: ForceRecoveryControls
     let targetBand: ForceTargetBand?
     let resolvingTarget: Bool
     let savingSummary: Bool
@@ -2665,6 +2904,20 @@ private struct ForceDeviceCard: View {
     @State private var discardIsRecovered = false
 
     private var targetRange: ClosedRange<Double>? { targetBand?.range }
+
+    /// #1004: a failed save falls back to OFFERING discard. The pull is still
+    /// held locally, so the honest next step is the user's, with what it costs
+    /// stated.
+    @ViewBuilder
+    private var recoveryFallbackNotice: some View {
+        if recoveryControls.offersDiscardFallback {
+            Text(ForceRecoveryActionPolicy.discardFallbackNotice)
+                .font(.caption)
+                .foregroundStyle(SendmeterStyle.caution)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("recovery-discard-fallback")
+        }
+    }
 
     private var showsDisconnectedEmptyState: Bool {
         guard !device.hasUnsavedRecording,
@@ -2813,7 +3066,9 @@ private struct ForceDeviceCard: View {
 
                 if guidedSessionActive {
                     Label(
-                        "Guided protocol active — resume or end it above",
+                        guidedLockOrphaned
+                            ? ForceLockOrphanPolicy.orphanedLockLabel
+                            : ForceLockOrphanPolicy.activeLockLabel,
                         systemImage: "lock.fill"
                     )
                     .font(.caption.weight(.semibold))
@@ -2839,39 +3094,45 @@ private struct ForceDeviceCard: View {
                     .background(SendmeterStyle.primary.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
                 }
 
-                if device.interruptedRecording != nil {
+                if device.interruptedRecording != nil, recoveryControls.showsRecoveryCard {
                     VStack(alignment: .leading, spacing: 10) {
                         Label("Unsaved pull recovered after disconnect", systemImage: "externaldrive.badge.exclamationmark")
                             .font(.subheadline.weight(.semibold))
                         HStack {
                             Button("Save Recovered Pull", action: saveRecovered)
                                 .hapticButtonStyle(.borderedProminent)
-                                .disabled(savingSummary || guidedSessionActive)
+                                // #1004: a held pull is always settleable. The
+                                // old condition also greys these while a guided
+                                // session is active, which is exactly the
+                                // deadlock against Start's `.disabled(device.hasUnsavedRecording)`.
+                                .disabled(!recoveryControls.canSave)
                             Button("Discard", role: .destructive) {
                                 discardIsRecovered = true
                                 showingDiscardConfirmation = true
                             }
                             .hapticButtonStyle(.bordered)
-                            .disabled(savingSummary || guidedSessionActive)
+                            .disabled(!recoveryControls.canDiscard)
                         }
+                        recoveryFallbackNotice
                     }
                     .padding(12)
                     .background(SendmeterStyle.caution.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                } else if device.completedSummary != nil, device.status != .measuring {
+                } else if device.completedSummary != nil, device.status != .measuring, recoveryControls.showsRecoveryCard {
                     VStack(alignment: .leading, spacing: 10) {
                         Label("Completed pull is ready for a durable save", systemImage: "checkmark.circle")
                             .font(.subheadline.weight(.semibold))
                         HStack {
                             Button("Save Completed Pull", action: saveCompleted)
                                 .hapticButtonStyle(.borderedProminent)
-                                .disabled(savingSummary || guidedSessionActive)
+                                .disabled(!recoveryControls.canSave)
                             Button("Discard", role: .destructive) {
                                 discardIsRecovered = false
                                 showingDiscardConfirmation = true
                             }
                             .hapticButtonStyle(.bordered)
-                            .disabled(savingSummary || guidedSessionActive)
+                            .disabled(!recoveryControls.canDiscard)
                         }
+                        recoveryFallbackNotice
                     }
                     .padding(12)
                     .background(SendmeterStyle.optimal.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))

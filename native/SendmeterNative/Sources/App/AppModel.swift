@@ -69,6 +69,26 @@ private enum PendingWrite: Codable, Sendable {
 }
 
 private extension PendingWrite {
+    /// #992: the persisted-log operation name for this payload's upload
+    /// attempt. A fixed case label — never a payload value, id or name.
+    var logLabel: String {
+        switch self {
+        case .session: return "session"
+        case .sessionDelete: return "session-delete"
+        case .sessionMerge: return "session-merge"
+        case .recording: return "recording"
+        case .recordingEdit: return "recording-edit"
+        case .sessionRPEEdit: return "session-rpe-edit"
+        case .recordingDelete: return "recording-delete"
+        case .workout: return "workout"
+        case .preset: return "preset"
+        case .routine: return "routine"
+        case .phaseTransition: return "phase-transition"
+        case .tagMutation: return "tag-mutation"
+        case .healthWrite: return "health-write"
+        }
+    }
+
     /// The operation this payload replays, for the direct-write entities.
     var directWriteOperation: DirectWriteOperation? {
         switch self {
@@ -446,6 +466,17 @@ public final class AppModel {
     /// blackout, so this — not the global banner — is where its retry lives.
     /// Cleared by a pass where every slice reconciled (or by an account reset).
     public private(set) var lastPartialRefreshFailure: RefreshFailureSummary?
+    /// #1004: what the most recent local-data repair did — an undecodable
+    /// stored payload whose authoritative copy is on the server was set aside
+    /// (raw bytes preserved) and its entity's cursor reset, so the next
+    /// refresh rebuilds it. This is the non-blocking surface for that work;
+    /// the launch-failure log carries the step. `nil` until a repair finds
+    /// something, and account-scoped like every other failure state here.
+    public private(set) var lastLocalDataRepair: LocalCacheRepairReport?
+    /// #1004: invalid rows already handled or reported, so a read that keeps
+    /// returning the same un-synced unreadable row does not repeat its notice
+    /// on every pass. Account-scoped (reset with the snapshot).
+    private var reportedInvalidRows: Set<LocalCacheInvalidRow> = []
     /// #964: true while the Dashboard should lead with its load-failure state:
     /// the last account-data load failed AND the account has no authoritative
     /// snapshot to render (`hasLoadedSessions` / `hasLoadedRecordings` are the
@@ -509,6 +540,15 @@ public final class AppModel {
     @ObservationIgnored private let healthService: HealthKitService
     @ObservationIgnored private let watchService: WatchConnectivityService
     @ObservationIgnored public let realtime: RealtimeService
+    /// #992: the binding every persisted failure line goes through. Production
+    /// defaults to `PersistedFailureSink.production` (the os.Logger emission);
+    /// app-target tests substitute a capture and assert the emitted
+    /// operation/domain/code/class/surfaced fields as behaviour — the #992
+    /// proof deliberately never reads source tokens. The F2 witness test
+    /// asserts a fresh model still holds the production binding, so a
+    /// substituted or no-op default goes RED.
+    @ObservationIgnored
+    var persistedFailureSink: PersistedFailureSink = .production
     /// #631: Send Conditions (SL-69) — Open-Meteo current weather + local
     /// climate, fetched + cached by the platform service.
     @ObservationIgnored private let weatherService: WeatherService
@@ -934,12 +974,22 @@ public final class AppModel {
         // The durable queue is a small JSON file owned by `DurableQueue`; its
         // read is not the database open this issue moves and is measured in
         // docs/evidence/issue-921/first-frame-timings.txt.
+        // #992 F1: a queue that cannot OPEN (corrupt file, directory I/O) used
+        // to be swallowed here — every later enqueue then silently no-ops and
+        // nothing in the log named why. The error is kept and recorded right
+        // after all stored properties exist (below).
+        var queueOpenFailure: Error?
         self.queue = support.flatMap { directory in
-            try? DurableQueue(
-                directoryURL: directory,
-                filename: "pending-writes.json",
-                breadcrumbLimit: 10
-            )
+            do {
+                return try DurableQueue(
+                    directoryURL: directory,
+                    filename: "pending-writes.json",
+                    breadcrumbLimit: 10
+                )
+            } catch {
+                queueOpenFailure = error
+                return nil
+            }
         }
         // Start the single flight without awaiting it, so opening and
         // migrating the store overlaps the auth round-trip instead of
@@ -1050,6 +1100,13 @@ public final class AppModel {
             for await (event, session) in auth.client.auth.authStateChanges {
                 await self.handleAuthEvent(event, session: session)
             }
+        }
+
+        // #992 F1: the queue-open failure deferred above — every stored
+        // property now exists, so the line can go through the same sink as
+        // every other sync/replay failure.
+        if let queueOpenFailure {
+            recordSyncReplayFailure("queue-open", queueOpenFailure, surfaced: false)
         }
     }
 
@@ -2180,6 +2237,15 @@ public final class AppModel {
             to: currentUserID,
             accountEpoch: accountEpoch
         ) else { return nil }
+        // #1004: an undecodable stored payload is repaired HERE, on the launch
+        // path that used to leave it silently unread (and unh healed) — the
+        // row's raw payload is set aside, the entity is refetched from the
+        // server, and a pending row is left exactly where it is.
+        await applyLocalDataRepair(
+            read.invalidRows,
+            accountUserID: accountUserID,
+            capturedBy: accountFetch
+        )
         let snapshot = read.snapshot
         let sessionsWereSynced = read.hasCompletedSync(.sessions)
         let recordingsWereSynced = read.hasCompletedSync(.recordings)
@@ -2706,8 +2772,9 @@ public final class AppModel {
             reportCacheUnavailable(reason)
             // #964 round 2: the launch-path failure log names this step even
             // though it deliberately shows no banner (network-only is a
-            // recoverable degradation, not a user-facing failure).
-            recordLaunchFailure("cache-prepare", reason)
+            // recoverable degradation, not a user-facing failure). #992: the
+            // line says so explicitly with `surfaced: false`.
+            recordLaunchFailure("cache-prepare", reason, surfaced: false)
         }
     }
 
@@ -2729,6 +2796,73 @@ public final class AppModel {
             .failure,
             detail: "Local cache \(operation): \(error.localizedDescription)"
         )
+    }
+
+    // MARK: - Local data repair (#1004)
+
+    /// #1004: quarantines every stored payload this build cannot decode and
+    /// heals the entities it touched from the server.
+    ///
+    /// This is what the launch path does automatically (see
+    /// `hydrateCachedWorkspace`) and what the Settings affordance calls on
+    /// demand. It never touches an un-synced row: a pending row's only copy is
+    /// local, so it is reported, not moved.
+    @discardableResult
+    public func repairUnreadableLocalData() async -> LocalCacheRepairReport? {
+        guard cachedWorkspace != nil, let userID = currentUserID else { return nil }
+        guard let read = await readCoherentCache(accountUserID: userID) else { return nil }
+        return await applyLocalDataRepair(
+            read.invalidRows,
+            accountUserID: userID,
+            capturedBy: AccountScopedFetch(
+                accountUserID: userID,
+                accountEpoch: accountEpoch
+            )
+        )
+    }
+
+    /// The one repair applier. `CacheOffload` keeps the quarantine write off
+    /// the main actor, and the account/epoch captured before the await is
+    /// re-checked before anything is published — another account's repair can
+    /// never surface here.
+    @discardableResult
+    private func applyLocalDataRepair(
+        _ invalidRows: [LocalCacheInvalidRow],
+        accountUserID: UUID,
+        capturedBy accountFetch: AccountScopedFetch
+    ) async -> LocalCacheRepairReport? {
+        guard let workspace = cachedWorkspace else { return nil }
+        let newRows = invalidRows.filter { !reportedInvalidRows.contains($0) }
+        guard !newRows.isEmpty else { return nil }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+        let report: LocalCacheRepairReport
+        do {
+            report = try await CacheOffload.run {
+                try workspace.store.quarantineInvalidRows(
+                    newRows,
+                    accountUserID: accountUserID
+                )
+            }
+        } catch {
+            recordCacheFailure("local data quarantine", error)
+            return nil
+        }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return nil }
+        reportedInvalidRows.formUnion(newRows)
+        // The decode failure stays VISIBLE: the persisted launch-failure log
+        // names the step and the decode family exactly like the launch-path
+        // failures #964 added, and the Settings repair notice below is the
+        // non-blocking surface (hence `surfaced: true`). A silent no-op is
+        // what this issue forbids.
+        recordLaunchFailure("local-data-repair", LocalCacheError.invalidPayload, surfaced: true)
+        lastLocalDataRepair = report
+        return report
     }
 
     /// #922: both published pending counts from ONE query, and both off the
@@ -2875,14 +3009,17 @@ public final class AppModel {
         dashboardLoadFailureClass = UserFacingError.classification(
             forLoadFailure: representativeError
         )
-        recordLaunchFailure(
-            "refresh-slice:\(representativeSlice.rawValue)",
-            representativeError
-        )
+        // #992: the surface decision is computed BEFORE the line (it has no
+        // side effects, only policy inputs) so the line can carry `surfaced`.
         let willSurface = errorSurfacePolicy.shouldSurface(
             source: source,
             hasLastGoodData: hasLoadedSessions && forceModel.hasLoadedRecordings,
             publishedAnySlice: outcomes.didPublishAnyGroup
+        )
+        recordLaunchFailure(
+            "refresh-slice:\(representativeSlice.rawValue)",
+            representativeError,
+            surfaced: willSurface
         )
         if willSurface {
             surfaceLoadFailure(representativeError)
@@ -3361,16 +3498,20 @@ public final class AppModel {
                 // keeps the named class here — a first-launch data-load
                 // failure must never render the empty `.unknown` copy.
                 dashboardLoadFailureClass = UserFacingError.classification(forLoadFailure: error)
-                recordLaunchFailure("refresh", error)
                 // #842: a background/partial refresh failure must not claim
                 // total offline while the last-good dataset is already on
                 // screen (History rendered, banner claiming a blackout). The
                 // suppressed failure still heals a rejected bearer — auth
                 // account state is not banner copy.
-                if errorSurfacePolicy.shouldSurface(
+                // #992: the surface decision is computed before the line so
+                // the persisted line records whether this failure reached the
+                // user (banner) or was suppressed behind last-good data.
+                let willSurface = errorSurfacePolicy.shouldSurface(
                     source: errorSurfaceSource,
                     hasLastGoodData: hasLoadedSessions && forceModel.hasLoadedRecordings
-                ) {
+                )
+                recordLaunchFailure("refresh", error, surfaced: willSurface)
+                if willSurface {
                     surfaceLoadFailure(error)
                 } else if let postgRESTError = error as? PostgRESTError {
                     recoverAuthFrom(postgRESTError)
@@ -3793,6 +3934,13 @@ public final class AppModel {
             // been persisted. Roll it back only for the account that made the
             // receipt; a sign-out/user switch must never refresh old-account
             // data into the new account's model.
+            // #992 F1: the queue-file write that failed here used to be
+            // silent; the `SendmeterNative`/12 throw above is the designed
+            // already-completed race, not a failure.
+            let nsError = error as NSError
+            if nsError.domain != "SendmeterNative" || nsError.code != 12 {
+                recordSyncReplayFailure("session-delete-undo", error, surfaced: false)
+            }
             let currentAccount = self.currentUserID
             _ = routineUndo.rollbackClaim(receipt, currentUserID: currentAccount)
             guard accountFetch.canApply(
@@ -4657,6 +4805,10 @@ public final class AppModel {
             try tindeq.armHandsFree()
         } catch {
             handsFree.handleDisconnected()
+            // #992 F1: this failure reaches the user as a banner but used to
+            // leave no persisted trace; the line names the arming failure
+            // itself (domain/code) alongside the banner copy.
+            recordSyncReplayFailure("hands-free-arm", error, surfaced: true)
             errorMessage = UserFacingError.message(for: error)
         }
     }
@@ -7766,7 +7918,14 @@ public final class AppModel {
                 workspace: workspace,
                 forcePurgeReconcile: forcePurgeReconcile,
                 purgeGeneration: remotePurgeGeneration
-            )
+            ),
+            recordFailure: { [weak self] entityType, error in
+                self?.recordSyncReplayFailure(
+                    "background-sync:\(entityType.rawValue)",
+                    error,
+                    surfaced: false
+                )
+            }
         )
         let outcome = await BackgroundSyncEngine.run(run)
         if case .completed = outcome {
@@ -8734,6 +8893,11 @@ public final class AppModel {
             serverValues = try await fetchServerValues()
         } catch {
             guard !Task.isCancelled else { return false }
+            // #992 F1: a failed authoritative read defers the whole legacy
+            // adoption rather than guessing; the deferral is the site's
+            // contract, and the read failure is now named so a device
+            // transcript can tell 'still deferred' from 'migrated'.
+            recordSyncReplayFailure("legacy-direct-writes", error, surfaced: false)
             return false
         }
         guard accountFetch.canApply(
@@ -8898,7 +9062,9 @@ public final class AppModel {
                 .first
         } catch {
             // A failed authoritative read defers the whole sweep rather than
-            // resolving anything on a guess.
+            // resolving anything on a guess. #992 F1: named so the transcript
+            // shows the sweep is still deferred.
+            recordSyncReplayFailure("legacy-phase-residues", error, surfaced: false)
             return false
         }
         guard accountFetch.canApply(
@@ -9043,7 +9209,9 @@ public final class AppModel {
             serverTags = try await repository.fetchTagMetadata()
         } catch {
             // A failed authoritative read defers the whole sweep rather than
-            // resolving anything on a guess.
+            // resolving anything on a guess. #992 F1: named so the transcript
+            // shows the sweep is still deferred.
+            recordSyncReplayFailure("legacy-tag-residues", error, surfaced: false)
             return false
         }
         guard accountFetch.canApply(
@@ -9336,7 +9504,9 @@ public final class AppModel {
             )
         } catch {
             // A failed authoritative read defers the whole sweep rather than
-            // resolving anything on a guess.
+            // resolving anything on a guess. #992 F1: named so the transcript
+            // shows the sweep is still deferred.
+            recordSyncReplayFailure("legacy-health-residues", error, surfaced: false)
             return false
         }
         guard accountFetch.canApply(
@@ -10811,6 +10981,17 @@ public final class AppModel {
             }
             result = UploadResult(uploaded: true, failure: nil)
         } catch {
+            // #992: a failed upload attempt is a sync/replay failure and used
+            // to leave no persisted trace (only queue-internal attempt state),
+            // so a device that could not push had nothing in its log naming
+            // the failure. A manual retry publishes an outcome row; an
+            // automatic drain is deliberately silent (the published pending
+            // counts are its only trace), so `surfaced` follows the mode.
+            recordSyncReplayFailure(
+                "queue-upload:\(item.payload.logLabel)",
+                error,
+                surfaced: mode == .manual
+            )
             if case .recordingDelete = item.payload {
                 // A delete intent is terminally durable until both the
                 // backend mutation and the terminal marker commit. Keep it in
@@ -11599,9 +11780,11 @@ public final class AppModel {
         } catch let error as URLError where error.code == .cancelled {
             return
         } catch {
-            // Deliberately keep the last accepted mirror row and swallow this
-            // best-effort fallback failure; it is not an auth event.
-            _ = error
+            // Deliberately keep the last accepted mirror row — this is the
+            // dropped-realtime-socket fallback refetch, best-effort by
+            // design. #992: the degradation is still named in the persisted
+            // log so a device transcript can tell it from a healthy pass.
+            recordSyncReplayFailure("live-workout-refetch", error, surfaced: false)
         }
     }
 
@@ -11801,7 +11984,9 @@ public final class AppModel {
         } catch {
             // Deliberately keep the last list snapshot and swallow this
             // best-effort reconcile failure; it is not an auth event.
-            _ = error
+            // #992: the persisted line is what lets a device transcript name
+            // the swallowed failure; a realtime reconcile is never surfaced.
+            recordSyncReplayFailure("realtime-reconcile", error, surfaced: false)
         }
     }
 
@@ -12478,6 +12663,10 @@ public final class AppModel {
         isRetryingQueuedWrites = false
         queuedWritesRetryGate.reset()
         lastPartialRefreshFailure = nil
+        // #1004: another account's unreadable rows, and its repair notice,
+        // never carry into the next account's screens.
+        lastLocalDataRepair = nil
+        reportedInvalidRows = []
         publishForceProgressInputMutation(.accountReset)
         refreshingOwner = nil
         isRefreshing = false
@@ -12601,7 +12790,9 @@ public final class AppModel {
     }
 
     private func surface(_ error: Error) {
-        recordLaunchFailure("banner", error)
+        // #992: this funnel IS the user surface (it sets the banner), so the
+        // persisted line says `surfaced: true`.
+        recordLaunchFailure("banner", error, surfaced: true)
         errorMessage = UserFacingError.message(for: error)
         recoverAuthFrom(error)
     }
@@ -12618,27 +12809,39 @@ public final class AppModel {
         recoverAuthFrom(error)
     }
 
-    /// #964 round 2: the persisted launch-failure line.
+    /// #992: the launch-path failure line.
     ///
-    /// The owner's device capture proved the app's own logging was not
-    /// persisted at all, so a launch failure could not name itself. This is
-    /// the `.notice` line (persisted by default) and it carries only fixed
-    /// vocabulary: the failing STEP, the error's DOMAIN and CODE, and the
-    /// taxonomy class. Domain and code are identifiers — never a message, a
-    /// payload, a token or user content — which is what makes them safe to
-    /// log as `.public` and readable in a device transcript. The class is the
-    /// RAW taxonomy result on purpose: an `.unknown` here is the signal that
-    /// the taxonomy still lacks a class for the real failure.
-    private static let launchFailureLog = Logger(
-        subsystem: "com.jirathip.sendlog.native",
-        category: "launch-failure"
-    )
+    /// #964 round 2 shipped the `.notice` line with `step`/`domain`/`code`/
+    /// `class` (persisted by default, fixed vocabulary, `.public` because
+    /// identifiers only). This round adds the missing field — whether the same
+    /// failure was SURFACED to the user — and routes the emission through the
+    /// injectable `persistedFailureSink`, so the app-target tests assert the
+    /// emitted fields instead of grepping for `.notice` tokens.
+    private func recordLaunchFailure(_ step: String, _ error: Error, surfaced: Bool) {
+        persistedFailureSink(
+            PersistedFailureLog.line(
+                channel: .launchFailure,
+                operation: step,
+                error: error,
+                surfaced: surfaced
+            )
+        )
+    }
 
-    private func recordLaunchFailure(_ step: String, _ error: Error) {
-        let nsError = error as NSError
-        let classification = UserFacingError.classification(for: error)
-        Self.launchFailureLog.notice(
-            "launch failure step=\(step, privacy: .public) domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) class=\(String(describing: classification), privacy: .public)"
+    /// #992: the sync/replay failure line — the boundaries outside the launch
+    /// funnel (durable-queue drain/push, the realtime reconcile, the watch
+    /// delivery) that used to fail without leaving a persisted trace. Same
+    /// fixed vocabulary as the launch funnel; `surfaced` distinguishes a
+    /// failure that also reached the user (a manual-retry outcome) from a
+    /// deliberately silent degradation.
+    private func recordSyncReplayFailure(_ operation: String, _ error: Error, surfaced: Bool) {
+        persistedFailureSink(
+            PersistedFailureLog.line(
+                channel: .syncReplayFailure,
+                operation: operation,
+                error: error,
+                surfaced: surfaced
+            )
         )
     }
 

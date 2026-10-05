@@ -363,6 +363,26 @@ public final class LocalCacheStore: Sendable {
                     """)
             }
         }
+        migrator.registerMigration("addCacheQuarantineTable") { db in
+            // #1004: where an undecodable stored payload is SET ASIDE. The raw
+            // payload is preserved verbatim so a later build can recover it;
+            // the row it came from is removed from `cache_rows` and its
+            // entity's cursor is reset, so the next refresh rebuilds the row
+            // from the server. Nothing here is ever auto-deleted, and a
+            // pending row is never moved here (its only copy is local).
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS cache_quarantine (
+                    account_user_id TEXT NOT NULL,
+                    entity_type     TEXT NOT NULL,
+                    entity_id       TEXT NOT NULL,
+                    payload         TEXT NOT NULL,
+                    reason          TEXT NOT NULL,
+                    quarantined_at  TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS cache_quarantine_account
+                    ON cache_quarantine (account_user_id, entity_type);
+                """)
+        }
         try migrator.migrate(dbQueue)
     }
 
@@ -531,19 +551,47 @@ public final class LocalCacheStore: Sendable {
             )
         }
 
+        // #1004: an undecodable stored payload is REPORTED, never silently
+        // dropped. The launch path quarantines these rows (preserving their
+        // raw payload) and heals them from the server; a pending row is only
+        // reported (its only copy is local).
+        var invalidRows: [LocalCacheInvalidRow] = []
         func decodeAll<T: Decodable>(_ type: T.Type, _ entityType: LocalCacheEntityType) -> [T] {
-            typedRows
-                .filter { $0.entityType == entityType && $0.deletedAt == nil }
-                .compactMap { try? decode(payload: $0.payload, as: type) }
+            var values: [T] = []
+            for row in typedRows where row.entityType == entityType && row.deletedAt == nil {
+                do {
+                    values.append(try decode(payload: row.payload, as: type))
+                } catch {
+                    invalidRows.append(
+                        LocalCacheInvalidRow(
+                            entityType: entityType,
+                            entityID: row.entityID,
+                            isPending: row.pending
+                        )
+                    )
+                }
+            }
+            return values
         }
 
-        let settings: UserSettings? = typedRows
-            .first {
-                $0.entityType == .settings
-                    && $0.entityID == CacheEntityID.settings
-                    && $0.deletedAt == nil
+        var settings: UserSettings?
+        if let settingsRow = typedRows.first(where: {
+            $0.entityType == .settings
+                && $0.entityID == CacheEntityID.settings
+                && $0.deletedAt == nil
+        }) {
+            do {
+                settings = try decode(payload: settingsRow.payload, as: UserSettings.self)
+            } catch {
+                invalidRows.append(
+                    LocalCacheInvalidRow(
+                        entityType: .settings,
+                        entityID: settingsRow.entityID,
+                        isPending: settingsRow.pending
+                    )
+                )
             }
-            .flatMap { try? decode(payload: $0.payload, as: UserSettings.self) }
+        }
 
         let snapshot = CachedWorkspaceSnapshot(
             sessions: decodeAll(Session.self, .sessions),
@@ -591,7 +639,8 @@ public final class LocalCacheStore: Sendable {
             cursors: cursors,
             completedEntityTypes: completed,
             purgeGenerations: purgeGenerations,
-            pendingRows: pendingRows
+            pendingRows: pendingRows,
+            invalidRows: invalidRows
         )
     }
 
@@ -1574,7 +1623,7 @@ public final class LocalCacheStore: Sendable {
         return rows.contains { ($0["name"] as String) == name }
     }
 
-    private static func accountIDString(_ id: UUID) -> String { id.uuidString }
+    static func accountIDString(_ id: UUID) -> String { id.uuidString }
 
     /// Formats a server timestamp exactly as the store's fixed-width UTC
     /// microsecond cursor strings. Repository delta fetches use the same
@@ -1584,7 +1633,7 @@ public final class LocalCacheStore: Sendable {
         timestamp(date)
     }
 
-    private static func timestamp(_ date: Date = Date()) -> String {
+    static func timestamp(_ date: Date = Date()) -> String {
         // Postgres timestamptz carries microseconds. The store never parses
         // these values; it only compares them, so a fixed-width UTC
         // microsecond formatter keeps string ordering equal to chronological
@@ -1601,7 +1650,7 @@ public final class LocalCacheStore: Sendable {
         return "\(whole).\(String(format: "%06lld", microseconds))Z"
     }
 
-    private func decode<T: Decodable>(payload: String, as type: T.Type) throws -> T {
+    func decode<T: Decodable>(payload: String, as type: T.Type) throws -> T {
         do {
             return try JSONDecoder().decode(type, from: Data(payload.utf8))
         } catch {

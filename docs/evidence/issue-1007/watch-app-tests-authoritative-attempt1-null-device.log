@@ -1,0 +1,34 @@
+Invalid device: null
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test -project SendmeterNative.xcodeproj -scheme "SendLogWatch Watch App" -configuration Debug -destination id=null "-only-testing:SendLogWatchTests" CODE_SIGNING_ALLOWED=NO -derivedDataPath /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/.xcode-derived
+
+Build settings from command line:
+    CODE_SIGNING_ALLOWED = NO
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  GRDB: https://github.com/groue/GRDB.swift @ 7.11.1
+  swift-concurrency-extras: https://github.com/pointfreeco/swift-concurrency-extras @ 1.4.1
+  Supabase: https://github.com/supabase/supabase-swift @ 528bd5f
+  xctest-dynamic-overlay: https://github.com/pointfreeco/xctest-dynamic-overlay @ 1.13.1
+  swift-asn1: https://github.com/apple/swift-asn1.git @ 1.7.1
+  SendLogWatchCore: /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/ios/App/SendLogWatchCore
+  SendmeterNative: /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native/SendmeterNative
+  SendLogHealthCore: /Users/jirathip/.herdr/worktrees/sendmeter/impl-1007/native-plugins/sendlog-health-core
+  swift-http-types: https://github.com/apple/swift-http-types.git @ 1.6.0
+  swift-crypto: https://github.com/apple/swift-crypto.git @ 4.5.1
+  swift-log: https://github.com/apple/swift-log.git @ 1.10.1
+  swift-clocks: https://github.com/pointfreeco/swift-clocks @ 1.1.1
+
+2026-10-04 12:02:14.131 xcodebuild[54342:56607716] Writing error result bundle to /var/folders/4k/fbv06j2j5bbd3h4wgbwk1ccm0000gn/T/ResultBundle_2569-04-10_12-02-0014 PM.xcresult
+xcodebuild: error: Unable to find a device matching the provided destination specifier:
+		{ id:null }
+
+	The requested device could not be found because no available devices matched the request.
+
+	Available destinations for the "SendLogWatch Watch App" scheme:
+		{ platform:watchOS, id:dvtdevice-DVTiOSDevicePlaceholder-watchos:placeholder, name:Any watchOS Device }
+		{ platform:watchOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-watchsimulator:placeholder, name:Any watchOS Simulator Device }
+WATCH_APP_TESTS_AUTH_EXIT=70

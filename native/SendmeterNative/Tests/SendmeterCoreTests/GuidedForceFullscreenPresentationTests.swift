@@ -684,6 +684,122 @@ final class GuidedForceFullscreenPresentationTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - #998 — the Target Coach renders only while a pull is measured
+
+    /// #998: the phase → content mapping for the one section whose presence
+    /// changes with the phase. The coach renders exactly in the measurement
+    /// phases (hold / reverse-action work, including the paused work state)
+    /// and in no rest, transition, or completed phase. If a future phase
+    /// renders it (or a rest starts rendering it again), this fails.
+    func testTargetCoachRendersOnlyWhileAPullIsMeasured() {
+        let expected: [GuidedForcePhase: Bool] = [
+            .hold: true,
+            .reverseOut: true,
+            .reverseReturn: true,
+            .paused: true,
+            .prepare: false,
+            .switchSide: false,
+            .rest: false,
+            .setRest: false,
+            .complete: false
+        ]
+
+        for (phase, renders) in expected {
+            XCTAssertEqual(
+                GuidedForceFullscreenPresentation.rendersTargetCoach(phase: phase),
+                renders,
+                "\(phase.rawValue) must \(renders ? "render" : "not render") the Target Coach"
+            )
+        }
+    }
+
+    /// #998: the mapping must hold for the phases the real schedule produces,
+    /// because the guided full-screen calls it with `presentation.phase`. A
+    /// rest stage (either flavour) renders no coach; a work stage — HOLD or
+    /// the reverse-action OUT/RETURN — renders it, so the rest screen can no
+    /// longer spend the coach's measured 92.5 pt.
+    func testTargetCoachRenderingFollowsThePhaseTheRunnerRenders() {
+        for mode in [ForceProtocolMode.hold, .reverseAction] {
+            let protocolValue = preset(mode: mode)
+            let run = ForceProtocolRun(preset: protocolValue, startingSide: .left)
+            for stage in run.stages {
+                let presentation = GuidedForceFullscreenPresentation.stage(
+                    stage,
+                    preset: protocolValue,
+                    elapsedSeconds: 1
+                )
+                XCTAssertEqual(
+                    GuidedForceFullscreenPresentation.rendersTargetCoach(phase: presentation.phase),
+                    stage.kind == .work,
+                    "\(mode) \(stage.kind) → \(presentation.phase) must follow the measurement phases"
+                )
+            }
+        }
+
+        // A paused phase is a suspended measurement (pause is only reachable
+        // from a work stage, #899), never a rest, so the coach stays.
+        let protocolValue = preset()
+        let holdStage = ForceProtocolRun(preset: protocolValue, startingSide: .left)
+            .stages.first { $0.kind == .work }!
+        let paused = GuidedForceFullscreenPresentation.stage(
+            holdStage,
+            preset: protocolValue,
+            elapsedSeconds: 2,
+            isPaused: true
+        )
+        XCTAssertEqual(paused.phase, .paused)
+        XCTAssertTrue(GuidedForceFullscreenPresentation.rendersTargetCoach(phase: paused.phase))
+    }
+
+    /// #998: the chart's growth must not be resolved from the measured stack —
+    /// a measurement-driven growth let the chart's own height feed back into
+    /// the next measurement and produced a two-state layout cycle on the
+    /// iPhone 17 Pro's rest screen (chart 151.7 ↔ 168.7 and the cover never
+    /// drawing; probe churned at ~100 renders/second,
+    /// `docs/evidence/issue-998/`). The slack is resolved from the static
+    /// budget, so two different measurements of the same viewport resolve the
+    /// same chart height — while the FIT still consumes the measurement, and
+    /// a genuinely roomy viewport still grows the trace to its cap.
+    func testChartGrowthResolvesFromTheStaticBudgetSoAMeasurementCannotMoveIt() {
+        let first = GuidedForceLayoutMeasurement(
+            scrollContentHeight: 697.0,
+            chartHeight: 151.7,
+            controlsBarHeight: 64.0
+        )
+        let second = GuidedForceLayoutMeasurement(
+            scrollContentHeight: 731.0,
+            chartHeight: 168.7,
+            controlsBarHeight: 64.0
+        )
+
+        // Both measured stacks fit, and the static budget does not: the chart
+        // stays at its floor for BOTH — the measurement cannot move it.
+        let firstFit = GuidedForceLayout.resolve(width: 402, height: 800, measurement: first)
+        let secondFit = GuidedForceLayout.resolve(width: 402, height: 800, measurement: second)
+        XCTAssertTrue(firstFit.essentialContentFits)
+        XCTAssertTrue(secondFit.essentialContentFits)
+        XCTAssertEqual(firstFit.flexibleChartHeight, secondFit.flexibleChartHeight)
+        XCTAssertEqual(firstFit.flexibleChartHeight, firstFit.chartMinimumHeight)
+
+        // A viewport the static budget genuinely has room for still grows the
+        // trace, and growth still stops at the visual maximum.
+        let roomy = GuidedForceLayout.resolve(width: 402, height: 1000, measurement: second)
+        XCTAssertTrue(roomy.essentialContentFits)
+        XCTAssertEqual(roomy.flexibleChartHeight, roomy.chartMaximumHeight)
+
+        // The measurement still owns the fit decision: a measured stack that
+        // overflows keeps the trace at its floor no matter how much static
+        // room the viewport appears to have.
+        let overflowing = GuidedForceLayoutMeasurement(
+            scrollContentHeight: 1100.0,
+            chartHeight: 140.0,
+            controlsBarHeight: 64.0
+        )
+        let tight = GuidedForceLayout.resolve(width: 402, height: 1000, measurement: overflowing)
+        XCTAssertFalse(tight.essentialContentFits, "the measured overflow must still win the fit")
+        XCTAssertEqual(tight.flexibleChartHeight, tight.chartMinimumHeight)
+    }
 }
 
 @MainActor

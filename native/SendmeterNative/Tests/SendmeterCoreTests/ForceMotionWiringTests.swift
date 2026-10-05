@@ -64,7 +64,19 @@ final class ForceMotionWiringTests: XCTestCase {
         let guidedSummary = exactFunction(guidedView, startingWith: "private func protocolSummary(")
 
         XCTAssertTrue(guidedSections.contains("protocolIdentityHeader"))
-        XCTAssertTrue(guidedSections.contains("targetCoach"))
+        // #998: the coach stays a stack member, but the shared Core phase →
+        // content mapping decides whether it renders — an unconditional
+        // `targetCoach` line (the pre-#998 form) must fail this.
+        XCTAssertTrue(
+            normalizeWhitespace(guidedSections).contains(
+                "if GuidedForceFullscreenPresentation.rendersTargetCoach(phase: presentation.phase) { targetCoach }"
+            ),
+            "the Target Coach must be gated on the phase mapping, inside the section stack"
+        )
+        XCTAssertFalse(
+            normalizeWhitespace(guidedSections).contains("statusRow(accent: accent) targetCoach"),
+            "the Target Coach must never be an unconditional stack member again"
+        )
         XCTAssertTrue(guidedTargetCoach.contains("No target configured for this protocol"))
         XCTAssertTrue(guidedTargetCoach.contains("else"))
         // #903: the outside recording-context card is a direct stack member

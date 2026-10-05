@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   apply:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     # Case matters: the environments are `Preview` and `Production`. GitHub
     # silently CREATES an environment when the name doesn't match an existing

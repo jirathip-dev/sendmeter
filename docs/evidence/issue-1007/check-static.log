@@ -1,0 +1,5 @@
+bash scripts/validate-native-static.sh
+Parsing 342 native Swift source/test files
+Generated project is missing the Force source: ManualForceFullscreen.swift
+error: recipe `check-static` failed on line 34 with exit code 1
+CHECK_STATIC_EXIT=1

@@ -1,0 +1,1447 @@
+swift test --package-path ios/App/SendLogWatchCore
+[0/1] Planning build
+Building for debugging...
+[0/2] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.51s)
+Test Suite 'All tests' started at 2569-10-04 11:51:40.131 AM.
+Test Suite 'SendLogWatchCorePackageTests.xctest' started at 2569-10-04 11:51:40.132 AM.
+Test Suite 'ACWRTests' started at 2569-10-04 11:51:40.132 AM.
+Test Case '-[SendLogWatchCoreTests.ACWRTests testAllZeroLoadIsNil]' started.
+Test Case '-[SendLogWatchCoreTests.ACWRTests testAllZeroLoadIsNil]' passed (0.002 seconds).
+Test Case '-[SendLogWatchCoreTests.ACWRTests testDailyLoadSeriesIsOldestToNewestWithZeroForMissingDays]' started.
+Test Case '-[SendLogWatchCoreTests.ACWRTests testDailyLoadSeriesIsOldestToNewestWithZeroForMissingDays]' passed (0.003 seconds).
+Test Case '-[SendLogWatchCoreTests.ACWRTests testDailyLoadSeriesSumsMultipleSessionsOnTheSameDay]' started.
+Test Case '-[SendLogWatchCoreTests.ACWRTests testDailyLoadSeriesSumsMultipleSessionsOnTheSameDay]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ACWRTests testDailyLoadSeriesTreatsNilLoadAsZero]' started.
+Test Case '-[SendLogWatchCoreTests.ACWRTests testDailyLoadSeriesTreatsNilLoadAsZero]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ACWRTests testEmptyLoadIsNil]' started.
+Test Case '-[SendLogWatchCoreTests.ACWRTests testEmptyLoadIsNil]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ACWRTests testFlatLoadRatioIsOne]' started.
+Test Case '-[SendLogWatchCoreTests.ACWRTests testFlatLoadRatioIsOne]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ACWRTests testMatchesWebFixtureVector]' started.
+Test Case '-[SendLogWatchCoreTests.ACWRTests testMatchesWebFixtureVector]' passed (0.001 seconds).
+Test Suite 'ACWRTests' passed at 2569-10-04 11:51:40.139 AM.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.006 (0.007) seconds
+Test Suite 'AccessTokenClaimsTests' started at 2569-10-04 11:51:40.139 AM.
+Test Case '-[SendLogWatchCoreTests.AccessTokenClaimsTests testDecodesPayloadsWhoseBase64NeedsPadding]' started.
+Test Case '-[SendLogWatchCoreTests.AccessTokenClaimsTests testDecodesPayloadsWhoseBase64NeedsPadding]' passed (0.050 seconds).
+Test Case '-[SendLogWatchCoreTests.AccessTokenClaimsTests testExpMayBeAbsent]' started.
+Test Case '-[SendLogWatchCoreTests.AccessTokenClaimsTests testExpMayBeAbsent]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AccessTokenClaimsTests testNilForNonJWTOrNonUUIDSubject]' started.
+Test Case '-[SendLogWatchCoreTests.AccessTokenClaimsTests testNilForNonJWTOrNonUUIDSubject]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AccessTokenClaimsTests testReadsSubAndExp]' started.
+Test Case '-[SendLogWatchCoreTests.AccessTokenClaimsTests testReadsSubAndExp]' passed (0.000 seconds).
+Test Suite 'AccessTokenClaimsTests' passed at 2569-10-04 11:51:40.190 AM.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.051 (0.051) seconds
+Test Suite 'AttemptDetectorTests' started at 2569-10-04 11:51:40.190 AM.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testAutoReturnToFloorClosesDespiteWalkingMotionExactlyOnce]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testAutoReturnToFloorClosesDespiteWalkingMotionExactlyOnce]' passed (0.004 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testCloseAttemptsMerge]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testCloseAttemptsMerge]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEndReasonAutoGetsNoQuietFallbackWithoutHRSupport]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEndReasonAutoGetsNoQuietFallbackWithoutHRSupport]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEndReasonHRQuietFallbackFiresForBothAutoAndManual]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEndReasonHRQuietFallbackFiresForBothAutoAndManual]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEndReasonManualNotQuietStillBoundedOnlyByHardCap]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEndReasonManualNotQuietStillBoundedOnlyByHardCap]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEndReasonManualQuietFallbackDoesNotNeedHR]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEndReasonManualQuietFallbackDoesNotNeedHR]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEndReasonReturnedToFloorWinsWhenEstablished]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEndReasonReturnedToFloorWinsWhenEstablished]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEstablishedDriftAttemptClosesNearDriftCap]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEstablishedDriftAttemptClosesNearDriftCap]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEstablishedDriftAttemptClosesNearDriftCapWhileActive]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testEstablishedDriftAttemptClosesNearDriftCapWhileActive]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testExplicitFragmentMergedWithPhantomLosesExemption]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testExplicitFragmentMergedWithPhantomLosesExemption]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testExplicitManualStopIsIdempotent]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testExplicitManualStopIsIdempotent]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testExplicitStopOfShortAutoAttemptRecordsExactlyOnePositiveDurationAttempt]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testExplicitStopOfShortAutoAttemptRecordsExactlyOnePositiveDurationAttempt]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testForgottenManualReturnToFloorClosesWhileWalkingExactlyOnce]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testForgottenManualReturnToFloorClosesWhileWalkingExactlyOnce]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testForgottenManualStopAutoClosesExactlyOnce]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testForgottenManualStopAutoClosesExactlyOnce]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testHRLessOneMeterClimbStillOpens]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testHRLessOneMeterClimbStillOpens]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testHROnlyAttemptClosesWithQuietFallback]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testHROnlyAttemptClosesWithQuietFallback]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testLiveAttemptCountCanChangeWithoutStateTransition]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testLiveAttemptCountCanChangeWithoutStateTransition]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testLowFortyFiveSecondClimbUsesAltitudeAndHRSupport]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testLowFortyFiveSecondClimbUsesAltitudeAndHRSupport]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualAttemptLogged]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualAttemptLogged]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualAttemptStillClosesAtMaxAttemptSHardCap]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualAttemptStillClosesAtMaxAttemptSHardCap]' passed (0.007 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualClosesOpenAuto]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualClosesOpenAuto]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualEstablishedDriftIsNotTruncatedByTheDriftCap]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualEstablishedDriftIsNotTruncatedByTheDriftCap]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualFlatTraverseIsNotTruncatedByTheFloorLevelCap]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualFlatTraverseIsNotTruncatedByTheFloorLevelCap]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualStartAndStopBeforeFirstSensorTickIsSafe]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualStartAndStopBeforeFirstSensorTickIsSafe]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualSuppressesAuto]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualSuppressesAuto]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualTraverseWithNoHRSelfClosesViaQuietAlone]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualTraverseWithNoHRSelfClosesViaQuietAlone]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualTraverseWithNoHRStaysOpenWhileActive]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testManualTraverseWithNoHRStaysOpenWhileActive]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testNegativeDriftStillUsesLocalFloor]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testNegativeDriftStillUsesLocalFloor]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testPositiveDurationInvariantHoldsAcrossAllFourEmissionPaths]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testPositiveDurationInvariantHoldsAcrossAllFourEmissionPaths]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testPostCloseHostileTickStaysAtRest]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testPostCloseHostileTickStaysAtRest]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testPredictRPEBounds]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testPredictRPEBounds]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testPressureDriftRejected]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testPressureDriftRejected]' passed (0.005 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testQuietPauseWhileElevatedDoesNotClose]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testQuietPauseWhileElevatedDoesNotClose]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testSameTickManualStopOnNonEmptyBufferRecordsNothing]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testSameTickManualStopOnNonEmptyBufferRecordsNothing]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testShortHopRejected]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testShortHopRejected]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testSingleCleanAttempt]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testSingleCleanAttempt]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testSlowClimbDoesNotNeedOldTenSecondGain]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testSlowClimbDoesNotNeedOldTenSecondGain]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testSnapshotLocalHeightTracksDescentAndClampsAtZero]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testSnapshotLocalHeightTracksDescentAndClampsAtZero]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testStableSnapshotExposesAutomaticOpenAndClose]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testStableSnapshotExposesAutomaticOpenAndClose]' passed (0.002 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testStopThenPlayOpensAndStaysManual]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testStopThenPlayOpensAndStaysManual]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testWalkingNoiseRejected]' started.
+Test Case '-[SendLogWatchCoreTests.AttemptDetectorTests testWalkingNoiseRejected]' passed (0.002 seconds).
+Test Suite 'AttemptDetectorTests' passed at 2569-10-04 11:51:40.227 AM.
+	 Executed 41 tests, with 0 failures (0 unexpected) in 0.034 (0.037) seconds
+Test Suite 'BackendFailureReasonTests' started at 2569-10-04 11:51:40.227 AM.
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testClassificationIsCaseInsensitive]' started.
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testClassificationIsCaseInsensitive]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testErrorInitializerDelegatesToLocalizedDescription]' started.
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testErrorInitializerDelegatesToLocalizedDescription]' passed (0.002 seconds).
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testJWTAndAuthWordingClassifyAsAuthExpired]' started.
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testJWTAndAuthWordingClassifyAsAuthExpired]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testNetworkWordingClassifiesAsUnreachable]' started.
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testNetworkWordingClassifiesAsUnreachable]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testNilErrorClassifiesAsUnreachable]' started.
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testNilErrorClassifiesAsUnreachable]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testTimeoutErrorClassifiesAsUnreachableViaItsOwnDescription]' started.
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testTimeoutErrorClassifiesAsUnreachableViaItsOwnDescription]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testUnrecognizedWordingClassifiesAsUnknown]' started.
+Test Case '-[SendLogWatchCoreTests.BackendFailureReasonTests testUnrecognizedWordingClassifiesAsUnknown]' passed (0.000 seconds).
+Test Suite 'BackendFailureReasonTests' passed at 2569-10-04 11:51:40.230 AM.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'BuildIdentityTests' started at 2569-10-04 11:51:40.230 AM.
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testBuildNumberOnlyParsesIntegers]' started.
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testBuildNumberOnlyParsesIntegers]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testDisplayMatchesThePhoneBuildFormat]' started.
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testDisplayMatchesThePhoneBuildFormat]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testHalfKnownIdentityIsKept]' started.
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testHalfKnownIdentityIsKept]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testNilWhenNothingIsKnown]' started.
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testNilWhenNothingIsKnown]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testReadsInfoDictionaryKeys]' started.
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testReadsInfoDictionaryKeys]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testWhitespaceIsTrimmed]' started.
+Test Case '-[SendLogWatchCoreTests.BuildIdentityTests testWhitespaceIsTrimmed]' passed (0.000 seconds).
+Test Suite 'BuildIdentityTests' passed at 2569-10-04 11:51:40.231 AM.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'CoalescingDrainTests' started at 2569-10-04 11:51:40.231 AM.
+Test Case '-[SendLogWatchCoreTests.CoalescingDrainTests testManyRequestsCoalesceToOneFollowUpPass]' started.
+Test Case '-[SendLogWatchCoreTests.CoalescingDrainTests testManyRequestsCoalesceToOneFollowUpPass]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.CoalescingDrainTests testRequestDuringFollowUpSchedulesAnotherPass]' started.
+Test Case '-[SendLogWatchCoreTests.CoalescingDrainTests testRequestDuringFollowUpSchedulesAnotherPass]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.CoalescingDrainTests testRequestDuringPassSchedulesFollowUp]' started.
+Test Case '-[SendLogWatchCoreTests.CoalescingDrainTests testRequestDuringPassSchedulesFollowUp]' passed (0.000 seconds).
+Test Suite 'CoalescingDrainTests' passed at 2569-10-04 11:51:40.232 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'DateExtensionsTests' started at 2569-10-04 11:51:40.232 AM.
+Test Case '-[SendLogWatchCoreTests.DateExtensionsTests testGregorianLocalCalendarIdentifier]' started.
+Test Case '-[SendLogWatchCoreTests.DateExtensionsTests testGregorianLocalCalendarIdentifier]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.DateExtensionsTests testGregorianLocalDayArithmeticMatchesPlainGregorian]' started.
+Test Case '-[SendLogWatchCoreTests.DateExtensionsTests testGregorianLocalDayArithmeticMatchesPlainGregorian]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.DateExtensionsTests testLocalDateStringFormatIsZeroPadded]' started.
+Test Case '-[SendLogWatchCoreTests.DateExtensionsTests testLocalDateStringFormatIsZeroPadded]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.DateExtensionsTests testLocalDateStringIsGregorianNotBuddhist]' started.
+Test Case '-[SendLogWatchCoreTests.DateExtensionsTests testLocalDateStringIsGregorianNotBuddhist]' passed (0.000 seconds).
+Test Suite 'DateExtensionsTests' passed at 2569-10-04 11:51:40.233 AM.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'DirectBeatRetryPolicyTests' started at 2569-10-04 11:51:40.233 AM.
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testCapIsExclusive]' started.
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testCapIsExclusive]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testEndHasItsOwnBudget]' started.
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testEndHasItsOwnBudget]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testEndRetriesEvenWithARetryInFlight]' started.
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testEndRetriesEvenWithARetryInFlight]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testEndRetriesPastTheConsecutiveFailureCap]' started.
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testEndRetriesPastTheConsecutiveFailureCap]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testFirstDiscreteFailureRetries]' started.
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testFirstDiscreteFailureRetries]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testOnlyTerminalMayRetryWithoutTheLiveSyncActor]' started.
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testOnlyTerminalMayRetryWithoutTheLiveSyncActor]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testRetryInFlightDedupesNonTerminal]' started.
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testRetryInFlightDedupesNonTerminal]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testTelemetryIsNeverRetried]' started.
+Test Case '-[SendLogWatchCoreTests.DirectBeatRetryPolicyTests testTelemetryIsNeverRetried]' passed (0.000 seconds).
+Test Suite 'DirectBeatRetryPolicyTests' passed at 2569-10-04 11:51:40.234 AM.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'ErrorTextTests' started at 2569-10-04 11:51:40.234 AM.
+Test Case '-[SendLogWatchCoreTests.ErrorTextTests testFailureMessageVerdictMatchesCopy]' started.
+Test Case '-[SendLogWatchCoreTests.ErrorTextTests testFailureMessageVerdictMatchesCopy]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ErrorTextTests testFriendlyNeverLeaksRawDescription]' started.
+Test Case '-[SendLogWatchCoreTests.ErrorTextTests testFriendlyNeverLeaksRawDescription]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ErrorTextTests testUserFacingMessagesArePlainAndActionable]' started.
+Test Case '-[SendLogWatchCoreTests.ErrorTextTests testUserFacingMessagesArePlainAndActionable]' passed (0.000 seconds).
+Test Suite 'ErrorTextTests' passed at 2569-10-04 11:51:40.235 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'EvictingWriteTests' started at 2569-10-04 11:51:40.235 AM.
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testANegativeBoundStillAllowsTheOneWriteAttempt]' started.
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testANegativeBoundStillAllowsTheOneWriteAttempt]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testARefusedEvictionStopsTheLoopImmediately]' started.
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testARefusedEvictionStopsTheLoopImmediately]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testARefusedWriteRetriesAfterEachEvictionUntilItFits]' started.
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testARefusedWriteRetriesAfterEachEvictionUntilItFits]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testAWriteThatSucceedsFirstTryEvictsNothing]' started.
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testAWriteThatSucceedsFirstTryEvictsNothing]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testRunningOutOfFilesToEvictReportsTheRefusalHonestly]' started.
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testRunningOutOfFilesToEvictReportsTheRefusalHonestly]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testTheIterationBoundHoldsEvenIfEvictionAlwaysClaimsSuccess]' started.
+Test Case '-[SendLogWatchCoreTests.EvictingWriteTests testTheIterationBoundHoldsEvenIfEvictionAlwaysClaimsSuccess]' passed (0.000 seconds).
+Test Suite 'EvictingWriteTests' passed at 2569-10-04 11:51:40.236 AM.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'FailedBundleClearTests' started at 2569-10-04 11:51:40.236 AM.
+Test Case '-[SendLogWatchCoreTests.FailedBundleClearTests testClearsWhenTheSavedBundleIsTheOneThatFailed]' started.
+Test Case '-[SendLogWatchCoreTests.FailedBundleClearTests testClearsWhenTheSavedBundleIsTheOneThatFailed]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.FailedBundleClearTests testDoesNotClearAnUnrelatedFailedBundle]' started.
+Test Case '-[SendLogWatchCoreTests.FailedBundleClearTests testDoesNotClearAnUnrelatedFailedBundle]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.FailedBundleClearTests testNoFailedBundleNeedsNoClearing]' started.
+Test Case '-[SendLogWatchCoreTests.FailedBundleClearTests testNoFailedBundleNeedsNoClearing]' passed (0.000 seconds).
+Test Suite 'FailedBundleClearTests' passed at 2569-10-04 11:51:40.237 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'FakeTindeqTests' started at 2569-10-04 11:51:40.237 AM.
+Test Case '-[SendLogWatchCoreTests.FakeTindeqTests testDefaultPullExceedsHandsFreeWindows]' started.
+Test Case '-[SendLogWatchCoreTests.FakeTindeqTests testDefaultPullExceedsHandsFreeWindows]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.FakeTindeqTests testMidRepScriptDisconnectsHalfwayThroughHold]' started.
+Test Case '-[SendLogWatchCoreTests.FakeTindeqTests testMidRepScriptDisconnectsHalfwayThroughHold]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.FakeTindeqTests testNoiseIsDeterministicAndBounded]' started.
+Test Case '-[SendLogWatchCoreTests.FakeTindeqTests testNoiseIsDeterministicAndBounded]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.FakeTindeqTests testSamplesUseFixedStepsAndIncludeExactEnd]' started.
+Test Case '-[SendLogWatchCoreTests.FakeTindeqTests testSamplesUseFixedStepsAndIncludeExactEnd]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.FakeTindeqTests testWaveformHasRampHoldReleaseAndRestPhases]' started.
+Test Case '-[SendLogWatchCoreTests.FakeTindeqTests testWaveformHasRampHoldReleaseAndRestPhases]' passed (0.000 seconds).
+Test Suite 'FakeTindeqTests' passed at 2569-10-04 11:51:40.238 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'ForceBeatWindowTests' started at 2569-10-04 11:51:40.238 AM.
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testEmptySamplesReturnsEmpty]' started.
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testEmptySamplesReturnsEmpty]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testGapWiderThanOldFixedWindowIsBackfilled]' started.
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testGapWiderThanOldFixedWindowIsBackfilled]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testNilSinceTSpansAtMostCapMsBackFromLastSample]' started.
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testNilSinceTSpansAtMostCapMsBackFromLastSample]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testRoundingParityWithSparkWindow]' started.
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testRoundingParityWithSparkWindow]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testSinceTAtOrAfterLastSampleReturnsEmpty]' started.
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testSinceTAtOrAfterLastSampleReturnsEmpty]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testSinceTOlderThanCapMsIsClampedAndThinned]' started.
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testSinceTOlderThanCapMsIsClampedAndThinned]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testSinceTOnlyIncludesPointsAfterIt]' started.
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testSinceTOnlyIncludesPointsAfterIt]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testSingleSampleDoesNotCrashOrDivideByZero]' started.
+Test Case '-[SendLogWatchCoreTests.ForceBeatWindowTests testSingleSampleDoesNotCrashOrDivideByZero]' passed (0.000 seconds).
+Test Suite 'ForceBeatWindowTests' passed at 2569-10-04 11:51:40.239 AM.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'ForceFinishPolicyTests' started at 2569-10-04 11:51:40.239 AM.
+Test Case '-[SendLogWatchCoreTests.ForceFinishPolicyTests testConfirmationDismissesExactlyWhenRecordingStarts]' started.
+Test Case '-[SendLogWatchCoreTests.ForceFinishPolicyTests testConfirmationDismissesExactlyWhenRecordingStarts]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceFinishPolicyTests testFinishNeverExecutesWhileARepIsRecording]' started.
+Test Case '-[SendLogWatchCoreTests.ForceFinishPolicyTests testFinishNeverExecutesWhileARepIsRecording]' passed (0.000 seconds).
+Test Suite 'ForceFinishPolicyTests' passed at 2569-10-04 11:51:40.240 AM.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'ForceProtocolSyncCopyTests' started at 2569-10-04 11:51:40.240 AM.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testBareStatusCode403ClassifiesAsAuthExpired]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testBareStatusCode403ClassifiesAsAuthExpired]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testCachedRowsStatesReflectActualCountNotJustACacheWrite]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testCachedRowsStatesReflectActualCountNotJustACacheWrite]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testEveryRealisticRawErrorProducesOnlyAllowedProductCopy]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testEveryRealisticRawErrorProducesOnlyAllowedProductCopy]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testExpiredTokenShowsOpenIPhoneMessage]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testExpiredTokenShowsOpenIPhoneMessage]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testNeverSyncedTitleDoesNotClaimACount]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testNeverSyncedTitleDoesNotClaimACount]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testTitleAndMessageNeverRepeatEachOther]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testTitleAndMessageNeverRepeatEachOther]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testUnreachablePhoneShowsConnectMessage]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testUnreachablePhoneShowsConnectMessage]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testUnrecognizedFailureFallsBackToGenericMessage]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolSyncCopyTests testUnrecognizedFailureFallsBackToGenericMessage]' passed (0.000 seconds).
+Test Suite 'ForceProtocolSyncCopyTests' passed at 2569-10-04 11:51:40.243 AM.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'ForceProtocolTests' started at 2569-10-04 11:51:40.243 AM.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testLateTickReturnsEveryCrossedCadenceSegmentInOrder]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testLateTickReturnsEveryCrossedCadenceSegmentInOrder]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testLegacyOverCapMovementPresetIsNormalizedBeforeRuntime]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testLegacyOverCapMovementPresetIsNormalizedBeforeRuntime]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testLegacyRowDefaultsMissingOptionalFields]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testLegacyRowDefaultsMissingOptionalFields]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testMovementStarterDurationIncludesPrepare]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testMovementStarterDurationIncludesPrepare]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testMovementStarterIsExact]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testMovementStarterIsExact]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testMovementTimelineHasExactDirectionsAndCounts]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testMovementTimelineHasExactDirectionsAndCounts]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testSnapshotIsWallClockDerivedAndClamped]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testSnapshotIsWallClockDerivedAndClamped]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testStaticSummaryAndTimeline]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testStaticSummaryAndTimeline]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testUserFacingLabelsAreExact]' started.
+Test Case '-[SendLogWatchCoreTests.ForceProtocolTests testUserFacingLabelsAreExact]' passed (0.000 seconds).
+Test Suite 'ForceProtocolTests' passed at 2569-10-04 11:51:40.245 AM.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'ForceRuntimePolicyTests' started at 2569-10-04 11:51:40.245 AM.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testAcknowledgeHapticForBoundaryEvents]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testAcknowledgeHapticForBoundaryEvents]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testGuidedMeasuringRouteFallbackIsIsolated]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testGuidedMeasuringRouteFallbackIsIsolated]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testGuidedRestVsGuidedWorkRuntime]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testGuidedRestVsGuidedWorkRuntime]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testHoldPeakCuesExactlyOnceWhenForceSettlesBelowTheRepPeak]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testHoldPeakCuesExactlyOnceWhenForceSettlesBelowTheRepPeak]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testHoldPeakTrackerNeverCuesWithoutAMeasuredPeak]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testHoldPeakTrackerNeverCuesWithoutAMeasuredPeak]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testHoldPeakTrackerResetsBetweenReps]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testHoldPeakTrackerResetsBetweenReps]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testIdleToMeasuringRequiresRuntimeThenFinishedReleases]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testIdleToMeasuringRequiresRuntimeThenFinishedReleases]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testMeasuringToSalvagingToIdleReleasesRuntime]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testMeasuringToSalvagingToIdleReleasesRuntime]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testNoDuplicateAcquireAcrossRepeatedMeasuringUpdates]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testNoDuplicateAcquireAcrossRepeatedMeasuringUpdates]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForFreeHold]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForFreeHold]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForGuidedRest]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForGuidedRest]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForGuidedWork]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForGuidedWork]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForHandsFree]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForHandsFree]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForIdle]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForIdle]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForTerminalStates]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReducedLuminanceSpecForTerminalStates]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReleaseOnEveryTerminalState]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testReleaseOnEveryTerminalState]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testStartHapticDoesNotFireOnReentryFromTerminal]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testStartHapticDoesNotFireOnReentryFromTerminal]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testStartHapticDoesNotReplayForSameState]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testStartHapticDoesNotReplayForSameState]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testStartHapticFiresOnEnteringMeasuredWork]' started.
+Test Case '-[SendLogWatchCoreTests.ForceRuntimePolicyTests testStartHapticFiresOnEnteringMeasuredWork]' passed (0.000 seconds).
+Test Suite 'ForceRuntimePolicyTests' passed at 2569-10-04 11:51:40.248 AM.
+	 Executed 19 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'ForceSidePolicyTests' started at 2569-10-04 11:51:40.248 AM.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testAllowedSidesAlwaysIncludesUnspecified]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testAllowedSidesAlwaysIncludesUnspecified]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testAllowedSidesPolicyTableForAllModes]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testAllowedSidesPolicyTableForAllModes]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testIsSideAllowedMatchesAllowedSides]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testIsSideAllowedMatchesAllowedSides]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testIsSideAllowedNeverTreatsUnspecifiedAsBoth]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testIsSideAllowedNeverTreatsUnspecifiedAsBoth]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testIsSidedDistinguishesBilateralFromNotApplicable]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testIsSidedDistinguishesBilateralFromNotApplicable]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideBilateralFallsBackToBoth]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideBilateralFallsBackToBoth]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideKeepsValidSideUnchanged]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideKeepsValidSideUnchanged]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideModeDefaultsMissingRegistryRowToUnilateralOrBilateral]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideModeDefaultsMissingRegistryRowToUnilateralOrBilateral]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideModeDefaultsUnknownToUnilateralOrBilateral]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideModeDefaultsUnknownToUnilateralOrBilateral]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideModePassesThroughEveryKnownMode]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideModePassesThroughEveryKnownMode]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideNeverReinterpretsHistoricalEmptyAsBoth]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideNeverReinterpretsHistoricalEmptyAsBoth]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideNotApplicableFallsBackToUnspecified]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideNotApplicableFallsBackToUnspecified]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideUnilateralFallsBackToUnspecifiedForAmbiguousBoth]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testNormalizeSideUnilateralFallsBackToUnspecifiedForAmbiguousBoth]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRecordedSideBilateralIsAlwaysBoth]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRecordedSideBilateralIsAlwaysBoth]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRecordedSideChangesWithModeWhileSideStaysUnspecified]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRecordedSideChangesWithModeWhileSideStaysUnspecified]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRecordedSideKeepsValidUnilateralSide]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRecordedSideKeepsValidUnilateralSide]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRecordedSideNotApplicableIsAlwaysUnspecified]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRecordedSideNotApplicableIsAlwaysUnspecified]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRememberedSideDoesNotLeakAcrossExercises]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRememberedSideDoesNotLeakAcrossExercises]' passed (0.002 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRememberedSideStoreAndReadRoundTrip]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRememberedSideStoreAndReadRoundTrip]' passed (0.002 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRemoveClearsRememberedSide]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRemoveClearsRememberedSide]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRestoreValidSideDropsSideInvalidUnderIncompatibleMode]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRestoreValidSideDropsSideInvalidUnderIncompatibleMode]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRestoreValidSideFallsBackForNoRememberedSide]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRestoreValidSideFallsBackForNoRememberedSide]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRestoreValidSideNeverReinterpretsEmptyAsBoth]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRestoreValidSideNeverReinterpretsEmptyAsBoth]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRestoreValidSideRestoresRememberedValidSide]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testRestoreValidSideRestoresRememberedValidSide]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testShowsSideSelectorByConcreteSidedness]' started.
+Test Case '-[SendLogWatchCoreTests.ForceSidePolicyTests testShowsSideSelectorByConcreteSidedness]' passed (0.001 seconds).
+Test Suite 'ForceSidePolicyTests' passed at 2569-10-04 11:51:40.269 AM.
+	 Executed 25 tests, with 0 failures (0 unexpected) in 0.019 (0.020) seconds
+Test Suite 'GuidedForceHapticPolicyTests' started at 2569-10-04 11:51:40.269 AM.
+Test Case '-[SendLogWatchCoreTests.GuidedForceHapticPolicyTests testCatchUpBatchCuesOnlyItsLatestBoundary]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceHapticPolicyTests testCatchUpBatchCuesOnlyItsLatestBoundary]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceHapticPolicyTests testCompletionWinsOverHistoricalDirectionCues]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceHapticPolicyTests testCompletionWinsOverHistoricalDirectionCues]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceHapticPolicyTests testDelayedMovementAdvanceReplaysManyBoundariesButCuesLatestSetStart]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceHapticPolicyTests testDelayedMovementAdvanceReplaysManyBoundariesButCuesLatestSetStart]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceHapticPolicyTests testLaunchPrepareBatchHasExactlyOneCueBoundary]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceHapticPolicyTests testLaunchPrepareBatchHasExactlyOneCueBoundary]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceHapticPolicyTests testPersistenceOnlyBoundariesDoNotCue]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceHapticPolicyTests testPersistenceOnlyBoundariesDoNotCue]' passed (0.000 seconds).
+Test Suite 'GuidedForceHapticPolicyTests' passed at 2569-10-04 11:51:40.270 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'GuidedForcePersistenceTests' started at 2569-10-04 11:51:40.270 AM.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testConcurrentFinishClaimsExactlyOneSave]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testConcurrentFinishClaimsExactlyOneSave]' passed (0.002 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testDatabaseFieldsEncodeExactPostgRESTKeys]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testDatabaseFieldsEncodeExactPostgRESTKeys]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testDuplicateFinishAndCadenceOnlyClaimsAreRejected]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testDuplicateFinishAndCadenceOnlyClaimsAreRejected]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testGuidedSalvageBoundary]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testGuidedSalvageBoundary]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testMovementAndStaticContextsCaptureExactRowIdentity]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testMovementAndStaticContextsCaptureExactRowIdentity]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testMovementCompletionFiltersMarkersAndCountsWholeReps]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testMovementCompletionFiltersMarkersAndCountsWholeReps]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testStaticCompletionHasNoInventedMovementFields]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testStaticCompletionHasNoInventedMovementFields]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testStaticDatabaseEncodingSafelyOmitsOptionalMovementFields]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePersistenceTests testStaticDatabaseEncodingSafelyOmitsOptionalMovementFields]' passed (0.000 seconds).
+Test Suite 'GuidedForcePersistenceTests' passed at 2569-10-04 11:51:40.275 AM.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.004 (0.005) seconds
+Test Suite 'GuidedForcePolicyTests' started at 2569-10-04 11:51:40.275 AM.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testAlternatingStaticProtocolIsUnsupportedEvenWhenConnected]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testAlternatingStaticProtocolIsUnsupportedEvenWhenConnected]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testMissingSalvageKindUsesSafeTerminalFallback]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testMissingSalvageKindUsesSafeTerminalFallback]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testMovementSalvageLeavesSessionOpenForCadenceContinuation]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testMovementSalvageLeavesSessionOpenForCadenceContinuation]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testMovementStarterCanRunCadenceOnlyWithoutProgressor]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testMovementStarterCanRunCadenceOnlyWithoutProgressor]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testStaticProtocolNeedsProgressor]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testStaticProtocolNeedsProgressor]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testStaticSalvageFinishesSession]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForcePolicyTests testStaticSalvageFinishesSession]' passed (0.000 seconds).
+Test Suite 'GuidedForcePolicyTests' passed at 2569-10-04 11:51:40.276 AM.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'GuidedForceRunStateTests' started at 2569-10-04 11:51:40.276 AM.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunStateTests testCadenceOnlyRunStillHasOnePersistenceBoundaryPerSet]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunStateTests testCadenceOnlyRunStillHasOnePersistenceBoundaryPerSet]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunStateTests testEarlyStopFinishesOnlyTheActivePartialSet]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunStateTests testEarlyStopFinishesOnlyTheActivePartialSet]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunStateTests testLateTickProcessesAllMovementBoundariesInOrderWithoutDuplicates]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunStateTests testLateTickProcessesAllMovementBoundariesInOrderWithoutDuplicates]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunStateTests testNormalMovementRunHasOneStartAndFinishPerSetAndCompletes]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunStateTests testNormalMovementRunHasOneStartAndFinishPerSetAndCompletes]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunStateTests testStaticHoldsStartAndFinishPerHoldAcrossLateTick]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunStateTests testStaticHoldsStartAndFinishPerHoldAcrossLateTick]' passed (0.000 seconds).
+Test Suite 'GuidedForceRunStateTests' passed at 2569-10-04 11:51:40.277 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'GuidedForceRunTimingTests' started at 2569-10-04 11:51:40.277 AM.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunTimingTests testFixedKgTargetBandUsesKgTolerance]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunTimingTests testFixedKgTargetBandUsesKgTolerance]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunTimingTests testFixedKgTargetBandUsesPercentToleranceAndStaysConstant]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunTimingTests testFixedKgTargetBandUsesPercentToleranceAndStaysConstant]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunTimingTests testMovementDurationBoundsLateTickToSetEnd]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunTimingTests testMovementDurationBoundsLateTickToSetEnd]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunTimingTests testMovementDurationKeepsHonestEarlyStop]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunTimingTests testMovementDurationKeepsHonestEarlyStop]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunTimingTests testReferenceTargetsAndCurvesStayTargetFree]' started.
+Test Case '-[SendLogWatchCoreTests.GuidedForceRunTimingTests testReferenceTargetsAndCurvesStayTargetFree]' passed (0.000 seconds).
+Test Suite 'GuidedForceRunTimingTests' passed at 2569-10-04 11:51:40.278 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'HandsFreeForceTests' started at 2569-10-04 11:51:40.278 AM.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testBackwardDeviceTimestampRestartsThresholdWindow]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testBackwardDeviceTimestampRestartsThresholdWindow]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testContinuousLoadSpanningSaveNeverProducesPhantomSecondRep]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testContinuousLoadSpanningSaveNeverProducesPhantomSecondRep]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testDiscardedRepNeverReportedAsQueued]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testDiscardedRepNeverReportedAsQueued]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testEachTransitionActionIsClaimedExactlyOnce]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testEachTransitionActionIsClaimedExactlyOnce]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testFlatWindowResetsOnExcursionAndDoesNotTerminate]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testFlatWindowResetsOnExcursionAndDoesNotTerminate]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testInactiveTransportDisarmsExceptForClaimedConnectedArm]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testInactiveTransportDisarmsExceptForClaimedConnectedArm]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testOnlyReleaseCarriesATrimTimestamp]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testOnlyReleaseCarriesATrimTimestamp]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testOnlyReleaseRearmsImmediatelyTapAndCapWaitForSlack]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testOnlyReleaseRearmsImmediatelyTapAndCapWaitForSlack]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testRearmCycleCanStartASecondRep]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testRearmCycleCanStartASecondRep]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testRearmThroughWaitingForSlackObservesReleaseThenArmsAndRecords]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testRearmThroughWaitingForSlackObservesReleaseThenArmsAndRecords]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testRecordingLasting14SIsDiscarded16SPersists]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testRecordingLasting14SIsDiscarded16SPersists]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testRecordingPeakingAt29KgIsDiscarded31KgPersists]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testRecordingPeakingAt29KgIsDiscarded31KgPersists]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testReleaseGraceAndHysteresisBandDoNotStopEarly]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testReleaseGraceAndHysteresisBandDoNotStopEarly]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testSaveWindowSamplePastArmTimeoutDoesNotCancel]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testSaveWindowSamplePastArmTimeoutDoesNotCancel]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testStableLoadStartsButBriefSpikeDoesNot]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testStableLoadStartsButBriefSpikeDoesNot]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testStaticLoadTerminatedRecordingPeakingBelowMinPeakIsDiscarded]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testStaticLoadTerminatedRecordingPeakingBelowMinPeakIsDiscarded]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testStopReasonAnswersTheKeepStreamLiveQuestion]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testStopReasonAnswersTheKeepStreamLiveQuestion]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testThirtySecondsFlatTerminatesAsStaticLoadTrimmingToFlatWindowStart]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testThirtySecondsFlatTerminatesAsStaticLoadTrimmingToFlatWindowStart]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testTwoNearSimultaneousStopClaimsSaveExactlyOnce]' started.
+Test Case '-[SendLogWatchCoreTests.HandsFreeForceTests testTwoNearSimultaneousStopClaimsSaveExactlyOnce]' passed (0.000 seconds).
+Test Suite 'HandsFreeForceTests' passed at 2569-10-04 11:51:40.282 AM.
+	 Executed 19 tests, with 0 failures (0 unexpected) in 0.002 (0.004) seconds
+Test Suite 'HealthMetricPrecedenceTests' started at 2569-10-04 11:51:40.282 AM.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testIsFreshHonorsTheExplicitTimeZoneNotTheHost]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testIsFreshHonorsTheExplicitTimeZoneNotTheHost]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testIsFreshSameLocalDayOnly]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testIsFreshSameLocalDayOnly]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testPhoneStillDiscardsEmptyCandidate]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testPhoneStillDiscardsEmptyCandidate]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testPhoneWinsWheneverItHasNonEmptyCandidate]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testPhoneWinsWheneverItHasNonEmptyCandidate]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchDiscardsEmptyCandidateEvenWhenRowMissing]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchDiscardsEmptyCandidateEvenWhenRowMissing]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchRetainsFreshNonEmptyPhoneRow]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchRetainsFreshNonEmptyPhoneRow]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchRetainsItsOwnEarlierFreshRowNoFlapping]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchRetainsItsOwnEarlierFreshRowNoFlapping]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchWriteIsDayBoundaryDeterministic]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchWriteIsDayBoundaryDeterministic]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchWritesOverFreshButEmptyRow]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchWritesOverFreshButEmptyRow]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchWritesOverRowWithoutComputedTimestamp]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchWritesOverRowWithoutComputedTimestamp]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchWritesOverStaleRowComputedYesterday]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchWritesOverStaleRowComputedYesterday]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchWritesWhenNoExistingRow]' started.
+Test Case '-[SendLogWatchCoreTests.HealthMetricPrecedenceTests testWatchWritesWhenNoExistingRow]' passed (0.000 seconds).
+Test Suite 'HealthMetricPrecedenceTests' passed at 2569-10-04 11:51:40.285 AM.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'HeartRateTimelineTests' started at 2569-10-04 11:51:40.285 AM.
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testAcceptsAStrictlyNewerSample]' started.
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testAcceptsAStrictlyNewerSample]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testFreshValueAtExactlyTheAgeBoundIsStillFresh]' started.
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testFreshValueAtExactlyTheAgeBoundIsStillFresh]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testFreshValueGoesAbsentPastTheAgeBound]' started.
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testFreshValueGoesAbsentPastTheAgeBound]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testFreshValueIsNilBeforeAnySampleAccepted]' started.
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testFreshValueIsNilBeforeAnySampleAccepted]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testFreshValueReturnsTheLatestValueWithinTheAgeBound]' started.
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testFreshValueReturnsTheLatestValueWithinTheAgeBound]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testRejectsAnOlderSampleArrivingLate]' started.
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testRejectsAnOlderSampleArrivingLate]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testRejectsASampleWithTheExactSameTimestamp]' started.
+Test Case '-[SendLogWatchCoreTests.HeartRateTimelineTests testRejectsASampleWithTheExactSameTimestamp]' passed (0.000 seconds).
+Test Suite 'HeartRateTimelineTests' passed at 2569-10-04 11:51:40.287 AM.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'LiveMirrorProtocolTests' started at 2569-10-04 11:51:40.287 AM.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testCursorRejectsDuplicatesAndOutOfOrderBeats]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testCursorRejectsDuplicatesAndOutOfOrderBeats]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testLegacyTerminalAlwaysWinsTimestampRace]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testLegacyTerminalAlwaysWinsTimestampRace]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testNewRunReplacesCursorAndOldRunCanBeRejectedByCaller]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testNewRunReplacesCursorAndOldRunCanBeRejectedByCaller]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testPendingIdentityDoesNotLetOlderInvocationEraseNewerRow]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testPendingIdentityDoesNotLetOlderInvocationEraseNewerRow]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testSequenceExhaustionNeverEmitsIntMaxTwice]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testSequenceExhaustionNeverEmitsIntMaxTwice]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testSequenceStartsAtOneAndAllowsTelemetryGaps]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testSequenceStartsAtOneAndAllowsTelemetryGaps]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testStampedAddsTheRawUppercaseUUIDString]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testStampedAddsTheRawUppercaseUUIDString]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testStampedDoesNotDisturbOtherWireFields]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testStampedDoesNotDisturbOtherWireFields]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testStampedLeavesTheKeyOffEntirelyForANilOwner]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testStampedLeavesTheKeyOffEntirelyForANilOwner]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testTerminalBeatDominatesLateLiveData]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testTerminalBeatDominatesLateLiveData]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testWireFieldsKeepSnakeCaseAndTerminalEventConsistent]' started.
+Test Case '-[SendLogWatchCoreTests.LiveMirrorProtocolTests testWireFieldsKeepSnakeCaseAndTerminalEventConsistent]' passed (0.000 seconds).
+Test Suite 'LiveMirrorProtocolTests' passed at 2569-10-04 11:51:40.288 AM.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'MovementSetMetricsTests' started at 2569-10-04 11:51:40.288 AM.
+Test Case '-[SendLogWatchCoreTests.MovementSetMetricsTests testFlatCompleteTargetedSet]' started.
+Test Case '-[SendLogWatchCoreTests.MovementSetMetricsTests testFlatCompleteTargetedSet]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.MovementSetMetricsTests testIrregularTraceIsTimeWeightedAndExcludesUnloadedTime]' started.
+Test Case '-[SendLogWatchCoreTests.MovementSetMetricsTests testIrregularTraceIsTimeWeightedAndExcludesUnloadedTime]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.MovementSetMetricsTests testMetricsJSONMatchesWebFieldNames]' started.
+Test Case '-[SendLogWatchCoreTests.MovementSetMetricsTests testMetricsJSONMatchesWebFieldNames]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.MovementSetMetricsTests testStarterMarkersUseStoredOutReturnVocabulary]' started.
+Test Case '-[SendLogWatchCoreTests.MovementSetMetricsTests testStarterMarkersUseStoredOutReturnVocabulary]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.MovementSetMetricsTests testTargetFreeEarlyStopKeepsAccuracyUnknown]' started.
+Test Case '-[SendLogWatchCoreTests.MovementSetMetricsTests testTargetFreeEarlyStopKeepsAccuracyUnknown]' passed (0.000 seconds).
+Test Suite 'MovementSetMetricsTests' passed at 2569-10-04 11:51:40.289 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'PendingQueueDecodeCompatTests' started at 2569-10-04 11:51:40.289 AM.
+Test Case '-[SendLogWatchCoreTests.PendingQueueDecodeCompatTests testPendingTindeqSessionDecodesFrozenPreviousShape]' started.
+Test Case '-[SendLogWatchCoreTests.PendingQueueDecodeCompatTests testPendingTindeqSessionDecodesFrozenPreviousShape]' passed (0.000 seconds).
+Test Suite 'PendingQueueDecodeCompatTests' passed at 2569-10-04 11:51:40.290 AM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'PendingQueuePolicyTests' started at 2569-10-04 11:51:40.290 AM.
+Test Case '-[SendLogWatchCoreTests.PendingQueuePolicyTests testFailedDirectFallbackReportsLoss]' started.
+Test Case '-[SendLogWatchCoreTests.PendingQueuePolicyTests testFailedDirectFallbackReportsLoss]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingQueuePolicyTests testFailedPersistFallsBackToDirectUpload]' started.
+Test Case '-[SendLogWatchCoreTests.PendingQueuePolicyTests testFailedPersistFallsBackToDirectUpload]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingQueuePolicyTests testSuccessfulDirectFallbackReportsUploaded]' started.
+Test Case '-[SendLogWatchCoreTests.PendingQueuePolicyTests testSuccessfulDirectFallbackReportsUploaded]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingQueuePolicyTests testSuccessfulPersistStartsBackgroundDrain]' started.
+Test Case '-[SendLogWatchCoreTests.PendingQueuePolicyTests testSuccessfulPersistStartsBackgroundDrain]' passed (0.000 seconds).
+Test Suite 'PendingQueuePolicyTests' passed at 2569-10-04 11:51:40.290 AM.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'PendingQueueUserMatchTests' started at 2569-10-04 11:51:40.290 AM.
+Test Case '-[SendLogWatchCoreTests.PendingQueueUserMatchTests testDifferentAccountsDoNotDrain]' started.
+Test Case '-[SendLogWatchCoreTests.PendingQueueUserMatchTests testDifferentAccountsDoNotDrain]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingQueueUserMatchTests testLegacyNilStampIsQuarantinedWithoutAnOwnerProof]' started.
+Test Case '-[SendLogWatchCoreTests.PendingQueueUserMatchTests testLegacyNilStampIsQuarantinedWithoutAnOwnerProof]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingQueueUserMatchTests testSameAccountDrains]' started.
+Test Case '-[SendLogWatchCoreTests.PendingQueueUserMatchTests testSameAccountDrains]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingQueueUserMatchTests testSignedOutKeepsLegacyItemQuarantined]' started.
+Test Case '-[SendLogWatchCoreTests.PendingQueueUserMatchTests testSignedOutKeepsLegacyItemQuarantined]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingQueueUserMatchTests testStampedItemDoesNotDrainWhileSignedOut]' started.
+Test Case '-[SendLogWatchCoreTests.PendingQueueUserMatchTests testStampedItemDoesNotDrainWhileSignedOut]' passed (0.000 seconds).
+Test Suite 'PendingQueueUserMatchTests' passed at 2569-10-04 11:51:40.291 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'PendingSyncCacheTests' started at 2569-10-04 11:51:40.291 AM.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testAllZerosReportAsZeroNotUnknown]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testAllZerosReportAsZeroNotUnknown]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testEachQueueKeepsItsOwnQuarantineSlot]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testEachQueueKeepsItsOwnQuarantineSlot]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testLatestCountPerQueueWins]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testLatestCountPerQueueWins]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testNegativeCountsCannotPoisonTheTotal]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testNegativeCountsCannotPoisonTheTotal]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testNegativeQuarantinedCountsAreRefused]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testNegativeQuarantinedCountsAreRefused]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testNegativeStuckSubsetCountsAreRefused]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testNegativeStuckSubsetCountsAreRefused]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testNilUntilEveryQueueHasCounted]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testNilUntilEveryQueueHasCounted]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testOwnerlessQueueRowsHaveTheirOwnCompleteDiagnosticTotal]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testOwnerlessQueueRowsHaveTheirOwnCompleteDiagnosticTotal]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testQuarantinedCountDoesNotFoldIntoTheSyncingTotal]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testQuarantinedCountDoesNotFoldIntoTheSyncingTotal]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testQuarantinedCountIsNilUntilEveryQueueReports]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testQuarantinedCountIsNilUntilEveryQueueReports]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testResetAlsoClearsQuarantinedBackToUnknown]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testResetAlsoClearsQuarantinedBackToUnknown]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testResetAlsoClearsTheStuckSubsetBackToUnknown]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testResetAlsoClearsTheStuckSubsetBackToUnknown]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testResetClearsBackToUnknown]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testResetClearsBackToUnknown]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testStuckSubsetIsIndependentOfTheTotal]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testStuckSubsetIsIndependentOfTheTotal]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testStuckSubsetIsNilUntilEveryQueueReports]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncCacheTests testStuckSubsetIsNilUntilEveryQueueReports]' passed (0.000 seconds).
+Test Suite 'PendingSyncCacheTests' passed at 2569-10-04 11:51:40.294 AM.
+	 Executed 15 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'PendingSyncStalenessTests' started at 2569-10-04 11:51:40.294 AM.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStalenessTests testAFreshReportIsNotStale]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStalenessTests testAFreshReportIsNotStale]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncStalenessTests testAnOldReportIsStale]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStalenessTests testAnOldReportIsStale]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncStalenessTests testNoReportIsNotCalledStale]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStalenessTests testNoReportIsNotCalledStale]' passed (0.000 seconds).
+Test Suite 'PendingSyncStalenessTests' passed at 2569-10-04 11:51:40.294 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'PendingSyncStampingTests' started at 2569-10-04 11:51:40.294 AM.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testAnEmptyQueueIsReportedRatherThanOmitted]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testAnEmptyQueueIsReportedRatherThanOmitted]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testCountRidesEvenWhenTheBuildIsUnknown]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testCountRidesEvenWhenTheBuildIsUnknown]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testNegativeCountsAreRefusedOnBothSides]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testNegativeCountsAreRefusedOnBothSides]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testReadsANumberThatCameBackAsADouble]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testReadsANumberThatCameBackAsADouble]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testRoundTripsThroughAMessage]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testRoundTripsThroughAMessage]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testStrippingLeavesTheOriginalPayloadShape]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testStrippingLeavesTheOriginalPayloadShape]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testUnknownCountLeavesTheMessageUntouched]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testUnknownCountLeavesTheMessageUntouched]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testUnstampedMessageYieldsNoCount]' started.
+Test Case '-[SendLogWatchCoreTests.PendingSyncStampingTests testUnstampedMessageYieldsNoCount]' passed (0.000 seconds).
+Test Suite 'PendingSyncStampingTests' passed at 2569-10-04 11:51:40.296 AM.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'PendingTindeqSessionTests' started at 2569-10-04 11:51:40.296 AM.
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testBuildDurationClampsAtSixHundredMinutes]' started.
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testBuildDurationClampsAtSixHundredMinutes]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testBuildDurationFloorsAtOneMinute]' started.
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testBuildDurationFloorsAtOneMinute]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testBuildFallsBackToNowWhenSessionStartedAtIsNil]' started.
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testBuildFallsBackToNowWhenSessionStartedAtIsNil]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testBuildSingularRecordingNote]' started.
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testBuildSingularRecordingNote]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testBuildUsesSessionStartedAtForDate]' started.
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testBuildUsesSessionStartedAtForDate]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testPendingSessionEncodeDecodeRoundTrip]' started.
+Test Case '-[SendLogWatchCoreTests.PendingTindeqSessionTests testPendingSessionEncodeDecodeRoundTrip]' passed (0.000 seconds).
+Test Suite 'PendingTindeqSessionTests' passed at 2569-10-04 11:51:40.297 AM.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'PhaseRGBTests' started at 2569-10-04 11:51:40.297 AM.
+Test Case '-[SendLogWatchCoreTests.PhaseRGBTests testCompositingOverABackground]' started.
+Test Case '-[SendLogWatchCoreTests.PhaseRGBTests testCompositingOverABackground]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PhaseRGBTests testContrastRatioMatchesKnownWCAGValues]' started.
+Test Case '-[SendLogWatchCoreTests.PhaseRGBTests testContrastRatioMatchesKnownWCAGValues]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PhaseRGBTests testLuminanceUsesTheLinearSegmentNearBlack]' started.
+Test Case '-[SendLogWatchCoreTests.PhaseRGBTests testLuminanceUsesTheLinearSegmentNearBlack]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.PhaseRGBTests testScaledClampsIntoRangeWhenMeasured]' started.
+Test Case '-[SendLogWatchCoreTests.PhaseRGBTests testScaledClampsIntoRangeWhenMeasured]' passed (0.000 seconds).
+Test Suite 'PhaseRGBTests' passed at 2569-10-04 11:51:40.298 AM.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'QuarantineBreadcrumbTests' started at 2569-10-04 11:51:40.298 AM.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testAnUnreadableHistoryFileStartsEmptyAndIsOverwritten]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testAnUnreadableHistoryFileStartsEmptyAndIsOverwritten]' passed (0.003 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testARecordedExitIsReadBackWithItsHeaderFields]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testARecordedExitIsReadBackWithItsHeaderFields]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testErrorMessageIsTruncatedAtWriteTime]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testErrorMessageIsTruncatedAtWriteTime]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testFailureSummaryIsEmptyForATransportFailure]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testFailureSummaryIsEmptyForATransportFailure]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testFailureSummaryJoinsOnlyTheFieldsThatExist]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testFailureSummaryJoinsOnlyTheFieldsThatExist]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testFailureSummaryOmitsNilFieldsIndividually]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testFailureSummaryOmitsNilFieldsIndividually]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testHistoryIsOldestFirst]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testHistoryIsOldestFirst]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testHistorySurvivesARelaunch]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testHistorySurvivesARelaunch]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testTheOnDiskShapeRoundTripsThroughJSON]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testTheOnDiskShapeRoundTripsThroughJSON]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testTheRingIsBoundedAndEvictsTheOldest]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineBreadcrumbTests testTheRingIsBoundedAndEvictsTheOldest]' passed (0.003 seconds).
+Test Suite 'QuarantineBreadcrumbTests' passed at 2569-10-04 11:51:40.307 AM.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.009 (0.010) seconds
+Test Suite 'QuarantineDiagnosticsTests' started at 2569-10-04 11:51:40.307 AM.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testEmptyMessageTruncatesToNothing]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testEmptyMessageTruncatesToNothing]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testLongErrorMessageIsTruncatedWithAnEllipsisAtTheLimit]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testLongErrorMessageIsTruncatedWithAnEllipsisAtTheLimit]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testPayloadDroppedNoteNeverDescribesARestore]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testPayloadDroppedNoteNeverDescribesARestore]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testQuarantineReasonRawValuesAreStable]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testQuarantineReasonRawValuesAreStable]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testQuarantineReasonRoundTripsItsOwnCases]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testQuarantineReasonRoundTripsItsOwnCases]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testResultSummaryCoversRestoredAndKept]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testResultSummaryCoversRestoredAndKept]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testResultSummaryIsNilWhenNothingWasAttempted]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testResultSummaryIsNilWhenNothingWasAttempted]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testResultSummaryWithZeroRestoredNeverClaimsAMove]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testResultSummaryWithZeroRestoredNeverClaimsAMove]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testRetryActionTitle]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testRetryActionTitle]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testSchemaRejectionCopySaysItWillNotRetry]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testSchemaRejectionCopySaysItWillNotRetry]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testSchemaRejectionIsNotManuallyRetryable]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testSchemaRejectionIsNotManuallyRetryable]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testShortErrorMessageIsUntouched]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testShortErrorMessageIsUntouched]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testStuckRetryingCopySaysItRetriesAutomaticallyAndNow]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testStuckRetryingCopySaysItRetriesAutomaticallyAndNow]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testStuckRetryingIsManuallyRetryable]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testStuckRetryingIsManuallyRetryable]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testTheTwoReasonsNeverShareCopy]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testTheTwoReasonsNeverShareCopy]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testTruncationHonorsAnExplicitLimit]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantineDiagnosticsTests testTruncationHonorsAnExplicitLimit]' passed (0.000 seconds).
+Test Suite 'QuarantineDiagnosticsTests' passed at 2569-10-04 11:51:40.311 AM.
+	 Executed 16 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'QuarantinedSyncStampingTests' started at 2569-10-04 11:51:40.311 AM.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testAZeroQuarantinedCountIsReportedRatherThanOmitted]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testAZeroQuarantinedCountIsReportedRatherThanOmitted]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testAZeroStuckSubsetIsReportedRatherThanOmitted]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testAZeroStuckSubsetIsReportedRatherThanOmitted]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testNegativeQuarantinedCountsAreRefusedOnBothSides]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testNegativeQuarantinedCountsAreRefusedOnBothSides]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testNegativeStuckSubsetCountsAreRefusedOnBothSides]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testNegativeStuckSubsetCountsAreRefusedOnBothSides]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testReadsAQuarantinedCountThatCameBackAsADouble]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testReadsAQuarantinedCountThatCameBackAsADouble]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testReadsAStuckSubsetThatCameBackAsADouble]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testReadsAStuckSubsetThatCameBackAsADouble]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testRoundTripsThroughAMessageAlongsidePendingSync]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testRoundTripsThroughAMessageAlongsidePendingSync]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testStrippingRemovesTheQuarantineKeyToo]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testStrippingRemovesTheQuarantineKeyToo]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testStrippingRemovesTheStuckSubsetKeyToo]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testStrippingRemovesTheStuckSubsetKeyToo]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testStuckSubsetRoundTripsAlongsideTheTotal]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testStuckSubsetRoundTripsAlongsideTheTotal]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testUnknownQuarantinedCountLeavesTheMessageUntouched]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testUnknownQuarantinedCountLeavesTheMessageUntouched]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testUnknownStuckSubsetLeavesTheMessageUntouchedAndReadsAsUnknown]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testUnknownStuckSubsetLeavesTheMessageUntouchedAndReadsAsUnknown]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testUnstampedMessageYieldsNoQuarantinedCount]' started.
+Test Case '-[SendLogWatchCoreTests.QuarantinedSyncStampingTests testUnstampedMessageYieldsNoQuarantinedCount]' passed (0.000 seconds).
+Test Suite 'QuarantinedSyncStampingTests' passed at 2569-10-04 11:51:40.313 AM.
+	 Executed 13 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'QueueRetryPolicyTests' started at 2569-10-04 11:51:40.313 AM.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testAPassBeyondTheRelayBudgetIsNoLongerStaleAuth]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testAPassBeyondTheRelayBudgetIsNoLongerStaleAuth]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testAPermanent403QuarantinesWithinTheCombinedBound]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testAPermanent403QuarantinesWithinTheCombinedBound]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testExactlyAtTheBackoffIsDue]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testExactlyAtTheBackoffIsDue]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testJustBelowTheBackoffIsNotDueYet]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testJustBelowTheBackoffIsNotDueYet]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testJustBelowThresholdIsStillRetryLater]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testJustBelowThresholdIsStillRetryLater]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testReachingTheThresholdBecomesStuck]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testReachingTheThresholdBecomesStuck]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testStaysRetryLaterBelowTheThreshold]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testStaysRetryLaterBelowTheThreshold]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testTheBudgetedNumberOf403PassesIsStillStaleAuth]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testTheBudgetedNumberOf403PassesIsStillStaleAuth]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testTheFirst403PassIsTreatedAsStaleAuth]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testTheFirst403PassIsTreatedAsStaleAuth]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testWellPastTheBackoffIsDue]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testWellPastTheBackoffIsDue]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testWellPastTheThresholdStaysStuck]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryPolicyTests testWellPastTheThresholdStaysStuck]' passed (0.000 seconds).
+Test Suite 'QueueRetryPolicyTests' passed at 2569-10-04 11:51:40.315 AM.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'QueueRetryScheduleTests' started at 2569-10-04 11:51:40.315 AM.
+Test Case '-[SendLogWatchCoreTests.QueueRetryScheduleTests testDelayCapsAtMaxDelayNoMatterHowManyStalls]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryScheduleTests testDelayCapsAtMaxDelayNoMatterHowManyStalls]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryScheduleTests testDelayGrowsWithConsecutiveStalls]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryScheduleTests testDelayGrowsWithConsecutiveStalls]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryScheduleTests testDelayIsMonotonicNonDecreasing]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryScheduleTests testDelayIsMonotonicNonDecreasing]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryScheduleTests testDelayNeverExceedsMaxDelay]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryScheduleTests testDelayNeverExceedsMaxDelay]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.QueueRetryScheduleTests testFirstStallUsesTheBaseDelay]' started.
+Test Case '-[SendLogWatchCoreTests.QueueRetryScheduleTests testFirstStallUsesTheBaseDelay]' passed (0.000 seconds).
+Test Suite 'QueueRetryScheduleTests' passed at 2569-10-04 11:51:40.316 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'RPEDepletionTests' started at 2569-10-04 11:51:40.316 AM.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testAccumulatorFallsBackUntilARepHasACurve]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testAccumulatorFallsBackUntilARepHasACurve]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testAccumulatorMatchesTheOneShotPrediction]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testAccumulatorMatchesTheOneShotPrediction]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testAccumulatorResetsWithTheSession]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testAccumulatorResetsWithTheSession]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testAtOrBelowCFContributesNothing]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testAtOrBelowCFContributesNothing]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testFixtureFallbackMatchesTheModelTunable]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testFixtureFallbackMatchesTheModelTunable]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testMatchesThePublishedTable]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testMatchesThePublishedTable]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testNegativeDurationIsClampedToZero]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testNegativeDurationIsClampedToZero]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testNilRatherThanZeroWhenNoRepHadACurve]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testNilRatherThanZeroWhenNoRepHadACurve]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testNilWithoutAUsableCurve]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testNilWithoutAUsableCurve]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testOnCurveToFailureIsExactlyOneBattery]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testOnCurveToFailureIsExactlyOneBattery]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testPredictionsMatchSharedSessionVectors]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testPredictionsMatchSharedSessionVectors]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testScalesLinearlyInForceAboveCFAndInDuration]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testScalesLinearlyInForceAboveCFAndInDuration]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testSkipsRepsWithoutACurveAndKeepsTheOnesWithOne]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testSkipsRepsWithoutACurveAndKeepsTheOnesWithOne]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testStaysInsideOneToTen]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testStaysInsideOneToTen]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testSumsEachRepAgainstItsOwnTagsCurve]' started.
+Test Case '-[SendLogWatchCoreTests.RPEDepletionTests testSumsEachRepAgainstItsOwnTagsCurve]' passed (0.000 seconds).
+Test Suite 'RPEDepletionTests' passed at 2569-10-04 11:51:40.319 AM.
+	 Executed 15 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'RPEModelTests' started at 2569-10-04 11:51:40.319 AM.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testAutoTrackedClampsToValidRange]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testAutoTrackedClampsToValidRange]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testAutoTrackedDoesNotSnapToHalfPoints]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testAutoTrackedDoesNotSnapToHalfPoints]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testAutoTrackedHandlesNaN]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testAutoTrackedHandlesNaN]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testAutoTrackedKeepsOneDecimalPrecision]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testAutoTrackedKeepsOneDecimalPrecision]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testConstantFeatureGetsNearZeroWeight]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testConstantFeatureGetsNearZeroWeight]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testFitRecoversGeneratingProcess]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testFitRecoversGeneratingProcess]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testIdenticalRowsDegenerate]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testIdenticalRowsDegenerate]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testPredictionClamps]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testPredictionClamps]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testSolve4x4Identity]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testSolve4x4Identity]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testSolve4x4SingularReturnsNil]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testSolve4x4SingularReturnsNil]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testStoreIsBlindToALegacyV1Model]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testStoreIsBlindToALegacyV1Model]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testStoreRoundTripsUnderTheCurrentKey]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testStoreRoundTripsUnderTheCurrentKey]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testTooFewSamplesReturnsNil]' started.
+Test Case '-[SendLogWatchCoreTests.RPEModelTests testTooFewSamplesReturnsNil]' passed (0.000 seconds).
+Test Suite 'RPEModelTests' passed at 2569-10-04 11:51:40.323 AM.
+	 Executed 13 tests, with 0 failures (0 unexpected) in 0.004 (0.004) seconds
+Test Suite 'ReadinessAcwrParityTests' started at 2569-10-04 11:51:40.323 AM.
+Test Case '-[SendLogWatchCoreTests.ReadinessAcwrParityTests testAcwrRatioMatchesSharedVectors]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessAcwrParityTests testAcwrRatioMatchesSharedVectors]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessAcwrParityTests testReadinessVectorsMapToWatchLabels]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessAcwrParityTests testReadinessVectorsMapToWatchLabels]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessAcwrParityTests testStatusVectorsMatchWatchBands]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessAcwrParityTests testStatusVectorsMatchWatchBands]' passed (0.000 seconds).
+Test Suite 'ReadinessAcwrParityTests' passed at 2569-10-04 11:51:40.325 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'ReadinessRefreshTests' started at 2569-10-04 11:51:40.325 AM.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testAccountTransitionResetsTimestampOwnershipForLaterBResults]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testAccountTransitionResetsTimestampOwnershipForLaterBResults]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testActivationAndReachabilityChooseOnlyOneDeliveryPath]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testActivationAndReachabilityChooseOnlyOneDeliveryPath]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testCancellationDropsQueuedFollowUp]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testCancellationDropsQueuedFollowUp]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testCoalescerRunsAtMostOneFollowUpAndKeepsStrongestReason]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testCoalescerRunsAtMostOneFollowUpAndKeepsStrongestReason]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testColdLaunchRestoresPersistedJWTSubjectBeforeReadinessWork]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testColdLaunchRestoresPersistedJWTSubjectBeforeReadinessWork]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testColdSignedOutContextCannotResurrectStaleAuthOrReadiness]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testColdSignedOutContextCannotResurrectStaleAuthOrReadiness]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testColdStartReconcilesCombinedAuthAndReadinessBeforePublication]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testColdStartReconcilesCombinedAuthAndReadinessBeforePublication]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testDirectSignedInAccountSwitchClearsCachedReadinessWithoutSignedOut]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testDirectSignedInAccountSwitchClearsCachedReadinessWithoutSignedOut]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testFailureAndCancellationRemainTyped]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testFailureAndCancellationRemainTyped]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testLegacyResultIsOnlyAdoptableByAnExplicitActiveRequest]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testLegacyResultIsOnlyAdoptableByAnExplicitActiveRequest]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testReadinessResultMergesIntoSignedInApplicationContext]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testReadinessResultMergesIntoSignedInApplicationContext]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testRequestMessageIsVersionTolerantAndRoundTrips]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testRequestMessageIsVersionTolerantAndRoundTrips]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testResultCarriesAccountStampAndRejectsCrossAccountOrLegacyLateResults]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testResultCarriesAccountStampAndRejectsCrossAccountOrLegacyLateResults]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testResultGateRejectsLateAndOutOfOrderResults]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testResultGateRejectsLateAndOutOfOrderResults]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testResultMessageOmitsNilSnapshotFieldsAndIsAValidWCPropertyList]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testResultMessageOmitsNilSnapshotFieldsAndIsAValidWCPropertyList]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testSameUserTokenRefreshKeepsEpochButAccountSwitchInvalidatesIt]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testSameUserTokenRefreshKeepsEpochButAccountSwitchInvalidatesIt]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testSignedOutApplicationContextClearsAuthAndReadinessBeforeNextAccount]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testSignedOutApplicationContextClearsAuthAndReadinessBeforeNextAccount]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testSignedOutWinsAnInterleavingBeforeDirectResultPublication]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testSignedOutWinsAnInterleavingBeforeDirectResultPublication]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testSignOutOwnerFenceRejectsDelayedStampedResultAfterQuarantineLoss]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testSignOutOwnerFenceRejectsDelayedStampedResultAfterQuarantineLoss]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testStaleTokenRetryIsSingleFlightAndDoesNotRetryOrdinaryErrors]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testStaleTokenRetryIsSingleFlightAndDoesNotRetryOrdinaryErrors]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testTaskGateRejectsOldFlightAfterClearAndReplacement]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testTaskGateRejectsOldFlightAfterClearAndReplacement]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testTerminalFallbackTimeoutCanStartANewFlight]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testTerminalFallbackTimeoutCanStartANewFlight]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testTokenGenerationIdentifiesBearerRotationWithoutChangingAccount]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testTokenGenerationIdentifiesBearerRotationWithoutChangingAccount]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testWidgetTaskGateRejectsCommitAfterSignOutAndPreservesNewOwner]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessRefreshTests testWidgetTaskGateRejectsCommitAfterSignOutAndPreservesNewOwner]' passed (0.000 seconds).
+Test Suite 'ReadinessRefreshTests' passed at 2569-10-04 11:51:40.330 AM.
+	 Executed 24 tests, with 0 failures (0 unexpected) in 0.003 (0.005) seconds
+Test Suite 'ReadinessWatchBridgeTests' started at 2569-10-04 11:51:40.330 AM.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testAccountSwitchDuringFlightFencesTheLateResultAndItsReplay]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testAccountSwitchDuringFlightFencesTheLateResultAndItsReplay]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testAnOlderPhonePushCannotReplaceANewerAppliedOne]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testAnOlderPhonePushCannotReplaceANewerAppliedOne]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testConcurrentDuplicateJoinsTheRunningFlight]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testConcurrentDuplicateJoinsTheRunningFlight]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testDuplicateReplayIsAnsweredWithoutASecondPass]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testDuplicateReplayIsAnsweredWithoutASecondPass]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testMalformedReadinessMessageIsNotTurnedIntoAResult]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testMalformedReadinessMessageIsNotTurnedIntoAResult]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testPhonePushDecodesThroughTheWatchGateAndKeepsTheSignedInContext]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testPhonePushDecodesThroughTheWatchGateAndKeepsTheSignedInContext]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testRequestOwnedByAnotherAccountIsNotExecuted]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testRequestOwnedByAnotherAccountIsNotExecuted]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testSignedOutPhoneAnswersTypedAuthRequiredInsteadOfAnEmptyAck]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testSignedOutPhoneAnswersTypedAuthRequiredInsteadOfAnEmptyAck]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testUnstampedRequestHasNoOwnershipProof]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testUnstampedRequestHasNoOwnershipProof]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testUserFacingOutcomesRenderCopyForEveryFailurePath]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testUserFacingOutcomesRenderCopyForEveryFailurePath]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testWatchAskRoundTripsThroughTheBridgeIntoTheWatchResultGate]' started.
+Test Case '-[SendLogWatchCoreTests.ReadinessWatchBridgeTests testWatchAskRoundTripsThroughTheBridgeIntoTheWatchResultGate]' passed (0.000 seconds).
+Test Suite 'ReadinessWatchBridgeTests' passed at 2569-10-04 11:51:40.333 AM.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'RelayRequestThrottleTests' started at 2569-10-04 11:51:40.333 AM.
+Test Case '-[SendLogWatchCoreTests.RelayRequestThrottleTests testARetryLaterIsAllowed]' started.
+Test Case '-[SendLogWatchCoreTests.RelayRequestThrottleTests testARetryLaterIsAllowed]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RelayRequestThrottleTests testCoincidingTriggersCollapseIntoOneAsk]' started.
+Test Case '-[SendLogWatchCoreTests.RelayRequestThrottleTests testCoincidingTriggersCollapseIntoOneAsk]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.RelayRequestThrottleTests testFirstAskAlwaysGoesOut]' started.
+Test Case '-[SendLogWatchCoreTests.RelayRequestThrottleTests testFirstAskAlwaysGoesOut]' passed (0.000 seconds).
+Test Suite 'RelayRequestThrottleTests' passed at 2569-10-04 11:51:40.333 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'SessionRelayDecodeTests' started at 2569-10-04 11:51:40.333 AM.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testAckCapableIsAdoptedFromTheRelayedContext]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testAckCapableIsAdoptedFromTheRelayedContext]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testAdoptsAFreshSignedInPayload]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testAdoptsAFreshSignedInPayload]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testAPayloadCarryingOnlyARefreshTokenIsRefused]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testAPayloadCarryingOnlyARefreshTokenIsRefused]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testARefreshTokenInThePayloadIsIgnoredEntirely]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testARefreshTokenInThePayloadIsIgnoredEntirely]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testASessionPersistedBeforeAckCapableStillLoads]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testASessionPersistedBeforeAckCapableStillLoads]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testCompatibilityFixtureWorksForCurrentAndLegacyDecoders]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testCompatibilityFixtureWorksForCurrentAndLegacyDecoders]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testEveryRejectionHasSomethingToShowTheUser]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testEveryRejectionHasSomethingToShowTheUser]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testFallsBackToTheRelayedExpiryOnlyWhenTheTokenOmitsExp]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testFallsBackToTheRelayedExpiryOnlyWhenTheTokenOmitsExp]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testRefusesAnExpiredPayloadWithAReason]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testRefusesAnExpiredPayloadWithAReason]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testRefusesAPayloadInsideTheFreshnessMargin]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testRefusesAPayloadInsideTheFreshnessMargin]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testRefusesGarbageWithADistinctReason]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testRefusesGarbageWithADistinctReason]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testSignedOutIsAlwaysHonoured]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testSignedOutIsAlwaysHonoured]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testTheStoredSessionCannotCarryARefreshTokenAtAll]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testTheStoredSessionCannotCarryARefreshTokenAtAll]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testTheTokensOwnExpiryWinsOverTheRelayedHint]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayDecodeTests testTheTokensOwnExpiryWinsOverTheRelayedHint]' passed (0.000 seconds).
+Test Suite 'SessionRelayDecodeTests' passed at 2569-10-04 11:51:40.336 AM.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'SessionRelayStalenessTests' started at 2569-10-04 11:51:40.336 AM.
+Test Case '-[SendLogWatchCoreTests.SessionRelayStalenessTests testAStateComputedAtTDisagreesWithTheSameSessionsStateLater]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayStalenessTests testAStateComputedAtTDisagreesWithTheSameSessionsStateLater]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayStalenessTests testNeedsTokenIsTrueWhenSignedOut]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayStalenessTests testNeedsTokenIsTrueWhenSignedOut]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SessionRelayStalenessTests testNeedsTokenTracksTheSameStalenessAsState]' started.
+Test Case '-[SendLogWatchCoreTests.SessionRelayStalenessTests testNeedsTokenTracksTheSameStalenessAsState]' passed (0.000 seconds).
+Test Suite 'SessionRelayStalenessTests' passed at 2569-10-04 11:51:40.337 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'StatusPresentationTests' started at 2569-10-04 11:51:40.337 AM.
+Test Case '-[SendLogWatchCoreTests.StatusPresentationTests testACWRRiskBandsMatchWebBoundaries]' started.
+Test Case '-[SendLogWatchCoreTests.StatusPresentationTests testACWRRiskBandsMatchWebBoundaries]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.StatusPresentationTests testACWRTrackClampsToZeroThroughTwoScale]' started.
+Test Case '-[SendLogWatchCoreTests.StatusPresentationTests testACWRTrackClampsToZeroThroughTwoScale]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.StatusPresentationTests testNilAndNonFiniteValuesStayUnknown]' started.
+Test Case '-[SendLogWatchCoreTests.StatusPresentationTests testNilAndNonFiniteValuesStayUnknown]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.StatusPresentationTests testReadinessProgressClampsAndNilDoesNotBecomeZero]' started.
+Test Case '-[SendLogWatchCoreTests.StatusPresentationTests testReadinessProgressClampsAndNilDoesNotBecomeZero]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.StatusPresentationTests testReadinessZoneLabelsAreNormalizedWithoutInventingUnknownZones]' started.
+Test Case '-[SendLogWatchCoreTests.StatusPresentationTests testReadinessZoneLabelsAreNormalizedWithoutInventingUnknownZones]' passed (0.000 seconds).
+Test Suite 'StatusPresentationTests' passed at 2569-10-04 11:51:40.338 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'SyncFreshnessPolicyTests' started at 2569-10-04 11:51:40.338 AM.
+Test Case '-[SendLogWatchCoreTests.SyncFreshnessPolicyTests testExactlyAtTheStaleThresholdIsStale]' started.
+Test Case '-[SendLogWatchCoreTests.SyncFreshnessPolicyTests testExactlyAtTheStaleThresholdIsStale]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SyncFreshnessPolicyTests testNoPendingItemsIsAlwaysCurrentRegardlessOfLastSync]' started.
+Test Case '-[SendLogWatchCoreTests.SyncFreshnessPolicyTests testNoPendingItemsIsAlwaysCurrentRegardlessOfLastSync]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SyncFreshnessPolicyTests testPendingWithAnOldSyncIsStale]' started.
+Test Case '-[SendLogWatchCoreTests.SyncFreshnessPolicyTests testPendingWithAnOldSyncIsStale]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SyncFreshnessPolicyTests testPendingWithARecentSyncIsCurrent]' started.
+Test Case '-[SendLogWatchCoreTests.SyncFreshnessPolicyTests testPendingWithARecentSyncIsCurrent]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.SyncFreshnessPolicyTests testPendingWithNoSuccessfulSyncEverIsStaleNotCurrent]' started.
+Test Case '-[SendLogWatchCoreTests.SyncFreshnessPolicyTests testPendingWithNoSuccessfulSyncEverIsStaleNotCurrent]' passed (0.000 seconds).
+Test Suite 'SyncFreshnessPolicyTests' passed at 2569-10-04 11:51:40.338 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'TagFetchPolicyTests' started at 2569-10-04 11:51:40.338 AM.
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testNoTrailingSleepAfterFinalAttempt]' started.
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testNoTrailingSleepAfterFinalAttempt]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testShouldRestartOnConnect_finishedEmptyRestarts]' started.
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testShouldRestartOnConnect_finishedEmptyRestarts]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testShouldRestartOnConnect_hasTagsNeverRestarts]' started.
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testShouldRestartOnConnect_hasTagsNeverRestarts]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testShouldRestartOnConnect_inFlightBlocksRestart]' started.
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testShouldRestartOnConnect_inFlightBlocksRestart]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testSleepScheduleBetweenAttempts]' started.
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testSleepScheduleBetweenAttempts]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testWithTimeoutPropagatesCancellation]' started.
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testWithTimeoutPropagatesCancellation]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testWithTimeoutReturnsResultWhenFasterThanDeadline]' started.
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testWithTimeoutReturnsResultWhenFasterThanDeadline]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testWithTimeoutThrowsWhenBodyStalls]' started.
+Test Case '-[SendLogWatchCoreTests.TagFetchPolicyTests testWithTimeoutThrowsWhenBodyStalls]' passed (0.101 seconds).
+Test Suite 'TagFetchPolicyTests' passed at 2569-10-04 11:51:40.441 AM.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.102 (0.103) seconds
+Test Suite 'TagReconciliationTests' started at 2569-10-04 11:51:40.441 AM.
+Test Case '-[SendLogWatchCoreTests.TagReconciliationTests testAllTagsGoneClearsSelection]' started.
+Test Case '-[SendLogWatchCoreTests.TagReconciliationTests testAllTagsGoneClearsSelection]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TagReconciliationTests testEmptyTagNeverClears]' started.
+Test Case '-[SendLogWatchCoreTests.TagReconciliationTests testEmptyTagNeverClears]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TagReconciliationTests testHiddenTagIsCleared]' started.
+Test Case '-[SendLogWatchCoreTests.TagReconciliationTests testHiddenTagIsCleared]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TagReconciliationTests testRenamedTagIsCleared]' started.
+Test Case '-[SendLogWatchCoreTests.TagReconciliationTests testRenamedTagIsCleared]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TagReconciliationTests testVisibleTagIsKept]' started.
+Test Case '-[SendLogWatchCoreTests.TagReconciliationTests testVisibleTagIsKept]' passed (0.000 seconds).
+Test Suite 'TagReconciliationTests' passed at 2569-10-04 11:51:40.442 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'TindeqProtocolTests' started at 2569-10-04 11:51:40.442 AM.
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testLowBatteryFrame]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testLowBatteryFrame]' passed (0.001 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testParsesMultipleSamplesPerNotification]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testParsesMultipleSamplesPerNotification]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testParsesSingleWeightSample]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testParsesSingleWeightSample]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testResponseFrame]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testResponseFrame]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testTruncatedFrameIsSafe]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testTruncatedFrameIsSafe]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testTruncatedFrameSentinelDoesNotCollideWithARealTag0xFFFrame]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testTruncatedFrameSentinelDoesNotCollideWithARealTag0xFFFrame]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testTruncatedTagIsDeliberatelyNotRepresentableAsUInt8]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testTruncatedTagIsDeliberatelyNotRepresentableAsUInt8]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testUnknownTag]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqProtocolTests testUnknownTag]' passed (0.000 seconds).
+Test Suite 'TindeqProtocolTests' passed at 2569-10-04 11:51:40.445 AM.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'TindeqRecordingLimitTests' started at 2569-10-04 11:51:40.445 AM.
+Test Case '-[SendLogWatchCoreTests.TindeqRecordingLimitTests testDoesNotStopAtOldTwoMinuteLimit]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqRecordingLimitTests testDoesNotStopAtOldTwoMinuteLimit]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqRecordingLimitTests testMovementNormalizationLeavesBoundaryHeadroom]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqRecordingLimitTests testMovementNormalizationLeavesBoundaryHeadroom]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqRecordingLimitTests testStopsAtTenMinuteLimitNotThirty]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqRecordingLimitTests testStopsAtTenMinuteLimitNotThirty]' passed (0.000 seconds).
+Test Suite 'TindeqRecordingLimitTests' passed at 2569-10-04 11:51:40.445 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'TindeqSalvagePolicyTests' started at 2569-10-04 11:51:40.445 AM.
+Test Case '-[SendLogWatchCoreTests.TindeqSalvagePolicyTests testDoesNotSalvageIntentionalDisconnect]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqSalvagePolicyTests testDoesNotSalvageIntentionalDisconnect]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqSalvagePolicyTests testDoesNotSalvageWhenNotMeasuring]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqSalvagePolicyTests testDoesNotSalvageWhenNotMeasuring]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqSalvagePolicyTests testDoesNotSalvageWithNoSamples]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqSalvagePolicyTests testDoesNotSalvageWithNoSamples]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqSalvagePolicyTests testDoesNotSalvageWithOnlyOneSample]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqSalvagePolicyTests testDoesNotSalvageWithOnlyOneSample]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.TindeqSalvagePolicyTests testSalvagesUnplannedDropMidMeasurementWithSamples]' started.
+Test Case '-[SendLogWatchCoreTests.TindeqSalvagePolicyTests testSalvagesUnplannedDropMidMeasurementWithSamples]' passed (0.000 seconds).
+Test Suite 'TindeqSalvagePolicyTests' passed at 2569-10-04 11:51:40.446 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'UploadErrorClassifierTests' started at 2569-10-04 11:51:40.446 AM.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests test401NeedsAuthRelay]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests test401NeedsAuthRelay]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests test403NeedsAuthRelay]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests test403NeedsAuthRelay]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests test408And429AreRetryableNotPermanent]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests test408And429AreRetryableNotPermanent]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests test409RemainsAmbiguousSoItRetries]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests test409RemainsAmbiguousSoItRetries]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests test5xxIsRetryable]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests test5xxIsRetryable]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testADifferentCheckConstraintOnTheSameTableDoesNotQuarantine]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testADifferentCheckConstraintOnTheSameTableDoesNotQuarantine]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testAnUnrecognizedFailureDefaultsToRetryNeverQuarantine]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testAnUnrecognizedFailureDefaultsToRetryNeverQuarantine]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testCheckViolationOnADifferentStageDoesNotQuarantine]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testCheckViolationOnADifferentStageDoesNotQuarantine]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testCheckViolationOnClimbAttemptsWithAPoisonedAttemptQuarantines]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testCheckViolationOnClimbAttemptsWithAPoisonedAttemptQuarantines]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testMatchingMessageAloneWithoutPoisonedBundleContentDoesNotQuarantine]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testMatchingMessageAloneWithoutPoisonedBundleContentDoesNotQuarantine]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testPGRST301FromARealResponseBodyNeedsAuthRelay]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testPGRST301FromARealResponseBodyNeedsAuthRelay]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testPGRST302AlsoNeedsAuthRelay]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testPGRST302AlsoNeedsAuthRelay]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testUniqueViolationDoesNotQuarantine]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testUniqueViolationDoesNotQuarantine]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testUnknownStageDoesNotQuarantine]' started.
+Test Case '-[SendLogWatchCoreTests.UploadErrorClassifierTests testUnknownStageDoesNotQuarantine]' passed (0.000 seconds).
+Test Suite 'UploadErrorClassifierTests' passed at 2569-10-04 11:51:40.448 AM.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'WatchAuthStateTests' started at 2569-10-04 11:51:40.448 AM.
+Test Case '-[SendLogWatchCoreTests.WatchAuthStateTests testAFreshTokenIsSignedInAndUsable]' started.
+Test Case '-[SendLogWatchCoreTests.WatchAuthStateTests testAFreshTokenIsSignedInAndUsable]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchAuthStateTests testAnExpiredTokenKEEPSTheWatchSignedIn]' started.
+Test Case '-[SendLogWatchCoreTests.WatchAuthStateTests testAnExpiredTokenKEEPSTheWatchSignedIn]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchAuthStateTests testNoSessionIsSignedOut]' started.
+Test Case '-[SendLogWatchCoreTests.WatchAuthStateTests testNoSessionIsSignedOut]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchAuthStateTests testUserIdSurvivesTokenExpiry]' started.
+Test Case '-[SendLogWatchCoreTests.WatchAuthStateTests testUserIdSurvivesTokenExpiry]' passed (0.000 seconds).
+Test Suite 'WatchAuthStateTests' passed at 2569-10-04 11:51:40.449 AM.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'WatchBuildStampingTests' started at 2569-10-04 11:51:40.449 AM.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStampingTests testQueueOwnerStampIsOptionalAndPreservedForDomainPayloads]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStampingTests testQueueOwnerStampIsOptionalAndPreservedForDomainPayloads]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStampingTests testRoundTripsThroughAMessage]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStampingTests testRoundTripsThroughAMessage]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStampingTests testStampingIsANoOpWithoutAnIdentity]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStampingTests testStampingIsANoOpWithoutAnIdentity]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStampingTests testStrippingLeavesTheOriginalPayloadShape]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStampingTests testStrippingLeavesTheOriginalPayloadShape]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStampingTests testUnstampedMessageYieldsNoIdentity]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStampingTests testUnstampedMessageYieldsNoIdentity]' passed (0.000 seconds).
+Test Suite 'WatchBuildStampingTests' passed at 2569-10-04 11:51:40.450 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'WatchBuildStatusTests' started at 2569-10-04 11:51:40.450 AM.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testMatchingBuilds]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testMatchingBuilds]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testNeverReportedIsNotAMatch]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testNeverReportedIsNotAMatch]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testNotPairedAndAppNotInstalledAreDistinct]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testNotPairedAndAppNotInstalledAreDistinct]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testPreActivationIsUnknownRatherThanNotPaired]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testPreActivationIsUnknownRatherThanNotPaired]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testStaleReportFromAnUnpairedWatchDoesNotClaimAMatch]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testStaleReportFromAnUnpairedWatchDoesNotClaimAMatch]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testUnknownPhoneBuildCannotBeCompared]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testUnknownPhoneBuildCannotBeCompared]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testUnorderableDifferenceIsStillADifference]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testUnorderableDifferenceIsStillADifference]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testWatchAheadIsOrdered]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testWatchAheadIsOrdered]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testWatchBehindIsOrdered]' started.
+Test Case '-[SendLogWatchCoreTests.WatchBuildStatusTests testWatchBehindIsOrdered]' passed (0.000 seconds).
+Test Suite 'WatchBuildStatusTests' passed at 2569-10-04 11:51:40.451 AM.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'WatchDesignTests' started at 2569-10-04 11:51:40.451 AM.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testAccentScaleUsesFullBrightnessOutsideReducedLuminance]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testAccentScaleUsesFullBrightnessOutsideReducedLuminance]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testAlwaysOnScalePreservesHueAndReducesLuminance]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testAlwaysOnScalePreservesHueAndReducesLuminance]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testBrightTextHasLegibleContrastOnEverySurface]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testBrightTextHasLegibleContrastOnEverySurface]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testCanonicalHuesMatchPhoneSemanticPalette]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testCanonicalHuesMatchPhoneSemanticPalette]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testCanonicalIconSymbolsMapConceptsIdentically]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testCanonicalIconSymbolsMapConceptsIdentically]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testPrimaryHitTargetMatchesWatchGuidance]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testPrimaryHitTargetMatchesWatchGuidance]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testReadableForegroundMeetsAAForEverySemanticAccentAndSurface]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testReadableForegroundMeetsAAForEverySemanticAccentAndSurface]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testReadableForegroundMeetsAAOnAccentTintedCardCorner]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testReadableForegroundMeetsAAOnAccentTintedCardCorner]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testReducedAccentIsDecorativeOnlyAndCannotBeUsedAsForeground]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testReducedAccentIsDecorativeOnlyAndCannotBeUsedAsForeground]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testRefreshFailureNeverClaimsSynced]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testRefreshFailureNeverClaimsSynced]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testSemanticStatesHaveStableAccessibleLanguage]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testSemanticStatesHaveStableAccessibleLanguage]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testWatchDangerHueStaysOrangeLikeThePhone]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testWatchDangerHueStaysOrangeLikeThePhone]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testWatchTokensAreDerivedFromCanonicalHues]' started.
+Test Case '-[SendLogWatchCoreTests.WatchDesignTests testWatchTokensAreDerivedFromCanonicalHues]' passed (0.000 seconds).
+Test Suite 'WatchDesignTests' passed at 2569-10-04 11:51:40.454 AM.
+	 Executed 13 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'WatchHealthComputeTests' started at 2569-10-04 11:51:40.454 AM.
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testACWRByDateEmptyWithoutRows]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testACWRByDateEmptyWithoutRows]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testACWRByDateUsesPerDateWindows]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testACWRByDateUsesPerDateWindows]' passed (0.200 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testDayBeyondWindowIsExcluded]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testDayBeyondWindowIsExcluded]' passed (0.004 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testEmptYInputsProduceNoMetrics]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testEmptYInputsProduceNoMetrics]' passed (0.002 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testLatestBodyMassOnOrBeforeDateIsUsed]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testLatestBodyMassOnOrBeforeDateIsUsed]' passed (0.059 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testSleepRestorativeAndRespFoldIntoInputs]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testSleepRestorativeAndRespFoldIntoInputs]' passed (0.066 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testSourceDayWithinWindowIsComputedWithSameRecoveryEngine]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthComputeTests testSourceDayWithinWindowIsComputedWithSameRecoveryEngine]' passed (0.064 seconds).
+Test Suite 'WatchHealthComputeTests' passed at 2569-10-04 11:51:40.849 AM.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.395 (0.396) seconds
+Test Suite 'WatchHealthMorningRefreshTests' started at 2569-10-04 11:51:40.849 AM.
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testDuePassFollowsRepollDelays]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testDuePassFollowsRepollDelays]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testIsCurrentLocalDay]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testIsCurrentLocalDay]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testObservationMapping]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testObservationMapping]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testProgressLedgerCountsOncePerDay]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testProgressLedgerCountsOncePerDay]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testShouldStartOncePerLocalDayOnlyInMorning]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testShouldStartOncePerLocalDayOnlyInMorning]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testWindowGates]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthMorningRefreshTests testWindowGates]' passed (0.000 seconds).
+Test Suite 'WatchHealthMorningRefreshTests' passed at 2569-10-04 11:51:40.851 AM.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'WatchHealthReconcileTests' started at 2569-10-04 11:51:40.851 AM.
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testDuplicateDateMetricsKeepTheNewestComputedTimestamp]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testDuplicateDateMetricsKeepTheNewestComputedTimestamp]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testHistoricalUpsertsOnlyMissingSourceBackedDates]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testHistoricalUpsertsOnlyMissingSourceBackedDates]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testSourceLessFreshMetricIsNeverWritten]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testSourceLessFreshMetricIsNeverWritten]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testTodayRetainedWhenFreshScoredRowExists]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testTodayRetainedWhenFreshScoredRowExists]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testTodayWinsOverFreshButEmptyRow]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testTodayWinsOverFreshButEmptyRow]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testTodayWriteKeepsExistingScoreWhenOverwriteForbidden]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testTodayWriteKeepsExistingScoreWhenOverwriteForbidden]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testTodayWritesWhenStaleRowExists]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testTodayWritesWhenStaleRowExists]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testWholeWindowPlanFillsMissingHistoricalDates]' started.
+Test Case '-[SendLogWatchCoreTests.WatchHealthReconcileTests testWholeWindowPlanFillsMissingHistoricalDates]' passed (0.000 seconds).
+Test Suite 'WatchHealthReconcileTests' passed at 2569-10-04 11:51:40.854 AM.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'WatchNavigationTests' started at 2569-10-04 11:51:40.854 AM.
+Test Case '-[SendLogWatchCoreTests.WatchNavigationTests testForceKeepsWorkoutReachableWhenRunning]' started.
+Test Case '-[SendLogWatchCoreTests.WatchNavigationTests testForceKeepsWorkoutReachableWhenRunning]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchNavigationTests testForceReplacesPathWhenNoWorkoutIsRunning]' started.
+Test Case '-[SendLogWatchCoreTests.WatchNavigationTests testForceReplacesPathWhenNoWorkoutIsRunning]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchNavigationTests testStatusAlwaysClearsToTheStackRoot]' started.
+Test Case '-[SendLogWatchCoreTests.WatchNavigationTests testStatusAlwaysClearsToTheStackRoot]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchNavigationTests testWorkoutTargetIsAlwaysJustWorkout]' started.
+Test Case '-[SendLogWatchCoreTests.WatchNavigationTests testWorkoutTargetIsAlwaysJustWorkout]' passed (0.000 seconds).
+Test Suite 'WatchNavigationTests' passed at 2569-10-04 11:51:40.855 AM.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'WatchQuarantineStatusTests' started at 2569-10-04 11:51:40.855 AM.
+Test Case '-[SendLogWatchCoreTests.WatchQuarantineStatusTests testAnyPositiveCountReadsAsStuck]' started.
+Test Case '-[SendLogWatchCoreTests.WatchQuarantineStatusTests testAnyPositiveCountReadsAsStuck]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchQuarantineStatusTests testNegativeCountIsTreatedAsNoReading]' started.
+Test Case '-[SendLogWatchCoreTests.WatchQuarantineStatusTests testNegativeCountIsTreatedAsNoReading]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchQuarantineStatusTests testNoneIsNotTheSameAsNeverReported]' started.
+Test Case '-[SendLogWatchCoreTests.WatchQuarantineStatusTests testNoneIsNotTheSameAsNeverReported]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchQuarantineStatusTests testPairingProblemsBeatAnyStoredCount]' started.
+Test Case '-[SendLogWatchCoreTests.WatchQuarantineStatusTests testPairingProblemsBeatAnyStoredCount]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchQuarantineStatusTests testPreActivationIsUnknownRatherThanNone]' started.
+Test Case '-[SendLogWatchCoreTests.WatchQuarantineStatusTests testPreActivationIsUnknownRatherThanNone]' passed (0.000 seconds).
+Test Suite 'WatchQuarantineStatusTests' passed at 2569-10-04 11:51:40.856 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'WatchSyncStatusTests' started at 2569-10-04 11:51:40.856 AM.
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testAFewItemsArePendingRatherThanBackedUp]' started.
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testAFewItemsArePendingRatherThanBackedUp]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testEmptyQueueIsNotTheSameAsNeverReported]' started.
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testEmptyQueueIsNotTheSameAsNeverReported]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testEnoughItemsReadAsBackedUp]' started.
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testEnoughItemsReadAsBackedUp]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testNegativeCountIsTreatedAsNoReading]' started.
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testNegativeCountIsTreatedAsNoReading]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testPairingProblemsBeatAnyStoredCount]' started.
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testPairingProblemsBeatAnyStoredCount]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testPreActivationIsUnknownRatherThanEmpty]' started.
+Test Case '-[SendLogWatchCoreTests.WatchSyncStatusTests testPreActivationIsUnknownRatherThanEmpty]' passed (0.000 seconds).
+Test Suite 'WatchSyncStatusTests' passed at 2569-10-04 11:51:40.857 AM.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'WidgetCountSyncTests' started at 2569-10-04 11:51:40.857 AM.
+Test Case '-[SendLogWatchCoreTests.WidgetCountSyncTests testNoPushWhenNeitherStateNorCountChanged]' started.
+Test Case '-[SendLogWatchCoreTests.WidgetCountSyncTests testNoPushWhenNeitherStateNorCountChanged]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WidgetCountSyncTests testPushOnCountChangeWithNoStateChange]' started.
+Test Case '-[SendLogWatchCoreTests.WidgetCountSyncTests testPushOnCountChangeWithNoStateChange]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WidgetCountSyncTests testPushOnStateChangeAlone]' started.
+Test Case '-[SendLogWatchCoreTests.WidgetCountSyncTests testPushOnStateChangeAlone]' passed (0.000 seconds).
+Test Suite 'WidgetCountSyncTests' passed at 2569-10-04 11:51:40.858 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'WorkoutCompletedNotifyTests' started at 2569-10-04 11:51:40.858 AM.
+Test Case '-[SendLogWatchCoreTests.WorkoutCompletedNotifyTests testNotifiesOnlyAfterADurableOutcome]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutCompletedNotifyTests testNotifiesOnlyAfterADurableOutcome]' passed (0.000 seconds).
+Test Suite 'WorkoutCompletedNotifyTests' passed at 2569-10-04 11:51:40.858 AM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'WorkoutCompletedReportTests' started at 2569-10-04 11:51:40.858 AM.
+Test Case '-[SendLogWatchCoreTests.WorkoutCompletedReportTests testPayloadCarriesOnlyCanonicalSummaryAndStableIds]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutCompletedReportTests testPayloadCarriesOnlyCanonicalSummaryAndStableIds]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutCompletedReportTests testPayloadRoundTripsThroughSummary]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutCompletedReportTests testPayloadRoundTripsThroughSummary]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutCompletedReportTests testStrippedRemovesOnlyKind]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutCompletedReportTests testStrippedRemovesOnlyKind]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutCompletedReportTests testSummaryRefusesPayloadMissingRequiredFields]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutCompletedReportTests testSummaryRefusesPayloadMissingRequiredFields]' passed (0.000 seconds).
+Test Suite 'WorkoutCompletedReportTests' passed at 2569-10-04 11:51:40.859 AM.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'WorkoutPartialSettleGateTests' started at 2569-10-04 11:51:40.859 AM.
+Test Case '-[SendLogWatchCoreTests.WorkoutPartialSettleGateTests testHoldNilSettlesImmediately]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPartialSettleGateTests testHoldNilSettlesImmediately]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPartialSettleGateTests testReholdDoesNotDisturbPriorWaiter]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPartialSettleGateTests testReholdDoesNotDisturbPriorWaiter]' passed (0.089 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPartialSettleGateTests testWaiterBlocksUntilHeldTaskCompletes]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPartialSettleGateTests testWaiterBlocksUntilHeldTaskCompletes]' passed (0.105 seconds).
+Test Suite 'WorkoutPartialSettleGateTests' passed at 2569-10-04 11:51:41.053 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.194 (0.194) seconds
+Test Suite 'WorkoutPhaseFillTests' started at 2569-10-04 11:51:41.053 AM.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testBandsAreThePhoneHuesCompositedTowardBlack]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testBandsAreThePhoneHuesCompositedTowardBlack]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testDimmedBandsAreDark]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testDimmedBandsAreDark]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testDimmingNeverReducesContrast]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testDimmingNeverReducesContrast]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testEveryBandCarriesItsLabelAtAAAContrast]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testEveryBandCarriesItsLabelAtAAAContrast]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testEveryLiveBandReadsAsABlockAgainstTheScreen]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testEveryLiveBandReadsAsABlockAgainstTheScreen]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testIdleDrawsNoBand]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testIdleDrawsNoBand]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testLivePhasesKeepTheAcceptedSeparation]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testLivePhasesKeepTheAcceptedSeparation]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testPrimaryReadoutsClearAAAOnTheBlackScreen]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testPrimaryReadoutsClearAAAOnTheBlackScreen]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testScreenIsBlackForEveryPhase]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testScreenIsBlackForEveryPhase]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testSecondaryReadoutsClearAAAOnTheBlackScreen]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testSecondaryReadoutsClearAAAOnTheBlackScreen]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testTransitionIsAnimatedButNotSluggish]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseFillTests testTransitionIsAnimatedButNotSluggish]' passed (0.000 seconds).
+Test Suite 'WorkoutPhaseFillTests' passed at 2569-10-04 11:51:41.055 AM.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'WorkoutPhaseResolutionTests' started at 2569-10-04 11:51:41.055 AM.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseResolutionTests testClimbingFlagWithoutAStartTimeIsNotClimbing]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseResolutionTests testClimbingFlagWithoutAStartTimeIsNotClimbing]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseResolutionTests testClimbingWinsOverAnOpenRest]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseResolutionTests testClimbingWinsOverAnOpenRest]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseResolutionTests testNoPhaseWithoutEitherClock]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseResolutionTests testNoPhaseWithoutEitherClock]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseResolutionTests testRestingUntilTheTargetThenRestOver]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseResolutionTests testRestingUntilTheTargetThenRestOver]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseResolutionTests testRestTargetChangeCanFlipThePhaseBothWays]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutPhaseResolutionTests testRestTargetChangeCanFlipThePhaseBothWays]' passed (0.000 seconds).
+Test Suite 'WorkoutPhaseResolutionTests' passed at 2569-10-04 11:51:41.056 AM.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'WorkoutScreenSelectionHistoricalFixtureTests' started at 2569-10-04 11:51:41.056 AM.
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionHistoricalFixtureTests testNewSelectionCannotBeBlockedByAFailedBundleByConstruction]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionHistoricalFixtureTests testNewSelectionCannotBeBlockedByAFailedBundleByConstruction]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionHistoricalFixtureTests testOldOrderMadeStartUnreachableWithAFailedBundlePresent]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionHistoricalFixtureTests testOldOrderMadeStartUnreachableWithAFailedBundlePresent]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionHistoricalFixtureTests testOldOrderRenderedAStaleFailureOverARunningWorkout]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionHistoricalFixtureTests testOldOrderRenderedAStaleFailureOverARunningWorkout]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionHistoricalFixtureTests testOldOrderRenderedAStaleSuccessFlashOverARunningWorkout]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionHistoricalFixtureTests testOldOrderRenderedAStaleSuccessFlashOverARunningWorkout]' passed (0.000 seconds).
+Test Suite 'WorkoutScreenSelectionHistoricalFixtureTests' passed at 2569-10-04 11:51:41.057 AM.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'WorkoutScreenSelectionTests' started at 2569-10-04 11:51:41.057 AM.
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionTests testJustSavedShowsOnlyWhileNotRunning]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionTests testJustSavedShowsOnlyWhileNotRunning]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionTests testRunningWorkoutWinsOverAStaleJustSavedFlag]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionTests testRunningWorkoutWinsOverAStaleJustSavedFlag]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionTests testRunningWorkoutWinsWhenNothingElseIsSet]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionTests testRunningWorkoutWinsWhenNothingElseIsSet]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionTests testStartIsReachableWhenNotRunningAndNotJustSaved]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutScreenSelectionTests testStartIsReachableWhenNotRunningAndNotJustSaved]' passed (0.000 seconds).
+Test Suite 'WorkoutScreenSelectionTests' passed at 2569-10-04 11:51:41.058 AM.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'WorkoutSessionActivationTests' started at 2569-10-04 11:51:41.058 AM.
+Test Case '-[SendLogWatchCoreTests.WorkoutSessionActivationTests testBeginCollectionFailureEndsAndDiscardsTheJustStartedPairAndRethrows]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutSessionActivationTests testBeginCollectionFailureEndsAndDiscardsTheJustStartedPairAndRethrows]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutSessionActivationTests testCleanupOrderIsDetachThenEndThenDiscard]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutSessionActivationTests testCleanupOrderIsDetachThenEndThenDiscard]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutSessionActivationTests testSuccessCallsStartAndBeginCollectionOnlyWithNoCleanup]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutSessionActivationTests testSuccessCallsStartAndBeginCollectionOnlyWithNoCleanup]' passed (0.000 seconds).
+Test Suite 'WorkoutSessionActivationTests' passed at 2569-10-04 11:51:41.059 AM.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'WorkoutStartGuardTests' started at 2569-10-04 11:51:41.059 AM.
+Test Case '-[SendLogWatchCoreTests.WorkoutStartGuardTests testBeginSucceedsAgainAfterFinish]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutStartGuardTests testBeginSucceedsAgainAfterFinish]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutStartGuardTests testGenerationAdvancesPerAcceptedStart]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutStartGuardTests testGenerationAdvancesPerAcceptedStart]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutStartGuardTests testSecondBeginWhileFirstInFlightIsRejected]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutStartGuardTests testSecondBeginWhileFirstInFlightIsRejected]' passed (0.000 seconds).
+Test Case '-[SendLogWatchCoreTests.WorkoutStartGuardTests testStaleGenerationIsNotCurrentAfterANewStartBegins]' started.
+Test Case '-[SendLogWatchCoreTests.WorkoutStartGuardTests testStaleGenerationIsNotCurrentAfterANewStartBegins]' passed (0.000 seconds).
+Test Suite 'WorkoutStartGuardTests' passed at 2569-10-04 11:51:41.060 AM.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'SendLogWatchCorePackageTests.xctest' passed at 2569-10-04 11:51:41.060 AM.
+	 Executed 600 tests, with 0 failures (0 unexpected) in 0.885 (0.927) seconds
+Test Suite 'All tests' passed at 2569-10-04 11:51:41.060 AM.
+	 Executed 600 tests, with 0 failures (0 unexpected) in 0.885 (0.928) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+WATCH_CORE_EXIT=0

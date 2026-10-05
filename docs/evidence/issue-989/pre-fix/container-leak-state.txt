@@ -1,0 +1,45 @@
+# Simulator container leak state (maintained across runs at the unchanged head)
+# container: 39BB570C-5786-42B1-8141-B9850F86BF71 (rotated from 06C5B0D4 between the pre-fix runs and Q1)
+# captured at 2026-10-04T06:02:28Z
+
+## cache_rows per (account, entity) — top 20
+94000000-0000-0000-0000-000000000940 | recordings | 13
+014A3A96-819D-4024-9840-623D967220BE | recordings | 8
+4E9ED7FC-FFED-487B-BF44-B77F100469D4 | recordings | 8
+98C6A3A5-3CEF-48F7-9582-B7375E73D2D9 | recordings | 8
+20B04645-D927-43B9-8B9A-A4AA62B26740 | recordings | 6
+35E2B4A3-28FF-4579-9D2B-1666D2410CED | phasePeriods | 5
+03B967E4-37C5-49B1-8A0F-1BDDEF30CAC7 | phasePeriods | 3
+071F9CA5-D923-4EEE-B037-92DD69FB9DC6 | recordings | 3
+0825F708-C826-48EE-89DB-B61FDF712293 | recordings | 3
+20F26DA7-BB78-4403-8ACB-27647B0BB66D | recordings | 3
+20F26DA7-BB78-4403-8ACB-27647B0BB66D | sessions | 3
+2BCC1CE6-16A5-42DB-815A-133FB4038CD4 | phasePeriods | 3
+4682BC11-6923-4A48-8889-BF54AF7AA9F1 | phasePeriods | 3
+6B66124A-4B80-4A4F-AF70-25A6632079C9 | recordings | 3
+6B66124A-4B80-4A4F-AF70-25A6632079C9 | sessions | 3
+754C5734-D712-4CF8-8B06-6386CB0CA3CB | healthMetrics | 3
+81A5788C-7404-4E77-AE0E-0E43D2FD0818 | phasePeriods | 3
+94000000-0000-0000-0000-000000000940 | sessions | 3
+9BFC3594-57BC-4B4F-B3D4-CA500A295BE2 | phasePeriods | 3
+A250DEB6-5C34-4AC7-B185-D26F02C39AD8 | phasePeriods | 3
+
+## account 94000000-…-940 (the OLD fixture's fixed account)
+recordings | 13
+sessions | 3
+
+## its tindeq session payloads (these hydrated into the old fixture's model.sessions)
+{"id":"278A6390-9A1D-4B52-AC6C-8DCFFFBAF522","typeLabel":"Tindeq","date":"2026-10-04","rpeConfirmed":false,"note":"2 recordings · FDP","phase":"capacity","rejected":false,"accountUserID":"94000000-0000-0000-0000-000000000940","pending":true,"rpe":5,"load":5,"type":"tindeq","groupID":"E59F4174-E077-4968-AB30-0383D80A3578","durationMinutes":1}
+{"id":"30347080-97E6-4A30-9221-23B34B5FC26B","type":"tindeq","pending":true,"typeLabel":"Tindeq","load":5,"phase":"capacity","date":"2026-10-04","groupID":"32A6E7B5-5E92-445B-9AC2-DC100BB0905A","accountUserID":"94000000-0000-0000-0000-000000000940","rpe":5,"rpeConfirmed":false,"rejected":false,"durationMinutes":1,"note":"2 recordings · FDP"}
+{"type":"tindeq","accountUserID":"94000000-0000-0000-0000-000000000940","durationMinutes":1,"load":5,"rpe":5,"pending":true,"rpeConfirmed":false,"date":"2026-10-04","groupID":"408326E1-2974-4664-979E-8B2A675E04DD","id":"547B27CE-2E06-4311-915C-43E6DD68B92D","phase":"capacity","note":"2 recordings · FDP","typeLabel":"Tindeq","rejected":false}
+
+## pending-writes.json
+items: 23 | breadcrumbs: 10
+  94000000-0000-0000-0000-000000000940 16
+  400042EE-030C-4213-AB09-3EE0DFC8EB6C 1
+  1900C1F7-AB34-4BE1-A49D-A2F488EFE1AE 1
+  C32E8B48-6667-48A7-8AB4-698F318FCF91 1
+  CDA2C5B0-3552-4FFB-92DD-0158110D890E 1
+  55A74236-6DEF-4C07-BB97-7FEBE5BDF188 1
+  3B558C0F-4E95-496D-ADE7-8AF724914549 1
+  31C9ED00-D894-4A1D-9A0A-6C2B3740EFDB 1

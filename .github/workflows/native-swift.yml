@@ -118,7 +118,7 @@ jobs:
   # that script with a stated reason, never a suppression at this call site.
   docs-check:
     name: Docs stale-command check
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       native: ${{ steps.classify.outputs.native }}
@@ -174,7 +174,7 @@ jobs:
     # a cancelled run still cancels.
     needs: [docs-check]
     if: ${{ !cancelled() && needs.docs-check.outputs.native != 'false' }}
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -232,7 +232,7 @@ jobs:
     # Same docs-only skip as `core-tests` above.
     needs: [docs-check]
     if: ${{ !cancelled() && needs.docs-check.outputs.native != 'false' }}
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

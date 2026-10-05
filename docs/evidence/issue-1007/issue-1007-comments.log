@@ -1,0 +1,45 @@
+author:	jirathip-k
+association:	member
+edited:	false
+status:	none
+--
+**DISPATCHED — with a premise to settle first** (orchestrator, PHASE 5, 2026-10-04)
+
+- **Dispatch receipt:** agent `impl-1007`, pane `w4JN:p1`, worktree `~/.herdr/worktrees/sendmeter/impl-1007`,
+  branch `impl-1007` off `origin/staging` `d61e715`, role implementer, harness hermes, profile `fleet-impl`.
+  Admission `admit` (load/cpu 0.13, occupancy 2900MB); uptake verified from pane content.
+
+**Why the lane is instructed to test this issue's premise before implementing anything.** Orchestrator read-only
+recon at `d61e715` finds the `9705102d` key is **not the key a shipping watch build uses**:
+
+- In `ios/App/SendLogWatch Watch App/Services/SupabaseService.swift` the retired literal
+  `sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH` appears **only inside `#if DEBUG && targetEnvironment(simulator)`**
+  — and that branch points at `http://127.0.0.1:54321` (the local stack), not at prod.
+- The device/`#else` path reads `Resources/SupabaseConfig.plist`, whose `SUPABASE_ANON_KEY` is
+  `sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp` — **byte-identical** to the phone's
+  `SupabaseConfiguration.publishableKey` (`Sources/Data/SupabaseService.swift:12`).
+- `native/SendmeterNative/project.yml:190` copies that plist into the `SendLogWatch Watch App` bundle
+  (`buildPhase: resources`), so a device build reads the same key the phone uses; in a Release build the stale
+  literal is not compiled at all (`#if DEBUG`).
+
+So "the Watch app ships a retired key / every watch Supabase path 401s" is, on this evidence, a **file-comparison
+claim about a dev-only simulator constant** rather than a statement about the shipped artifact. The lane's first
+deliverable is therefore an **executed verdict**, not a fix:
+
+1. build the watch app and inspect the **built bundle** (`plutil -p "<built>/SendLogWatch Watch App.app/SupabaseConfig.plist"`)
+   plus `strings -a` on the built binary per configuration — quote what each configuration actually carries;
+2. a **live probe matrix** per candidate key against prod (`sessions` → status, plus the controlled liveness checks
+   `select=bogus_col` → 400 and a bogus table → 404 so a 401 cannot be confused with a malformed request);
+3. then the issue's own ACs: the real fix for whatever that establishes, a **single source of truth** for the
+   publishable key (or a gate that fails when the two committed keys differ), a live **200** from the key the fixed
+   build actually uses (not a key comparison), the divergence history from git, and the revocation recommendation.
+
+**Constraints recorded for the lane:** the repo deliberately allowlists these publishable keys in `.gitleaks.toml`
+(keep the policy intact — extend only for the exact new assignment form, never by loosening a rule); RLS stays the
+security boundary and nothing in `supabase/**` is touched; key **revocation is an owner action**, the lane only
+recommends it; the watch's no-refresh-token contract is untouched. The device/watch-pair legs of AC1 stay **OPEN**
+(not obtainable from this host) and will not be claimed.
+
+Refs #991, #964
+
+--

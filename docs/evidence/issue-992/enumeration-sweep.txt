@@ -1,0 +1,190 @@
+Sources/App/AppModel.swift:10010:            } catch {
+Sources/App/AppModel.swift:10928:                } catch let error as DurableQueueError {
+Sources/App/AppModel.swift:10983:        } catch {
+Sources/App/AppModel.swift:1126:        try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+Sources/App/AppModel.swift:11404:        } catch {
+Sources/App/AppModel.swift:11523:        } catch {
+Sources/App/AppModel.swift:11641:        } catch {
+Sources/App/AppModel.swift:11688:        } catch {
+Sources/App/AppModel.swift:11778:        } catch is CancellationError {
+Sources/App/AppModel.swift:11780:        } catch let error as URLError where error.code == .cancelled {
+Sources/App/AppModel.swift:11782:        } catch {
+Sources/App/AppModel.swift:11802:                try? await Task.sleep(nanoseconds: 5_000_000_000)
+Sources/App/AppModel.swift:11839:            try? await Task.sleep(nanoseconds: UInt64(remainingMs * 1_000_000))
+Sources/App/AppModel.swift:11980:        } catch is CancellationError {
+Sources/App/AppModel.swift:11982:        } catch let error as URLError where error.code == .cancelled {
+Sources/App/AppModel.swift:11984:        } catch {
+Sources/App/AppModel.swift:12135:                    } catch {
+Sources/App/AppModel.swift:12759:        } catch {
+Sources/App/AppModel.swift:1569:        } catch {
+Sources/App/AppModel.swift:1594:        } catch {
+Sources/App/AppModel.swift:1618:        } catch {
+Sources/App/AppModel.swift:1785:        } catch {
+Sources/App/AppModel.swift:1813:        } catch {
+Sources/App/AppModel.swift:1966:            } catch {
+Sources/App/AppModel.swift:2065:                } catch {
+Sources/App/AppModel.swift:2196:        } catch {
+Sources/App/AppModel.swift:2401:        } catch {
+Sources/App/AppModel.swift:2423:        } catch {
+Sources/App/AppModel.swift:2445:        } catch {
+Sources/App/AppModel.swift:2483:        } catch {
+Sources/App/AppModel.swift:2511:        } catch {
+Sources/App/AppModel.swift:2657:            if let revision = try? cachedWorkspace.localRevision(
+Sources/App/AppModel.swift:2682:            let entityIDs = (try? cachedWorkspace.pendingEntityIDs(
+Sources/App/AppModel.swift:2692:                if let revision = try? cachedWorkspace.localRevision(
+Sources/App/AppModel.swift:2849:        } catch {
+Sources/App/AppModel.swift:2879:        } catch {
+Sources/App/AppModel.swift:2954:        } catch {
+Sources/App/AppModel.swift:3486:        } catch {
+Sources/App/AppModel.swift:3590:        } catch {
+Sources/App/AppModel.swift:3735:        } catch {
+Sources/App/AppModel.swift:3812:        } catch {
+Sources/App/AppModel.swift:3932:        } catch {
+Sources/App/AppModel.swift:4017:        } catch {
+Sources/App/AppModel.swift:4050:        } catch {
+Sources/App/AppModel.swift:4806:        } catch {
+Sources/App/AppModel.swift:5265:                    let samples = try? await repository.fetchRecordingSamples(id: candidate.id)
+Sources/App/AppModel.swift:5346:                    let samples = try? await repository.fetchRecordingSamples(id: candidate.id)
+Sources/App/AppModel.swift:5792:        } catch {
+Sources/App/AppModel.swift:5977:        } catch {
+Sources/App/AppModel.swift:6007:        } catch {
+Sources/App/AppModel.swift:6066:        } catch {
+Sources/App/AppModel.swift:6334:        } catch {
+Sources/App/AppModel.swift:6566:        } catch is CancellationError {
+Sources/App/AppModel.swift:6568:        } catch {
+Sources/App/AppModel.swift:6722:        } catch is CancellationError {
+Sources/App/AppModel.swift:6724:        } catch let error as URLError where error.code == .cancelled {
+Sources/App/AppModel.swift:6726:        } catch {
+Sources/App/AppModel.swift:6829:        } catch is CancellationError {
+Sources/App/AppModel.swift:6832:        } catch let error as URLError where error.code == .cancelled {
+Sources/App/AppModel.swift:6835:        } catch {
+Sources/App/AppModel.swift:7002:        } catch is CancellationError {
+Sources/App/AppModel.swift:7004:        } catch {
+Sources/App/AppModel.swift:7177:                        } catch {
+Sources/App/AppModel.swift:7286:                    } catch {
+Sources/App/AppModel.swift:7379:        } catch {
+Sources/App/AppModel.swift:7466:        } catch {
+Sources/App/AppModel.swift:7490:        } catch {
+Sources/App/AppModel.swift:7565:                } catch {
+Sources/App/AppModel.swift:7594:        } catch {
+Sources/App/AppModel.swift:8163:        } catch {
+Sources/App/AppModel.swift:8379:        } catch {
+Sources/App/AppModel.swift:8558:            let current: Int? = try? cachedWorkspace?.localRevision(
+Sources/App/AppModel.swift:8645:        } catch {
+Sources/App/AppModel.swift:8779:            } catch {
+Sources/App/AppModel.swift:8875:        guard let allPending = try? workspace.pendingEntityIDs(
+Sources/App/AppModel.swift:8880:        let livePending = (try? workspace.pendingEntityIDs(
+Sources/App/AppModel.swift:8894:        } catch {
+Sources/App/AppModel.swift:8954:                try? self.cachedWorkspace?.store.loadOne(
+Sources/App/AppModel.swift:8974:                try? self.cachedWorkspace?.store.loadOne(
+Sources/App/AppModel.swift:9034:        let pendingPeriodIDs = (try? workspace.pendingEntityIDs(
+Sources/App/AppModel.swift:9039:        let livePeriodIDs = Set((try? workspace.pendingEntityIDs(
+Sources/App/AppModel.swift:9043:        let pendingSettingsIDs = (try? workspace.pendingEntityIDs(
+Sources/App/AppModel.swift:9063:        } catch {
+Sources/App/AppModel.swift:9076:            guard let revision = try? workspace.localRevision(
+Sources/App/AppModel.swift:9095:            guard let local = try? workspace.store.loadOne(
+Sources/App/AppModel.swift:9133:            guard let revision = try? workspace.localRevision(
+Sources/App/AppModel.swift:9137:            ), let local = try? workspace.store.loadOne(
+Sources/App/AppModel.swift:9192:        let pendingIDs = (try? workspace.pendingEntityIDs(
+Sources/App/AppModel.swift:9210:        } catch {
+Sources/App/AppModel.swift:9222:            guard let revision = try? workspace.localRevision(
+Sources/App/AppModel.swift:9227:            if let local = try? workspace.store.loadOne(
+Sources/App/AppModel.swift:9369:        let current: Int? = (try? cachedWorkspace?.localRevision(
+Sources/App/AppModel.swift:9431:        } catch let error as DurableQueueError where error == .itemNotFound {
+Sources/App/AppModel.swift:9433:        } catch {
+Sources/App/AppModel.swift:9485:        let pendingIDs = (try? workspace.pendingEntityIDs(
+Sources/App/AppModel.swift:9505:        } catch {
+Sources/App/AppModel.swift:9517:            guard let revision = (try? workspace.localRevision(
+Sources/App/AppModel.swift:9523:            guard let local = try? workspace.store.loadOne(
+Sources/App/AppModel.swift:9684:        let pendingIDs = (try? workspace.pendingEntityIDs(
+Sources/App/AppModel.swift:9689:        let liveIDs = Set((try? workspace.pendingEntityIDs(
+Sources/App/AppModel.swift:9699:            let current = try? workspace.localRevision(
+Sources/App/AppModel.swift:9722:            guard let local = try? workspace.store.loadOne(
+Sources/App/AppModel.swift:9778:            let current = try? workspace.localRevision(
+Sources/App/AppModel.swift:9803:        let settingsCurrent = try? workspace.localRevision(
+Sources/App/AppModel.swift:989:            } catch {
+Sources/App/AppModel.swift:9920:            let current = try? workspace.localRevision(
+Sources/App/AppModel.swift:9944:            let currentFinal = try? workspace.localRevision(
+Sources/App/AppModel.swift:9979:            let current = try? workspace.localRevision(
+Sources/App/BackgroundSyncService.swift:54:        } catch {
+Sources/App/GuidedProtocolActivityManager.swift:84:        } catch {
+Sources/App/Haptics.swift:205:            try? await Task.sleep(nanoseconds: 50_000_000)
+Sources/App/Haptics.swift:238:                        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000))
+Sources/App/ManualWorkoutActivityManager.swift:160:        let events = data.compactMap { try? JSONDecoder().decode(ManualWorkoutActivityEvent.self, from: $0) }
+Sources/App/ManualWorkoutActivityManager.swift:187:        guard let data = try? JSONEncoder().encode(event) else { return }
+Sources/App/ManualWorkoutActivityManager.swift:70:        } catch {
+Sources/App/ManualWorkoutRestScheduler.swift:145:            } catch {
+Sources/App/ManualWorkoutRestScheduler.swift:271:            } catch {
+Sources/App/SendmeterNativeApp.swift:164:                        } catch {
+Sources/App/SendmeterNativeApp.swift:465:                try? await Task.sleep(nanoseconds: 2_500_000_000)
+Sources/Core/AsyncDeadline.swift:43:                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+Sources/Core/AuthDiagnostics.swift:154:        guard let data = try? Data(contentsOf: url) else { return [] }
+Sources/Core/AuthDiagnostics.swift:157:        return (try? decoder.decode([AuthEventEntry].self, from: data)) ?? []
+Sources/Core/AuthDiagnostics.swift:163:        guard let data = try? encoder.encode(events) else { return }
+Sources/Core/AuthDiagnostics.swift:164:        try? data.write(to: url, options: .atomic)
+Sources/Core/AuthRecovery.swift:88:              let object = try? JSONSerialization.jsonObject(with: data),
+Sources/Core/BackgroundSyncEngine.swift:104:            } catch {
+Sources/Core/BackgroundSyncEngine.swift:119:            } catch {
+Sources/Core/CachePreparation.swift:223:        } catch {
+Sources/Core/DateSupport.swift:53:        try? dayStyleCache.style(for: timeZone).parse(string)
+Sources/Core/LocalCacheStore.swift:1656:        } catch {
+Sources/Core/LocalCacheStore.swift:417:            } catch {
+Sources/Core/LocalCacheStore.swift:464:        } catch {
+Sources/Core/LocalCacheStore.swift:564:                } catch {
+Sources/Core/LocalCacheStore.swift:585:            } catch {
+Sources/Core/LostRecordingNotice.swift:77:        guard let data = try? encoder.encode(next) else { return false }
+Sources/Core/LostRecordingNotice.swift:93:        guard let notice = try? decoder.decode(LostRecordingNotice.self, from: data) else {
+Sources/Core/ManualWorkoutActivityContent.swift:65:            } catch {
+Sources/Core/ManualWorkoutLifecycleCoordinator.swift:238:        } catch {
+Sources/Core/MutationRecoveryCoordinator.swift:601:        } catch {
+Sources/Core/MutationRecoveryCoordinator.swift:670:            } catch {
+Sources/Core/MutationRecoveryCoordinator.swift:709:        } catch {
+Sources/Core/RoutineAudio.swift:123:    /// Pause/background stops future playback and leaves no catch-up cue when
+Sources/Core/RoutineAudio.swift:140:    /// anchor, so a foreground catch-up cannot emit a stale countdown or gong.
+Sources/Core/RoutineGate.swift:127:    /// couple of missed ticks, short enough to catch a genuinely suspended
+Sources/Core/RoutineGate.swift:373:        return try? JSONDecoder().decode(PersistedRoutineRun.self, from: data)
+Sources/Core/RoutineGate.swift:377:        guard let data = try? JSONEncoder().encode(run) else { return }
+Sources/Core/SignOutQueuePolicy.swift:113:        } catch {
+Sources/Core/WorkspaceSyncCoordinator.swift:292:        } catch {
+Sources/Core/WorkspaceSyncCoordinator.swift:313:        } catch {
+Sources/Core/WorkspaceSyncCoordinator.swift:335:        } catch {
+Sources/Core/WorkspaceSyncCoordinator.swift:356:        } catch {
+Sources/Core/WorkspaceSyncCoordinator.swift:397:        } catch {
+Sources/Core/WorkspaceSyncCoordinator.swift:457:        } catch {
+Sources/Data/RealtimeService.swift:107:        } catch {
+Sources/Data/Repositories.swift:1194:        } catch let error as PostgRESTError where error.code == "23505" || error.statusCode == 409 {
+Sources/Data/Repositories.swift:1520:        } catch let error as PostgRESTError where error.code == "23505" || error.statusCode == 409 {
+Sources/Data/Repositories.swift:1624:        } catch {
+Sources/Data/SupabaseService.swift:158:        } catch {
+Sources/Data/SupabaseService.swift:282:        } catch {
+Sources/Data/SupabaseService.swift:613:            try? await remove()
+Sources/Data/SupabaseService.swift:697:        if let one = try? Value(from: decoder) {
+Sources/Data/SupabaseService.swift:85:        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+Sources/Data/SupabaseService.swift:912:            let remote = try? decoder.decode(RemoteErrorBody.self, from: data)
+Sources/Data/SupabaseService.swift:999:            let remote = try? decoder.decode(RemoteErrorBody.self, from: data)
+Sources/Features/Force/ForceView.swift:284:                try? await Task.sleep(nanoseconds: 200_000_000)
+Sources/Features/Force/ForceView.swift:3184:                        } catch {
+Sources/Features/Force/ForceView.swift:3194:                        } catch {
+Sources/Features/History/HistoryView.swift:1169:        } catch {
+Sources/Features/History/SessionDetailView.swift:440:        } catch is CancellationError {
+Sources/Features/History/SessionDetailView.swift:444:        } catch let error as URLError where error.code == .cancelled {
+Sources/Features/History/SessionDetailView.swift:447:        } catch {
+Sources/Features/History/SessionDetailView.swift:461:                    let samples = try? await repository.fetchRecordingSamples(id: id)
+Sources/Features/Phases/PhasesView.swift:236:                try? await Task.sleep(for: .milliseconds(50))
+Sources/Features/Workout/ManualWorkoutFullscreen.swift:312:        } catch {
+Sources/Features/Workout/WorkoutView.swift:1122:                // foreground catch-up. It is an anchor, never a catch-up cue.
+Sources/Features/Workout/WorkoutView.swift:190:            try? await Task.sleep(nanoseconds: 100_000_000)
+Sources/Features/Workout/WorkoutView.swift:505:        } catch {
+Sources/Platform/HealthKitService.swift:190:        } catch {
+Sources/Platform/TindeqBluetooth.swift:230:        try? write(.stop)
+Sources/Platform/TindeqBluetooth.swift:547:            try? refreshBattery()
+Sources/Platform/WatchConnectivityService.swift:246:        } catch {
+Sources/Platform/WatchConnectivityService.swift:247:            // #992: a failed watch transmit used to be a silent `try?`. Watch
+Sources/Platform/WatchConnectivityService.swift:430:        if let data = try? encoder.encode(completionInbox.values) {
+Sources/Platform/WatchConnectivityService.swift:439:        return (try? decoder.decode([WatchWorkoutCompletion].self, from: data)) ?? []
+Sources/Platform/WeatherService.swift:164:            } catch {
+Sources/Platform/WeatherService.swift:191:        } catch {
+Sources/Platform/WeatherService.swift:282:        guard let reading = try? decoder.decode(CachedReading.self, from: raw) else { return nil }
+Sources/Platform/WeatherService.swift:287:        guard let data = try? encoder.encode(
+Sources/Platform/WeatherService.swift:295:        guard let cached = try? decoder.decode(CachedClimate.self, from: raw),
+Sources/Platform/WeatherService.swift:302:        guard let data = try? encoder.encode(cached) else { return }

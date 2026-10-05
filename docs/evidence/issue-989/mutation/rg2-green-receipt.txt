@@ -1,0 +1,2 @@
+# restored run tally (rg2-green.log)
+Executed 7 tests, with 0 failures

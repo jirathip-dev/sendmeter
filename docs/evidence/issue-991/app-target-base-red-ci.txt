@@ -1,0 +1,14 @@
+# App-target suite red at the lane BASE on hosted CI (pre-existing, not this diff)
+
+gh run view 37197803088 --repo jirathip-dev/sendmeter --log-failed
+run 37197803088: branch staging, conclusion failure, 2026-10-04T11:10 — the merge of PR #1009,
+i.e. the exact lane base 3638202fe7eb230f20732c6c578080b39e64e0f5. Failing job: 'iOS Simulator build'
+(the app-target suite job; every other job green). Raw failing-test lines:
+
+2026-10-04T11:27:25.1778040Z Test Case '-[SendmeterNativeTests.GuidedLaunchRecoveryAppTests testALegacyStoredPayloadIsSetAsideAndTheAppStillStartsASession]' failed (0.903 seconds).
+2026-10-04T11:29:29.0480840Z Test Case '-[SendmeterNativeTests.GuidedProtocolCompletionTests test941BackToBackProtocolsLogOneEntryWhenTheSessionEndsExplicitly]' failed (120.322 seconds).
+
+The #941 test is the same test that failed in this lane's app-target run
+(app-target-suite-01.log) — base-identity for the red is the CI run above.
+Tracked (unmerged) fix for the class: PR #1012 '#989: retire the app-target suite's
+intermittent reds (fixture isolation + bounded reads)' — OPEN.

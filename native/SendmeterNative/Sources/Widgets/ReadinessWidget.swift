@@ -59,8 +59,7 @@ struct ReadinessWidgetProvider: TimelineProvider {
     }
 
     private func currentSnapshot(at date: Date) -> ReadinessWidgetSnapshot? {
-        guard let store = ReadinessWidgetStore.appGroupStore,
-              let snapshot = store.load(),
+        guard let snapshot = ReadinessWidgetStore.appGroupStore.load(),
               snapshot.freshness(
                   on: ReadinessWidgetTimelinePolicy.localDayString(for: date)
               ) == .current

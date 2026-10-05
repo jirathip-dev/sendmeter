@@ -1,0 +1,8 @@
+== gitleaks full committed-surface scan (re-run after redaction) ==
+gitleaks: 8.30.1
+surface: staged tree 5ff9a3f19677ddace04189e11612d00d9b13acd4 (= evidence commit + redactions + report; becoming the tip commit)
+command: gitleaks detect --source . --no-git --config .gitleaks.toml --redact --no-banner --exit-code=1 --report-format json --report-path <evidence>/gitleaks-full-tree.json
+
+[90m12:15PM[0m [32mINF[0m [1mscanned ~11017188 bytes (11.02 MB) in 365ms[0m
+[90m12:15PM[0m [32mINF[0m [1mno leaks found[0m
+GITLEAKS_FULL_TREE_EXIT=0
