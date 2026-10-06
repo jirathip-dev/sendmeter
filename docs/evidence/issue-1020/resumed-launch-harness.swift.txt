@@ -1,0 +1,230 @@
+// ===========================================================================
+// impl-1020 step-0 extension: the RESUMED pass (the orchestrator's harness
+// only ran `cursor == nil`). The device reads with the cursor the previous
+// launch persisted, so this models the server filter FAITHFULLY: Postgres
+// compares the row's TRUE microsecond `updated_at` (taken from the raw JSON
+// text, never from the client's decoded Date) against the cursor stamp.
+// Prints counts and verdicts only — no row values, no cursors.
+// ===========================================================================
+
+/// Exact microseconds from a Postgres/PostgREST timestamp text, digit by digit
+/// (no Foundation date parser on this side: this is the SERVER's view).
+func serverMicros(_ text: String) -> Int64 {
+    // "YYYY-MM-DDTHH:MM:SS[.ffffff](Z|+HH:MM)"
+    let base = String(text.prefix(19))
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(secondsFromGMT: 0)
+    f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+    let whole = Int64(f.date(from: base)!.timeIntervalSince1970)
+    var rest = text.dropFirst(19)
+    var frac: Int64 = 0
+    if rest.first == "." {
+        rest = rest.dropFirst()
+        let digits = rest.prefix(while: { $0.isNumber })
+        frac = Int64((String(digits) + "000000").prefix(6))!
+        rest = rest.dropFirst(digits.count)
+    }
+    var offset: Int64 = 0
+    if let sign = rest.first, sign == "+" || sign == "-" {
+        let hh = Int64(rest.dropFirst().prefix(2))!
+        let mm = Int64(rest.dropFirst(4).prefix(2))!
+        offset = (hh * 3600 + mm * 60) * (sign == "+" ? 1 : -1)
+    }
+    return (whole - offset) * 1_000_000 + frac
+}
+
+func rawTimestamps(_ name: String, key: String) throws -> [Int64] {
+    let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).json")
+    let array = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [[String: Any]]
+    return array.map { serverMicros($0[key] as! String) }
+}
+
+enum CursorFilter { case none, legacy(Int64), composite(Int64, String) }
+
+func serverFilter(_ cursor: String?) -> CursorFilter {
+    guard let cursor, !cursor.isEmpty else { return .none }
+    if let bar = cursor.firstIndex(of: "|") {
+        return .composite(serverMicros(String(cursor[..<bar])), String(cursor[cursor.index(after: bar)...]).lowercased())
+    }
+    return .legacy(serverMicros(cursor))
+}
+
+/// One read pass through the REAL reader; the "server" applies its filter on
+/// the TRUE microseconds. Returns (verdict, next cursor).
+func resumedPass<Row: Sendable, Value: Sendable>(
+    _ label: String,
+    rows allRows: [Row],
+    trueMicros: [Int64],
+    since startCursor: String?,
+    entityID: @escaping @Sendable (Row) -> String,
+    tieBreakID: @escaping @Sendable (Row) -> String,
+    value: @escaping @Sendable (Row) -> Value,
+    isDeleted: @escaping @Sendable (Row) -> Bool,
+    updatedAt: @escaping @Sendable (Row) -> Date
+) -> (ok: Bool, cursor: String?, detail: String) {
+    let pageSize = DeltaPageReader<Row, Value>.defaultPageSize
+    let indexed = Array(zip(allRows, trueMicros))
+    let filter = serverFilter(startCursor)
+    func visible(after f: CursorFilter) -> [Row] {
+        indexed.filter { row, micros in
+            switch f {
+            case .none: return true
+            case let .legacy(stamp): return micros >= stamp
+            case let .composite(stamp, id):
+                return micros > stamp || (micros == stamp && tieBreakID(row).lowercased() > id)
+            }
+        }.map(\.0)
+    }
+    let reader = DeltaPageReader<Row, Value>(
+        select: "sim", entityID: entityID, tieBreakID: tieBreakID,
+        value: value, isDeleted: isDeleted, updatedAt: updatedAt
+    )
+    let semaphore = DispatchSemaphore(value: 0)
+    nonisolated(unsafe) var result: Result<RemoteEntityDelta<Value>, Error>?
+    nonisolated(unsafe) var firstVisible = 0
+    Task {
+        do {
+            let delta = try await reader.read(since: startCursor) { request in
+                // The reader re-issues its OWN cursor per page; honor it.
+                let orItem = request.queryItems.first { $0.name == "or" }?.value
+                let gteItem = request.queryItems.first { $0.name == "updated_at" }?.value
+                var pageFilter: CursorFilter = .none
+                if let orItem {
+                    // (updated_at.gt.<stamp>,and(updated_at.eq.<stamp>,<col>.gt.<id>))
+                    let stamp = String(orItem.dropFirst("(updated_at.gt.".count).prefix(while: { $0 != "," }))
+                    let id = String(orItem[orItem.range(of: ".gt.", options: .backwards)!.upperBound...].dropLast(2))
+                    pageFilter = .composite(serverMicros(stamp), id.lowercased())
+                } else if let gteItem {
+                    pageFilter = .legacy(serverMicros(String(gteItem.dropFirst(4))))
+                }
+                let rows = visible(after: pageFilter)
+                if firstVisible == 0 { firstVisible = rows.count }
+                return DeltaPageResponse(rows: Array(rows.prefix(pageSize)), totalCount: rows.count)
+            }
+            result = .success(delta)
+        } catch { result = .failure(error) }
+        semaphore.signal()
+    }
+    semaphore.wait()
+    _ = filter
+    switch result {
+    case let .success(delta):
+        return (true, delta.cursor, "PASS  \(label): server-visible=\(firstVisible)/\(allRows.count) changes=\(delta.changes.count)")
+    case let .failure(error):
+        return (false, nil, "FAIL  \(label): server-visible=\(firstVisible)/\(allRows.count) -> \(describe(error))")
+    case .none:
+        return (false, nil, "FAIL  \(label): no result")
+    }
+}
+
+/// The device's real sequence: launch 1 has no cursor; launch 2 resumes at
+/// the cursor launch 1 persisted; launch 3 at launch 2's (health/workouts
+/// launch 1 is the legacy `makeDelta` window, so launch 2 is their legacy
+/// `gte` resume and launch 3 the first composite one).
+let healMode = CommandLine.arguments.contains("--heal")
+func launches<Row: Sendable, Value: Sendable>(
+    _ slice: String,
+    rows: [Row], trueMicros: [Int64],
+    firstSyncLegacy: Bool = false,
+    healFromOldBuild: Bool = healMode,
+    entityID: @escaping @Sendable (Row) -> String,
+    tieBreakID: @escaping @Sendable (Row) -> String,
+    value: @escaping @Sendable (Row) -> Value,
+    isDeleted: @escaping @Sendable (Row) -> Bool,
+    updatedAt: @escaping @Sendable (Row) -> Date
+) -> Bool {
+    var cursor: String?
+    var ok = true
+    // Report whether the decoded Date kept the row's real precision.
+    let truncated = zip(rows, trueMicros).filter { DeltaCursor.microseconds(of: updatedAt($0.0)) != $0.1 }.count
+    print("INFO  \(slice): rows=\(rows.count) decodedDate!=serverMicros for \(truncated) rows")
+    for launch in 1...3 {
+        // HEAL leg: launch 2 starts from the cursor the OLD build persisted —
+        // the same composite cursor with its stamp truncated to milliseconds.
+        if launch == 2, let c = cursor, healFromOldBuild {
+            let parts = c.split(separator: "|", maxSplits: 1).map(String.init)
+            let stamp = parts[0]
+            let dot = stamp.firstIndex(of: ".")!
+            let ms = stamp[stamp.index(after: dot)...].prefix(3)
+            let old = String(stamp[..<dot]) + "." + ms + "000Z"
+            cursor = parts.count == 2 ? old + "|" + parts[1] : old
+        }
+        if launch == 1 && firstSyncLegacy {
+            cursor = rows.map(updatedAt).max().map(syncCursorString)
+            print("PASS  \(slice) launch 1 (first-sync window, legacy cursor)")
+            continue
+        }
+        let r = resumedPass("\(slice) launch \(launch) (cursor \(cursor == nil ? "nil" : (cursor!.contains("|") ? "composite" : "legacy")))",
+                            rows: rows, trueMicros: trueMicros, since: cursor,
+                            entityID: entityID, tieBreakID: tieBreakID, value: value,
+                            isDeleted: isDeleted, updatedAt: updatedAt)
+        print(r.detail)
+        if !r.ok { ok = false; break }
+        cursor = r.cursor ?? cursor
+    }
+    return ok
+}
+
+var failed: [String] = []
+func run(_ slice: String, _ body: () throws -> Bool) {
+    do { if try !body() { failed.append(slice) } } catch { print("FAIL  \(slice) decode: \(describe(error))"); failed.append(slice) }
+}
+
+run("sessions") {
+    let r = try rows("sessions", SessionRow.self)
+    return launches("sessions", rows: r, trueMicros: try rawTimestamps("sessions", key: "updated_at"),
+        entityID: { $0.id.uuidString }, tieBreakID: { $0.id.uuidString }, value: { $0.id.uuidString },
+        isDeleted: { $0.deletedAt != nil }, updatedAt: { $0.updatedAt ?? .distantPast })
+}
+run("recordings") {
+    let r = try rows("recordings", RecordingRow.self)
+    return launches("recordings", rows: r, trueMicros: try rawTimestamps("recordings", key: "updated_at"),
+        entityID: { $0.id.uuidString }, tieBreakID: { $0.id.uuidString }, value: { $0.id.uuidString },
+        isDeleted: { $0.deletedAt != nil }, updatedAt: { $0.updatedAt })
+}
+run("settings") {
+    let r = try rows("settings", SettingsRow.self)
+    return launches("settings", rows: r, trueMicros: try rawTimestamps("settings", key: "updated_at"),
+        entityID: { _ in "settings" }, tieBreakID: { $0.userID?.uuidString ?? "" }, value: { $0.currentPhase },
+        isDeleted: { _ in false }, updatedAt: { $0.updatedAt })
+}
+run("phasePeriods") {
+    let r = try rows("phase_periods", PhasePeriodRow.self)
+    return launches("phasePeriods", rows: r, trueMicros: try rawTimestamps("phase_periods", key: "updated_at"),
+        entityID: { $0.id.uuidString }, tieBreakID: { $0.id.uuidString }, value: { $0.phase },
+        isDeleted: { $0.deletedAt != nil }, updatedAt: { $0.updatedAt })
+}
+run("healthMetrics") {
+    let r = try rows("health_metrics", HealthMetricRow.self)
+    return launches("healthMetrics", rows: r, trueMicros: try rawTimestamps("health_metrics", key: "updated_at"),
+        firstSyncLegacy: true,
+        entityID: { $0.date }, tieBreakID: { $0.date }, value: { $0.date },
+        isDeleted: { _ in false }, updatedAt: { $0.updatedAt })
+}
+run("presets") {
+    let r = try rows("presets", PresetRow.self)
+    return launches("presets", rows: r, trueMicros: try rawTimestamps("presets", key: "updated_at"),
+        entityID: { $0.id.uuidString }, tieBreakID: { $0.id.uuidString }, value: { $0.id.uuidString },
+        isDeleted: { $0.deletedAt != nil }, updatedAt: { $0.updatedAt })
+}
+run("routinePresets") {
+    let r = try rows("routines", RoutineRow.self)
+    return launches("routinePresets", rows: r, trueMicros: try rawTimestamps("routines", key: "updated_at"),
+        entityID: { $0.id.uuidString }, tieBreakID: { $0.id.uuidString }, value: { $0.name },
+        isDeleted: { $0.deletedAt != nil }, updatedAt: { $0.updatedAt })
+}
+run("workoutsAndAttempts") {
+    let r = try rows("workouts", WorkoutListRow.self)
+    return launches("workoutsAndAttempts", rows: r, trueMicros: try rawTimestamps("workouts", key: "updated_at"),
+        firstSyncLegacy: true,
+        entityID: { $0.id.uuidString }, tieBreakID: { $0.id.uuidString }, value: { $0.id.uuidString },
+        isDeleted: { _ in false }, updatedAt: { $0.updatedAt })
+}
+run("tagMetadata") {
+    let r = try rows("tags", TagMetadataRow.self)
+    return launches("tagMetadata", rows: r, trueMicros: try rawTimestamps("tags", key: "updated_at"),
+        entityID: { $0.name }, tieBreakID: { $0.name }, value: { $0.name },
+        isDeleted: { _ in false }, updatedAt: { $0.updatedAt })
+}
+print(failed.isEmpty ? "RESUMED SIMULATION: every slice survives three launches"
+                     : "RESUMED SIMULATION: \(failed.count) slice(s) FAIL on a resumed launch: \(failed.joined(separator: ","))")
