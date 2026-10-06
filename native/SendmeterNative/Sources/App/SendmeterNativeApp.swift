@@ -79,23 +79,26 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @EnvironmentObject private var theme: AppThemeController
     @Environment(\.colorScheme) private var systemScheme
-    /// #927 follow-up: the error banner's laid-out height, measured so the
-    /// screen under it can be laid out below it.
-    @State private var errorBannerHeight: CGFloat = 0
 
     init(structuralHapticMode: StructuralHapticDiagnosticMode = .normal) {
         self.structuralHapticMode = structuralHapticMode
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
+        ErrorBannerHost(structuralHapticMode: structuralHapticMode) {
             Group {
                 switch model.bootState {
                 case .loading:
                     SplashView()
                 case .signedOut:
                     #if DEBUG
-                    if CommandLine.arguments.contains("--tabs-fixture") {
+                    if CommandLine.arguments.contains("--error-banner-fixture") {
+                        // #927 evidence harness: raises the REAL banner through
+                        // `model.errorMessage`, so RootView's own host draws it
+                        // over the real signed-out screen or, with
+                        // `--tabs-fixture <tab>`, over the real tab views.
+                        ErrorBannerFixtureView(arguments: CommandLine.arguments)
+                    } else if CommandLine.arguments.contains("--tabs-fixture") {
                         // #875 evidence harness: render the real tab bar
                         // without a signed-in session.
                         TabsFixtureView(selectedTab: fixtureTabArgument())
@@ -115,10 +118,6 @@ struct RootView: View {
                         // #938 evidence harness: the real guided force cover,
                         // presented the way ForceView presents it.
                         GuidedForceFixtureView(arguments: CommandLine.arguments)
-                    } else if CommandLine.arguments.contains("--error-banner-fixture") {
-                        // #927 evidence harness: the real banner over the real
-                        // signed-out screen (see ErrorBannerFixtureView).
-                        ErrorBannerFixtureView(arguments: CommandLine.arguments)
                     } else {
                         LoginView()
                     }
@@ -133,40 +132,6 @@ struct RootView: View {
                     }
                 }
             }
-            // #927 follow-up (build-57 device report): the banner overlay
-            // below reserves no layout space, so a tab's navigation bar laid
-            // its large title out UNDER the banner and drew it through the
-            // message. While a banner shows, the screen's top safe area grows
-            // by the banner's measured height plus its 8 pt inset, so every
-            // navigation bar and large title is laid out below the banner
-            // instead of behind it. Applied to the screen only — the overlay
-            // keeps the window's own safe area, so the banner never moves.
-            .safeAreaPadding(.top, model.errorMessage == nil ? 0 : errorBannerHeight + 8)
-
-        }
-        .overlay(alignment: .top) {
-            // Stack diagnostics below the error banner so the A/B label can
-            // never obscure its message or dismiss button.
-            VStack(spacing: 4) {
-                if let message = model.errorMessage {
-                    ErrorBanner(message: message) { model.errorMessage = nil }
-                        .onGeometryChange(for: CGFloat.self) { proxy in
-                            proxy.size.height
-                        } action: { height in
-                            errorBannerHeight = height
-                        }
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .zIndex(10)
-                }
-
-                if let label = structuralHapticMode.displayLabel {
-                    StructuralHapticDiagnosticBanner(label: label)
-                        .allowsHitTesting(false)
-                        .zIndex(20)
-                }
-            }
-            .padding(.horizontal)
-            .padding(.top, 8)
         }
         .overlay(alignment: .bottom) {
             if let toast = model.toast {
@@ -197,6 +162,65 @@ struct RootView: View {
         // unchanged banner stay silent.
         .errorBannerAnnouncement(message: model.errorMessage)
         .preferredColorScheme(theme.resolvedScheme(prefersDark: systemScheme == .dark))
+    }
+}
+
+/// #927: the app's single failure surface, hosted over a screen.
+///
+/// The banner sits in a top overlay so it never moves with the screen's
+/// scrolling. An overlay reserves no layout space, though, so on its own a
+/// tab's navigation bar laid its large title out UNDER the banner and drew it
+/// through the message (build-57 device report). While a banner shows, the
+/// screen is therefore padded down by the banner's measured height plus its
+/// 8 pt inset, so it is laid out below the banner's bottom edge: every
+/// navigation bar and large title starts below the banner instead of behind
+/// it, at every text size. This is layout padding, not `safeAreaPadding`:
+/// measured, a safe-area adjustment does not reach the UIKit navigation bars
+/// a `NavigationStack` hosts, so their large titles stayed under the banner.
+struct ErrorBannerHost<Screen: View>: View {
+    private let structuralHapticMode: StructuralHapticDiagnosticMode
+    private let screen: Screen
+    @Environment(AppModel.self) private var model
+    /// The banner's laid-out height, measured from the banner itself.
+    @State private var errorBannerHeight: CGFloat = 0
+
+    init(
+        structuralHapticMode: StructuralHapticDiagnosticMode = .normal,
+        @ViewBuilder screen: () -> Screen
+    ) {
+        self.structuralHapticMode = structuralHapticMode
+        self.screen = screen()
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            screen
+                .padding(.top, model.errorMessage == nil ? 0 : errorBannerHeight + 8)
+        }
+        .overlay(alignment: .top) {
+            // Stack diagnostics below the error banner so the A/B label can
+            // never obscure its message or dismiss button.
+            VStack(spacing: 4) {
+                if let message = model.errorMessage {
+                    ErrorBanner(message: message) { model.errorMessage = nil }
+                        .onGeometryChange(for: CGFloat.self) { proxy in
+                            proxy.size.height
+                        } action: { height in
+                            errorBannerHeight = height
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(10)
+                }
+
+                if let label = structuralHapticMode.displayLabel {
+                    StructuralHapticDiagnosticBanner(label: label)
+                        .allowsHitTesting(false)
+                        .zIndex(20)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.top, 8)
+        }
     }
 }
 
@@ -551,54 +575,48 @@ private struct TrainingLoadFixtureView: View {
 #endif
 
 #if DEBUG
-/// #927 evidence harness: renders the REAL shared `ErrorBanner` in the same
-/// top-overlay stack `RootView` builds (same VStack spacing, horizontal/top
-/// padding, and transition) over the real signed-out screen. The production
-/// banner needs an actual failed request to appear, so this is what a
-/// simulator capture can drive without a backend: it shows the dismiss
-/// target, the wrapped copy at accessibility text sizes, and light/dark
-/// rendering. `--error-banner-fixture short|long`; DEBUG-only, and the app's
-/// normal signed-out flow never reaches this view.
+/// #927 evidence harness: raises the REAL banner the production way — by
+/// setting `model.errorMessage` — so `RootView`'s own host (overlay, measured
+/// safe-area reservation, announcement) draws it. The screen under it is the
+/// real signed-out screen or, with `--tabs-fixture <tab>`, the real tab views
+/// (Dashboard by default), so a simulator capture shows the real banner over
+/// the real large title without a backend or a failed request.
+/// `--error-banner-fixture short|long|unreadable` picks real `UserFacingError`
+/// copy; DEBUG-only, and the app's normal signed-out flow never reaches it.
 private struct ErrorBannerFixtureView: View {
-    /// A short failure — one line at normal text sizes (real `FriendlyError`
-    /// copy for a failed save).
-    static let shortMessage = "Couldn't save this. Try again."
-    /// The longest real failure copy in `FriendlyError` (the device-clock
-    /// nudge) — the honest "long error" case that must wrap without
-    /// truncating on the smallest supported phone.
-    static let longMessage = """
-    Your iPhone's date and time may be wrong. Turn on Set Automatically in \
-    Settings → General → Date & Time, then try again.
-    """
-
     private let message: String
-    @State private var isPresented = true
+    @Environment(AppModel.self) private var model
+    @State private var raised = false
 
     init(arguments: [String]) {
         let nameIndex = arguments.firstIndex(of: "--error-banner-fixture")
         let name = nameIndex.flatMap { index in
             arguments.indices.contains(index + 1) ? arguments[index + 1] : nil
         }
-        message = name == "short" ? Self.shortMessage : Self.longMessage
+        switch name {
+        // A short failure — one line at normal text sizes.
+        case "short": message = UserFacingError.message(for: .saveFailed)
+        // The copy on the build-57 device screenshot.
+        case "unreadable": message = UserFacingError.message(for: .dataUnreadable)
+        // The longest failure copy (the device-clock nudge).
+        default: message = UserFacingError.message(for: .authClockSkew)
+        }
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            LoginView()
-        }
-        .overlay(alignment: .top) {
-            // The production RootView overlay stack, unchanged.
-            VStack(spacing: 4) {
-                if isPresented {
-                    ErrorBanner(message: message) { isPresented = false }
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .zIndex(10)
-                }
+        Group {
+            if CommandLine.arguments.contains("--tabs-fixture") {
+                TabsFixtureView(selectedTab: fixtureTabArgument())
+            } else {
+                LoginView()
             }
-            .padding(.horizontal)
-            .padding(.top, 8)
         }
-        .animation(.easeInOut(duration: 0.2), value: isPresented)
+        .onAppear {
+            // Once: a dismissed banner stays dismissed.
+            guard !raised else { return }
+            raised = true
+            model.errorMessage = message
+        }
     }
 }
 #endif

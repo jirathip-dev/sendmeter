@@ -502,7 +502,15 @@ public struct ErrorBanner: View {
     }
 
     private var dismissButton: some View {
-        Button {
+        DismissControl(dismiss: dismiss)
+    }
+
+    /// The one dismiss control both layouts place.
+    private struct DismissControl: View {
+        let dismiss: () -> Void
+
+        var body: some View {
+            Button {
                 Haptics.shared.playGesture(.light)
                 dismiss()
             } label: {
@@ -522,9 +530,6 @@ public struct ErrorBanner: View {
             .accessibilityLabel(ErrorBannerAccessibility.dismissLabel)
             .accessibilityIdentifier(ErrorBannerAccessibility.dismissIdentifier)
         }
-        .padding(12)
-        .background(SendmeterStyle.alert.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
