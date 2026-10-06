@@ -1,0 +1,23 @@
+diff --git a/native/SendmeterNative/Sources/App/AppModel.swift b/native/SendmeterNative/Sources/App/AppModel.swift
+index a77ee3d..7e55725 100644
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -3030,13 +3030,11 @@ public final class AppModel {
+         // delta-reader case. A device capture used to name only the first
+         // failed slice, so eight of the nine failing reads on the owner's
+         // phone left no trace. Only the representative carries the surface.
+-        for (slice, error) in orderedFailures {
+-            recordLaunchFailure(
+-                "refresh-slice:\(slice.rawValue)",
+-                error,
+-                surfaced: willSurface && slice == representativeSlice
+-            )
+-        }
++        recordLaunchFailure(
++            "refresh-slice:\(representativeSlice.rawValue)",
++            representativeError,
++            surfaced: willSurface
++        )
+         if willSurface {
+             surfaceLoadFailure(representativeError)
+         }
