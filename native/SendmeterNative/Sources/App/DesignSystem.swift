@@ -445,20 +445,71 @@ extension View {
 public struct ErrorBanner: View {
     let message: String
     let dismiss: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     public var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(SendmeterStyle.alert)
-                // Decorative: VoiceOver reads the message itself, not the glyph.
-                .accessibilityHidden(true)
-            Text(message)
-                .font(.subheadline)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // Wrap to the message's full height at every text size instead
-                // of letting a compressed proposal clip the copy (#927).
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier(ErrorBannerAccessibility.messageIdentifier)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                // #927 follow-up: at accessibility text sizes the glyph and the
+                // dismiss target share a top row and the message wraps across
+                // the full banner width, so the longest failure copy still
+                // fits on one phone screen instead of a narrow column that
+                // runs off its bottom edge.
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 12) {
+                        alertGlyph
+                        Spacer(minLength: 0)
+                        dismissButton
+                    }
+                    messageText
+                        // VoiceOver still reads the message before the
+                        // dismiss control, as in the single-row layout.
+                        .accessibilitySortPriority(1)
+                }
+                .accessibilityElement(children: .contain)
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    alertGlyph
+                    messageText
+                    dismissButton
+                }
+            }
+        }
+        .padding(12)
+        // #927 follow-up: an opaque backing under the tint, so nothing the
+        // screen draws beneath the banner (a large title, scrolled content)
+        // can show through the message.
+        .background(SendmeterStyle.alert.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .background(.background, in: RoundedRectangle(cornerRadius: 12))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var alertGlyph: some View {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundStyle(SendmeterStyle.alert)
+            // Decorative: VoiceOver reads the message itself, not the glyph.
+            .accessibilityHidden(true)
+    }
+
+    private var messageText: some View {
+        Text(message)
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Wrap to the message's full height at every text size instead
+            // of letting a compressed proposal clip the copy (#927).
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier(ErrorBannerAccessibility.messageIdentifier)
+    }
+
+    private var dismissButton: some View {
+        DismissControl(dismiss: dismiss)
+    }
+
+    /// The one dismiss control both layouts place.
+    private struct DismissControl: View {
+        let dismiss: () -> Void
+
+        var body: some View {
             Button {
                 Haptics.shared.playGesture(.light)
                 dismiss()
@@ -479,9 +530,6 @@ public struct ErrorBanner: View {
             .accessibilityLabel(ErrorBannerAccessibility.dismissLabel)
             .accessibilityIdentifier(ErrorBannerAccessibility.dismissIdentifier)
         }
-        .padding(12)
-        .background(SendmeterStyle.alert.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
