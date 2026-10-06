@@ -79,6 +79,9 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @EnvironmentObject private var theme: AppThemeController
     @Environment(\.colorScheme) private var systemScheme
+    /// #927 follow-up: the error banner's laid-out height, measured so the
+    /// screen under it can be laid out below it.
+    @State private var errorBannerHeight: CGFloat = 0
 
     init(structuralHapticMode: StructuralHapticDiagnosticMode = .normal) {
         self.structuralHapticMode = structuralHapticMode
@@ -130,6 +133,15 @@ struct RootView: View {
                     }
                 }
             }
+            // #927 follow-up (build-57 device report): the banner overlay
+            // below reserves no layout space, so a tab's navigation bar laid
+            // its large title out UNDER the banner and drew it through the
+            // message. While a banner shows, the screen's top safe area grows
+            // by the banner's measured height plus its 8 pt inset, so every
+            // navigation bar and large title is laid out below the banner
+            // instead of behind it. Applied to the screen only — the overlay
+            // keeps the window's own safe area, so the banner never moves.
+            .safeAreaPadding(.top, model.errorMessage == nil ? 0 : errorBannerHeight + 8)
 
         }
         .overlay(alignment: .top) {
@@ -138,6 +150,11 @@ struct RootView: View {
             VStack(spacing: 4) {
                 if let message = model.errorMessage {
                     ErrorBanner(message: message) { model.errorMessage = nil }
+                        .onGeometryChange(for: CGFloat.self) { proxy in
+                            proxy.size.height
+                        } action: { height in
+                            errorBannerHeight = height
+                        }
                         .transition(.move(edge: .top).combined(with: .opacity))
                         .zIndex(10)
                 }
