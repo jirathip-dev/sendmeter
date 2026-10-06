@@ -1,0 +1,30 @@
+INFO  sessions: rows=121 decodedDate!=serverMicros for 121 rows
+PASS  sessions launch 1 (cursor nil): server-visible=121/121 changes=121
+FAIL  sessions launch 2 (cursor composite): server-visible=1/121 -> DeltaReadError.cursorDidNotAdvance
+INFO  recordings: rows=610 decodedDate!=serverMicros for 610 rows
+PASS  recordings launch 1 (cursor nil): server-visible=610/610 changes=610
+FAIL  recordings launch 2 (cursor composite): server-visible=1/610 -> DeltaReadError.cursorDidNotAdvance
+INFO  settings: rows=1 decodedDate!=serverMicros for 1 rows
+PASS  settings launch 1 (cursor nil): server-visible=1/1 changes=1
+FAIL  settings launch 2 (cursor composite): server-visible=1/1 -> DeltaReadError.cursorDidNotAdvance
+INFO  phasePeriods: rows=4 decodedDate!=serverMicros for 4 rows
+PASS  phasePeriods launch 1 (cursor nil): server-visible=4/4 changes=4
+FAIL  phasePeriods launch 2 (cursor composite): server-visible=1/4 -> DeltaReadError.cursorDidNotAdvance
+INFO  healthMetrics: rows=96 decodedDate!=serverMicros for 96 rows
+PASS  healthMetrics launch 1 (first-sync window, legacy cursor)
+PASS  healthMetrics launch 2 (cursor legacy): server-visible=1/96 changes=1
+FAIL  healthMetrics launch 3 (cursor composite): server-visible=1/96 -> DeltaReadError.cursorDidNotAdvance
+INFO  presets: rows=4 decodedDate!=serverMicros for 4 rows
+PASS  presets launch 1 (cursor nil): server-visible=4/4 changes=4
+FAIL  presets launch 2 (cursor composite): server-visible=4/4 -> DeltaReadError.outOfOrderPage
+INFO  routinePresets: rows=1 decodedDate!=serverMicros for 1 rows
+PASS  routinePresets launch 1 (cursor nil): server-visible=1/1 changes=1
+FAIL  routinePresets launch 2 (cursor composite): server-visible=1/1 -> DeltaReadError.cursorDidNotAdvance
+INFO  workoutsAndAttempts: rows=45 decodedDate!=serverMicros for 45 rows
+PASS  workoutsAndAttempts launch 1 (first-sync window, legacy cursor)
+PASS  workoutsAndAttempts launch 2 (cursor legacy): server-visible=1/45 changes=1
+FAIL  workoutsAndAttempts launch 3 (cursor composite): server-visible=1/45 -> DeltaReadError.cursorDidNotAdvance
+INFO  tagMetadata: rows=6 decodedDate!=serverMicros for 6 rows
+PASS  tagMetadata launch 1 (cursor nil): server-visible=6/6 changes=6
+FAIL  tagMetadata launch 2 (cursor composite): server-visible=6/6 -> DeltaReadError.outOfOrderPage
+RESUMED SIMULATION: 9 slice(s) FAIL on a resumed launch: sessions,recordings,settings,phasePeriods,healthMetrics,presets,routinePresets,workoutsAndAttempts,tagMetadata

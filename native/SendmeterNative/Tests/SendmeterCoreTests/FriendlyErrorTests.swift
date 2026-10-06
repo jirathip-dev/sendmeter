@@ -45,9 +45,10 @@ final class FriendlyErrorTests: XCTestCase {
             (.cacheUnavailable, "Sendmeter couldn\u{2019}t read its saved data on this iPhone. Reopen the app, then try again."),
             // #1004: the remedy is a retry, not "update the app" — the
             // owner of the device this banner fired on was already on the
-            // newest build, and the stored row that would not decode is set
-            // aside and rebuilt from the server.
-            (.dataUnreadable, "Sendmeter couldn\u{2019}t read some of its data. Try again \u{2014} unreadable data on this iPhone is set aside and rebuilt from your account."),
+            // newest build. #1020: and the copy must not promise a rebuild
+            // "from your account" when the account's response is the
+            // unreadable one.
+            (.dataUnreadable, "Sendmeter couldn\u{2019}t read some of its data. Try again."),
             (.secureStorageUnavailable, "Sendmeter couldn\u{2019}t reach its saved sign-in on this iPhone. Reopen the app, then try again."),
             (.loadFailed, "Sendmeter couldn\u{2019}t load your data. Try again."),
             (.unknown, "Something went wrong while completing that. Try again.")

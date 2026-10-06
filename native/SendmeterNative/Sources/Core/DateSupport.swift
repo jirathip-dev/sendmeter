@@ -139,13 +139,37 @@ public enum LocalDateSupport {
         ISO8601DateFormatter().string(from: date)
     }
 
+    /// Parses an ISO-8601 instant, keeping every fractional digit down to the
+    /// microsecond.
+    ///
+    /// #1020: Postgres `timestamptz` (and so every PostgREST `updated_at`)
+    /// carries microseconds — `2026-10-05T23:22:10.123456+00:00`. Foundation's
+    /// `.withFractionalSeconds` keeps only MILLISECONDS, so the delta reader
+    /// persisted a cursor up to 999 µs BEHIND the row it last read. The next
+    /// launch's `updated_at.gt.<cursor>` then re-served that row (and, for a
+    /// tie group stamped in one transaction, reordered it), the reader failed
+    /// closed (`cursorDidNotAdvance` / `outOfOrderPage`) on every slice, and
+    /// the unreadable-data banner returned on every launch after the first
+    /// sync. The fraction is therefore added as exact integer microseconds on
+    /// top of the whole-second instant Foundation parses.
     public static func iso8601Date(from string: String) -> Date? {
         let formatter = ISO8601DateFormatter()
-        if let exact = formatter.date(from: string) { return exact }
-        formatter.formatOptions = [.withInternetDateTime]
-        if let date = formatter.date(from: string) { return date }
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: string)
+        guard let dot = string.firstIndex(of: "."),
+              string.distance(from: string.startIndex, to: dot) == 19
+        else {
+            if let exact = formatter.date(from: string) { return exact }
+            formatter.formatOptions = [.withInternetDateTime]
+            return formatter.date(from: string)
+        }
+        let digits = string[string.index(after: dot)...].prefix { $0.isASCII && $0.isNumber }
+        guard !digits.isEmpty,
+              let microseconds = Int64(String(digits.prefix(6)).padding(toLength: 6, withPad: "0", startingAt: 0)),
+              let whole = formatter.date(
+                  from: String(string[..<dot]) + String(string[digits.endIndex...])
+              )
+        else { return nil }
+        let wholeSeconds = Int64(whole.timeIntervalSince1970.rounded())
+        return Date(timeIntervalSince1970: Double(wholeSeconds * 1_000_000 + microseconds) / 1_000_000)
     }
 
     /// Canonical local-day key for a stored date string.

@@ -3025,11 +3025,18 @@ public final class AppModel {
             hasLastGoodData: hasLoadedSessions && forceModel.hasLoadedRecordings,
             publishedAnySlice: outcomes.didPublishAnyGroup
         )
-        recordLaunchFailure(
-            "refresh-slice:\(representativeSlice.rawValue)",
-            representativeError,
-            surfaced: willSurface
-        )
+        // #1020: one line PER failed slice, each naming its slice and (via
+        // the line's `detail`) the decode kind + codingPath keys or the
+        // delta-reader case. A device capture used to name only the first
+        // failed slice, so eight of the nine failing reads on the owner's
+        // phone left no trace. Only the representative carries the surface.
+        for (slice, error) in orderedFailures {
+            recordLaunchFailure(
+                "refresh-slice:\(slice.rawValue)",
+                error,
+                surfaced: willSurface && slice == representativeSlice
+            )
+        }
         if willSurface {
             surfaceLoadFailure(representativeError)
         }

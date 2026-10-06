@@ -123,10 +123,16 @@ public enum UserFacingError {
             // #1004: this copy used to say "Update Sendmeter, then try
             // again", which is not a remedy for a user who is already on the
             // newest build — and it named the wrong actor. The remedy that
-            // always exists is the retry: the read is re-run, an unreadable
-            // stored row is set aside (never deleted) and the account's copy
-            // is rebuilt from the server.
-            return "Sendmeter couldn\u{2019}t read some of its data. Try again \u{2014} unreadable data on this iPhone is set aside and rebuilt from your account."
+            // always exists is the retry.
+            //
+            // #1020: the #1004 copy also promised that unreadable data "is set
+            // aside and rebuilt from your account". That is only true for a
+            // stored row on this iPhone; when the ACCOUNT's own response is
+            // the unreadable one (the server read every launch on build 57),
+            // a retry re-reads the same response, so nothing can be rebuilt
+            // from it. The copy now promises only the retry, which holds for both
+            // sources.
+            return "Sendmeter couldn\u{2019}t read some of its data. Try again."
         case .secureStorageUnavailable:
             return "Sendmeter couldn\u{2019}t reach its saved sign-in on this iPhone. Reopen the app, then try again."
         case .loadFailed:

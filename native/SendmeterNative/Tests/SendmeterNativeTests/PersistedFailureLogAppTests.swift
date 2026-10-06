@@ -233,6 +233,108 @@ final class PersistedFailureLogAppTests: XCTestCase {
         XCTAssertTrue(line.surfaced)
     }
 
+    // MARK: - #1020: every failed slice is named, with its schema detail
+
+    /// #1020 AC3: the owner's capture named only `refresh-slice:sessions`
+    /// although every slice failed, and nothing said WHY. Now each failed
+    /// slice gets its own line carrying the decode kind + codingPath keys —
+    /// the schema identifiers, never the value — and only the representative
+    /// line carries the banner.
+    @MainActor
+    func testEveryFailedSliceGetsItsOwnLineNamingTheCodingPath() async throws {
+        let server = FakeFailureLogPostgREST()
+        let model = try await makeSignedInModel(server: server)
+        await model.refreshAll(showSpinner: false)
+        XCTAssertTrue(
+            model.hasLoadedSessions && model.forceModel.hasLoadedRecordings,
+            "fixture: the first load must publish authoritative last-good data"
+        )
+        let capture = FailureLineCapture()
+        model.persistedFailureSink = PersistedFailureSink(capture.sink)
+        // Two slices answer with rows this build cannot decode: a tag whose
+        // `updated_at` is not a timestamp, and a preset with no `id`.
+        let unreadableStamp = "owner-value-1020"
+        server.answerRequests(
+            containing: "rest/v1/tindeq_tags",
+            with: #"[{"name":"crimp","hidden":false,"updated_at":"\#(unreadableStamp)"}]"#
+        )
+        server.answerRequests(containing: "rest/v1/tindeq_presets", with: #"[{"name":"crimp"}]"#)
+
+        await model.refreshAll(showSpinner: false)
+
+        let tags = try await waitForLine(capture, where: { $0.operation == "refresh-slice:tagMetadata" })
+        let presets = try await waitForLine(capture, where: { $0.operation == "refresh-slice:presets" })
+        XCTAssertEqual(tags.classification, "dataUnreadable")
+        XCTAssertEqual(tags.detail, "decode=dataCorrupted path=*.updated_at")
+        XCTAssertEqual(presets.detail, "decode=keyNotFound path=*.id")
+        XCTAssertTrue(
+            tags.message.hasPrefix("launch failure step=refresh-slice:tagMetadata "),
+            tags.message
+        )
+        XCTAssertTrue(tags.message.hasSuffix(" decode=dataCorrupted path=*.updated_at"), tags.message)
+        XCTAssertEqual(
+            capture.lines.map(\.operation).sorted(),
+            ["refresh-slice:presets", "refresh-slice:tagMetadata"],
+            "one line per failed slice, no more: \(capture.lines.map(\.message))"
+        )
+        XCTAssertEqual(
+            capture.lines.filter(\.surfaced).count,
+            0,
+            "a partial pass behind last-good data surfaces nothing"
+        )
+        for line in capture.lines {
+            XCTAssertFalse(line.message.contains(unreadableStamp), "a row value reached the log: \(line.message)")
+            XCTAssertFalse(line.message.contains("crimp"), "user content reached the log: \(line.message)")
+        }
+        // AC2 witness: every other slice still published.
+        XCTAssertEqual(
+            model.lastPartialRefreshFailure?.groups,
+            [.presets, .tagMetadata],
+            "only the two unreadable slices' groups are held back"
+        )
+    }
+
+    // MARK: - #1020 RED witness: the second launch at real microsecond stamps
+
+    /// #1020: build 57 showed the unreadable-data banner on EVERY launch after
+    /// the first sync, with no row of the owner's account failing to decode.
+    /// The server answers with real PostgREST microsecond stamps and honours
+    /// the cursor filter on those true microseconds, as Postgres does. Before
+    /// the fix the client truncated each stamp to milliseconds, so the second
+    /// refresh's `updated_at.gt.<cursor>` re-served the row the cursor stands
+    /// on and every slice failed closed with `cursorDidNotAdvance`.
+    @MainActor
+    func testSecondLaunchAtMicrosecondServerStampsRefreshesWithoutAFailure() async throws {
+        let server = FakeFailureLogPostgREST()
+        server.serveMicrosecondSessions([
+            ("10200000-0000-0000-0000-000000000001", "2026-10-05T23:22:09.731904+00:00"),
+            ("10200000-0000-0000-0000-000000000002", "2026-10-05T23:22:10.123456+00:00")
+        ])
+        let model = try await makeSignedInModel(server: server)
+        let capture = FailureLineCapture()
+        model.persistedFailureSink = PersistedFailureSink(capture.sink)
+
+        await model.refreshAll(showSpinner: false)
+        XCTAssertEqual(model.sessions.count, 2, "fixture: launch 1 reads the account")
+        await model.refreshAll(showSpinner: false)
+        for _ in 0..<40 {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+
+        XCTAssertTrue(
+            server.sawCompositeSessionCursor,
+            "fixture: the second pass must resume at the persisted cursor"
+        )
+        XCTAssertEqual(
+            capture.lines.map(\.message),
+            [],
+            "the resumed refresh at microsecond stamps must not fail"
+        )
+        XCTAssertNil(model.errorMessage, "no unreadable-data banner on the second launch")
+        XCTAssertNil(model.lastPartialRefreshFailure)
+        XCTAssertEqual(model.sessions.count, 2)
+    }
+
     // MARK: - Line capture (the seam the app routes every emission through)
 
     @MainActor
@@ -417,6 +519,9 @@ private final class FakeFailureLogPostgREST: @unchecked Sendable {
     private let lock = NSLock()
     private var online = true
     private var failingPaths: Set<String> = []
+    private var cannedBodies: [String: String] = [:]
+    private var microsecondSessions: [(id: String, stamp: String)] = []
+    private(set) var sawCompositeSessionCursor = false
 
     func goOffline() {
         lock.lock()
@@ -434,6 +539,24 @@ private final class FakeFailureLogPostgREST: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// #1020: answers every request whose path contains `fragment` with
+    /// `body` — a server row in a shape this build cannot decode.
+    func answerRequests(containing fragment: String, with body: String) {
+        lock.lock()
+        cannedBodies[fragment] = body
+        lock.unlock()
+    }
+
+    /// #1020: serves `sessions` rows with real PostgREST microsecond
+    /// `updated_at` text and applies the reader's cursor filter on the TRUE
+    /// microseconds (a fixed-width stamp compares exactly as the instant), as
+    /// Postgres does — never on a client-decoded `Date`.
+    func serveMicrosecondSessions(_ rows: [(id: String, stamp: String)]) {
+        lock.lock()
+        microsecondSessions = rows
+        lock.unlock()
+    }
+
     func makeURLSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [FakeFailureLogProtocol.self]
@@ -448,7 +571,45 @@ private final class FakeFailureLogPostgREST: @unchecked Sendable {
         guard online else { return nil }
         let path = request.url?.path ?? ""
         guard !failingPaths.contains(where: { path.contains($0) }) else { return nil }
+        if let body = cannedBodies.first(where: { path.contains($0.key) })?.value {
+            return (200, Data(body.utf8))
+        }
+        if path.hasSuffix("rest/v1/sessions"), !microsecondSessions.isEmpty {
+            return (200, Data(sessionsPage(for: request).utf8))
+        }
         return (200, Data("[]".utf8))
+    }
+
+    private func sessionsPage(for request: URLRequest) -> String {
+        let items = URLComponents(url: request.url ?? URL(fileURLWithPath: "/"), resolvingAgainstBaseURL: false)?
+            .queryItems ?? []
+        // `2026-10-05T23:22:10.123456+00:00` -> `2026-10-05T23:22:10.123456Z`,
+        // the fixed-width form the cursor persists: text order == time order.
+        func exact(_ stamp: String) -> String { String(stamp.dropLast("+00:00".count)) + "Z" }
+        var visible = microsecondSessions
+        if let composite = items.first(where: { $0.name == "or" })?.value,
+           let gt = composite.range(of: "(updated_at.gt."),
+           let comma = composite.range(of: ",and(updated_at.eq."),
+           let idGT = composite.range(of: ",id.gt.", options: .backwards) {
+            sawCompositeSessionCursor = true
+            let cursorStamp = String(composite[gt.upperBound..<comma.lowerBound])
+            let cursorID = String(composite[idGT.upperBound...].dropLast(2)).lowercased()
+            visible = visible.filter { row in
+                exact(row.stamp) > cursorStamp || (exact(row.stamp) == cursorStamp && row.id > cursorID)
+            }
+        } else if let legacy = items.first(where: { $0.name == "updated_at" })?.value,
+                  legacy.hasPrefix("gte.") {
+            let cursorStamp = String(legacy.dropFirst("gte.".count))
+            visible = visible.filter { exact($0.stamp) >= cursorStamp }
+        }
+        visible.sort { (exact($0.stamp), $0.id) < (exact($1.stamp), $1.id) }
+        return "[" + visible.map { row in
+            """
+            {"id":"\(row.id)","date":"2026-10-05","type":"hangboard","type_label":"Hangboard",\
+            "duration_min":30,"rpe":7,"rpe_confirmed":true,"load":210,"note":"","phase":"strength",\
+            "group_id":null,"workout_source":null,"updated_at":"\(row.stamp)","deleted_at":null}
+            """
+        }.joined(separator: ",") + "]"
     }
 }
 
