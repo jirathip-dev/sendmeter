@@ -139,6 +139,26 @@ final class PersistedFailureLogTests: XCTestCase {
         XCTAssertFalse(detail.contains("crimp"))
     }
 
+    /// A dictionary key that IS a plain identifier is still user data (a tag
+    /// literally named `crimp`); it must not pass as a schema key.
+    func testAnIdentifierShapedDictionaryKeyIsStillRedacted() throws {
+        struct Row: Decodable {
+            let byTag: [String: Int]
+            enum CodingKeys: String, CodingKey { case byTag = "by_tag" }
+        }
+        let error: Error
+        do {
+            _ = try JSONDecoder().decode(Row.self, from: Data(#"{"by_tag":{"crimp":"seven"}}"#.utf8))
+            return XCTFail("fixture: the value must not decode")
+        } catch let thrown {
+            error = thrown
+        }
+
+        let detail = try XCTUnwrap(PersistedFailureLog.detail(for: error))
+        XCTAssertEqual(detail, "decode=typeMismatch path=by_tag.?")
+        XCTAssertFalse(detail.contains("crimp"))
+    }
+
     func testDeltaReaderFailureLineNamesTheCase() {
         XCTAssertEqual(
             PersistedFailureLog.detail(for: DeltaReadError.cursorDidNotAdvance),

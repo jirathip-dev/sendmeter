@@ -203,6 +203,11 @@ public enum PersistedFailureLog {
 
     private static func schemaKey(_ key: CodingKey) -> String {
         if key.intValue != nil { return "*" }
+        // A dictionary-keyed container's key is DATA (a tag name, a date),
+        // not schema, even when it looks like an identifier: Foundation
+        // decodes it through its own `_DictionaryCodingKey`-style type, while
+        // every schema key is a model's `CodingKeys`.
+        if String(describing: type(of: key)).hasPrefix("_") { return "?" }
         let name = key.stringValue
         let isIdentifier = !name.isEmpty
             && name.count <= 64
