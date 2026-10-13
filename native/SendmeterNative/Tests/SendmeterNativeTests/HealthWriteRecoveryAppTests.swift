@@ -413,7 +413,12 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
             entityID: conflicted.date
         )
 
-        let model = try await makeSignedInModel(server: server, readings: readings)
+        // #1015: the residue is seeded before the model exists and the
+        // bootstrap's own drain is the first sweep, so this test cannot settle
+        // the bootstrap first (that drain would sweep before the "visible
+        // before the sweep" assertion). It settles at the END instead, so its
+        // bootstrap tail cannot outlive it. Assertions unchanged.
+        let model = try await makeSignedInModel(server: server, readings: readings, settleBootstrap: false)
         await model.refreshAll(showSpinner: false)
         XCTAssertEqual(
             model.pendingCacheWriteCount,
@@ -441,6 +446,7 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
             [conflicted.date],
             "a residue the server does not prove stays exactly where it is"
         )
+        await AppModelLaunchSettle.settle(model)
     }
 
     // MARK: - Harness
@@ -526,7 +532,8 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
     private func makeSignedInModel(
         server: FakeHealthPostgREST,
         readings: HealthReadingBox,
-        userID: UUID? = nil
+        userID: UUID? = nil,
+        settleBootstrap: Bool = true
     ) async throws -> AppModel {
         let accountID = userID ?? self.userID
         let suite = "HealthWriteRecoveryAppTests.signed-in.\(UUID().uuidString)"
@@ -562,7 +569,11 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
         // #1015: settle the account bootstrap before the test drives anything
         // (see `AppModelLaunchSettle`); the fixed 200-yield budget returned
         // while the bootstrap's refresh/drain was still in flight.
-        await AppModelLaunchSettle.settle(model)
+        if settleBootstrap {
+            await AppModelLaunchSettle.settle(model)
+        } else {
+            await AppModelLaunchSettle.waitForAccount(model)
+        }
         XCTAssertNotNil(model.currentUserID, "seeded auth session never became currentUserID")
         return model
     }
