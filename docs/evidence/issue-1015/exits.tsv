@@ -10,3 +10,5 @@ green-build-4	28081a4	2026-10-13T11:55:09Z	0	build-for-testing
 green-offenders-iter3	28081a4	2026-10-13T11:55:26Z	65	test-without-building	Executed 99 tests, with 42 failures (0 unexpected) in 958.441 (958.494) seconds
 green-build-5	d58384f	2026-10-13T12:16:36Z	0	build-for-testing
 green-tindeq-iter5-probe	d58384f	2026-10-13T12:20:57Z	0	test	Executed 15 tests, with 0 failures (0 unexpected) in 16.552 (16.559) seconds
+green-build-6	ff84ad9	2026-10-13T12:21:59Z	0	build-for-testing
+green-offenders-iter3	ff84ad9	2026-10-13T12:22:22Z	0	test-without-building	Executed 99 tests, with 0 failures (0 unexpected) in 689.790 (689.837) seconds
