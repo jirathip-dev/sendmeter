@@ -12,3 +12,13 @@ green-build-5	d58384f	2026-10-13T12:16:36Z	0	build-for-testing
 green-tindeq-iter5-probe	d58384f	2026-10-13T12:20:57Z	0	test	Executed 15 tests, with 0 failures (0 unexpected) in 16.552 (16.559) seconds
 green-build-6	ff84ad9	2026-10-13T12:21:59Z	0	build-for-testing
 green-offenders-iter3	ff84ad9	2026-10-13T12:22:22Z	0	test-without-building	Executed 99 tests, with 0 failures (0 unexpected) in 689.790 (689.837) seconds
+mut-M1-upload-keeps-item-build	ff84ad9	2026-10-13T12:34:06Z	0	build-for-testing
+mut-M1-upload-keeps-item	af72467	2026-10-13T12:45:37Z	65	test-without-building	Executed 1 test, with 2 failures (0 unexpected) in 34.586 (34.589) seconds
+mut-M2-queue-never-persists-build	af72467	2026-10-13T12:47:01Z	0	build-for-testing
+mut-M2-queue-never-persists	af72467	2026-10-13T12:47:37Z	65	test-without-building	Executed 1 test, with 5 failures (0 unexpected) in 92.661 (92.667) seconds
+mut-M3-force-save-no-enqueue-build	af72467	2026-10-13T12:49:55Z	0	build-for-testing
+mut-M3-force-save-no-enqueue	af72467	2026-10-13T12:50:52Z	65	test-without-building	Executed 1 test, with 2 failures (0 unexpected) in 0.204 (0.210) seconds
+mut-M4-merge-keeps-groups-build	af72467	2026-10-13T12:51:46Z	0	build-for-testing
+mut-M4-merge-keeps-groups	af72467	2026-10-13T12:52:36Z	65	test-without-building	Executed 1 test, with 1 failure (0 unexpected) in 1.628 (1.631) seconds
+mut-M5-settings-half-skipped-build	af72467	2026-10-13T12:53:24Z	0	build-for-testing
+mut-M5-settings-half-skipped	af72467	2026-10-13T12:53:56Z	65	test-without-building	Executed 1 test, with 3 failures (0 unexpected) in 62.639 (62.641) seconds

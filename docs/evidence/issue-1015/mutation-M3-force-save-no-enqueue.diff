@@ -1,0 +1,13 @@
+diff --git a/native/SendmeterNative/Sources/App/AppModel.swift b/native/SendmeterNative/Sources/App/AppModel.swift
+index a77ee3d..bd1f261 100644
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -4625,7 +4625,7 @@ public final class AppModel {
+             accountUserID: userID,
+             payload: PendingWrite.recording(recording)
+         )
+-        let enqueued = await enqueueAndUpload(item, capturedBy: accountFetch)
++        let enqueued = false; _ = item
+         guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+             return .stale
+         }
