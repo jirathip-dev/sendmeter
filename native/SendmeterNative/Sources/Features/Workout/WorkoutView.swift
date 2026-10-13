@@ -954,7 +954,7 @@ private struct RoutineRunnerSheet: View {
     private func nextPhase(snapshot: RoutineRunnerSnapshot) -> some View {
         if let next = snapshot.next {
             let nextColor = next.stage.kind == .rest ? SendmeterStyle.caution : SendmeterStyle.primary
-            let nextText = next.stage.kind == .rest ? Color(hex: "#1A1A1A") : Color.white
+            let nextText = next.stage.kind == .rest ? SendmeterStyle.onCaution : SendmeterStyle.onPrimary
             HStack(spacing: 8) {
                 Text("NEXT")
                     .font(.caption2.weight(.bold))
@@ -1257,7 +1257,7 @@ private extension RoutineRunnerVisualState {
     }
 
     var foregroundColor: Color {
-        self == .rest ? Color(hex: "#1A1A1A") : .white
+        self == .rest ? SendmeterStyle.onCaution : SendmeterStyle.onPrimary
     }
 
     /// DONE's light identity field can lift a dark material enough to make
@@ -1270,7 +1270,9 @@ private extension RoutineRunnerVisualState {
 
     var completionForegroundColor: Color {
         self == .done
-            ? Color(hex: RoutineRunnerContrastPalette.doneCompletionForegroundHex)
+            // #1028 B1: same #1A1A1A, now resolved from the shared palette
+            // (`RoutineRunnerContrastPalette` keeps the hex for its tests).
+            ? SendmeterStyle.onCaution
             : foregroundColor
     }
 

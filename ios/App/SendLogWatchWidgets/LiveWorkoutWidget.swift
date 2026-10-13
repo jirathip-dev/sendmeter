@@ -26,9 +26,11 @@ struct LiveWorkoutView: View {
     let snap: WidgetSnapshot
 
     private func phaseColor(climbing: Bool) -> Color {
+        // #1028 B1: optimal-text (dark) while climbing, primary while
+        // resting — the same values, now from the shared palette.
         let base = climbing
-            ? PhaseRGB(0x4F / 255, 0xB0 / 255, 0xFF / 255)
-            : PhaseRGB(0x5B / 255, 0x5F / 255, 0xC7 / 255)
+            ? SendmeterPalette.optimalText.rgb(isDark: true)
+            : SendmeterPalette.primary.rgb(isDark: true)
         // This is a sparse 11pt semantic label/icon, not a decorative fill.
         // Keep its contrast in Always-On; only actual fills/glows use the 42%
         // reduced-luminance accent scale.

@@ -2082,7 +2082,8 @@ struct ForceView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 Color.clear.frame(height: 72)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            // #1028 B1: the shared palette canvas (phone = Watch).
+            .background(SendmeterStyle.canvas)
             .navigationTitle("Force")
             .refreshable { await model.refreshAll(showSpinner: false) }
             .task(id: targetResolutionKey) {

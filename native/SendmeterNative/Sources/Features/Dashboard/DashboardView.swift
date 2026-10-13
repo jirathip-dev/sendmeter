@@ -48,7 +48,8 @@ struct DashboardView: View {
                 }
                 .padding()
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            // #1028 B1: the shared palette canvas (phone = Watch).
+            .background(SendmeterStyle.canvas)
             .navigationTitle("Dashboard")
             .refreshable {
                 // #661 (finding 5): pull-to-refresh is the ONLY user-initiated
@@ -263,6 +264,8 @@ private struct TodayDecisionCard: View {
                     }
                 }
             }
+            // #1028 A1: one of the few chalk-textured hero surfaces.
+            .sendmeterChalk()
         }
         .hapticButtonStyle(.plain)
         .accessibilityHint("Shows the raw HealthKit metrics behind today's readiness score.")

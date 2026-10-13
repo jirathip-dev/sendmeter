@@ -42,6 +42,8 @@ enum WatchPalette {
     static let canvasRaised = color(WatchDesignTokens.canvasRaised)
     static let card = color(WatchDesignTokens.card)
     static let cardStrong = color(WatchDesignTokens.cardStrong)
+    /// #1028 B1: the shared hairline (phone dark `line`).
+    static let line = color(SendmeterPalette.line.rgb(isDark: true))
     static let primary = color(WatchDesignTokens.primary)
     static let secondary = color(WatchDesignTokens.secondary)
     static let success = color(WatchDesignTokens.success)
@@ -49,9 +51,10 @@ enum WatchPalette {
     static let danger = color(WatchDesignTokens.danger)
     static let force = color(WatchDesignTokens.force)
 
-    static let textPrimary = Color.white
-    static let textSecondary = Color.white.opacity(0.72)
-    static let textTertiary = Color.white.opacity(0.48)
+    // #1028 B1: the shared palette's text ramp (phone dark = Watch).
+    static let textPrimary = color(WatchDesignTokens.textPrimary)
+    static let textSecondary = color(WatchDesignTokens.textSecondary)
+    static let textTertiary = color(WatchDesignTokens.textTertiary)
 
     private static func token(for state: WatchVisualState) -> PhaseRGB {
         switch state {
