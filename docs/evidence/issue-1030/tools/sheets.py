@@ -88,6 +88,9 @@ def tile(path, width):
 
 def save(img, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    # Sheets are for viewing only (the measured pixels live in screens/), so a
+    # 256-colour palette keeps the repo copy ~2.5x smaller with no visible loss.
+    img = img.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
     img.save(path, optimize=True, pnginfo=PngImagePlugin.PngInfo())
     print(os.path.relpath(path, ROOT))
 
