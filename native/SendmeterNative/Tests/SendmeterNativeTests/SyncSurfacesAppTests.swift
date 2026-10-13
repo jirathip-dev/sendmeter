@@ -574,9 +574,11 @@ final class SyncSurfacesAppTests: XCTestCase {
             weather: WeatherService(defaults: defaults, session: server.makeURLSession())
         )
         guard signedIn else { return model }
-        // #1015 sweep: deadline-bound (wall clock), same condition; the old
-        // `Task.yield()` budget could expire before the auth event landed.
-        await AppModelLaunchSettle.waitForAccount(model)
+        var waited = 0
+        while model.currentUserID == nil, waited < 400 {
+            waited += 1
+            await Task.yield()
+        }
         XCTAssertNotNil(model.currentUserID, "seeded auth session never became currentUserID")
         return model
     }

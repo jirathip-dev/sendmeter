@@ -22,3 +22,5 @@ mut-M4-merge-keeps-groups-build	af72467	2026-10-13T12:51:46Z	0	build-for-testing
 mut-M4-merge-keeps-groups	af72467	2026-10-13T12:52:36Z	65	test-without-building	Executed 1 test, with 1 failure (0 unexpected) in 1.628 (1.631) seconds
 mut-M5-settings-half-skipped-build	af72467	2026-10-13T12:53:24Z	0	build-for-testing
 mut-M5-settings-half-skipped	af72467	2026-10-13T12:53:56Z	65	test-without-building	Executed 1 test, with 3 failures (0 unexpected) in 62.639 (62.641) seconds
+full-build	af72467	2026-10-13T12:55:46Z	0	build-for-testing
+full-run1-AT-HEAD-50caf2b	50caf2b	2026-10-13T12:56:20Z	65	test-without-building	Executed 184 tests, with 7 failures (0 unexpected) in 343.005 (343.089) seconds
