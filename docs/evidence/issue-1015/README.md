@@ -103,7 +103,7 @@ are kept and labelled, not deleted. Every commit after `63e4924` is docs/evidenc
 | `just slop` | **0** | `gates-just-slop.log.gz`: "Anti-slop config, wrapper, source path, and advisory CI wiring passed" |
 | `just core` | **0** | `gates-just-core.log.gz`: `Executed 1535 tests, with 0 failures` (host SwiftPM) |
 | `just check-static` | **1** | `gates-just-check-static.log.gz`: "Generated project is missing the Force source: ManualForceFullscreen.swift". **The base fails the same way:** `just check-static` on a `git archive 48788ef` tree → **1** with the identical line (`gates-base-48788ef-just-check-static.log.gz`). The script still lists a file #906 removed; it lives in `scripts/`, outside this lane's fence, so it is a follow-up |
-| `git diff --check origin/staging..HEAD` | see the final report | Run on the final head |
+| `git diff --check origin/staging..HEAD` | **0** | Run at `ed2b233` with `origin/staging` = merge-base = `48788ef`; empty output |
 | `just gen` | 0 | `gates-just-gen*.log.gz`; no project.yml change; the `.xcodeproj` stays untracked |
 
 A stale log name in a source comment: `AppModelLaunchSettle.swift` cites
