@@ -107,18 +107,39 @@ public final class TindeqBluetooth: NSObject {
     /// holds nothing yet, so the live reading comes from here (#671).
     private var lastSampleKilograms: Double = 0
     private let flushScheduler = ForcePublishScheduler()
+    /// #1021: the last connected Progressor (device-local), so the Force tab
+    /// can reconnect to it without a tap.
+    @ObservationIgnored private let knownProgressor: KnownProgressorStore
+    /// #1021: an automatic reconnect asked for before Bluetooth reported
+    /// powered-on (a cold launch straight into Force).
+    private var pendingAutoReconnect = false
+    /// #1021: the in-flight automatic reconnect, if any. A newer attempt or
+    /// any explicit connect/disconnect supersedes it.
+    private var autoReconnectAttempt = 0
+    private var autoReconnecting = false
+    /// #1021: a retrieved peripheral whose pending connect the bounded
+    /// auto-reconnect cancelled; its late delegate callback is not a drop.
+    private var quietlyCancelledPeripheral: CBPeripheral?
     #if DEBUG
     private var flushCountInSecond = 0
     private var flushSecondStart: TimeInterval = 0
     #endif
 
-    public override init() {
+    public init(knownProgressor: KnownProgressorStore = KnownProgressorStore()) {
         let sampleBuffer = ForceSampleBuffer()
         self.sampleBuffer = sampleBuffer
         self.accumulator = ForceSessionAccumulator(sampleBuffer: sampleBuffer)
+        self.knownProgressor = knownProgressor
         super.init()
         _ = central
     }
+
+    /// #1021: a Progressor has connected on this phone before.
+    public var hasKnownProgressor: Bool { knownProgressor.identifier != nil }
+
+    /// How long an automatic reconnect may stay on "Connecting…" before it
+    /// stops quietly (an out-of-range Progressor must not pin the bar).
+    static let autoReconnectWindowSeconds: Double = 10
 
     deinit {
         // RunLoop.main owns the timer; if this transport is ever released
@@ -129,6 +150,8 @@ public final class TindeqBluetooth: NSObject {
 
     public func connect() {
         connectRequested = true
+        autoReconnecting = false
+        pendingAutoReconnect = false
         guard central.state == .poweredOn else {
             status = central.state == .unsupported || central.state == .unauthorized
                 ? .unavailable
@@ -140,6 +163,8 @@ public final class TindeqBluetooth: NSObject {
 
     public func disconnect() {
         connectRequested = false
+        autoReconnecting = false
+        pendingAutoReconnect = false
         // Final flush before the branch flags clear, so the last frame of a
         // live stream publishes (#671 review F3).
         stopFlushDriver()
@@ -261,6 +286,60 @@ public final class TindeqBluetooth: NSObject {
         )
     }
 
+    /// #1021: reconnect the remembered Progressor without a tap — directly
+    /// through `retrievePeripherals(withIdentifiers:)`, falling back to the
+    /// normal scan when the system no longer knows it. AppModel decides WHEN
+    /// (`ForceAutoReconnectPolicy`); this only does it. Bounded: if no link
+    /// comes up within `autoReconnectWindowSeconds`, the attempt stops and the
+    /// status returns to what it was.
+    public func reconnectKnownProgressor() {
+        guard let identifier = knownProgressor.identifier else { return }
+        guard peripheral == nil, !central.isScanning else { return }
+        switch central.state {
+        case .poweredOn:
+            break
+        case .unknown, .resetting:
+            // Answered by `centralManagerDidUpdateState`.
+            pendingAutoReconnect = true
+            return
+        default:
+            return
+        }
+        pendingAutoReconnect = false
+        let previous = status
+        connectRequested = true
+        autoReconnecting = true
+        autoReconnectAttempt &+= 1
+        let attempt = autoReconnectAttempt
+        if let known = central.retrievePeripherals(withIdentifiers: [identifier]).first {
+            peripheral = known
+            known.delegate = self
+            status = .connecting
+            central.connect(known, options: nil)
+        } else {
+            beginScan()
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.autoReconnectWindowSeconds * 1_000_000_000))
+            self?.endStalledAutoReconnect(attempt: attempt, restoring: previous)
+        }
+    }
+
+    private func endStalledAutoReconnect(attempt: Int, restoring previous: Status) {
+        guard autoReconnecting, attempt == autoReconnectAttempt else { return }
+        switch status {
+        case .scanning, .connecting: break
+        default: return
+        }
+        autoReconnecting = false
+        connectRequested = false
+        if let peripheral {
+            quietlyCancelledPeripheral = peripheral
+            central.cancelPeripheralConnection(peripheral)
+        }
+        resetConnection(status: previous)
+    }
+
     private func beginScan() {
         guard !central.isScanning else { return }
         status = .scanning
@@ -268,6 +347,14 @@ public final class TindeqBluetooth: NSObject {
             withServices: [CBUUID(string: TindeqProtocolConstants.serviceUUID)],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
+    }
+
+    /// True (and forgotten) when `peripheral` is the one the bounded
+    /// auto-reconnect cancelled: its late callback is not a dropped link.
+    private func consumeQuietCancel(_ peripheral: CBPeripheral) -> Bool {
+        guard let cancelled = quietlyCancelledPeripheral, cancelled === peripheral else { return false }
+        quietlyCancelledPeripheral = nil
+        return true
     }
 
     private func resetConnection(status: Status) {
@@ -417,7 +504,13 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
         Task { @MainActor in
             switch central.state {
             case .poweredOn:
-                if connectRequested { beginScan() } else { status = .idle }
+                if pendingAutoReconnect {
+                    reconnectKnownProgressor()
+                } else if connectRequested {
+                    beginScan()
+                } else {
+                    status = .idle
+                }
             case .unsupported, .unauthorized:
                 resetConnection(status: .unavailable)
             case .poweredOff:
@@ -461,6 +554,8 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
         error: Error?
     ) {
         Task { @MainActor in
+            if consumeQuietCancel(peripheral) { return }
+            autoReconnecting = false
             resetConnection(
                 status: .interrupted(UserFacingError.message(for: .progressorConnectFailed))
             )
@@ -473,6 +568,8 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
         error: Error?
     ) {
         Task { @MainActor in
+            if consumeQuietCancel(peripheral) { return }
+            autoReconnecting = false
             if isRecording {
                 interruptedSummary = accumulator.summary()
                 interruptedWasHandsFree = wasHandsFreeRecording
@@ -543,6 +640,9 @@ extension TindeqBluetooth: CBPeripheralDelegate {
                 return
             }
             peripheral.setNotifyValue(true, for: notifyCharacteristic)
+            // #1021: remember this Progressor for the next automatic reconnect.
+            knownProgressor.remember(peripheral.identifier)
+            autoReconnecting = false
             status = .connected
             try? refreshBattery()
         }
@@ -593,6 +693,21 @@ extension TindeqBluetooth: CBPeripheralDelegate {
             case .response, .unknown:
                 break
             }
+        }
+    }
+}
+
+extension TindeqBluetooth.Status {
+    /// #1028/#1021: the transport state in the Force bar's terms — one
+    /// mapping shared by the bar and the auto-reconnect decision.
+    public var forceBarDevice: ForceBarDevice {
+        switch self {
+        case .idle: return .disconnected
+        case .interrupted: return .interrupted
+        case .unavailable: return .bluetoothOff
+        case .scanning, .connecting: return .connecting
+        case .connected: return .connected
+        case .measuring: return .measuring
         }
     }
 }

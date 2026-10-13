@@ -219,6 +219,10 @@ public struct ProductEmptyState: View {
     let artwork: ProductEmptyStateArtwork
     let action: () -> Void
     let compact: Bool
+    /// #1028 D3/F1: an inline (mascot-left) variant with NO action — used
+    /// where a sticky bar already owns the action, so the empty state never
+    /// duplicates it. The mascot stays (C3).
+    private var inline = false
 
     public init(
         title: String,
@@ -236,7 +240,49 @@ public struct ProductEmptyState: View {
         self.compact = compact
     }
 
+    /// #1028 D3/F1: inline, action-free empty state.
+    public init(
+        title: String,
+        message: String,
+        inlineArtwork artwork: ProductEmptyStateArtwork
+    ) {
+        self.title = title
+        self.message = message
+        self.actionTitle = ""
+        self.artwork = artwork
+        self.action = {}
+        self.compact = true
+        self.inline = true
+    }
+
     public var body: some View {
+        if inline {
+            inlineBody
+        } else {
+            stackedBody
+        }
+    }
+
+    private var inlineBody: some View {
+        HStack(alignment: .center, spacing: 14) {
+            illustration
+                .frame(width: 72, height: 72)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(SendmeterStyle.textPrimary)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(SendmeterStyle.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var stackedBody: some View {
         VStack(spacing: compact ? 10 : 14) {
             illustration
 
@@ -273,9 +319,9 @@ public struct ProductEmptyState: View {
                 .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
-                .frame(width: compact ? 82 : 122, height: compact ? 82 : 118)
+                .frame(width: inline ? 72 : (compact ? 82 : 122), height: inline ? 72 : (compact ? 82 : 118))
                 .foregroundStyle(SendmeterStyle.primary)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: inline ? nil : .infinity)
                 .accessibilityHidden(true)
         case .splash:
             ZStack {
