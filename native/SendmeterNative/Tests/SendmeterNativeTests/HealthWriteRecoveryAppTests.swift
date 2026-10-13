@@ -73,6 +73,14 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
         XCTAssertTrue(queueFile.contains("41.25"), "the intended biometric is persisted")
 
         // Process death: a fresh instance reads the same on-disk state.
+        // #1015: the server is still down when the app relaunches. The settled
+        // relaunch runs its bootstrap drain to completion (the old harness
+        // returned before it, so :78 raced that drain); with the one-shot
+        // rejection already consumed, that drain replayed the intent before
+        // the survival assertion (green-offenders-iter3-STOPPED: 0 != 1, 3/3).
+        // `resume()` below clears an unconsumed rejection, so the explicit
+        // retry is unaffected either way. Assertions unchanged.
+        server.rejectNextMutation(status: 500, code: "08006")
         let relaunched = try await makeSignedInModel(server: server, readings: readings)
         await relaunched.refreshAll(showSpinner: false)
         XCTAssertEqual(relaunched.queuedWriteCount, 1, "the durable intent survives the restart")
@@ -82,6 +90,7 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
             "the intent is still on disk after the restart"
         )
 
+        server.resume()
         await relaunched.retryAllQueuedWrites()
         try await waitForQueueCount(relaunched, expected: 0)
 

@@ -47,12 +47,15 @@ final class ForceLockOrphanAppTests: XCTestCase {
     /// so the assertion measures the release itself: no queued row may be
     /// removed or replaced by it.
     func testTheReleaseOverAnEndedSessionLeavesThePendingRowUntouched() async throws {
-        let model = try await makeSignedInModel()
-        let preset = Self.quickPreset()
-        let session = Self.makeSession(model: model, preset: preset)
-
         // Offline: every upload refuses, so the save must remain a PENDING
         // (un-synced) durable row — the exact row the fence protects.
+        // #1015: offline from LAUNCH, i.e. before the model exists. The fence
+        // below waits for the bootstrap pass's recorded failure; set after the
+        // model, the stub could land after a fast bootstrap had already
+        // refreshed against the 200 stub, and that failure never came
+        // (green-offenders-iter3-STOPPED: 60 s expiry, both fields nil). The
+        // fixed account's accumulated queue (channel (a)) used to slow the
+        // bootstrap enough to hide it. Assertions unchanged.
         StubURLProtocol.reply = (
             statusCode: 500,
             body: Data(#"{"message":"host offline"}"#.utf8)
@@ -60,6 +63,9 @@ final class ForceLockOrphanAppTests: XCTestCase {
         defer {
             StubURLProtocol.reply = (statusCode: 200, body: Data("[]".utf8))
         }
+        let model = try await makeSignedInModel()
+        let preset = Self.quickPreset()
+        let session = Self.makeSession(model: model, preset: preset)
 
         // FIX ROUND 1 — the determinism seam (hosted CI run 37179622828
         // attempt 1: "timed out after 15s waiting for the offline save to
