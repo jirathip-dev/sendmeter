@@ -24,15 +24,27 @@ final class TindeqSessionMergeAppTests: XCTestCase {
     /// here meant every run (and every test) reused the same queue identity in
     /// the same container — `DurableQueue.enqueue` refuses an id another
     /// account already holds (`accountMismatch`).
-    private let survivorID = UUID()
-    private let secondID = UUID()
-    private let thirdID = UUID()
-    private let survivorGroup = UUID()
-    private let secondGroup = UUID()
-    private let thirdGroup = UUID()
-    private let survivorRecordingID = UUID()
-    private let secondRecordingID = UUID()
-    private let thirdRecordingID = UUID()
+    ///
+    /// The three ids of each kind are fresh but ASCENDING (`ascendingIDs`):
+    /// every fixture row carries the same `updated_at`, so the delta reader
+    /// orders the page by id and fails closed (`outOfOrderPage`) on a page
+    /// that is not — the property the former `…11 < …12 < …13` literals had.
+    private let sessionIDs = ascendingIDs()
+    private let groupIDs = ascendingIDs()
+    private let recordingIDs = ascendingIDs()
+    private var survivorID: UUID { sessionIDs[0] }
+    private var secondID: UUID { sessionIDs[1] }
+    private var thirdID: UUID { sessionIDs[2] }
+    private var survivorGroup: UUID { groupIDs[0] }
+    private var secondGroup: UUID { groupIDs[1] }
+    private var thirdGroup: UUID { groupIDs[2] }
+    private var survivorRecordingID: UUID { recordingIDs[0] }
+    private var secondRecordingID: UUID { recordingIDs[1] }
+    private var thirdRecordingID: UUID { recordingIDs[2] }
+
+    private static func ascendingIDs() -> [UUID] {
+        (0..<3).map { _ in UUID() }.sorted { $0.uuidString < $1.uuidString }
+    }
 
     // MARK: - AC1 / AC2: three same-day entries fold into one
 

@@ -6,3 +6,5 @@ green-build-2	3dd03d2	2026-10-13T10:28:40Z	0	build-for-testing
 compile-check-realtime-opts	3dd03d2	2026-10-13T11:29:22Z	0	build-for-testing
 green-build-3	98e53f8	2026-10-13T11:30:02Z	0	build-for-testing
 green-phase-iter20	98e53f8	2026-10-13T11:30:23Z	0	test-without-building	Executed 180 tests, with 0 failures (0 unexpected) in 324.411 (324.485) seconds
+green-build-4	28081a4	2026-10-13T11:55:09Z	0	build-for-testing
+green-offenders-iter3	28081a4	2026-10-13T11:55:26Z	65	test-without-building	Executed 99 tests, with 42 failures (0 unexpected) in 958.441 (958.494) seconds
