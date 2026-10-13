@@ -48,7 +48,8 @@ struct DashboardView: View {
                 }
                 .padding()
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            // #1028 B1: the shared palette canvas (phone = Watch).
+            .background(SendmeterStyle.canvas)
             .navigationTitle("Dashboard")
             .refreshable {
                 // #661 (finding 5): pull-to-refresh is the ONLY user-initiated
