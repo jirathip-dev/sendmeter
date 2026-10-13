@@ -50,12 +50,20 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
         await model.syncHealth(requestAuthorization: false)
 
         XCTAssertEqual(server.mutationCount, 0, "nothing reached the server")
-        XCTAssertEqual(model.queuedWriteCount, 1, "the intent is queued, not lost")
+        // #1015: wait first, then assert (the count is published by the queue
+        // actor's own refresh, not by the awaited pass).
         try await waitForQueueCount(model, expected: 1)
+        XCTAssertEqual(model.queuedWriteCount, 1, "the intent is queued, not lost")
 
         // AC1: the account, the row date and the intended payload are on disk
         // before the pass could have reported anything as saved.
-        let queueFile = try Self.queueFileContents()
+        // #1015: the in-memory count above is published BEFORE the queue
+        // actor's file write is observable from here, so the raw-file read is
+        // deadline-bounded too (it returns the last read on expiry and the
+        // assertions below then fail with the file's real contents).
+        let queueFile = try await Self.queueFileContents(
+            containingAll: [userID.uuidString, today, "63", "41.25"]
+        )
         XCTAssertTrue(queueFile.contains(userID.uuidString), "the intent is scoped to this account")
         XCTAssertTrue(queueFile.contains(today), "the row identity (date) is persisted")
         XCTAssertTrue(queueFile.contains("63"), "the intended score is persisted")
@@ -65,8 +73,9 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
         let relaunched = try await makeSignedInModel(server: server, readings: readings)
         await relaunched.refreshAll(showSpinner: false)
         XCTAssertEqual(relaunched.queuedWriteCount, 1, "the durable intent survives the restart")
+        let relaunchedQueueFile = try await Self.queueFileContents(containingAll: [today])
         XCTAssertTrue(
-            try Self.queueFileContents().contains(today),
+            relaunchedQueueFile.contains(today),
             "the intent is still on disk after the restart"
         )
 
@@ -306,7 +315,7 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
             "an explicit retry never spends the bounded quarantine budget"
         )
         XCTAssertNil(server.readiness(of: today), "nothing partial was written")
-        let queueFile = try Self.queueFileContents()
+        let queueFile = try await Self.queueFileContents(containingAll: [today])
         XCTAssertTrue(
             queueFile.contains(today),
             "AC4: the rejected recovery's payload is preserved, never silently cleared"
@@ -433,13 +442,19 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
 
     // MARK: - Harness
 
+    // #1015: the three harness waits are deadline-bound (wall clock, not a
+    // fixed iteration budget) and report the state observed on expiry.
     @MainActor
     private func waitForQueueCount(_ model: AppModel, expected: Int) async throws {
-        for _ in 0..<400 {
+        let started = ContinuousClock.now
+        while ContinuousClock.now - started < AppModelLaunchSettle.deadline {
             if model.queuedWriteCount == expected { return }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        XCTFail("queue count never reached \(expected) (still \(model.queuedWriteCount))")
+        guard model.queuedWriteCount == expected else {
+            XCTFail("queue count never reached \(expected) (still \(model.queuedWriteCount)); observed \(AppModelLaunchSettle.state(model))")
+            return
+        }
     }
 
     @MainActor
@@ -447,19 +462,27 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
         _ model: AppModel,
         expected: RejectionClass
     ) async throws {
-        for _ in 0..<400 {
+        let started = ContinuousClock.now
+        while ContinuousClock.now - started < AppModelLaunchSettle.deadline {
             if model.queuedWriteDiagnostics.first?.rejectionClass == expected { return }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        XCTFail("the queue never recorded a \(expected) failure")
+        guard model.queuedWriteDiagnostics.first?.rejectionClass == expected else {
+            XCTFail("the queue never recorded a \(expected) failure; observed \(model.queuedWriteDiagnostics.map(\.kind))")
+            return
+        }
     }
 
     private func waitForHeldMutation(_ server: FakeHealthPostgREST) async throws {
-        for _ in 0..<600 {
+        let started = ContinuousClock.now
+        while ContinuousClock.now - started < AppModelLaunchSettle.deadline {
             if server.isHoldingMutation { return }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        XCTFail("the stubbed server never held the expected mutation")
+        guard server.isHoldingMutation else {
+            XCTFail("the stubbed server never held the expected mutation")
+            return
+        }
     }
 
     @MainActor
@@ -533,11 +556,10 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
             weather: WeatherService(defaults: defaults, session: server.makeURLSession())
         )
 
-        var waited = 0
-        while model.currentUserID == nil, waited < 200 {
-            waited += 1
-            await Task.yield()
-        }
+        // #1015: settle the account bootstrap before the test drives anything
+        // (see `AppModelLaunchSettle`); the fixed 200-yield budget returned
+        // while the bootstrap's refresh/drain was still in flight.
+        await AppModelLaunchSettle.settle(model)
         XCTAssertNotNil(model.currentUserID, "seeded auth session never became currentUserID")
         return model
     }
@@ -575,6 +597,26 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
 
     private static func cacheDatabaseURL() -> URL {
         supportDirectory().appendingPathComponent("local-cache.sqlite", isDirectory: false)
+    }
+
+    /// #1015: deadline-bounded raw-file read. `DurableQueue` publishes its
+    /// count through the model before the file write is guaranteed to be
+    /// visible to a second reader, so a bare read right after an in-memory
+    /// wait can see the previous file. Polls until every needle is present,
+    /// then returns that read; on expiry returns the last read so the caller's
+    /// own assertions fail against the real contents.
+    private static func queueFileContents(
+        containingAll needles: [String],
+        timeout: Duration = AppModelLaunchSettle.deadline
+    ) async throws -> String {
+        let started = ContinuousClock.now
+        var last = (try? queueFileContents()) ?? ""
+        while ContinuousClock.now - started < timeout {
+            if needles.allSatisfy(last.contains) { return last }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+            last = (try? queueFileContents()) ?? ""
+        }
+        return try queueFileContents()
     }
 
     private static func queueFileContents() throws -> String {

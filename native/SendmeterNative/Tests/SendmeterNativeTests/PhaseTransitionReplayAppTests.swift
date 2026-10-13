@@ -708,11 +708,14 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
             weather: WeatherService(defaults: defaults, session: server.makeURLSession())
         )
 
-        var waited = 0
-        while model.currentUserID == nil, waited < 400 {
-            waited += 1
-            await Task.yield()
-        }
+        // #1015: settle the account bootstrap before the test drives anything
+        // (see `AppModelLaunchSettle`). The fixed 400-yield budget returned
+        // while the bootstrap was still in flight, so its tail — and, after
+        // the test, the whole pass — could overlap the next model's. Observed
+        // on CI (job 111484058121): the relaunched model never saw the intent
+        // the first model had persisted (`queuedWriteCount=0`, settings half
+        // never completed). Deadline-bound; assertions unchanged.
+        await AppModelLaunchSettle.settle(model)
         XCTAssertNotNil(model.currentUserID, "seeded auth session never became currentUserID")
         return model
     }

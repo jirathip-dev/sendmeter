@@ -332,11 +332,9 @@ final class DashboardLoadFailureAppTests: XCTestCase {
             weather: WeatherService(defaults: defaults, session: server.makeURLSession())
         )
 
-        var waited = 0
-        while model.currentUserID == nil, waited < 200 {
-            waited += 1
-            await Task.yield()
-        }
+        // #1015 sweep: deadline-bound (wall clock), same condition; the old
+        // `Task.yield()` budget could expire before the auth event landed.
+        await AppModelLaunchSettle.waitForAccount(model)
         XCTAssertNotNil(model.currentUserID, "seeded auth session never became currentUserID")
         return model
     }

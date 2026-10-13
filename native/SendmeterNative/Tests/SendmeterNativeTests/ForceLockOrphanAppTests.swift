@@ -30,6 +30,13 @@ final class ForceLockOrphanAppTests: XCTestCase {
         case noWindowScene
     }
 
+    /// #1015: a fresh account per test. The cache store and the pending-write
+    /// queue are account-scoped data in the ONE app container the suite runs
+    /// in, so the former fixed `94000000-…0940` account accumulated every
+    /// prior run's (and every prior test's) un-synced recording rows and
+    /// bootstrap state under the same identity — channel (a) of #989/PR #1012.
+    private let userID = UUID()
+
     /// The hard data fence: the release over an ENDED session must not touch
     /// the user's un-synced data.
     ///
@@ -512,7 +519,7 @@ final class ForceLockOrphanAppTests: XCTestCase {
         let suite = "ForceLockOrphanAppTests.signed-in.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         let storage = InMemoryAuthStorage()
-        let session = Self.makeSession()
+        let session = Self.makeSession(userID: userID)
         try storage.store(
             // The SDK's default storage key namespaces by project ref:
             // `sb-<host>-auth-token` (SupabaseClient.init).
@@ -561,7 +568,7 @@ final class ForceLockOrphanAppTests: XCTestCase {
     }
 
     private static func makeSession(
-        userID: UUID = UUID(uuidString: "94000000-0000-0000-0000-000000000940")!,
+        userID: UUID,
         sessionID: String = "session-1"
     ) -> Auth.Session {
         let payload = Data(

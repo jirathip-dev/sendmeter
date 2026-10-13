@@ -18,12 +18,21 @@ final class TindeqSessionMergeAppTests: XCTestCase {
     /// are account-scoped files in the app container, so a shared user id
     /// would leak one test's merge into the next.
     private let userID = UUID()
-    private let survivorID = UUID(uuidString: "94200000-0000-0000-0000-000000000011")!
-    private let secondID = UUID(uuidString: "94200000-0000-0000-0000-000000000012")!
-    private let thirdID = UUID(uuidString: "94200000-0000-0000-0000-000000000013")!
-    private let survivorGroup = UUID(uuidString: "94200000-0000-0000-0000-0000000000a1")!
-    private let secondGroup = UUID(uuidString: "94200000-0000-0000-0000-0000000000a2")!
-    private let thirdGroup = UUID(uuidString: "94200000-0000-0000-0000-0000000000a3")!
+    /// #1015: the fixture's session/group identities are fresh per test too.
+    /// The pending-write queue is ONE file for every account on the device and
+    /// a merge's queue item id IS its survivor's session id, so fixed literals
+    /// here meant every run (and every test) reused the same queue identity in
+    /// the same container — `DurableQueue.enqueue` refuses an id another
+    /// account already holds (`accountMismatch`).
+    private let survivorID = UUID()
+    private let secondID = UUID()
+    private let thirdID = UUID()
+    private let survivorGroup = UUID()
+    private let secondGroup = UUID()
+    private let thirdGroup = UUID()
+    private let survivorRecordingID = UUID()
+    private let secondRecordingID = UUID()
+    private let thirdRecordingID = UUID()
 
     // MARK: - AC1 / AC2: three same-day entries fold into one
 
@@ -211,16 +220,16 @@ final class TindeqSessionMergeAppTests: XCTestCase {
     private func recordingFixtures() -> String {
         """
         [
-          \(recordingJSON(id: "94200000-0000-0000-0000-0000000000c1", at: "2026-01-20T10:00:00Z", tag: "FDP", group: survivorGroup)),
-          \(recordingJSON(id: "94200000-0000-0000-0000-0000000000c3", at: "2026-01-20T10:30:00Z", tag: "FDP", group: secondGroup)),
-          \(recordingJSON(id: "94200000-0000-0000-0000-0000000000c4", at: "2026-01-20T11:00:00Z", tag: "MWF", group: thirdGroup))
+          \(recordingJSON(id: survivorRecordingID, at: "2026-01-20T10:00:00Z", tag: "FDP", group: survivorGroup)),
+          \(recordingJSON(id: secondRecordingID, at: "2026-01-20T10:30:00Z", tag: "FDP", group: secondGroup)),
+          \(recordingJSON(id: thirdRecordingID, at: "2026-01-20T11:00:00Z", tag: "MWF", group: thirdGroup))
         ]
         """
     }
 
-    private func recordingJSON(id: String, at: String, tag: String, group: UUID) -> String {
+    private func recordingJSON(id: UUID, at: String, tag: String, group: UUID) -> String {
         """
-        {"id":"\(id)","deleted_at":null,"updated_at":"2026-01-20T12:00:00Z",
+        {"id":"\(id.uuidString.lowercased())","deleted_at":null,"updated_at":"2026-01-20T12:00:00Z",
          "recorded_at":"\(at)","duration_ms":60000,"peak_kg":32,"avg_kg":28,
          "sample_count":2,"note":"","tag":"\(tag)","side":"left",
          "group_id":"\(group.uuidString.lowercased())","source":"dynamometer"}
@@ -234,13 +243,22 @@ final class TindeqSessionMergeAppTests: XCTestCase {
         await model.refreshAll(showSpinner: false)
     }
 
+    /// #1015: deadline-bound (the old 400 × 5 ms budget gave up after ~2 s on a
+    /// contended runner); expiry reports the state observed. The count must
+    /// still settle at exactly `expected`.
     @MainActor
     private func waitForQueueCount(_ model: AppModel, expected: Int) async throws {
-        for _ in 0..<400 {
+        let started = ContinuousClock.now
+        while ContinuousClock.now - started < AppModelLaunchSettle.deadline {
             if model.queuedWriteCount == expected { return }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        XCTFail("queue never reached \(expected); last observed \(model.queuedWriteCount)")
+        guard model.queuedWriteCount == expected else {
+            XCTFail(
+                "queue never reached \(expected) after \(ContinuousClock.now - started); observed \(AppModelLaunchSettle.state(model)), diagnostics=\(model.queuedWriteDiagnostics.map(\.kind))"
+            )
+            return
+        }
     }
 
     @MainActor
@@ -304,11 +322,14 @@ final class TindeqSessionMergeAppTests: XCTestCase {
             weather: WeatherService(defaults: defaults, session: server.makeURLSession())
         )
 
-        var waited = 0
-        while model.currentUserID == nil, waited < 200 {
-            waited += 1
-            await Task.yield()
-        }
+        // #1015: settle the account bootstrap before the test drives anything
+        // (see `AppModelLaunchSettle`). The fixed 200-yield budget returned
+        // while the bootstrap's own `refreshAll` was still in flight; its
+        // (pre-merge) sessions/recordings publication then landed DURING
+        // `await mergeTindeqSessions` and `mergeSessions(remote:)` dropped the
+        // optimistic survivor — measured on CI as duration 30 / "1 recording ·
+        // FDP" / 1 recording right after the merge (job 111464323010).
+        await AppModelLaunchSettle.settle(model)
         XCTAssertNotNil(model.currentUserID, "seeded auth session never became currentUserID")
         return model
     }
