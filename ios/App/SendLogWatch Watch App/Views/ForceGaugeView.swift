@@ -738,8 +738,8 @@ struct ForceGaugeView: View {
         .frame(height: 26)
         .background {
             Capsule()
-                .fill(Color.white.opacity(0.06))
-                .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.8))
+                .fill(WatchPalette.cardStrong)
+                .overlay(Capsule().stroke(WatchPalette.line, lineWidth: 0.8))
         }
     }
 
@@ -1147,7 +1147,7 @@ struct ForceGaugeView: View {
             // SL-585: guidance, not a gate — free hold starts untagged.
             Text("Pick an exercise to tag your holds.")
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WatchPalette.textSecondary)
                 .accessibilityHint("Holds record untagged until an exercise is selected")
         }
 
@@ -1292,7 +1292,7 @@ struct ForceGaugeView: View {
             (Text(String(format: "%.1f", elapsedS))
                 .font(.system(size: 26, weight: .bold, design: .rounded))
                 .monospacedDigit()
-            + Text(" s").font(.footnote).foregroundStyle(.secondary))
+            + Text(" s").font(.footnote).foregroundStyle(WatchPalette.textSecondary))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
@@ -1349,7 +1349,7 @@ struct ForceGaugeView: View {
                 (Text(String(format: "%.1f", elapsedS))
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                + Text(" s").font(.footnote).foregroundStyle(.secondary))
+                + Text(" s").font(.footnote).foregroundStyle(WatchPalette.textSecondary))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }

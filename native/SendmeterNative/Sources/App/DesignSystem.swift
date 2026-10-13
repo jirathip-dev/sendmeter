@@ -22,15 +22,39 @@ public enum SendmeterStyle {
     // watch and widget. The watch applies its own luminance adaptation on
     // top of these exact hues (always-on / reduced-luminance), and the dark
     // chart pairs in ChartToken are the phone's dark-mode adaptation.
-    public static let capacity = Color(hex: SendmeterSemanticHue.optimal.hex)
-    public static let strength = Color(hex: SendmeterSemanticHue.caution.hex)
-    public static let power = Color(hex: SendmeterSemanticHue.danger.hex)
-    public static let execution = Color(hex: SendmeterSemanticHue.execution.hex)
-    public static let primary = Color(hex: SendmeterSemanticHue.primary.hex)
-    public static let optimal = Color(hex: SendmeterSemanticHue.optimal.hex)
-    public static let caution = Color(hex: SendmeterSemanticHue.caution.hex)
-    public static let paused = Color(hex: "#565D6D")
-    public static let alert = Color(hex: SendmeterSemanticHue.danger.hex)
+    public static let capacity = Color.palette(SendmeterPalette.optimal)
+    public static let strength = Color.palette(SendmeterPalette.caution)
+    public static let power = Color.palette(SendmeterPalette.danger)
+    public static let execution = Color.palette(SendmeterPalette.execution)
+    public static let primary = Color.palette(SendmeterPalette.primary)
+    public static let optimal = Color.palette(SendmeterPalette.optimal)
+    public static let caution = Color.palette(SendmeterPalette.caution)
+    public static let paused = Color.palette(SendmeterPalette.paused)
+    public static let alert = Color.palette(SendmeterPalette.danger)
+
+    // #1028 B1: the shared neutral ramp (phone = Watch). Every phone surface
+    // and text colour resolves here from `SendmeterPalette`; the Watch reads
+    // the same pairs' dark values through `WatchPalette`.
+    public static let canvas = Color.palette(SendmeterPalette.canvas)
+    public static let surface = Color.palette(SendmeterPalette.surface)
+    public static let surfaceRaised = Color.palette(SendmeterPalette.surfaceRaised)
+    public static let surfaceNested = Color.palette(SendmeterPalette.surfaceNested)
+    public static let surfaceDisabled = Color.palette(SendmeterPalette.surfaceDisabled)
+    public static let line = Color.palette(SendmeterPalette.line)
+    public static let textPrimary = Color.palette(SendmeterPalette.textPrimary)
+    public static let textSecondary = Color.palette(SendmeterPalette.textSecondary)
+    public static let textTertiary = Color.palette(SendmeterPalette.textTertiary)
+    public static let textDisabled = Color.palette(SendmeterPalette.textDisabled)
+    public static let primaryText = Color.palette(SendmeterPalette.primaryText)
+    public static let primarySoft = Color.palette(SendmeterPalette.primarySoft)
+    public static let onPrimary = Color.palette(SendmeterPalette.onPrimary)
+    public static let onCaution = Color.palette(SendmeterPalette.onCaution)
+    public static let optimalText = Color.palette(SendmeterPalette.optimalText)
+    public static let cautionText = Color.palette(SendmeterPalette.cautionText)
+    public static let dangerText = Color.palette(SendmeterPalette.dangerText)
+    public static let executionText = Color.palette(SendmeterPalette.executionText)
+    public static let zonePowerEndurance = Color.palette(SendmeterPalette.zonePowerEndurance)
+    public static let zoneEndurance = Color.palette(SendmeterPalette.zoneEndurance)
 
     public static func phaseColor(_ phase: PhaseID) -> Color {
         switch phase {
@@ -98,6 +122,18 @@ public extension SendConditionsColorBand {
 }
 
 public extension Color {
+    /// #1028 B1: a light/dark `SendmeterPalette` pair as one dynamic colour
+    /// (resolves per trait collection, so it follows the app's theme choice
+    /// without threading `colorScheme` through every view).
+    static func palette(_ pair: SendmeterPalette.Pair) -> Color {
+        guard pair.light != pair.dark else { return Color(hex: pair.light) }
+        let light = UIColor(Color(hex: pair.light))
+        let dark = UIColor(Color(hex: pair.dark))
+        return Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? dark : light
+        })
+    }
+
     init(hex: String) {
         let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         var value: UInt64 = 0
@@ -153,10 +189,12 @@ public struct SurfaceCard<Content: View>: View {
                 maxHeight: fillsHeight ? .infinity : nil,
                 alignment: .leading
             )
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: SendmeterStyle.radius, style: .continuous))
+            // #1028 B1: the shared `surface` token (phone = Watch card)
+            // replaces the system material, whose grey drifted from the Watch.
+            .background(SendmeterStyle.surface, in: RoundedRectangle(cornerRadius: SendmeterStyle.radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: SendmeterStyle.radius, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    .stroke(SendmeterStyle.line, lineWidth: 1)
             )
     }
 }
@@ -370,14 +408,28 @@ public struct StatusPill: View {
         self.color = color
     }
 
+    /// #1028 B3: the label is the hue mixed into `textPrimary`
+    /// (`SendmeterPalette.pillText`), not the raw hue — raw caution/danger/
+    /// optimal labels were 1.9–2.9:1 in light mode. Painted as textPrimary
+    /// with the hue layered on top at `pillTextHueWeight`, which composites to
+    /// exactly that mix for any `Color` a call site passes (iOS 17 has no
+    /// `Color.mix`).
     public var body: some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
+        label
+            .foregroundStyle(SendmeterStyle.textPrimary)
+            .overlay {
+                label
+                    .foregroundStyle(color.opacity(SendmeterPalette.pillTextHueWeight))
+                    .accessibilityHidden(true)
+            }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .foregroundStyle(color)
-            .background(color.opacity(0.12), in: Capsule())
+            .background(color.opacity(SendmeterPalette.pillFillOpacity), in: Capsule())
             .overlay(Capsule().stroke(color.opacity(0.28), lineWidth: 1))
+    }
+
+    private var label: some View {
+        Text(text).font(.caption.weight(.semibold))
     }
 }
 
@@ -599,5 +651,66 @@ public struct AppToast: View {
         .background(.thickMaterial, in: Capsule())
         .contentShape(Capsule())
         .shadow(radius: 12, y: 6)
+    }
+}
+
+// MARK: - #1028 A1: chalk texture (a few hero surfaces only)
+
+/// #1028 A1: the chalky texture — on a FEW hero surfaces only (Today's
+/// decision, the armed protocol). A fixed-seed speckle drawn in the text
+/// token at very low opacity, so it is identical on every render, follows
+/// the theme, and never carries meaning. Hidden when the user asks for
+/// increased contrast or reduced transparency.
+public struct ChalkTexture: View {
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    /// Contrast-bounded peak opacity (`SendmeterPalette.chalkOpacity`).
+    static let opacity: Double = SendmeterPalette.chalkOpacity
+    /// Fixed seed (0x404 = 1028, the issue number the approved texture was
+    /// captured with), so the pattern matches the #1028 approved sheets.
+    static let seed: UInt64 = 0x404
+
+    public init() {}
+
+    public var body: some View {
+        if contrast != .increased, !reduceTransparency {
+            Canvas(rendersAsynchronously: false) { context, size in
+                var state = Self.seed
+                func next() -> Double {
+                    // SplitMix64: deterministic and platform-independent.
+                    state &+= 0x9E37_79B9_7F4A_7C15
+                    var z = state
+                    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+                    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+                    return Double(z ^ (z >> 31)) / Double(UInt64.max)
+                }
+                // ~1 grain per 90 pt², denser toward the top edge (chalk
+                // dust settles where a hand brushes the card).
+                let count = Int(size.width * size.height / 90)
+                for _ in 0..<count {
+                    let x = next() * size.width
+                    let y = pow(next(), 1.6) * size.height
+                    let r = 0.35 + next() * 0.9
+                    context.opacity = 0.35 + next() * 0.65
+                    context.fill(
+                        Path(ellipseIn: CGRect(x: x, y: y, width: r * 2.2, height: r * 1.6)),
+                        with: .color(SendmeterStyle.textPrimary)
+                    )
+                }
+            }
+            .opacity(Self.opacity)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+}
+
+public extension View {
+    /// #1028 A1: chalk texture on a hero surface, clipped to its shape.
+    func sendmeterChalk(cornerRadius: CGFloat = SendmeterStyle.radius) -> some View {
+        overlay {
+            ChalkTexture()
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        }
     }
 }

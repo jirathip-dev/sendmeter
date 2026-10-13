@@ -113,6 +113,8 @@ struct ForceRecordingContextCard: View {
                 deviceRow
             }
         }
+        // #1028 A1: chalk on the hero only while a protocol is armed.
+        .overlay { if showsArmedHero { ChalkTexture().clipShape(RoundedRectangle(cornerRadius: SendmeterStyle.radius, style: .continuous)) } }
         .accessibilityElement(children: .contain)
     }
 
@@ -1013,59 +1015,27 @@ private struct SavedPresetCategory {
 /// appears ONLY on the Progressor/Connected dot, Endurance identity is teal,
 /// Pow End a non-blue mauve, Power/Strength keep danger/caution identity.
 private enum RecordingContextPalette {
-    static let statusBlue = Color(hex: "#2E96F0")
-    static let enduranceTeal = Color(hex: "#3CBFA3")
+    // #1028 B1: every value resolves from the shared `SendmeterPalette`
+    // (phone = Watch). The `scheme` parameters stay so call sites are
+    // unchanged; the palette colours are trait-dynamic themselves.
+    static let statusBlue = SendmeterStyle.optimal
+    static let enduranceTeal = SendmeterStyle.zoneEndurance
     /// `color-mix(primary 68%, danger)` — the approved non-blue Pow End mauve.
-    static let powEndMauve = Color(hex: "#87669A")
-    static let handsFreeGold = Color(hex: "#DDB13A")
+    static let powEndMauve = SendmeterStyle.zonePowerEndurance
+    static let handsFreeGold = SendmeterStyle.caution
 
-    static func primary(_ scheme: ColorScheme) -> Color {
-        Color(hex: "#5B5FC7")
-    }
-
-    static func primaryMixed(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#A9ADE3") : Color(hex: "#4A4EAC")
-    }
-
-    static func primaryBorder(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#6F74CF") : Color(hex: "#C3C5EC")
-    }
-
-    static func metadata(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#C7C7CE") : Color(hex: "#52525C")
-    }
-
-    static func line(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#35353C") : Color(hex: "#D8D8DE")
-    }
-
-    static func nested(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#242428") : Color(hex: "#F7F7FA")
-    }
-
-    static func nestedRaised(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#2D2D32") : Color(hex: "#ECECF2")
-    }
-
-    static func moduleBackground(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#1A1A1D") : Color(hex: "#FBFBFD")
-    }
-
-    static func heroSurface(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#242428") : Color(hex: "#F7F7FA")
-    }
-
-    static func paused(_ scheme: ColorScheme) -> Color {
-        Color(hex: "#565D6D")
-    }
-
-    static func disabledLabel(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#A0A0AA") : Color(hex: "#61616B")
-    }
-
-    static func disabledBackground(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#29292E") : Color(hex: "#E8E8ED")
-    }
+    static func primary(_ scheme: ColorScheme) -> Color { SendmeterStyle.primary }
+    static func primaryMixed(_ scheme: ColorScheme) -> Color { SendmeterStyle.primaryText }
+    static func primaryBorder(_ scheme: ColorScheme) -> Color { SendmeterStyle.primarySoft }
+    static func metadata(_ scheme: ColorScheme) -> Color { SendmeterStyle.textSecondary }
+    static func line(_ scheme: ColorScheme) -> Color { SendmeterStyle.line }
+    static func nested(_ scheme: ColorScheme) -> Color { SendmeterStyle.surfaceRaised }
+    static func nestedRaised(_ scheme: ColorScheme) -> Color { SendmeterStyle.surfaceNested }
+    static func moduleBackground(_ scheme: ColorScheme) -> Color { SendmeterStyle.surface }
+    static func heroSurface(_ scheme: ColorScheme) -> Color { SendmeterStyle.surfaceRaised }
+    static func paused(_ scheme: ColorScheme) -> Color { SendmeterStyle.paused }
+    static func disabledLabel(_ scheme: ColorScheme) -> Color { SendmeterStyle.textDisabled }
+    static func disabledBackground(_ scheme: ColorScheme) -> Color { SendmeterStyle.surfaceDisabled }
 
     /// Identity dot: danger Power, caution Strength, mauve Pow End, teal
     /// Endurance, paused neutral otherwise. Selected rows keep the identity
@@ -1078,8 +1048,8 @@ private enum RecordingContextPalette {
     ) -> some View {
         let color: Color
         switch quality {
-        case .power: color = Color(hex: "#E5743A")
-        case .strength: color = Color(hex: "#DDB13A")
+        case .power: color = SendmeterStyle.power
+        case .strength: color = SendmeterStyle.strength
         case .powerEndurance: color = powEndMauve
         case .endurance: color = enduranceTeal
         case nil: color = paused(scheme)

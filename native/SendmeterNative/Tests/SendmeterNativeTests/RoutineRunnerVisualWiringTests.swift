@@ -111,14 +111,22 @@ final class RoutineRunnerVisualWiringTests: XCTestCase {
                 "approved identity hue \(identityHue) must remain in the canonical semantic hue source"
             )
         }
+        // #1028 B1: the paused neutral and the semantic derivation moved into
+        // the ONE shared palette (`SendmeterPalette`, phone = Watch); the
+        // design system resolves both from it.
+        let sharedPalette = source("../../ios/App/SendLogWatchCore/Sources/SendLogWatchCore/SendmeterPalette.swift")
         XCTAssertTrue(
-            designSystem.contains("#565D6D"),
-            "approved identity hue #565D6D must remain in the design system"
+            sharedPalette.contains("#565D6D"),
+            "approved identity hue #565D6D must remain in the shared palette"
         )
         for semanticCase in ["primary", "optimal", "caution", "execution"] {
             XCTAssertTrue(
-                designSystem.contains("SendmeterSemanticHue.\(semanticCase).hex"),
-                "design system must derive its \(semanticCase) identity hue from SendmeterSemanticHue"
+                sharedPalette.contains("SendmeterSemanticHue.\(semanticCase).hex"),
+                "the shared palette must derive its \(semanticCase) identity hue from SendmeterSemanticHue"
+            )
+            XCTAssertTrue(
+                designSystem.contains("SendmeterPalette.\(semanticCase)"),
+                "design system must resolve its \(semanticCase) identity hue from SendmeterPalette"
             )
         }
 

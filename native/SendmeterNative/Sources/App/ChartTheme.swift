@@ -204,11 +204,12 @@ public enum ChartToken: String, CaseIterable, Sendable {
         case .optimal: return (SendmeterSemanticHue.optimal.hex, semanticPair(.optimal).1)
         case .caution: return (SendmeterSemanticHue.caution.hex, semanticPair(.caution).1)
         case .alert: return (SendmeterSemanticHue.danger.hex, semanticPair(.alert).1)
-        case .reference: return ("#8E8E93", "#A9A9B0")
-        case .grid: return ("#E2E2E6", "#3E3E44")
-        case .axis: return ("#6E6E73", "#A9A9B0")
-        case .tooltip: return ("#FFFFFF", "#2C2C31")
-        case .tooltipBorder: return ("#D8D8DC", "#4A4A50")
+        // #1028 B1: the chart neutrals resolve from the shared palette.
+        case .reference: return paletteHexes(SendmeterPalette.chartReference)
+        case .grid: return paletteHexes(SendmeterPalette.chartGrid)
+        case .axis: return paletteHexes(SendmeterPalette.chartAxis)
+        case .tooltip: return paletteHexes(SendmeterPalette.chartTooltip)
+        case .tooltipBorder: return paletteHexes(SendmeterPalette.chartTooltipBorder)
         }
     }
 
@@ -280,17 +281,18 @@ public enum ChartActivityHue: String, CaseIterable, Sendable {
 
     private var hexPair: (light: String, dark: String) {
         switch self {
-        case .board: return ("#2E96F0", "#4FB0FF")
-        case .fingerboard: return ("#7B83EB", "#9296EE")
-        case .gym: return ("#5B5FC7", "#9296EE")
-        case .outdoor: return ("#218E98", "#65D2DB")
-        case .arc: return ("#1682A5", "#66D5EF")
-        case .antagonist: return ("#7752A8", "#B18AE8")
-        case .routine: return ("#A94D7D", "#E39AC3")
-        case .campus: return ("#C96032", "#F0864C")
-        case .tindeq: return ("#B96C2C", "#E8A24D")
-        case .auto: return ("#2A82C5", "#77C8F5")
-        case .custom: return ("#6E6E73", "#A9A9B0")
+        // #1028 B1: the activity hues resolve from the shared palette.
+        case .board: return paletteHexes(SendmeterPalette.activityBoard)
+        case .fingerboard: return paletteHexes(SendmeterPalette.activityFingerboard)
+        case .gym: return paletteHexes(SendmeterPalette.activityGym)
+        case .outdoor: return paletteHexes(SendmeterPalette.activityOutdoor)
+        case .arc: return paletteHexes(SendmeterPalette.activityArc)
+        case .antagonist: return paletteHexes(SendmeterPalette.activityAntagonist)
+        case .routine: return paletteHexes(SendmeterPalette.activityRoutine)
+        case .campus: return paletteHexes(SendmeterPalette.activityCampus)
+        case .tindeq: return paletteHexes(SendmeterPalette.activityTindeq)
+        case .auto: return paletteHexes(SendmeterPalette.activityAuto)
+        case .custom: return paletteHexes(SendmeterPalette.activityCustom)
         }
     }
 }
@@ -331,4 +333,10 @@ private extension Color {
             blue: Double(blue) / 255
         )
     }
+}
+
+/// #1028 B1: a shared-palette pair as the `(light, dark)` hex tuple the
+/// chart tokens expose.
+private func paletteHexes(_ pair: SendmeterPalette.Pair) -> (light: String, dark: String) {
+    (pair.light, pair.dark)
 }

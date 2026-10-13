@@ -263,6 +263,8 @@ private struct TodayDecisionCard: View {
                     }
                 }
             }
+            // #1028 A1: one of the few chalk-textured hero surfaces.
+            .sendmeterChalk()
         }
         .hapticButtonStyle(.plain)
         .accessibilityHint("Shows the raw HealthKit metrics behind today's readiness score.")

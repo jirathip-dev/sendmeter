@@ -517,7 +517,7 @@ struct WorkoutLiveView: View {
             ForEach(restTargets, id: \.self) { target in
                 let selected = visibleRestTargetS == target
                 let minutes = target / 60
-                let tint = Self.restTargetRamp(for: target)
+                let tint = Self.restTargetTint
                 let accent = WatchPalette.accent(tint, reducedLuminance: isLuminanceReduced)
                 Button {
                     workout.restTargetS = target
@@ -563,23 +563,14 @@ struct WorkoutLiveView: View {
         .frame(height: Self.controlRowHeight, alignment: .bottom)
     }
 
-    /// One hue per target so the selection reads at a glance (#580's "more
-    /// colorful"): a DEDICATED decorative ramp, deliberately not aliased to
-    /// the semantic state tokens (#582 review F10) — a five-minute rest is
-    /// not a `warning` and a one-minute rest is not `success`, and coupling
-    /// durations to state tokens would both dilute what those hues mean
-    /// elsewhere on the watch and silently recolor this row if a state token
-    /// is ever retuned. The values intentionally match the accent family's
-    /// look (and `WatchPalette.accent`'s Always-On dimming applies the same
-    /// way); only the *meaning* is decoupled.
-    private static func restTargetRamp(for target: Int) -> PhaseRGB {
-        switch target {
-        case 60: PhaseRGB(0.30, 0.93, 0.68) // mint
-        case 120: PhaseRGB(0.18, 0.84, 0.96) // cyan — the screenshot suite's selector pixel proof
-        case 180: PhaseRGB(0.48, 0.40, 1.0) // indigo
-        default: PhaseRGB(1.0, 0.76, 0.32) // amber
-        }
-    }
+    /// #1028 P6: every rest target paints the phone's resting hue
+    /// (`SendmeterPalette.rest` — the phone's RESTING accent and selected
+    /// rest-target chip, and this screen's own resting band). The retired
+    /// per-duration ramp (mint/cyan/indigo/amber) was the last Watch colour
+    /// family the phone never painted. Selection still reads at a glance
+    /// from the filled capsule, the heavier stroke and the heavy label, and
+    /// `WatchPalette.accent`'s Always-On dimming applies unchanged.
+    private static let restTargetTint = SendmeterPalette.rest.rgb(isDark: true)
 
     private func timeString(_ t: TimeInterval) -> String {
         let s = Int(t)
