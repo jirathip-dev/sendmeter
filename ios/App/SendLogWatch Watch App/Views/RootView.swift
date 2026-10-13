@@ -55,6 +55,12 @@ struct RootView: View {
         }
         .onAppear {
             syncForceRuntime()
+            // #1028 design round: a force fixture can open straight on the
+            // gauge (`-sendmeter-fixture-route force`). Fixture launches only.
+            if ScreenshotFixtures.enabled, ScreenshotFixtures.force != nil,
+               ScreenshotFixtures.opensForceRoute, path.isEmpty {
+                path = [.force]
+            }
         }
     }
 

@@ -161,6 +161,7 @@ struct HistoryView: View {
                     forceList
                 }
             }
+            .sendmeterTabBarEdge(Color(uiColor: .systemGroupedBackground))
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("History")
             .searchable(text: $query, prompt: searchPrompt)

@@ -26,7 +26,8 @@ struct DashboardView: View {
                         }
                     }
                     TodayDecisionCard(showRecovery: $showRecovery)
-                    ReadinessTrendCard()
+                    // #1023: the sparse state opens the same recovery sheet.
+                    ReadinessTrendCard(onOpenRecoveryInputs: { showRecovery = true })
                     // #704: reserve the largest Send Conditions state before
                     // equalizing both cards to the same measured row height.
                     DashboardContextRow(spacing: 16) {
@@ -48,7 +49,9 @@ struct DashboardView: View {
                 }
                 .padding()
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            // #1028 B1/F5: shared canvas; opaque edge under the tab bar.
+            .sendmeterTabBarEdge()
+            .background(SendmeterStyle.canvas)
             .navigationTitle("Dashboard")
             .refreshable {
                 // #661 (finding 5): pull-to-refresh is the ONLY user-initiated
@@ -178,13 +181,15 @@ private struct TodayDecisionCard: View {
         return ChartToken.caution.color(scheme)
     }
 
+    /// #1022: one verdict from the readiness × load table — recovery advice
+    /// once, and the load line is always qualified in the verdict's terms.
+    private var verdict: DashboardVerdict.Copy? {
+        guard let readiness = model.readiness?.readiness else { return nil }
+        return DashboardVerdict.copy(readiness: readiness, ratio: model.acwr.ratio)
+    }
+
     private var recommendation: String {
-        guard let readiness = model.readiness?.readiness else {
-            return "Sync Apple Health to build today's recommendation."
-        }
-        if readiness < 40 { return "Recover — keep intensity low and reduce volume." }
-        if readiness > 70 { return "Ready to train — use the planned block intensity." }
-        return "Maintain — train, but keep one rep in reserve."
+        verdict?.headline ?? "Sync Apple Health to build today's recommendation."
     }
 
     var body: some View {
@@ -240,10 +245,16 @@ private struct TodayDecisionCard: View {
                             Text("\(model.currentPhase.name) Training Block")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
-                            if let ratio = model.acwr.ratio {
-                                Text("Load ratio \(ratio, format: .number.precision(.fractionLength(2))) · \(TrainingMetrics.acwrStatus(ratio).rawValue)")
+                            if let loadLine = verdict?.loadLine {
+                                Text(loadLine)
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(SendmeterStyle.textSecondary)
+                            } else if let ratio = model.acwr.ratio {
+                                // No readiness yet: the ratio alone, never an
+                                // unqualified status word (#1022).
+                                Text("Load ratio \(ratio, format: .number.precision(.fractionLength(2)))")
+                                    .font(.caption)
+                                    .foregroundStyle(SendmeterStyle.textSecondary)
                             }
                             if let syncedAt = model.lastHealthSyncedAt {
                                 Text("Last synced \(syncedAt, format: .dateTime.month(.abbreviated).day().hour().minute())")
@@ -263,6 +274,8 @@ private struct TodayDecisionCard: View {
                     }
                 }
             }
+            // #1028 A1: one of the few chalk-textured hero surfaces.
+            .sendmeterChalk()
         }
         .hapticButtonStyle(.plain)
         .accessibilityHint("Shows the raw HealthKit metrics behind today's readiness score.")
@@ -309,7 +322,9 @@ private struct PhaseCard: View {
             let next = guidance.nextPhase.map { PhaseCatalog.definition(for: $0).name } ?? model.currentPhase.name
             return "Consider \(next) next"
         case .considerRecovery:
-            return "Readiness low or falling — consider recovery"
+            // #1022: Today's decision states the recovery advice; the block
+            // card points at it instead of repeating it.
+            return "Readiness low — today's decision comes first"
         }
     }
 

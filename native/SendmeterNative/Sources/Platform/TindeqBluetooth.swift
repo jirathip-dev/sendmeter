@@ -596,3 +596,22 @@ extension TindeqBluetooth: CBPeripheralDelegate {
         }
     }
 }
+
+#if DEBUG
+extension TindeqBluetooth {
+    /// #1028 design harness only (`--design-1028`, DEBUG): sets the published
+    /// transport state directly so the real Force screen renders a device
+    /// state without a Progressor. Never called outside `DesignFixture1028`.
+    func designFixtureSet(status: Status, samples: [TindeqSample] = []) {
+        sampleBuffer.removeAll()
+        for sample in samples { sampleBuffer.append(sample) }
+        visibleSampleRange = samples.isEmpty ? 0..<0 : sampleBuffer.visibleRange()
+        let values = samples.map(\.kilograms)
+        currentKilograms = values.last ?? 0
+        peakKilograms = values.max() ?? 0
+        averageKilograms = values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
+        elapsedMilliseconds = samples.last?.milliseconds ?? 0
+        self.status = status
+    }
+}
+#endif

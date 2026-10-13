@@ -99,7 +99,7 @@ final class TabMascotWiringTests: XCTestCase {
             startingWith: "private struct StartWorkoutCard: View"
         )
 
-        XCTAssertTrue(card.contains("Image(\"WorkoutMascotLarge\")"))
+        XCTAssertTrue(card.contains("Image(designRoundMascot(\"WorkoutMascotLarge\"))"))
         XCTAssertTrue(card.contains("SendmeterStyle.primary"))
         XCTAssertTrue(card.contains(".accessibilityHidden(true)"))
         XCTAssertFalse(card.contains("figure.climbing"))

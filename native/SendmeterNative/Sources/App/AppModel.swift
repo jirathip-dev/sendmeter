@@ -12876,3 +12876,28 @@ public final class AppModel {
         }
     }
 }
+
+#if DEBUG
+extension AppModel {
+    /// #1028 design harness only (`--design-1028`, DEBUG): publishes a
+    /// deterministic account snapshot so the real Dashboard and Force views
+    /// render the owner's state without a backend. Never called outside
+    /// `DesignFixture1028`.
+    func designFixtureSeed(
+        sessions: [SendmeterCore.Session],
+        healthMetrics: [HealthMetric],
+        presets: [TindeqPreset],
+        recordings: [TindeqRecording],
+        healthSyncedAt: Date?
+    ) {
+        self.sessions = sessions
+        hasLoadedSessions = true
+        self.healthMetrics = healthMetrics
+        self.presets = presets
+        self.recordings = recordings
+        hasLoadedRecordings = true
+        lastHealthSyncedAt = healthSyncedAt
+        forceModel.hasLoadedRecordings = true
+    }
+}
+#endif

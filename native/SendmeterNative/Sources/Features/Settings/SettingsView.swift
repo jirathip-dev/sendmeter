@@ -42,6 +42,7 @@ struct SettingsView: View {
                 aboutSupportSection
                 dangerZoneSection
             }
+            .sendmeterTabBarEdge(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Settings")
             .refreshable {
                 model.watch.refreshPairingState()

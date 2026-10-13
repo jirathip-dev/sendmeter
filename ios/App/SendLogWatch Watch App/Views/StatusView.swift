@@ -173,15 +173,15 @@ struct StatusView: View {
                     } else if snap.readiness != nil {
                         Text("Zone unavailable")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(WatchPalette.textSecondary)
                     } else {
                         Text("No score")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(WatchPalette.textSecondary)
                     }
                     Text("0–100")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(WatchPalette.textTertiary)
                 }
                 .accessibilityHidden(true)
             }
@@ -216,7 +216,7 @@ struct StatusView: View {
                 // card production renders.
                 Text(statusSyncLabel)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(WatchPalette.textTertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .accessibilityIdentifier("status-sync-label")
@@ -254,7 +254,7 @@ struct StatusView: View {
                 Text("2")
             }
             .font(.system(size: 8, weight: .medium, design: .rounded))
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(WatchPalette.textTertiary)
             .accessibilityHidden(true)
 
             if snap.acwr == nil {

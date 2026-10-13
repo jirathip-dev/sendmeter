@@ -29,17 +29,19 @@ final class ForceEmptyStateArtworkWiringTests: XCTestCase {
             "the disconnected/empty Progressor card must keep the shared empty-state layout"
         )
         XCTAssertTrue(
-            deviceCard.contains("artwork: .forceMascot"),
+            deviceCard.contains("inlineArtwork: .forceMascot"),
             "the Force empty state must opt into the approved mascot artwork; the cave/photo composite is banned on this surface"
         )
         XCTAssertTrue(
             deviceCard.contains("\"Reconnect to your force progress\""),
             "the reconnect copy must stay on the Force empty state"
         )
-        XCTAssertTrue(deviceCard.contains("actionTitle: emptyActionTitle"))
-        XCTAssertTrue(deviceCard.contains("action: emptyAction"))
+        // #1028 F1: compact and action-free — the bar owns Reconnect.
+        XCTAssertFalse(deviceCard.contains("actionTitle: emptyActionTitle"))
+        XCTAssertFalse(deviceCard.contains("action: emptyAction"))
+        // #1028: `inlineArtwork:` (the compact, action-free variant).
         XCTAssertEqual(
-            countOccurrences("artwork: .forceMascot", in: forceView),
+            countOccurrences("rtwork: .forceMascot", in: forceView),
             1,
             "only the Force device empty state opts into the mascot artwork today"
         )
@@ -57,7 +59,14 @@ final class ForceEmptyStateArtworkWiringTests: XCTestCase {
         // The mascot branch wires the approved hero imageset as a template
         // silhouette (native tint axis). Absent on the old cave composite.
         XCTAssertTrue(emptyState.contains("case .forceMascot:"))
-        XCTAssertTrue(emptyState.contains("Image(\"ForceMascotLarge\")"))
+        // #1028: the approved master stays the Release asset; the design
+        // round's refined candidate is a DEBUG, launch-argument-only swap.
+        XCTAssertTrue(emptyState.contains("Image(designRoundMascot(\"ForceMascotLarge\"))"))
+        let designSystem = code(source("Sources/App/DesignSystem.swift"))
+        let flat = designSystem.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        XCTAssertTrue(flat.contains(
+            "#if DEBUG return DesignFixture1028.refinedMascots ? approved + \"1028\" : approved #else return approved #endif"
+        ))
         XCTAssertTrue(emptyState.contains(".renderingMode(.template)"))
         XCTAssertTrue(
             emptyState.contains(".foregroundStyle(SendmeterStyle.primary)"),

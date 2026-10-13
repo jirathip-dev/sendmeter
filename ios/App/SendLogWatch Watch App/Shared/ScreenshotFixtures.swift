@@ -128,6 +128,16 @@ enum ScreenshotFixtures {
         enabled && ProcessInfo.processInfo.arguments.contains("-sendmeter-accessibility-large")
     }
 
+    /// #1028 design round: `-sendmeter-fixture-route force` pushes the
+    /// gauge on launch so a force fixture is captured on the gauge itself.
+    static var opensForceRoute: Bool {
+        guard enabled,
+              let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-sendmeter-fixture-route"),
+              ProcessInfo.processInfo.arguments.indices.contains(index + 1)
+        else { return false }
+        return ProcessInfo.processInfo.arguments[index + 1] == "force"
+    }
+
     static var state: ScreenshotFixtureState {
         guard enabled,
               let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-sendmeter-fixture"),

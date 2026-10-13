@@ -574,10 +574,11 @@ struct WorkoutLiveView: View {
     /// way); only the *meaning* is decoupled.
     private static func restTargetRamp(for target: Int) -> PhaseRGB {
         switch target {
-        case 60: PhaseRGB(0.30, 0.93, 0.68) // mint
-        case 120: PhaseRGB(0.18, 0.84, 0.96) // cyan — the screenshot suite's selector pixel proof
-        case 180: PhaseRGB(0.48, 0.40, 1.0) // indigo
-        default: PhaseRGB(1.0, 0.76, 0.32) // amber
+        // #1028 B1: the shipped ramp, now resolved from the shared palette.
+        case 60: SendmeterPalette.restRamp60.rgb(isDark: true) // mint
+        case 120: SendmeterPalette.restRamp120.rgb(isDark: true) // cyan — the screenshot suite's selector pixel proof
+        case 180: SendmeterPalette.restRamp180.rgb(isDark: true) // indigo
+        default: SendmeterPalette.restRamp240.rgb(isDark: true) // amber
         }
     }
 

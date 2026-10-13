@@ -156,8 +156,12 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(
             device.contains("case .idle, .unavailable, .interrupted:")
         )
-        XCTAssertTrue(device.contains("actionTitle: emptyActionTitle"))
-        XCTAssertTrue(device.contains("action: emptyAction"))
+        // #1028 F1: the empty state carries NO action of its own — the
+        // sticky bar is the only Connect/Reconnect surface (it used to be the
+        // second Reconnect the owner saw on build 57).
+        XCTAssertTrue(device.contains("inlineArtwork: .forceMascot"))
+        XCTAssertFalse(device.contains("actionTitle: emptyActionTitle"))
+        XCTAssertFalse(device.contains("action: emptyAction"))
         XCTAssertTrue(device.contains("Reconnect to your force progress"))
         let forceDataEmpty = exactBlock(
             device,
@@ -168,12 +172,8 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(forceDataEmpty.contains("!handsFreeArmed"))
         XCTAssertTrue(forceDataEmpty.contains("case .connected:"))
         XCTAssertTrue(forceDataEmpty.contains("return true"))
-        let normalizedDevice = normalizeWhitespace(device)
-        XCTAssertTrue(
-            normalizedDevice.contains(
-                "if showsPrimaryEmptyState, device.status != .connected { EmptyView()"
-            )
-        )
+        // The curve card's own empty action still routes through the shared
+        // performer (it is not the device card's).
         XCTAssertTrue(force.contains("private var forceEmptyActionTitle: String"))
         XCTAssertTrue(force.contains("private func performForceEmptyAction()"))
         let normalizedForce = normalizeWhitespace(force)
@@ -186,48 +186,25 @@ final class EmptyStateWiringTests: XCTestCase {
         XCTAssertTrue(normalizedForce.contains("case .scanning, .connecting: model.tindeq.disconnect()"))
         XCTAssertFalse(force.contains("model.selectedTab = .settings"))
 
+        // #1028 F1/F2: the card keeps device tools only. Connect / Start /
+        // Arm / Stop & save are the bar's ONE big action; the Hands-free
+        // toggle became the bar's Guided | Hands-free switch.
         let controls = exactBlock(force, startingWith: "private var controls: some View")
-        let normalizedControls = normalizeWhitespace(controls)
-        XCTAssertTrue(
-            normalizedControls.contains(
-                "if showsPrimaryEmptyState, device.status != .connected { EmptyView()"
-            )
-        )
         XCTAssertTrue(controls.contains("case .connected:"))
         XCTAssertTrue(controls.contains("try device.tare()"))
         XCTAssertTrue(controls.contains("Label(\"Battery\""))
         XCTAssertTrue(controls.contains("device.disconnect()"))
-        XCTAssertTrue(controls.contains("$handsFreeEnabled"))
-        XCTAssertTrue(
-            normalizeWhitespace(controls).contains(
-                "else if handsFreeArmed, protocolArmed { VStack(spacing: 8) { if !showsPrimaryEmptyState { Button(action: start)"
-            )
-        )
-        XCTAssertTrue(
-            normalizeWhitespace(controls).contains(
-                "else if protocolArmed { Button(action: start) { Label(\"Start Guided Protocol\""
-            )
-        )
-        XCTAssertTrue(normalizeWhitespace(controls).contains("else if handsFreeEnabled, !protocolArmed {"))
-        XCTAssertTrue(controls.contains("Hands-free is ready — use the action above to arm it"))
+        for removed in [
+            "$handsFreeEnabled", "Toggle(", "Start Guided Protocol", "Arm Hands-free",
+            "Connect Progressor", "Stop & Save", "Hands-free is ready",
+        ] {
+            XCTAssertFalse(controls.contains(removed), "the Progressor card must not carry \(removed) (#1028 F1/F2)")
+        }
+        XCTAssertFalse(force.contains("private var forceDeviceEmptyActionTitle: String"))
+        XCTAssertFalse(device.contains("StatusPill("), "#1028 F1: no status pill on the Progressor card")
+        XCTAssertFalse(device.contains("private var statusLabel"), "#1028 F1: no status line on the Progressor card")
         XCTAssertFalse(force.contains("\"Record a pull\""))
         XCTAssertFalse(force.contains("Label(\"Start Pull\""))
-        XCTAssertTrue(force.contains("return \"Arm Hands-free\""))
-        let deviceTitle = exactBlock(
-            force,
-            startingWith: "private var forceDeviceEmptyActionTitle: String"
-        )
-        XCTAssertTrue(
-            normalizeWhitespace(deviceTitle).contains(
-                "if selectedPreset == nil { return \"Arm Hands-free\" }"
-            )
-        )
-        XCTAssertTrue(
-            normalizeWhitespace(deviceTitle).contains(
-                "case .measuring: return \"Stop & save\""
-            ),
-            "the device action-title switch must handle the active measuring state"
-        )
         let emptyAction = exactBlock(
             force,
             startingWith: "private func performForceEmptyAction()"
@@ -237,6 +214,19 @@ final class EmptyStateWiringTests: XCTestCase {
                 "else if selectedPreset == nil { if !handsFreeEnabled { handsFreeEnabled = true } armHandsFree() }"
             )
         )
+
+        // The bar is the one action surface, and every action is wired.
+        let bar = exactBlock(force, startingWith: "private func performForceBarAction(_ action: ForceBarAction)")
+        let normalizedBar = normalizeWhitespace(bar)
+        for wiring in [
+            "case .connect, .reconnect: model.requestConnect()",
+            "case .startGuided: startPrimaryForceAction()",
+            "case .armHandsFree: armHandsFree()",
+            "case .stopAndSave: stopAndSave()",
+            "case .chooseProtocol: openProtocolList()",
+        ] {
+            XCTAssertTrue(normalizedBar.contains(wiring), "bar action missing: \(wiring)")
+        }
 
         XCTAssertEqual(
             countOccurrences("showsPrimaryEmptyState: false", in: force),

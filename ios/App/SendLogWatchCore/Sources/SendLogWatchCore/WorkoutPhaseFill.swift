@@ -122,11 +122,12 @@ public struct PhaseFill: Sendable, Equatable {
 /// dark enough that white text keeps AAA contrast on it.
 public enum WorkoutPhasePalette {
     /// `--success` (dark theme), climbing — also the view's Play tint.
-    public static let phoneSuccess = PhaseRGB(0x4F / 255, 0xB0 / 255, 0xFF / 255)
+    /// #1028 B1: resolved from the shared palette (same values).
+    public static let phoneSuccess = SendmeterPalette.optimalText.rgb(isDark: true)
     /// `--primary`, resting.
-    private static let phonePrimary = PhaseRGB(0x5B / 255, 0x5F / 255, 0xC7 / 255)
+    private static let phonePrimary = SendmeterPalette.primary.rgb(isDark: true)
     /// `--danger` (dark theme), rest-over — also the view's End/Stop tint.
-    public static let phoneDanger = PhaseRGB(0xF0 / 255, 0x86 / 255, 0x4C / 255)
+    public static let phoneDanger = SendmeterPalette.dangerText.rgb(isDark: true)
 
     /// Every band is picked to clear this against `label` — AAA (7:1) for
     /// body text, with margin left for the OLED's own gamma. The secondary

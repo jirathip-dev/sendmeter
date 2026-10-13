@@ -53,17 +53,19 @@ struct ForceRecordingContextCard: View {
     /// Non-nil only while a suggested zone protocol is armed: the SL-97
     /// intensity dial (60–110, step 5, persisted by the parent).
     let intensityPercent: Binding<Int>?
-    /// Recording-device row state (design S1/S3/S5 footer).
-    let deviceConnected: Bool
-    let deviceStatusText: String
+    /// #1028 F3: what the card may claim about the link and the mode. The
+    /// "Recording device" row is gone (F1: the bottom bar is the only device
+    /// status surface).
+    let readiness: ForceContextReadiness
+    /// Armed-state presentation: the hero shows unless the user asked for the
+    /// protocol list ("Change", or the bar's protocol name — #1028 D2);
+    /// arming again returns to the hero. Owned by the parent so the bar can
+    /// open it.
+    @Binding var showProtocolList: Bool
     /// Movement & side summary value, e.g. "FDP · Side Left".
     let movementSummary: String
     /// Opens the combined movement + side picker.
     let onOpenPicker: () -> Void
-
-    /// Armed-state local presentation: the hero shows unless the user asked
-    /// for the protocol list ("Change"); arming again returns to the hero.
-    @State private var showProtocolList = false
 
     private var isFree: Bool { selectedTarget == .free }
 
@@ -103,16 +105,27 @@ struct ForceRecordingContextCard: View {
     var body: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 0) {
-                recordingHead
-                summaryRow
-                if showsArmedHero {
-                    protocolHero
+                if locked && !showsArmedHero {
+                    // #1028: while a pull owns the device nothing on this
+                    // card can change — a dimmed head, picker row and
+                    // seven-tile grid only pushed the live trace below the
+                    // bar. Collapse to ONE locked line; the full card
+                    // returns when the pull settles.
+                    lockedFreePullRow
                 } else {
-                    protocolSection
+                    recordingHead
+                    summaryRow
+                    if showsArmedHero {
+                        protocolHero
+                    } else {
+                        protocolSection
+                    }
                 }
-                deviceRow
             }
+            .padding(.bottom, showsArmedHero || locked ? 0 : 6)
         }
+        // #1028 A1: chalk on the hero only while a protocol is armed.
+        .overlay { if showsArmedHero { ChalkTexture().clipShape(RoundedRectangle(cornerRadius: SendmeterStyle.radius, style: .continuous)) } }
         .accessibilityElement(children: .contain)
     }
 
@@ -122,7 +135,10 @@ struct ForceRecordingContextCard: View {
         HStack(spacing: 8) {
             RecordingContextEyebrow(title: "Recording context", systemImage: "tag")
             Spacer(minLength: 8)
-            Text(isFree ? "Nothing armed" : "Armed")
+            // #1028 F2: in Hands-free the free pull IS the plan — "Nothing
+            // armed" next to the bar's "Armed · pull to start" contradicted it.
+            // F3: without a link the protocol is only selected, not armed.
+            Text(headerWord)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(RecordingContextPalette.metadata(scheme))
                 .accessibilityAddTraits(isFree ? [] : [.isSelected])
@@ -131,6 +147,11 @@ struct ForceRecordingContextCard: View {
         .padding(.top, 10)
         .padding(.bottom, 8)
         .frame(minHeight: 40)
+    }
+
+    private var headerWord: String {
+        if isFree { return readiness.modeChip == "Hands-free" ? "Free pull" : "Nothing armed" }
+        return readiness.claim == .waitingForProgressor ? "Selected" : "Armed"
     }
 
     // MARK: Movement & side decision row
@@ -222,6 +243,34 @@ struct ForceRecordingContextCard: View {
     }
 
     @State private var protocolSource: ProtocolSource = .suggested
+
+    private var lockedFreePullRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "lock.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(RecordingContextPalette.metadata(scheme))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(movementSummary) · \(isFree ? "Free pull" : (selectedPreset?.name ?? "Free pull"))")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                // #899: armed, the next physical action stays on the card;
+                // mid-pull, say why nothing here can change.
+                Text(readiness.claim == .handsFreeArmed
+                    ? "Pull to start · release to stop"
+                    : "Locked until this pull is saved")
+                    .font(.caption)
+                    .foregroundStyle(RecordingContextPalette.metadata(scheme))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("force-context-locked-free-pull")
+    }
 
     enum ProtocolSource: String, CaseIterable, Identifiable {
         case suggested
@@ -442,15 +491,22 @@ struct ForceRecordingContextCard: View {
     private var protocolHero: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                RecordingContextEyebrow(title: "Armed protocol", systemImage: "waveform.path.ecg")
+                RecordingContextEyebrow(
+                    title: readiness.claim == .waitingForProgressor ? "Selected protocol" : "Armed protocol",
+                    systemImage: "waveform.path.ecg"
+                )
                 Spacer(minLength: 8)
-                // #899: every guided protocol is pull-gated, so the armed
-                // hero always carries the hands-free identity.
+                // #1028 F2: the chip names the bar's mode (it used to claim
+                // Hands-free unconditionally).
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(RecordingContextPalette.handsFreeGold)
+                        .fill(
+                            readiness.modeChip == "Hands-free"
+                                ? RecordingContextPalette.handsFreeGold
+                                : RecordingContextPalette.primary(scheme)
+                        )
                         .frame(width: 6, height: 6)
-                    Text("Hands-free")
+                    Text(readiness.modeChip)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(RecordingContextPalette.metadata(scheme))
                 }
@@ -636,15 +692,18 @@ struct ForceRecordingContextCard: View {
             HStack(spacing: 6) {
                 RecordingContextEyebrow(title: "Target band", systemImage: "scope")
                 Spacer(minLength: 8)
-                Text("Live readout")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(
-                        RecordingContextPalette.nestedRaised(scheme),
-                        in: Capsule()
-                    )
+                // #1028 F3: only claimed with a live link.
+                if readiness.showsLiveReadout, displayBand != nil {
+                    Text("Live readout")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(RecordingContextPalette.metadata(scheme))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            RecordingContextPalette.nestedRaised(scheme),
+                            in: Capsule()
+                        )
+                }
             }
             .padding(.horizontal, 10)
             .padding(.top, 9)
@@ -807,18 +866,22 @@ struct ForceRecordingContextCard: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: Readiness row (#899: guided + hands-free only — no tap-to-start)
+    // MARK: Readiness row (#899 pull-gated; #1028 F3 honest link state)
 
+    /// #1028 F3: with no live link the row says "Waiting for Progressor" —
+    /// never "Armed now". Connect/Reconnect itself lives only in the bar (F1).
     private var readinessRow: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "hand.draw")
+        let waiting = readiness.claim == .waitingForProgressor
+        let tint = waiting ? RecordingContextPalette.metadata(scheme) : RecordingContextPalette.primaryMixed(scheme)
+        return HStack(spacing: 9) {
+            Image(systemName: readiness.systemImage)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
+                .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Pull to start · release to stop")
+                Text(readiness.title)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
-                Text("Armed now · no confirmation step")
+                    .foregroundStyle(waiting ? Color.primary : tint)
+                Text(readiness.detail)
                     .font(.caption)
                     .foregroundStyle(RecordingContextPalette.metadata(scheme))
             }
@@ -828,56 +891,16 @@ struct ForceRecordingContextCard: View {
         .padding(.vertical, 6)
         .frame(minHeight: 44)
         .background(
-            RecordingContextPalette.primary(scheme).opacity(0.11),
+            waiting
+                ? RecordingContextPalette.nestedRaised(scheme)
+                : RecordingContextPalette.primary(scheme).opacity(0.11),
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
         .padding(.top, 8)
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("force-context-readiness")
     }
 
-    // MARK: Device row (S1/S3/S5 footer)
-
-    private var deviceRow: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "sensor.tag.radiowaves.forward")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
-                .frame(width: 32, height: 32)
-                .background(
-                    RecordingContextPalette.primary(scheme).opacity(0.18),
-                    in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-                )
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Recording device")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                Text("Tindeq Progressor")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-            }
-            Spacer(minLength: 8)
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(
-                        deviceConnected
-                            ? RecordingContextPalette.statusBlue
-                            : RecordingContextPalette.paused(scheme)
-                    )
-                    .frame(width: 6, height: 6)
-                Text(deviceStatusText)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(RecordingContextPalette.metadata(scheme))
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Recording device status: \(deviceStatusText)")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .frame(minHeight: 52)
-        .overlay(alignment: .top) { hairline }
-        .accessibilityElement(children: .contain)
-    }
 }
 
 // MARK: - Suggested protocol presentation helpers
@@ -1013,59 +1036,27 @@ private struct SavedPresetCategory {
 /// appears ONLY on the Progressor/Connected dot, Endurance identity is teal,
 /// Pow End a non-blue mauve, Power/Strength keep danger/caution identity.
 private enum RecordingContextPalette {
-    static let statusBlue = Color(hex: "#2E96F0")
-    static let enduranceTeal = Color(hex: "#3CBFA3")
+    // #1028 B1: every value resolves from the shared `SendmeterPalette`
+    // (phone = Watch). The `scheme` parameters stay so call sites are
+    // unchanged; the palette colours are trait-dynamic themselves.
+    static let statusBlue = SendmeterStyle.optimal
+    static let enduranceTeal = SendmeterStyle.zoneEndurance
     /// `color-mix(primary 68%, danger)` — the approved non-blue Pow End mauve.
-    static let powEndMauve = Color(hex: "#87669A")
-    static let handsFreeGold = Color(hex: "#DDB13A")
+    static let powEndMauve = SendmeterStyle.zonePowerEndurance
+    static let handsFreeGold = SendmeterStyle.caution
 
-    static func primary(_ scheme: ColorScheme) -> Color {
-        Color(hex: "#5B5FC7")
-    }
-
-    static func primaryMixed(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#A9ADE3") : Color(hex: "#4A4EAC")
-    }
-
-    static func primaryBorder(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#6F74CF") : Color(hex: "#C3C5EC")
-    }
-
-    static func metadata(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#C7C7CE") : Color(hex: "#52525C")
-    }
-
-    static func line(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#35353C") : Color(hex: "#D8D8DE")
-    }
-
-    static func nested(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#242428") : Color(hex: "#F7F7FA")
-    }
-
-    static func nestedRaised(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#2D2D32") : Color(hex: "#ECECF2")
-    }
-
-    static func moduleBackground(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#1A1A1D") : Color(hex: "#FBFBFD")
-    }
-
-    static func heroSurface(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#242428") : Color(hex: "#F7F7FA")
-    }
-
-    static func paused(_ scheme: ColorScheme) -> Color {
-        Color(hex: "#565D6D")
-    }
-
-    static func disabledLabel(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#A0A0AA") : Color(hex: "#61616B")
-    }
-
-    static func disabledBackground(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#29292E") : Color(hex: "#E8E8ED")
-    }
+    static func primary(_ scheme: ColorScheme) -> Color { SendmeterStyle.primary }
+    static func primaryMixed(_ scheme: ColorScheme) -> Color { SendmeterStyle.primaryText }
+    static func primaryBorder(_ scheme: ColorScheme) -> Color { SendmeterStyle.primarySoft }
+    static func metadata(_ scheme: ColorScheme) -> Color { SendmeterStyle.textSecondary }
+    static func line(_ scheme: ColorScheme) -> Color { SendmeterStyle.line }
+    static func nested(_ scheme: ColorScheme) -> Color { SendmeterStyle.surfaceRaised }
+    static func nestedRaised(_ scheme: ColorScheme) -> Color { SendmeterStyle.surfaceNested }
+    static func moduleBackground(_ scheme: ColorScheme) -> Color { SendmeterStyle.surface }
+    static func heroSurface(_ scheme: ColorScheme) -> Color { SendmeterStyle.surfaceRaised }
+    static func paused(_ scheme: ColorScheme) -> Color { SendmeterStyle.paused }
+    static func disabledLabel(_ scheme: ColorScheme) -> Color { SendmeterStyle.textDisabled }
+    static func disabledBackground(_ scheme: ColorScheme) -> Color { SendmeterStyle.surfaceDisabled }
 
     /// Identity dot: danger Power, caution Strength, mauve Pow End, teal
     /// Endurance, paused neutral otherwise. Selected rows keep the identity
@@ -1078,8 +1069,8 @@ private enum RecordingContextPalette {
     ) -> some View {
         let color: Color
         switch quality {
-        case .power: color = Color(hex: "#E5743A")
-        case .strength: color = Color(hex: "#DDB13A")
+        case .power: color = SendmeterStyle.power
+        case .strength: color = SendmeterStyle.strength
         case .powerEndurance: color = powEndMauve
         case .endurance: color = enduranceTeal
         case nil: color = paused(scheme)

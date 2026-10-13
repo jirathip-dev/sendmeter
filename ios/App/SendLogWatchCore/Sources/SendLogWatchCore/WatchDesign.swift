@@ -52,10 +52,20 @@ public enum WatchDesignTokens {
     // Deep OLED-safe canvas and raised surfaces. These are sRGB values so the
     // SwiftUI target can translate them to Color while Core tests their
     // contrast and dimmed behavior without importing SwiftUI.
-    public static let canvas = PhaseRGB(0.018, 0.024, 0.055)
-    public static let canvasRaised = PhaseRGB(0.045, 0.055, 0.12)
-    public static let card = PhaseRGB(0.075, 0.082, 0.17)
-    public static let cardStrong = PhaseRGB(0.12, 0.12, 0.25)
+    //
+    // #1028 B1: these resolve from the ONE shared palette's dark ramp, so the
+    // Watch canvas/cards are the same slate the phone paints in dark mode
+    // (previously a navy-only ramp the phone never used).
+    public static let canvas = SendmeterPalette.canvas.rgb(isDark: true)
+    public static let canvasRaised = SendmeterPalette.surface.rgb(isDark: true)
+    public static let card = SendmeterPalette.surfaceRaised.rgb(isDark: true)
+    public static let cardStrong = SendmeterPalette.surfaceNested.rgb(isDark: true)
+
+    /// #1028 B1: the shared text ramp (dark values) — replaces the Watch's
+    /// `Color.white` / `white.opacity(0.72/0.48)` literals.
+    public static let textPrimary = SendmeterPalette.textPrimary.rgb(isDark: true)
+    public static let textSecondary = SendmeterPalette.textSecondary.rgb(isDark: true)
+    public static let textTertiary = SendmeterPalette.textTertiary.rgb(isDark: true)
 
     // Semantic accents. Hue is the differentiator; every important state is
     // also named/iconed in the UI so colour is never the only signal. The
@@ -64,7 +74,8 @@ public enum WatchDesignTokens {
     // each surface applies its own luminance adaptation.
     public static let primary = PhaseRGB(hex: SendmeterSemanticHue.primary.hex)
     public static let secondary = PhaseRGB(hex: SendmeterSemanticHue.optimal.hex)
-    public static let success = PhaseRGB(0.30, 0.93, 0.68)
+    /// #1028 B1: the phone's success/ready blue (was an off-palette mint).
+    public static let success = SendmeterPalette.success.rgb(isDark: true)
     public static let warning = PhaseRGB(hex: SendmeterSemanticHue.caution.hex)
     public static let danger = PhaseRGB(hex: SendmeterSemanticHue.danger.hex)
     /// Reserved for the Home screen's Force-module nav-card identity only
@@ -79,7 +90,7 @@ public enum WatchDesignTokens {
     /// theme") — recorded on the issue as a maintainer decision, not
     /// self-certified here. See the #538 discussion for the reasoning and to
     /// overrule it.
-    public static let force = PhaseRGB(1.0, 0.43, 0.76)
+    public static let force = SendmeterPalette.watchForceNav.rgb(isDark: true)
 
     public static let semanticAccents: [PhaseRGB] = [
         primary, secondary, success, warning, danger, force,
