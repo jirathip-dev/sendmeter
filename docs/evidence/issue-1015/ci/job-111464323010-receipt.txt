@@ -1,0 +1,39 @@
+25895: Test Suite 'AccountSwitchInFlightAppTests' passed at 2026-10-04 15:35:57.218.
+25896: 	 Executed 8 tests, with 0 failures (0 unexpected) in 161.235 (161.249) seconds
+25921: 	 Executed 5 tests, with 0 failures (0 unexpected) in 0.121 (0.123) seconds
+25949: 	 Executed 4 tests, with 0 failures (0 unexpected) in 7.716 (7.720) seconds
+25997: 	 Executed 3 tests, with 0 failures (0 unexpected) in 5.119 (5.124) seconds
+26256: 	 Executed 7 tests, with 0 failures (0 unexpected) in 5.524 (5.530) seconds
+26986: 	 Executed 10 tests, with 0 failures (0 unexpected) in 1.920 (1.936) seconds
+27454: 	 Executed 5 tests, with 0 failures (0 unexpected) in 3.047 (3.064) seconds
+27568: 	 Executed 3 tests, with 0 failures (0 unexpected) in 1.995 (1.996) seconds
+27666: Test Suite 'ForceLockOrphanAppTests' passed at 2026-10-04 15:36:23.623.
+27667: 	 Executed 3 tests, with 0 failures (0 unexpected) in 0.894 (0.904) seconds
+27720: 	 Executed 8 tests, with 0 failures (0 unexpected) in 0.198 (0.221) seconds
+28310: 	 Executed 3 tests, with 0 failures (0 unexpected) in 3.996 (4.009) seconds
+28395: 	 Executed 3 tests, with 0 failures (0 unexpected) in 0.993 (1.027) seconds
+29406: Test Suite 'HealthWriteRecoveryAppTests' passed at 2026-10-04 15:36:41.608.
+29407: 	 Executed 9 tests, with 0 failures (0 unexpected) in 12.692 (12.719) seconds
+30245: 	 Executed 3 tests, with 0 failures (0 unexpected) in 47.379 (47.386) seconds
+30348: 	 Executed 4 tests, with 0 failures (0 unexpected) in 0.173 (0.176) seconds
+30383: 	 Executed 12 tests, with 0 failures (0 unexpected) in 0.402 (0.507) seconds
+30394: 	 Executed 4 tests, with 0 failures (0 unexpected) in 0.039 (0.041) seconds
+30993: Test Suite 'PhaseTransitionReplayAppTests' passed at 2026-10-04 15:37:31.880.
+30994: 	 Executed 9 tests, with 0 failures (0 unexpected) in 1.402 (1.498) seconds
+31022: 	 Executed 4 tests, with 0 failures (0 unexpected) in 0.015 (0.073) seconds
+31031: 	 Executed 3 tests, with 0 failures (0 unexpected) in 0.008 (0.010) seconds
+31038: 	 Executed 2 tests, with 0 failures (0 unexpected) in 0.020 (0.021) seconds
+31073: 	 Executed 6 tests, with 0 failures (0 unexpected) in 0.212 (0.218) seconds
+31188: 	 Executed 6 tests, with 0 failures (0 unexpected) in 0.451 (0.458) seconds
+31871: 	 Executed 12 tests, with 0 failures (0 unexpected) in 2.465 (2.474) seconds
+33408: 	 Executed 13 tests, with 0 failures (0 unexpected) in 2.885 (2.909) seconds
+33609: /Users/runner/work/sendmeter/sendmeter/native/SendmeterNative/Tests/SendmeterNativeTests/TindeqSessionMergeAppTests.swift:54: error: -[SendmeterNativeTests.TindeqSessionMergeAppTests testMergeFoldsThreeSameDayEntriesIntoOneAndKeepsEveryRecording] : XCTAssertEqual failed: ("30") is not equal to ("61") - duration is the full span (10:00:00 → 11:01:00)
+33610: /Users/runner/work/sendmeter/sendmeter/native/SendmeterNative/Tests/SendmeterNativeTests/TindeqSessionMergeAppTests.swift:55: error: -[SendmeterNativeTests.TindeqSessionMergeAppTests testMergeFoldsThreeSameDayEntriesIntoOneAndKeepsEveryRecording] : XCTAssertEqual failed: ("1 recording · FDP") is not equal to ("3 recordings · FDP, MWF") - the note lists every recording
+33613: 2026-10-04 15:37:43.989035+0000/Users/runner/work/sendmeter/sendmeter/native/SendmeterNative/Tests/SendmeterNativeTests/TindeqSessionMergeAppTests.swift:60: error: -[SendmeterNativeTests.TindeqSessionMergeAppTests testMergeFoldsThreeSameDayEntriesIntoOneAndKeepsEveryRecording] : XCTAssertEqual failed: ("1") is not equal to ("3") - AC2: the merged session's detail shows every recording
+33791: Test Suite 'TindeqSessionMergeAppTests' failed at 2026-10-04 15:37:44.627.
+33792: 	 Executed 3 tests, with 3 failures (0 unexpected) in 1.840 (1.864) seconds
+34792: 	 Executed 8 tests, with 0 failures (0 unexpected) in 16.572 (16.584) seconds
+34836: 	 Executed 5 tests, with 0 failures (0 unexpected) in 0.057 (0.127) seconds
+35094: 	 Executed 5 tests, with 0 failures (0 unexpected) in 11.155 (11.164) seconds
+35096: 	 Executed 172 tests, with 3 failures (0 unexpected) in 295.902 (296.536) seconds
+35098: 	 Executed 172 tests, with 3 failures (0 unexpected) in 295.902 (296.539) seconds

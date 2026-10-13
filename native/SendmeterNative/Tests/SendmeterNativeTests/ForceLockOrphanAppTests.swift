@@ -30,6 +30,13 @@ final class ForceLockOrphanAppTests: XCTestCase {
         case noWindowScene
     }
 
+    /// #1015: a fresh account per test. The cache store and the pending-write
+    /// queue are account-scoped data in the ONE app container the suite runs
+    /// in, so the former fixed `94000000-…0940` account accumulated every
+    /// prior run's (and every prior test's) un-synced recording rows and
+    /// bootstrap state under the same identity — channel (a) of #989/PR #1012.
+    private let userID = UUID()
+
     /// The hard data fence: the release over an ENDED session must not touch
     /// the user's un-synced data.
     ///
@@ -40,12 +47,15 @@ final class ForceLockOrphanAppTests: XCTestCase {
     /// so the assertion measures the release itself: no queued row may be
     /// removed or replaced by it.
     func testTheReleaseOverAnEndedSessionLeavesThePendingRowUntouched() async throws {
-        let model = try await makeSignedInModel()
-        let preset = Self.quickPreset()
-        let session = Self.makeSession(model: model, preset: preset)
-
         // Offline: every upload refuses, so the save must remain a PENDING
         // (un-synced) durable row — the exact row the fence protects.
+        // #1015: offline from LAUNCH, i.e. before the model exists. The fence
+        // below waits for the bootstrap pass's recorded failure; set after the
+        // model, the stub could land after a fast bootstrap had already
+        // refreshed against the 200 stub, and that failure never came
+        // (green-offenders-iter3-STOPPED: 60 s expiry, both fields nil). The
+        // fixed account's accumulated queue (channel (a)) used to slow the
+        // bootstrap enough to hide it. Assertions unchanged.
         StubURLProtocol.reply = (
             statusCode: 500,
             body: Data(#"{"message":"host offline"}"#.utf8)
@@ -53,6 +63,9 @@ final class ForceLockOrphanAppTests: XCTestCase {
         defer {
             StubURLProtocol.reply = (statusCode: 200, body: Data("[]".utf8))
         }
+        let model = try await makeSignedInModel()
+        let preset = Self.quickPreset()
+        let session = Self.makeSession(model: model, preset: preset)
 
         // FIX ROUND 1 — the determinism seam (hosted CI run 37179622828
         // attempt 1: "timed out after 15s waiting for the offline save to
@@ -512,7 +525,7 @@ final class ForceLockOrphanAppTests: XCTestCase {
         let suite = "ForceLockOrphanAppTests.signed-in.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         let storage = InMemoryAuthStorage()
-        let session = Self.makeSession()
+        let session = Self.makeSession(userID: userID)
         try storage.store(
             // The SDK's default storage key namespaces by project ref:
             // `sb-<host>-auth-token` (SupabaseClient.init).
@@ -561,7 +574,7 @@ final class ForceLockOrphanAppTests: XCTestCase {
     }
 
     private static func makeSession(
-        userID: UUID = UUID(uuidString: "94000000-0000-0000-0000-000000000940")!,
+        userID: UUID,
         sessionID: String = "session-1"
     ) -> Auth.Session {
         let payload = Data(
