@@ -276,7 +276,8 @@ final class TindeqSessionMergeAppTests: XCTestCase {
                     storage: storage,
                     autoRefreshToken: false,
                     emitLocalSessionAsInitialSession: true
-                )
+                ),
+                realtime: AppModelLaunchSettle.realtimeOptions
             )
         )
     }

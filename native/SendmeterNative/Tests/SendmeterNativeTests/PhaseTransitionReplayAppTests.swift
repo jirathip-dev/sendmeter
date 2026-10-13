@@ -662,7 +662,8 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
                     storage: storage,
                     autoRefreshToken: false,
                     emitLocalSessionAsInitialSession: true
-                )
+                ),
+                realtime: AppModelLaunchSettle.realtimeOptions
             )
         )
     }

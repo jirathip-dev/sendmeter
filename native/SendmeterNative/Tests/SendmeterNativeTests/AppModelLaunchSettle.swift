@@ -1,4 +1,5 @@
 import Foundation
+import Supabase
 import XCTest
 @testable import Sendmeter
 
@@ -30,9 +31,21 @@ import XCTest
 /// Only after that does the test drive anything. The gate decides only WHEN a
 /// test proceeds; nothing it asserts changes, and an expiry fails the test with
 /// the state actually observed.
+///
+/// Settling makes the bootstrap's LAST step part of every test's cost: the
+/// realtime join, which the fixtures point at an unresolvable host. With the
+/// SDK defaults (10 s timeout, 5 attempts, backoff) that is ~16-32 s per model
+/// (measured: green-phase-iter20-STOPPED.log). `realtimeOptions` makes the
+/// join fail in about a second instead; nothing in these suites asserts
+/// realtime, and the app's join stays best-effort either way.
 @MainActor
 enum AppModelLaunchSettle {
     static let deadline: Duration = .seconds(90)
+
+    /// The harness client's realtime options: one join attempt, short timeout.
+    nonisolated static var realtimeOptions: RealtimeClientOptions {
+        RealtimeClientOptions(timeoutInterval: 0.5, maxRetryAttempts: 1)
+    }
 
     static func isSettled(_ model: AppModel) -> Bool {
         model.currentUserID != nil

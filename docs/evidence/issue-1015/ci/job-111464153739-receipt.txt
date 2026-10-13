@@ -1,0 +1,37 @@
+23941: /Users/runner/work/sendmeter/sendmeter/native/SendmeterNative/Tests/SendmeterNativeTests/AccountSwitchInFlightAppTests.swift:379: error: -[SendmeterNativeTests.AccountSwitchInFlightAppTests testAnAOwnedMutationCompletionNeverEntersTheNewAccountsContext] : XCTAssertEqual failed: ("1") is not equal to ("0") - B's own upload completes normally
+24374: Test Suite 'AccountSwitchInFlightAppTests' failed at 2026-10-04 15:23:18.841.
+24375: 	 Executed 8 tests, with 1 failure (0 unexpected) in 172.177 (173.114) seconds
+24400: 	 Executed 5 tests, with 0 failures (0 unexpected) in 0.063 (0.066) seconds
+24428: 	 Executed 4 tests, with 0 failures (0 unexpected) in 6.895 (6.896) seconds
+24476: 	 Executed 3 tests, with 0 failures (0 unexpected) in 4.950 (4.951) seconds
+24735: 	 Executed 7 tests, with 0 failures (0 unexpected) in 3.937 (3.939) seconds
+25240: 	 Executed 10 tests, with 0 failures (0 unexpected) in 0.822 (0.826) seconds
+25843: 	 Executed 5 tests, with 0 failures (0 unexpected) in 2.774 (2.776) seconds
+25937: 	 Executed 3 tests, with 0 failures (0 unexpected) in 0.745 (0.746) seconds
+26025: Test Suite 'ForceLockOrphanAppTests' passed at 2026-10-04 15:23:39.376.
+26026: 	 Executed 3 tests, with 0 failures (0 unexpected) in 0.326 (0.327) seconds
+26089: 	 Executed 8 tests, with 0 failures (0 unexpected) in 0.115 (0.138) seconds
+26648: 	 Executed 3 tests, with 0 failures (0 unexpected) in 3.029 (3.033) seconds
+26723: 	 Executed 3 tests, with 0 failures (0 unexpected) in 0.464 (0.500) seconds
+27887: Test Suite 'HealthWriteRecoveryAppTests' passed at 2026-10-04 15:23:56.705.
+27888: 	 Executed 9 tests, with 0 failures (0 unexpected) in 13.635 (13.657) seconds
+28722: 	 Executed 3 tests, with 0 failures (0 unexpected) in 51.384 (51.388) seconds
+28787: 	 Executed 4 tests, with 0 failures (0 unexpected) in 0.112 (0.114) seconds
+28860: 	 Executed 12 tests, with 0 failures (0 unexpected) in 0.259 (0.263) seconds
+28871: 	 Executed 4 tests, with 0 failures (0 unexpected) in 0.031 (0.041) seconds
+29407: Test Suite 'PhaseTransitionReplayAppTests' passed at 2026-10-04 15:24:49.859.
+29408: 	 Executed 9 tests, with 0 failures (0 unexpected) in 1.130 (1.162) seconds
+29417: 	 Executed 3 tests, with 0 failures (0 unexpected) in 0.009 (0.010) seconds
+29436: 	 Executed 3 tests, with 0 failures (0 unexpected) in 0.015 (0.082) seconds
+29453: 	 Executed 2 tests, with 0 failures (0 unexpected) in 0.017 (0.046) seconds
+29468: 	 Executed 6 tests, with 0 failures (0 unexpected) in 0.101 (0.103) seconds
+29513: 	 Executed 6 tests, with 0 failures (0 unexpected) in 0.259 (0.261) seconds
+30338: 	 Executed 12 tests, with 0 failures (0 unexpected) in 2.892 (2.905) seconds
+31479: 	 Executed 13 tests, with 0 failures (0 unexpected) in 1.106 (1.110) seconds
+31703: Test Suite 'TindeqSessionMergeAppTests' passed at 2026-10-04 15:25:00.487.
+31704: 	 Executed 3 tests, with 0 failures (0 unexpected) in 0.329 (0.331) seconds
+32899: 	 Executed 8 tests, with 0 failures (0 unexpected) in 12.686 (12.689) seconds
+32929: 	 Executed 5 tests, with 0 failures (0 unexpected) in 0.030 (0.055) seconds
+33432: 	 Executed 5 tests, with 0 failures (0 unexpected) in 10.166 (10.168) seconds
+33434: 	 Executed 171 tests, with 1 failure (0 unexpected) in 296.390 (297.673) seconds
+33436: 	 Executed 171 tests, with 1 failure (0 unexpected) in 296.390 (297.674) seconds
