@@ -443,7 +443,7 @@ private final class FakePostgREST: @unchecked Sendable {
             return Reply(status: 200, body: Data(mergeResult.utf8))
         }
         if path.hasSuffix("/sessions") {
-            return Reply(status: 200, body: Data(sessions.utf8))
+            return Reply(status: 200, body: Self.page(sessions, after: request))
         }
         if path.hasSuffix("/tindeq_recordings") {
             // The curve warm-up asks for `samples`; those rows are not part of
@@ -452,11 +452,33 @@ private final class FakePostgREST: @unchecked Sendable {
                 return Reply(status: 200, body: Data("[]".utf8))
             }
             if method == "GET" {
-                return Reply(status: 200, body: Data(recordings.utf8))
+                return Reply(status: 200, body: Self.page(recordings, after: request))
             }
             return Reply(status: 200, body: Data("[]".utf8))
         }
         return Reply(status: 200, body: Data("[]".utf8))
+    }
+}
+
+extension FakePostgREST {
+    /// #1015: honour the delta cursor the way PostgREST does. Every fixture
+    /// row shares one `updated_at`, so the cursor's `id.gt.<id>` arm alone
+    /// decides the page. The fake used to ignore it and re-serve every row, so
+    /// a SECOND delta read failed closed (`outOfOrderPage`, a row at or before
+    /// the cursor) and published nothing; the settled bootstrap makes that
+    /// second read certain (green-tindeq-iter5 at d58384f: 0 sessions).
+    static func page(_ rowsJSON: String, after request: URLRequest) -> Data {
+        let cursorID = request.url
+            .flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+            .queryItems?.first { $0.name == "or" }?.value?
+            .components(separatedBy: "id.gt.").dropFirst().first?
+            .prefix { $0 != ")" }
+            .lowercased()
+        guard let cursorID,
+              let rows = try? JSONSerialization.jsonObject(with: Data(rowsJSON.utf8)) as? [[String: Any]]
+        else { return Data(rowsJSON.utf8) }
+        let later = rows.filter { (($0["id"] as? String) ?? "").lowercased() > cursorID }
+        return (try? JSONSerialization.data(withJSONObject: later)) ?? Data("[]".utf8)
     }
 }
 
