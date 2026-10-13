@@ -57,10 +57,13 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
 
         // AC1: the account, the row date and the intended payload are on disk
         // before the pass could have reported anything as saved.
-        // #1015: the in-memory count above is published BEFORE the queue
-        // actor's file write is observable from here, so the raw-file read is
-        // deadline-bounded too (it returns the last read on expiry and the
-        // assertions below then fail with the file's real contents).
+        // #1015: deadline-bounded raw-file read. One `DurableQueue` writes the
+        // file BEFORE it publishes (`transact`, OfflineQueue.swift:1739-1751),
+        // but the file is ONE per container and every live model owns its own
+        // queue actor, so a second instance can persist a whole-store
+        // snapshot over it between the count wait and this read. The read
+        // polls until the needles are present and, on expiry, returns the last
+        // read so the assertions below fail against the file's real contents.
         let queueFile = try await Self.queueFileContents(
             containingAll: [userID.uuidString, today, "63", "41.25"]
         )
@@ -599,10 +602,10 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
         supportDirectory().appendingPathComponent("local-cache.sqlite", isDirectory: false)
     }
 
-    /// #1015: deadline-bounded raw-file read. `DurableQueue` publishes its
-    /// count through the model before the file write is guaranteed to be
-    /// visible to a second reader, so a bare read right after an in-memory
-    /// wait can see the previous file. Polls until every needle is present,
+    /// #1015: deadline-bounded raw-file read. The queue file is shared by every
+    /// `DurableQueue` instance in the app container (each live model owns
+    /// one), so a bare read right after an in-memory wait can see another
+    /// instance's whole-store write. Polls until every needle is present,
     /// then returns that read; on expiry returns the last read so the caller's
     /// own assertions fail against the real contents.
     private static func queueFileContents(
