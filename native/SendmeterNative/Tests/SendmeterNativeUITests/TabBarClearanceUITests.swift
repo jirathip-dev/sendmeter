@@ -6,11 +6,11 @@ import XCTest
 /// sits above the tab bar. Every-tab clearance is slice 3 (#1032).
 ///
 /// Runs on the existing `--tabs-fixture force` harness (the real
-/// `MainTabView` without a signed-in session) and is meant for an SE-size
-/// simulator, the smallest supported viewport:
+/// `MainTabView` without a signed-in session) on an iPhone SE (3rd
+/// generation) simulator, the smallest supported viewport (375x667 pt):
 ///
 ///   xcodebuild test -scheme SendmeterNative \
-///     -destination 'platform=iOS Simulator,name=<iPhone SE (3rd generation) simulator>' \
+///     -destination 'platform=iOS Simulator,name=<an iPhone SE (3rd generation)>' \
 ///     -only-testing:SendmeterNativeUITests/TabBarClearanceUITests
 final class TabBarClearanceUITests: XCTestCase {
     override func setUp() {
@@ -51,22 +51,22 @@ final class TabBarClearanceUITests: XCTestCase {
         let barTop = min(tabBar.frame.minY, forceBar.frame.minY)
 
         // Snapshot the whole app, not the container (a stale container
-        // element can fail to resolve after the drag); fall back to element
-        // queries if the snapshot fails. The filter keeps on-screen rows and
-        // drops the bars' own controls.
+        // element can fail to resolve after the drag). The bars' own controls
+        // are excluded STRUCTURALLY (their subtrees are skipped), never by
+        // geometry: a content row hidden entirely behind the bar is exactly
+        // the F5 defect and must count.
+        let screen = window.frame
+        XCTContext.runActivity(named: "window \(screen.width)x\(screen.height) pt") { _ in }
         let frames: [(label: String, frame: CGRect)]
         do {
             frames = contentFrames(in: try app.snapshot())
         } catch {
-            XCTContext.runActivity(named: "snapshot failed (\(error.localizedDescription)) — querying elements") { _ in }
-            frames = queriedFrames(in: app)
+            XCTFail("Force: accessibility snapshot failed: \(error.localizedDescription)")
+            return
         }
-        let screen = window.frame
-        let bars = [tabBar.frame, forceBar.frame]
         let rows = frames.filter { row in
             row.frame.width > 0 && row.frame.height > 0
                 && row.frame.maxY > screen.minY && row.frame.minY < screen.maxY
-                && !bars.contains(where: { $0.insetBy(dx: -1, dy: -1).contains(row.frame) })
         }
         guard let last = rows.max(by: { $0.frame.maxY < $1.frame.maxY }) else {
             XCTFail("Force: no visible content rows")
@@ -91,26 +91,15 @@ final class TabBarClearanceUITests: XCTestCase {
             .max { $0.frame.height < $1.frame.height }
     }
 
-    private static let rowKinds: [XCUIElement.ElementType] = [.staticText, .button, .cell, .image, .switch, .textField]
+    private static let rowKinds: Set<XCUIElement.ElementType> = [.staticText, .button, .cell, .image, .switch, .textField]
 
-    private func queriedFrames(in app: XCUIApplication) -> [(label: String, frame: CGRect)] {
-        var result: [(String, CGRect)] = []
-        for kind in Self.rowKinds {
-            let query = app.descendants(matching: kind)
-            for index in 0..<min(query.count, 150) {
-                let element = query.element(boundBy: index)
-                guard element.exists else { continue }
-                result.append((name(label: element.label, identifier: element.identifier, kind: kind), element.frame))
-            }
-        }
-        return result
-    }
-
+    /// Every content element's frame, skipping the two bars' subtrees (the
+    /// tab bar and the sticky Force bar), so their controls are not rows.
     private func contentFrames(in snapshot: XCUIElementSnapshot) -> [(label: String, frame: CGRect)] {
         var result: [(String, CGRect)] = []
-        let kinds = Set(Self.rowKinds)
         func walk(_ node: XCUIElementSnapshot) {
-            if kinds.contains(node.elementType) {
+            if node.elementType == .tabBar || node.identifier == "force-bottom-bar" { return }
+            if Self.rowKinds.contains(node.elementType) {
                 result.append((name(label: node.label, identifier: node.identifier, kind: node.elementType), node.frame))
             }
             node.children.forEach(walk)
