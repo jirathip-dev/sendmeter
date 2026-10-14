@@ -2185,12 +2185,19 @@ struct ForceView: View {
             // #1028 P9: on a compact-height phone the large title collapses
             // while a pull records, so the live trace stays above the bar.
             .navigationBarTitleDisplayMode(collapsesLargeTitle ? .inline : .large)
-            // The full Force screen height (safe areas included) — the
-            // device class P9 keys on, independent of the title's own state.
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.size.height + proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom
-            } action: { height in
-                forceScreenHeight = height
+            // The full screen height the Force tab spans: a clear layer
+            // stretched over every safe area (status bar, title, tab bar),
+            // so the device class P9 keys on never depends on the title's
+            // own state. (The view's own proxy reports the in-safe-area
+            // frame, which put a 17 Pro under the compact limit.)
+            .background {
+                Color.clear
+                    .ignoresSafeArea()
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.height
+                    } action: { height in
+                        forceScreenHeight = height
+                    }
             }
             .refreshable { await model.refreshAll(showSpinner: false) }
             .task(id: targetResolutionKey) {
