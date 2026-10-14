@@ -1366,8 +1366,6 @@ struct ForceView: View {
     /// #1028 D2: the bar's protocol name opens the recording-context list.
     @State private var protocolListRequested = false
     @State private var forceScrollProxy: ScrollViewProxy?
-    /// #1028 P9: the Force screen's height (0 until the first layout).
-    @State private var forceScreenHeight: CGFloat = 0
     @State private var guidedMinimizeRequested = false
     /// #1004: the launch attempt's own identity owns the in-flight flag — a
     /// resolution that never settles can no longer leave Start locked.
@@ -1894,11 +1892,20 @@ struct ForceView: View {
         )
     }
 
+    /// #1028 P9: the device class is the SCREEN height (667 pt on an SE,
+    /// 874 pt on a 17 Pro), read from the window scene. A measured view
+    /// height is not: it excludes the title, bars and insets, and its first
+    /// layout pass can be transient, so a 17 Pro read as compact.
+    private static var deviceScreenHeight: Double {
+        let scene = UIApplication.shared.connectedScenes.first { $0 is UIWindowScene } as? UIWindowScene
+        return Double(scene?.screen.bounds.height ?? 0)
+    }
+
     /// #1028 P9: collapse the large title while recording on a compact
     /// height (iPhone SE), so the live trace stays above the bar.
     private var collapsesLargeTitle: Bool {
         ForceTitlePolicy.collapsesLargeTitle(
-            screenHeight: Double(forceScreenHeight),
+            screenHeight: Self.deviceScreenHeight,
             recording: model.tindeq.status == .measuring || model.handsFree.isMeasuring
         )
     }
@@ -2185,20 +2192,6 @@ struct ForceView: View {
             // #1028 P9: on a compact-height phone the large title collapses
             // while a pull records, so the live trace stays above the bar.
             .navigationBarTitleDisplayMode(collapsesLargeTitle ? .inline : .large)
-            // The full screen height the Force tab spans: a clear layer
-            // stretched over every safe area (status bar, title, tab bar),
-            // so the device class P9 keys on never depends on the title's
-            // own state. (The view's own proxy reports the in-safe-area
-            // frame, which put a 17 Pro under the compact limit.)
-            .background {
-                Color.clear
-                    .ignoresSafeArea()
-                    .onGeometryChange(for: CGFloat.self) { proxy in
-                        proxy.size.height
-                    } action: { height in
-                        forceScreenHeight = height
-                    }
-            }
             .refreshable { await model.refreshAll(showSpinner: false) }
             .task(id: targetResolutionKey) {
                 await resolveSelectedTarget()
