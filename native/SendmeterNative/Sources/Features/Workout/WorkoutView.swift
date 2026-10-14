@@ -73,6 +73,8 @@ struct WorkoutView: View {
                 }
                 .padding()
             }
+            // #1028 F5: opaque edge under the tab bar.
+            .sendmeterTabBarEdge(Color(uiColor: .systemGroupedBackground))
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Workout")
             .toolbar {
@@ -409,7 +411,7 @@ private struct StartWorkoutCard: View {
                 VStack(spacing: 6) {
                     Text("Manual workout")
                         .font(.title2.bold())
-                    Text("Start once, tap for each attempt, then finish. The complete workout is written atomically and appears in History immediately.")
+                    Text("Tap once per attempt, then finish.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -550,7 +552,7 @@ private struct WatchWorkoutMirrorCard: View {
 
     private var transportLabel: String {
         switch model.liveWorkoutSyncState {
-        case .watchDirect: return "Direct WatchConnectivity mirror"
+        case .watchDirect: return "Live from your Apple Watch"
         case .serverFallback: return "Server mirror"
         case .temporarilyUnreachable: return "Link paused"
         case .unknown: return "Mirror"
@@ -954,7 +956,7 @@ private struct RoutineRunnerSheet: View {
     private func nextPhase(snapshot: RoutineRunnerSnapshot) -> some View {
         if let next = snapshot.next {
             let nextColor = next.stage.kind == .rest ? SendmeterStyle.caution : SendmeterStyle.primary
-            let nextText = next.stage.kind == .rest ? Color(hex: "#1A1A1A") : Color.white
+            let nextText = next.stage.kind == .rest ? SendmeterStyle.onCaution : SendmeterStyle.onPrimary
             HStack(spacing: 8) {
                 Text("NEXT")
                     .font(.caption2.weight(.bold))
@@ -1257,7 +1259,7 @@ private extension RoutineRunnerVisualState {
     }
 
     var foregroundColor: Color {
-        self == .rest ? Color(hex: "#1A1A1A") : .white
+        self == .rest ? SendmeterStyle.onCaution : SendmeterStyle.onPrimary
     }
 
     /// DONE's light identity field can lift a dark material enough to make
@@ -1270,7 +1272,9 @@ private extension RoutineRunnerVisualState {
 
     var completionForegroundColor: Color {
         self == .done
-            ? Color(hex: RoutineRunnerContrastPalette.doneCompletionForegroundHex)
+            // #1028 B1: same #1A1A1A, now resolved from the shared palette
+            // (`RoutineRunnerContrastPalette` keeps the hex for its tests).
+            ? SendmeterStyle.onCaution
             : foregroundColor
     }
 

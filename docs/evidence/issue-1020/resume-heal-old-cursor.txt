@@ -1,0 +1,37 @@
+INFO  sessions: rows=121 decodedDate!=serverMicros for 0 rows
+PASS  sessions launch 1 (cursor nil): server-visible=121/121 changes=121
+PASS  sessions launch 2 (cursor composite): server-visible=1/121 changes=1
+PASS  sessions launch 3 (cursor composite): server-visible=0/121 changes=0
+INFO  recordings: rows=610 decodedDate!=serverMicros for 0 rows
+PASS  recordings launch 1 (cursor nil): server-visible=610/610 changes=610
+PASS  recordings launch 2 (cursor composite): server-visible=1/610 changes=1
+PASS  recordings launch 3 (cursor composite): server-visible=0/610 changes=0
+INFO  settings: rows=1 decodedDate!=serverMicros for 0 rows
+PASS  settings launch 1 (cursor nil): server-visible=1/1 changes=1
+PASS  settings launch 2 (cursor composite): server-visible=1/1 changes=1
+PASS  settings launch 3 (cursor composite): server-visible=0/1 changes=0
+INFO  phasePeriods: rows=4 decodedDate!=serverMicros for 0 rows
+PASS  phasePeriods launch 1 (cursor nil): server-visible=4/4 changes=4
+PASS  phasePeriods launch 2 (cursor composite): server-visible=1/4 changes=1
+PASS  phasePeriods launch 3 (cursor composite): server-visible=0/4 changes=0
+INFO  healthMetrics: rows=96 decodedDate!=serverMicros for 0 rows
+PASS  healthMetrics launch 1 (first-sync window, legacy cursor)
+PASS  healthMetrics launch 2 (cursor legacy): server-visible=1/96 changes=1
+PASS  healthMetrics launch 3 (cursor composite): server-visible=0/96 changes=0
+INFO  presets: rows=4 decodedDate!=serverMicros for 0 rows
+PASS  presets launch 1 (cursor nil): server-visible=4/4 changes=4
+PASS  presets launch 2 (cursor composite): server-visible=4/4 changes=4
+PASS  presets launch 3 (cursor composite): server-visible=0/4 changes=0
+INFO  routinePresets: rows=1 decodedDate!=serverMicros for 0 rows
+PASS  routinePresets launch 1 (cursor nil): server-visible=1/1 changes=1
+PASS  routinePresets launch 2 (cursor composite): server-visible=1/1 changes=1
+PASS  routinePresets launch 3 (cursor composite): server-visible=0/1 changes=0
+INFO  workoutsAndAttempts: rows=45 decodedDate!=serverMicros for 0 rows
+PASS  workoutsAndAttempts launch 1 (first-sync window, legacy cursor)
+PASS  workoutsAndAttempts launch 2 (cursor legacy): server-visible=1/45 changes=1
+PASS  workoutsAndAttempts launch 3 (cursor composite): server-visible=0/45 changes=0
+INFO  tagMetadata: rows=6 decodedDate!=serverMicros for 0 rows
+PASS  tagMetadata launch 1 (cursor nil): server-visible=6/6 changes=6
+PASS  tagMetadata launch 2 (cursor composite): server-visible=6/6 changes=6
+PASS  tagMetadata launch 3 (cursor composite): server-visible=0/6 changes=0
+RESUMED SIMULATION: every slice survives three launches

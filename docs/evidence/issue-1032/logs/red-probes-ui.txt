@@ -1,0 +1,4 @@
+probe=ui-dashboard red_exit=65 (GREEN: the unmutated all-tabs clearance run)
+probe=ui-workout red_exit=65 (GREEN: the unmutated all-tabs clearance run)
+probe=ui-history red_exit=65 (GREEN: the unmutated all-tabs clearance run)
+probe=ui-settings red_exit=65 (GREEN: the unmutated all-tabs clearance run)

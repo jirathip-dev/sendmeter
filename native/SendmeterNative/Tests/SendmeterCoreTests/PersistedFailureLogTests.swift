@@ -58,6 +58,124 @@ final class PersistedFailureLogTests: XCTestCase {
             "#964's device-grep vocabulary is kept: \(line.message)"
         )
         XCTAssertTrue(line.message.contains("surfaced=true"))
+        XCTAssertNil(line.detail, "a transport error has no schema detail")
+        XCTAssertTrue(line.message.hasSuffix("surfaced=true"), "no detail field without a detail")
+    }
+
+    // MARK: - #1020: the line names the decode path / delta case by itself
+
+    /// The real decode error a refresh slice raises when a row's
+    /// `updated_at` is unreadable: the line must carry the decode kind and
+    /// the codingPath KEYS (array index collapsed), never the value.
+    func testDecodeFailureLineCarriesTheCodingPathKeysAndNoValue() throws {
+        struct Row: Decodable {
+            let updatedAt: Date
+            enum CodingKeys: String, CodingKey { case updatedAt = "updated_at" }
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid ISO-8601 timestamp: \(value)"
+            )
+        }
+        let secretValue = "owner-private-value-1020"
+        let error: Error
+        do {
+            _ = try decoder.decode([Row].self, from: Data(#"[{"updated_at":"\#(secretValue)"}]"#.utf8))
+            return XCTFail("fixture: the row must not decode")
+        } catch let thrown {
+            error = thrown
+        }
+
+        let line = PersistedFailureLog.line(
+            channel: .launchFailure,
+            operation: "refresh-slice:presets",
+            error: error,
+            surfaced: true
+        )
+
+        XCTAssertEqual(line.detail, "decode=dataCorrupted path=*.updated_at")
+        XCTAssertEqual(line.classification, "dataUnreadable")
+        XCTAssertTrue(line.message.hasPrefix("launch failure step=refresh-slice:presets "))
+        XCTAssertTrue(line.message.hasSuffix(" surfaced=true decode=dataCorrupted path=*.updated_at"))
+        XCTAssertFalse(line.message.contains(secretValue), "a value never reaches the log")
+    }
+
+    func testMissingKeyLineNamesTheMissingKey() throws {
+        struct Row: Decodable {
+            let steps: [Step]
+            struct Step: Decodable { let kind: String }
+        }
+        let error: Error
+        do {
+            _ = try JSONDecoder().decode(Row.self, from: Data(#"{"steps":[{"kind":"hang"},{}]}"#.utf8))
+            return XCTFail("fixture: the second step must not decode")
+        } catch let thrown {
+            error = thrown
+        }
+
+        XCTAssertEqual(PersistedFailureLog.detail(for: error), "decode=keyNotFound path=steps.*.kind")
+    }
+
+    /// A dictionary-keyed payload puts USER content in the codingPath (a tag
+    /// name, a date string). Only plain identifiers may pass.
+    func testUserContentInACodingPathKeyIsRedacted() throws {
+        let error: Error
+        do {
+            _ = try JSONDecoder().decode(
+                [String: Int].self,
+                from: Data(#"{"Owner's crimp tag":"seven"}"#.utf8)
+            )
+            return XCTFail("fixture: the value must not decode")
+        } catch let thrown {
+            error = thrown
+        }
+
+        let detail = try XCTUnwrap(PersistedFailureLog.detail(for: error))
+        XCTAssertEqual(detail, "decode=typeMismatch path=?")
+        XCTAssertFalse(detail.contains("crimp"))
+    }
+
+    /// A dictionary key that IS a plain identifier is still user data (a tag
+    /// literally named `crimp`); it must not pass as a schema key.
+    func testAnIdentifierShapedDictionaryKeyIsStillRedacted() throws {
+        struct Row: Decodable {
+            let byTag: [String: Int]
+            enum CodingKeys: String, CodingKey { case byTag = "by_tag" }
+        }
+        let error: Error
+        do {
+            _ = try JSONDecoder().decode(Row.self, from: Data(#"{"by_tag":{"crimp":"seven"}}"#.utf8))
+            return XCTFail("fixture: the value must not decode")
+        } catch let thrown {
+            error = thrown
+        }
+
+        let detail = try XCTUnwrap(PersistedFailureLog.detail(for: error))
+        XCTAssertEqual(detail, "decode=typeMismatch path=by_tag.?")
+        XCTAssertFalse(detail.contains("crimp"))
+    }
+
+    func testDeltaReaderFailureLineNamesTheCase() {
+        XCTAssertEqual(
+            PersistedFailureLog.detail(for: DeltaReadError.cursorDidNotAdvance),
+            "delta=cursorDidNotAdvance"
+        )
+        XCTAssertEqual(PersistedFailureLog.detail(for: DeltaReadError.outOfOrderPage), "delta=outOfOrderPage")
+        XCTAssertEqual(
+            PersistedFailureLog.detail(for: DeltaReadError.pageBudgetExhausted(pageLimit: 3)),
+            "delta=pageBudgetExhausted"
+        )
+        let line = PersistedFailureLog.line(
+            channel: .launchFailure,
+            operation: "refresh-slice:tagMetadata",
+            error: DeltaReadError.outOfOrderPage,
+            surfaced: false
+        )
+        XCTAssertTrue(line.message.hasSuffix(" surfaced=false delta=outOfOrderPage"), line.message)
     }
 
     func testEmissionRunsForBothChannelsAndLevels() {

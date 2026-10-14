@@ -179,6 +179,12 @@ final class ErrorBannerAccessibilityTests: XCTestCase {
             app.contains("model.errorMessage = nil"),
             "dismiss must clear only the banner message"
         )
+        // #927 follow-up: RootView hosts the banner through the measured
+        // host the large-title layout tests mount.
+        XCTAssertTrue(
+            app.contains("ErrorBannerHost(structuralHapticMode: structuralHapticMode) {"),
+            "RootView must host every screen in the measured banner host"
+        )
 
         let design = Self.code(Self.source("Sources/App/DesignSystem.swift"))
         let banner = Self.exactBlock(

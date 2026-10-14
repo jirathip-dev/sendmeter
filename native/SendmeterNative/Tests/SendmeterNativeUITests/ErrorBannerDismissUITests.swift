@@ -5,8 +5,9 @@ import XCTest
 /// this UI test drives the REAL banner end to end on a simulator:
 ///
 /// - launches the app with the DEBUG `--error-banner-fixture short|long`
-///   harness (the same `ErrorBanner` the app presents, over the signed-out
-///   screen),
+///   harness (the REAL banner, raised through `model.errorMessage` and drawn
+///   by RootView's own host over the signed-out screen, or over the real
+///   Dashboard with `--tabs-fixture dashboard`),
 /// - finds the dismiss control by its `error-banner-dismiss` accessibility
 ///   identifier and checks what the assistive layer sees (label, target size,
 ///   hittability),
@@ -26,6 +27,40 @@ final class ErrorBannerDismissUITests: XCTestCase {
 
     func testTappingDismissRemovesLongErrorBanner() {
         assertDismissRemovesBanner(fixture: .long, expectWrappedMessage: true)
+    }
+
+    /// #927 follow-up (build-57 device report): the real banner over the real
+    /// Dashboard. The large title must be laid out BELOW the banner — never
+    /// over its message or dismiss control — and the dismiss control must
+    /// still be the hittable element at its own centre.
+    func testDashboardLargeTitleStaysBelowTheBanner() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--error-banner-fixture", "unreadable", "--tabs-fixture", "dashboard"]
+        app.launch()
+        defer { app.terminate() }
+
+        let dismiss = app.buttons["error-banner-dismiss"]
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 30), "the banner's dismiss control did not appear")
+        let message = app.staticTexts["error-banner-message"]
+        XCTAssertTrue(message.exists, "the banner message must be on screen")
+        let title = app.navigationBars["Dashboard"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10), "the Dashboard did not render under the banner")
+
+        let bannerBottom = max(message.frame.maxY, dismiss.frame.maxY)
+        XCTAssertGreaterThanOrEqual(
+            title.frame.minY,
+            bannerBottom,
+            "the Dashboard navigation bar (\(title.frame)) must start below the banner (bottom \(bannerBottom))"
+        )
+        XCTAssertTrue(dismiss.isHittable, "no layer may sit over the dismiss control")
+
+        dismiss.tap()
+        XCTAssertTrue(dismiss.waitForNonExistence(timeout: 10), "tapping dismiss must remove the banner")
+        XCTAssertLessThan(
+            title.frame.minY,
+            bannerBottom,
+            "with the banner gone the Dashboard reclaims the space"
+        )
     }
 
     private func assertDismissRemovesBanner(

@@ -1114,10 +1114,10 @@ private struct GuidedForceProtocolView: View {
                 color: handsFreeStatus.color
             )
             Spacer(minLength: 4)
-            Text("\(session.savedCount) queued")
+            Text("\(session.savedCount) saved")
                 .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.secondary)
-                .accessibilityLabel("\(session.savedCount) pulls durably queued")
+                .accessibilityLabel("\(session.savedCount) pulls saved")
         }
     }
 
@@ -1363,6 +1363,9 @@ struct ForceView: View {
     @State private var creatingPreset = false
     @State private var guidedSession: GuidedForceProtocolSession?
     @State private var guidedFullscreenPresented = false
+    /// #1028 D2: the bar's protocol name opens the recording-context list.
+    @State private var protocolListRequested = false
+    @State private var forceScrollProxy: ScrollViewProxy?
     @State private var guidedMinimizeRequested = false
     /// #1004: the launch attempt's own identity owns the in-flight flag — a
     /// resolution that never settles can no longer leave Start locked.
@@ -1540,27 +1543,6 @@ struct ForceView: View {
         }
     }
 
-    private var forceDeviceEmptyActionTitle: String {
-        switch model.tindeq.status {
-        case .connected:
-            if model.handsFree.isArmed {
-                return "Cancel hands-free arm"
-            }
-            // #899: nothing armed — the only free-pull start is the
-            // hands-free arm (the toggle is adopted by the action).
-            if selectedPreset == nil {
-                return "Arm Hands-free"
-            }
-            return "Start guided pull"
-        case .measuring: return "Stop & save"
-        case .unavailable: return "Open Bluetooth Settings"
-        case .scanning, .connecting: return "Cancel connection"
-        case .interrupted: return "Reconnect Progressor"
-        case .idle:
-            return model.recordings.isEmpty ? "Connect Progressor" : "Reconnect Progressor"
-        }
-    }
-
     private var forceConnectionPending: Bool {
         switch model.tindeq.status {
         case .scanning, .connecting: return true
@@ -1610,7 +1592,7 @@ struct ForceView: View {
         case .scanning, .connecting:
             // Keep the action contract honest for any future consumer even
             // though the current cards render a progress indicator instead.
-            model.tindeq.disconnect()
+            model.requestDisconnect()
         }
     }
 
@@ -1844,12 +1826,144 @@ struct ForceView: View {
             targetBand: selectedTargetReferenceBand,
             zoneTarget: armedZoneTarget,
             intensityPercent: intensityBinding,
-            deviceConnected: model.tindeq.status == .connected,
-            deviceStatusText: forceDeviceStatusText,
+            // #1028 F1/F3: no device row on this card (the bottom bar owns
+            // device status); the card only states what it may honestly
+            // claim about the link.
+            readiness: forceContextReadiness,
+            showProtocolList: $protocolListRequested,
             movementSummary: movementContextSummary,
             onOpenPicker: { movementPickerPresented = true }
         )
         .disabled(recordingContextLocked)
+        .id(Self.recordingContextAnchor)
+    }
+
+    static let recordingContextAnchor = "force-recording-context"
+
+    // MARK: #1028 sticky bottom bar (spec D + amendment F)
+
+    /// #1028 P11: AppModel owns the mapping, so a user Disconnect reads as
+    /// "Disconnected" and only a dropped link as "Connection lost".
+    private var forceBarDevice: ForceBarDevice { model.forceBarDevice }
+
+    private var forceBarMode: Binding<ForceBarMode> {
+        Binding(
+            get: { handsFreeEnabled ? .handsFree : .guided },
+            set: { handsFreeEnabled = $0 == .handsFree }
+        )
+    }
+
+    private var forceRecoveryControls: ForceRecoveryControls {
+        ForceRecoveryActionPolicy.controls(
+            state: ForceRecoveryControlsState(
+                hasUnsavedRecording: model.tindeq.hasUnsavedRecording,
+                saving: savingSummary,
+                sessionActive: guidedControlsLocked,
+                saveFailed: recoverySaveFailed
+            )
+        )
+    }
+
+    private var forceBarState: ForceBarState {
+        ForceBarPolicy.state(
+            ForceBarInput(
+                device: forceBarDevice,
+                mode: handsFreeEnabled ? .handsFree : .guided,
+                armedProtocolName: selectedPreset?.name,
+                handsFreeArmed: model.handsFree.isArmed,
+                handsFreeMeasuring: model.handsFree.isMeasuring,
+                hasHeldPull: model.tindeq.status != .measuring
+                    && model.tindeq.hasUnsavedRecording
+                    && forceRecoveryControls.showsRecoveryCard,
+                guidedSessionActive: guidedSession.map { !$0.isEnded } ?? false,
+                saving: savingSummary,
+                hasRecordings: !model.recordings.isEmpty
+            )
+        )
+    }
+
+    /// #1028 F3: what the recording-context card may claim.
+    private var forceContextReadiness: ForceContextReadiness {
+        ForceContextReadiness(
+            device: forceBarDevice,
+            mode: handsFreeEnabled ? .handsFree : .guided,
+            handsFreeArmed: model.handsFree.isArmed,
+            connectWord: model.recordings.isEmpty && forceBarDevice != .interrupted ? "Connect" : "Reconnect"
+        )
+    }
+
+    /// #1028 P9: the device class is the SCREEN height (667 pt on an SE,
+    /// 874 pt on a 17 Pro), read from the window scene. A measured view
+    /// height is not: it excludes the title, bars and insets, and its first
+    /// layout pass can be transient, so a 17 Pro read as compact.
+    private static var deviceScreenHeight: Double {
+        let scene = UIApplication.shared.connectedScenes.first { $0 is UIWindowScene } as? UIWindowScene
+        return Double(scene?.screen.bounds.height ?? 0)
+    }
+
+    /// #1028 P9: collapse the large title while recording on a compact
+    /// height (iPhone SE), so the live trace stays above the bar.
+    private var collapsesLargeTitle: Bool {
+        ForceTitlePolicy.collapsesLargeTitle(
+            screenHeight: Self.deviceScreenHeight,
+            recording: model.tindeq.status == .measuring || model.handsFree.isMeasuring
+        )
+    }
+
+    /// F4: the bar's live line while a pull records — "29.8 kg · Hold 30.3 s".
+    private var forceBarLiveLine: String? {
+        guard model.tindeq.status == .measuring || model.handsFree.isMeasuring else { return nil }
+        let kg = model.tindeq.currentKilograms.formatted(.number.precision(.fractionLength(1)))
+        return "\(kg) kg · " + ForceReadoutFormat.hold(milliseconds: model.tindeq.elapsedMilliseconds)
+    }
+
+    private func performForceBarAction(_ action: ForceBarAction) {
+        switch action {
+        case .connect, .reconnect:
+            model.requestConnect()
+        case .openBluetoothSettings:
+            openBluetoothSettings()
+        case .cancelConnecting:
+            model.requestDisconnect()
+        case .chooseProtocol:
+            openProtocolList()
+        case .startGuided:
+            startPrimaryForceAction()
+        case .resumeGuided:
+            guidedMinimizeRequested = false
+            guidedFullscreenPresented = true
+        case .armHandsFree:
+            armHandsFree()
+        case .disarmHandsFree:
+            Haptics.shared.playGesture(.medium)
+            cancelHandsFreeArm()
+        case .stopAndSave:
+            stopAndSave()
+        case .saveHeldPull:
+            if model.tindeq.interruptedRecording != nil {
+                saveRecovered()
+            } else {
+                saveCompleted()
+            }
+        }
+    }
+
+    private func openProtocolList() {
+        guard !recordingContextLocked else { return }
+        protocolListRequested = true
+        withAnimation(.easeOut(duration: 0.25)) {
+            forceScrollProxy?.scrollTo(Self.recordingContextAnchor, anchor: .top)
+        }
+    }
+
+    private var forceBottomBar: some View {
+        ForceBottomBar(
+            state: forceBarState,
+            mode: forceBarMode,
+            liveLine: forceBarLiveLine,
+            onSubject: openProtocolList,
+            onAction: { performForceBarAction(forceBarState.action) }
+        )
     }
 
     /// #750: lock the whole recording context for the same run window the web
@@ -1878,22 +1992,16 @@ struct ForceView: View {
         return exercise + " · Side " + side.label
     }
 
-    /// The recording-context card's device-row status text.
-    private var forceDeviceStatusText: String {
-        switch model.tindeq.status {
-        case .connected: return "Connected"
-        case .measuring: return "Measuring"
-        case .scanning, .connecting: return "Connecting…"
-        case .unavailable: return "Bluetooth off"
-        case .interrupted: return "Reconnect"
-        case .idle: return "Disconnected"
-        }
-    }
-
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 16) {
+                // #1032: a plain VStack. Under the sticky bar's bottom
+                // safe-area inset (#1031) a LazyVStack can re-measure forever
+                // at the end of the scroll for some content heights (a 99%
+                // CPU main-thread hang on SE; sampled in issue-1032 logs).
+                // The tab holds about ten cards, so lazy loading saves nothing.
+                VStack(spacing: 16) {
                     if let guidedSession, !guidedSession.isEnded {
                         GuidedForceResumeCard(session: guidedSession) {
                             Haptics.shared.tap()
@@ -1933,46 +2041,24 @@ struct ForceView: View {
                     // the stack; the Progressor operate card follows it.
                     recordingContextCard
 
+                    // #1028 F1/F2: the Progressor card is compact — no status
+                    // line, pill, reconnect panel or Hands-free toggle (the
+                    // bottom bar owns status, Connect/Reconnect and the mode).
                     ForceDeviceCard(
                         device: model.tindeq,
-                        handsFreeEnabled: $handsFreeEnabled,
                         handsFreeArmed: model.handsFree.isArmed,
                         handsFreeMeasuring: model.handsFree.isMeasuring,
-                        protocolArmed: selectedPreset != nil,
                         guidedSessionActive: guidedControlsLocked,
                         guidedLockOrphaned: guidedLockOrphaned,
-                        recoveryControls: ForceRecoveryActionPolicy.controls(
-                            state: ForceRecoveryControlsState(
-                                hasUnsavedRecording: model.tindeq.hasUnsavedRecording,
-                                saving: savingSummary,
-                                sessionActive: guidedControlsLocked,
-                                saveFailed: recoverySaveFailed
-                            )
-                        ),
+                        recoveryControls: forceRecoveryControls,
                         targetBand: selectedTargetReferenceBand,
                         resolvingTarget: resolvingTargets,
                         savingSummary: savingSummary,
                         gaugeSessionCount: gaugeSessionCount,
                         hasLoadedRecordings: forceModel.hasLoadedRecordings,
                         hasForceRecordings: !model.recordings.isEmpty,
-                        emptyActionTitle: forceDeviceEmptyActionTitle,
-                        emptyAction: performForceEmptyAction,
-                        // #653/#710/#899: an armed suggested protocol (Focus-
-                        // Next zone or maintenance) OR a selected saved preset
-                        // makes the main Start button launch that guided
-                        // protocol — the native equivalent of the web's
-                        // Start-with-an-armed-protocol opening the guided
-                        // timer. #899 removed the nothing-armed free-pull
-                        // start: with nothing armed the card routes to the
-                        // hands-free arm instead. `launch` correctly keeps
-                        // the recording-context selection in sync for a user
-                        // preset and clears a suggested arm for a saved one.
-                        start: startPrimaryForceAction,
                         refuseAction: { message in refuseAction(message) },
-                        connect: { model.requestConnect() },
-                        armHandsFree: armHandsFree,
-                        stopAndSave: stopAndSave,
-                        cancelArm: cancelHandsFreeArm,
+                        disconnect: { model.requestDisconnect() },
                         finishSession: {
                             guard !guidedControlsLocked else { return }
                             Task { await model.endGaugeSession() }
@@ -2077,13 +2163,40 @@ struct ForceView: View {
                     RecentForceCard(recordings: Array(model.recordings.prefix(8)))
                 }
                 .padding()
-                .padding(.bottom, 80)
             }
+            .onAppear {
+                forceScrollProxy = proxy
+            }
+            }
+            // #1028 D1/F5: the sticky bar sits in the bottom safe-area inset,
+            // so the scroll content ends above it; its opaque canvas backing
+            // runs down under the tab bar, so nothing scrolls under either.
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                Color.clear.frame(height: 72)
+                forceBottomBar
+                    .background(alignment: .top) {
+                        SendmeterStyle.canvas
+                            .ignoresSafeArea(edges: .bottom)
+                    }
+                    // A short canvas fade above the backing, so content
+                    // passing behind the bar dissolves instead of slicing.
+                    .overlay(alignment: .top) {
+                        LinearGradient(
+                            colors: [SendmeterStyle.canvas.opacity(0), SendmeterStyle.canvas],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 14)
+                        .offset(y: -14)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                    }
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            // #1028 B1: the shared palette canvas (phone = Watch).
+            .background(SendmeterStyle.canvas)
             .navigationTitle("Force")
+            // #1028 P9: on a compact-height phone the large title collapses
+            // while a pull records, so the live trace stays above the bar.
+            .navigationBarTitleDisplayMode(collapsesLargeTitle ? .inline : .large)
             .refreshable { await model.refreshAll(showSpinner: false) }
             .task(id: targetResolutionKey) {
                 await resolveSelectedTarget()
@@ -2101,6 +2214,9 @@ struct ForceView: View {
                 if let guidedSession {
                     registerGuidedTeardown(for: guidedSession)
                 }
+                // #1021: entering Force reconnects the last Progressor (never
+                // after a user Disconnect, never mid-session).
+                model.autoReconnectProgressor(.enteredForce)
             }
             // #628: the hands-free save path snapshots the recording context
             // (tag/side/zone/preset/target) at arm time.
@@ -2842,7 +2958,7 @@ private struct GuidedForceResumeCard: View {
                     Text("\(session.preset.name) · \(session.run.currentStage.label)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text("\(session.savedCount) pull\(session.savedCount == 1 ? "" : "s") durably queued")
+                    Text("\(session.savedCount) pull\(session.savedCount == 1 ? "" : "s") saved")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -2867,12 +2983,12 @@ private struct GuidedForceResumeCard: View {
 private struct ForceDeviceCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let device: TindeqBluetooth
-    @Binding var handsFreeEnabled: Bool
     /// #628: the hands-free loop's state, mirrored from AppModel (the loop
     /// re-renders through the device's observed sample/status changes).
+    /// #1028 F2: the Hands-free toggle left this card for the bar's mode
+    /// switch; the card only reflects the loop.
     let handsFreeArmed: Bool
     let handsFreeMeasuring: Bool
-    let protocolArmed: Bool
     let guidedSessionActive: Bool
     /// #1004 (session-lock): true when that session has already ENDED — the
     /// lock has no live owner, so the row names the release instead of a
@@ -2887,14 +3003,13 @@ private struct ForceDeviceCard: View {
     let gaugeSessionCount: Int
     let hasLoadedRecordings: Bool
     let hasForceRecordings: Bool
-    let emptyActionTitle: String
-    let emptyAction: () -> Void
-    let start: () -> Void
+    /// #1028 F1: Connect / Start / Arm / Stop & save live only in the bottom
+    /// bar; the card keeps device tools (Tare, Battery, Disconnect) and the
+    /// #1004 recovery controls.
     let refuseAction: (String) -> Void
-    let connect: () -> Void
-    let armHandsFree: () -> Void
-    let stopAndSave: () -> Void
-    let cancelArm: () -> Void
+    /// #1021: routes through `AppModel.requestDisconnect()`, so the
+    /// auto-reconnect never fights the user's own Disconnect.
+    let disconnect: () -> Void
     let finishSession: () -> Void
     let saveCompleted: () -> Void
     let saveRecovered: () -> Void
@@ -2954,6 +3069,8 @@ private struct ForceDeviceCard: View {
         showsDisconnectedEmptyState || showsForceDataEmptyState
     }
 
+    /// #1028 F1: the empty state points at the bar — it never carries a
+    /// second Connect/Reconnect of its own.
     private var primaryEmptyMessage: String {
         switch device.status {
         case .unavailable:
@@ -2961,40 +3078,35 @@ private struct ForceDeviceCard: View {
                 ? "Your saved force history is safe. Turn Bluetooth back on in iOS Settings to reconnect."
                 : "Turn Bluetooth back on in iOS Settings to connect your Progressor."
         case .idle where hasForceRecordings:
-            return "Reconnect your Progressor to continue recording and extend your force history."
+            return "Reconnect from the bar below to keep extending your force history."
         case .interrupted where hasForceRecordings:
-            return "Your saved force history is safe. Reconnect your Progressor to continue recording."
+            return "Your saved force history is safe. Reconnect from the bar below."
         case .interrupted:
-            return "Reconnect your Progressor to turn a pull into a force curve."
+            return "Reconnect from the bar below to turn a pull into a force curve."
         case .connected:
-            return "Record with Hands-free, or run a guided protocol above, to turn your first pull into a force curve."
+            return "Choose Guided or Hands-free in the bar below to record your first pull."
         default:
-            return "Connect your Progressor to turn a pull into a force curve."
+            return "Connect from the bar below to turn a pull into a force curve."
         }
     }
 
     var body: some View {
         SurfaceCard {
-            VStack(spacing: 16) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 5) {
-                        SectionLabel("Progressor", systemImage: "dot.radiowaves.left.and.right")
-                        Text(statusLabel)
-                            .font(.headline)
-                    }
-                    Spacer()
-                    StatusPill(statusPill.text, color: statusPill.color)
-                }
+            VStack(spacing: 14) {
+                // #1028 F1: no status line / pill here — the bottom bar is
+                // the only device-status surface.
+                SectionLabel("Progressor", systemImage: "dot.radiowaves.left.and.right")
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 if showsPrimaryEmptyState {
+                    // #1028 D3/F1: compact — the mascot stays (C3), the big
+                    // reconnect panel and its button do not.
                     ProductEmptyState(
                         title: hasForceRecordings
                             ? "Reconnect to your force progress"
                             : "Your first pull starts here",
                         message: primaryEmptyMessage,
-                        actionTitle: emptyActionTitle,
-                        artwork: .forceMascot,
-                        action: emptyAction
+                        inlineArtwork: .forceMascot
                     )
                 } else if device.status == .measuring || device.handsFreeArmed || !device.visibleSampleRange.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
@@ -3014,7 +3126,9 @@ private struct ForceDeviceCard: View {
                                     "Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
                                 )
                             Text("Average \(device.averageKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
-                            Text((device.elapsedMilliseconds / 1_000).formatted(.number.precision(.fractionLength(1))) + " s")
+                            // #1028 F4: the time is labelled.
+                            Text(ForceReadoutFormat.hold(milliseconds: device.elapsedMilliseconds))
+                                .accessibilityIdentifier("force-live-hold")
                         }
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
@@ -3023,7 +3137,8 @@ private struct ForceDeviceCard: View {
                         buffer: device.sampleBuffer,
                         range: device.visibleSampleRange,
                         targetRange: targetRange,
-                        target: targetBand?.kilograms
+                        target: targetBand?.kilograms,
+                        showsKilogramScale: true
                     )
                     .frame(height: 190)
                     .accessibilityElement(children: .ignore)
@@ -3033,18 +3148,26 @@ private struct ForceDeviceCard: View {
                         )
                     )
                 } else {
-                    VStack(spacing: 12) {
+                    // #1028 D3: compact ready state (was a 170 pt panel).
+                    HStack(spacing: 12) {
                         Image(systemName: "waveform.path.ecg")
-                            .font(.system(size: 46, weight: .semibold))
+                            .font(.system(size: 26, weight: .semibold))
                             .foregroundStyle(SendmeterStyle.primary)
-                        Text("Ready to measure")
-                            .font(.title3.bold())
-                        Text("Connect a Tindeq Progressor, tare it, then arm Hands-free or start a guided protocol.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
+                            .frame(width: 44, height: 44)
+                            .background(SendmeterStyle.primary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Ready to measure")
+                                .font(.headline)
+                            Text("Tare before your first pull. The live trace appears here.")
+                                .font(.subheadline)
+                                .foregroundStyle(SendmeterStyle.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 170)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
                 }
 
                 if resolvingTarget {
@@ -3119,7 +3242,7 @@ private struct ForceDeviceCard: View {
                     .background(SendmeterStyle.caution.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 } else if device.completedSummary != nil, device.status != .measuring, recoveryControls.showsRecoveryCard {
                     VStack(alignment: .leading, spacing: 10) {
-                        Label("Completed pull is ready for a durable save", systemImage: "checkmark.circle")
+                        Label("Pull finished — save it to keep it", systemImage: "checkmark.circle")
                             .font(.subheadline.weight(.semibold))
                         HStack {
                             Button("Save Completed Pull", action: saveCompleted)
@@ -3159,116 +3282,22 @@ private struct ForceDeviceCard: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This pull has not been placed in the durable on-device queue and cannot be recovered after it is discarded.")
+            Text("This pull hasn't been saved yet. Once discarded, it can't be recovered.")
         }
     }
 
+    /// #1028 F1/F2: device tools only. Connect, Start, Arm, Disarm and
+    /// Stop & save are the bottom bar's single big action; the Hands-free
+    /// toggle became the bar's Guided | Hands-free switch.
     @ViewBuilder
     private var controls: some View {
-        if showsPrimaryEmptyState, device.status != .connected {
-            EmptyView()
-        } else {
-            switch device.status {
-        case .unavailable:
-            Label("Bluetooth is not available for this app.", systemImage: "bluetooth.slash")
-                .foregroundStyle(.secondary)
-        case .idle, .interrupted:
-            if showsDisconnectedEmptyState {
-                EmptyView()
-            } else {
-                Button {
-                    // #656 (review F1): user-initiated — arms the transport's
-                    // success/error haptics for this launch.
-                    connect()
-                } label: {
-                    Label("Connect Progressor", systemImage: "antenna.radiowaves.left.and.right")
-                }
-                .hapticButtonStyle(PrimaryActionButtonStyle())
-            }
-        case .scanning, .connecting:
-            HStack {
-                ProgressView()
-                Text(device.status == .scanning ? "Searching for Progressor…" : "Connecting…")
-                Spacer()
-                Button("Cancel") { device.disconnect() }
-            }
+        switch device.status {
         case .connected:
             VStack(spacing: 10) {
-                if handsFreeMeasuring {
-                    VStack(spacing: 8) {
-                        Label(
-                            "Measuring — release to save",
-                            systemImage: "record.circle.fill"
-                        )
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(SendmeterStyle.primary)
-                        Button(action: stopAndSave) {
-                            Label("Stop & Save", systemImage: "stop.fill")
-                        }
-                        .hapticButtonStyle(PrimaryActionButtonStyle())
-                    }
-                } else if handsFreeArmed, protocolArmed {
-                    VStack(spacing: 8) {
-                        if !showsPrimaryEmptyState {
-                            Button(action: start) {
-                                Label("Start Guided Protocol", systemImage: "play.fill")
-                            }
-                            .hapticButtonStyle(PrimaryActionButtonStyle())
-                        }
-                        Button("Cancel hands-free arm", role: .destructive, action: cancelArm)
-                            .hapticButtonStyle(.bordered)
-                    }
-                } else if handsFreeArmed {
-                    VStack(spacing: 8) {
-                        Label("Armed — pull to measure", systemImage: "scope")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(SendmeterStyle.primary)
-                        Button("Cancel", role: .destructive) {
-                            // #656 (review F14): disarming hands-free is a
-                            // destructive action — medium tick.
-                            Haptics.shared.playGesture(.medium)
-                            cancelArm()
-                        }
-                        .hapticButtonStyle(.bordered)
-                    }
-                } else if handsFreeEnabled, !protocolArmed {
-                    if showsPrimaryEmptyState {
-                        Label(
-                            "Hands-free is ready — use the action above to arm it",
-                            systemImage: "scope"
-                        )
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    } else {
-                        Button(action: armHandsFree) {
-                            Label("Arm Hands-free", systemImage: "scope")
-                        }
-                        .hapticButtonStyle(PrimaryActionButtonStyle())
-                        .disabled(device.hasUnsavedRecording)
-                    }
-                } else if protocolArmed {
-                    Button(action: start) {
-                        Label("Start Guided Protocol", systemImage: "play.fill")
-                    }
-                    .hapticButtonStyle(PrimaryActionButtonStyle())
-                    .disabled(device.hasUnsavedRecording)
-                } else if !showsPrimaryEmptyState {
-                    // #899: no direct-measure "Start Pull" remains — with
-                    // nothing armed the honest route is arming a guided
-                    // protocol above or turning on Hands-free below.
-                    Label(
-                        "Pick a guided protocol above, or turn on Hands-free to record a pull",
-                        systemImage: "scope"
-                    )
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-                }
                 if device.hasUnsavedRecording {
                     Text(UserFacingError.message(for: .previousRecordingUnfinished))
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(SendmeterStyle.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 HStack {
@@ -3280,6 +3309,8 @@ private struct ForceDeviceCard: View {
                         }
                     } label: {
                         Label("Tare", systemImage: "scalemass")
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                     .hapticButtonStyle(.bordered)
                     Button {
@@ -3290,57 +3321,22 @@ private struct ForceDeviceCard: View {
                         }
                     } label: {
                         Label("Battery", systemImage: "battery.100percent")
+                            // #1028: on an SE the row is ~20 pt short and the
+                            // squeezed pill hyphenated to "Bat-tery".
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                     .hapticButtonStyle(.bordered)
-                    Spacer()
-                    Button("Disconnect", role: .destructive) { device.disconnect() }
+                    Spacer(minLength: 4)
+                    Button("Disconnect", role: .destructive, action: disconnect)
                         .hapticButtonStyle(.borderless)
-                }
-
-                Toggle(isOn: $handsFreeEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Hands-free")
-                            .font(.subheadline.weight(.medium))
-                        Text("Measurement starts when you pull and saves when you release.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
-            }
-        case .measuring:
-            Button(action: stopAndSave) {
-                HStack {
-                    if savingSummary { ProgressView().tint(.white) }
-                    Label("Stop & Save", systemImage: "stop.fill")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .disabled(handsFreeArmed || handsFreeMeasuring)
                 }
             }
-            .hapticButtonStyle(PrimaryActionButtonStyle())
-            .disabled(savingSummary)
-            }
-        }
-    }
-
-    private var statusLabel: String {
-        switch device.status {
-        case .unavailable: return "Unavailable"
-        case .idle: return "Not connected"
-        case .scanning: return "Searching"
-        case .connecting: return "Connecting"
-        case .connected: return "Connected"
-        case .measuring: return "Measuring"
-        case let .interrupted(message): return message
-        }
-    }
-
-    private var statusPill: (text: String, color: Color) {
-        switch device.status {
-        case .connected: return ("Ready", SendmeterStyle.optimal)
-        case .measuring: return ("Live", SendmeterStyle.primary)
-        case .scanning, .connecting: return ("Working", SendmeterStyle.caution)
-        case .interrupted: return ("Interrupted", SendmeterStyle.alert)
-        case .unavailable: return ("Unavailable", SendmeterStyle.alert)
-        case .idle: return ("Offline", .secondary)
+        default:
+            EmptyView()
         }
     }
 
@@ -3363,6 +3359,8 @@ struct ForceTraceChart: View {
     private let source: SampleSource
     let targetRange: ClosedRange<Double>?
     let target: Double?
+    /// #1028 F4: a light kg scale (labels in a right gutter, hairline guides).
+    var showsKilogramScale = false
     @Environment(\.colorScheme) private var scheme
     /// #900: rep-boundary hysteresis — the held peak lives here so a rep
     /// boundary that empties the visible window cannot collapse the scale
@@ -3383,12 +3381,17 @@ struct ForceTraceChart: View {
         buffer: ForceSampleBuffer,
         range: Range<Int>,
         targetRange: ClosedRange<Double>?,
-        target: Double?
+        target: Double?,
+        showsKilogramScale: Bool = false
     ) {
         self.source = .buffer(buffer, range)
         self.targetRange = targetRange
         self.target = target
+        self.showsKilogramScale = showsKilogramScale
     }
+
+    /// #1028 F4: the label gutter's width (the plot never runs under labels).
+    private static let scaleGutter: CGFloat = 40
 
     private var sampleRange: Range<Int> {
         switch source {
@@ -3409,7 +3412,12 @@ struct ForceTraceChart: View {
     }
 
     var body: some View {
-        Canvas { context, size in
+        Canvas { context, canvasSize in
+            let showsScale = showsKilogramScale
+            let size = CGSize(
+                width: max(1, canvasSize.width - (showsScale ? Self.scaleGutter : 0)),
+                height: canvasSize.height
+            )
             let sampleRange = self.sampleRange
             let maxValue = ForceChartYDomain.maxValue(
                 bandUpperBoundKilograms: targetRange?.upperBound,
@@ -3430,12 +3438,31 @@ struct ForceTraceChart: View {
                 CGFloat((milliseconds - firstTime) / (lastTime - firstTime)) * size.width
             }
 
-            for index in 1..<4 {
-                var grid = Path()
-                let lineY = size.height * CGFloat(index) / 4
-                grid.move(to: CGPoint(x: 0, y: lineY))
-                grid.addLine(to: CGPoint(x: size.width, y: lineY))
-                context.stroke(grid, with: .color(gridColor), lineWidth: 1)
+            if showsScale {
+                // #1028 F4: quiet scale — hairlines at the labelled ticks only.
+                let ticks = ForceTraceScale.ticks(maxValue: maxValue)
+                for (offset, tick) in ticks.enumerated() {
+                    let lineY = y(tick)
+                    var grid = Path()
+                    grid.move(to: CGPoint(x: 0, y: lineY))
+                    grid.addLine(to: CGPoint(x: size.width, y: lineY))
+                    context.stroke(grid, with: .color(gridColor), lineWidth: 0.5)
+                    context.draw(
+                        Text(ForceTraceScale.label(tick, isTop: offset == ticks.count - 1))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundColor(SendmeterStyle.textTertiary),
+                        at: CGPoint(x: canvasSize.width - 6, y: lineY),
+                        anchor: .trailing
+                    )
+                }
+            } else {
+                for index in 1..<4 {
+                    var grid = Path()
+                    let lineY = size.height * CGFloat(index) / 4
+                    grid.move(to: CGPoint(x: 0, y: lineY))
+                    grid.addLine(to: CGPoint(x: size.width, y: lineY))
+                    context.stroke(grid, with: .color(gridColor), lineWidth: 1)
+                }
             }
 
             if let targetRange {
@@ -3556,7 +3583,7 @@ private struct WatchForceMirrorCard: View {
                             )
                         )
                 }
-                Text("Direct WatchConnectivity · updated \(force.updatedAt, style: .relative) ago")
+                Text("From your Apple Watch · updated \(force.updatedAt, style: .relative) ago")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -3645,7 +3672,7 @@ private struct RecentForceCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 SectionLabel("Recent recordings", systemImage: "clock")
                 if recordings.isEmpty {
-                    Text("Completed pulls will appear here after their durable local save is queued.")
+                    Text("Saved pulls appear here.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {

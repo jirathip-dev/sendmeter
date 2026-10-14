@@ -1,0 +1,2 @@
+green_exit=0
+probe=ui-clearance red_exit=65 (GREEN: the unmutated suite run)

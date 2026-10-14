@@ -1,0 +1,16 @@
+applied M1-upload-keeps-item: native/SendmeterNative/Sources/App/AppModel.swift
+reverted M1-upload-keeps-item; Sources diff empty
+sources-clean-after-M1-upload-keeps-item=0
+applied M2-queue-never-persists: native/SendmeterNative/Sources/Core/OfflineQueue.swift
+reverted M2-queue-never-persists; Sources diff empty
+sources-clean-after-M2-queue-never-persists=0
+applied M3-force-save-no-enqueue: native/SendmeterNative/Sources/App/AppModel.swift
+reverted M3-force-save-no-enqueue; Sources diff empty
+sources-clean-after-M3-force-save-no-enqueue=0
+applied M4-merge-keeps-groups: native/SendmeterNative/Sources/App/AppModel.swift
+reverted M4-merge-keeps-groups; Sources diff empty
+sources-clean-after-M4-merge-keeps-groups=0
+applied M5-settings-half-skipped: native/SendmeterNative/Sources/App/AppModel.swift
+reverted M5-settings-half-skipped; Sources diff empty
+sources-clean-after-M5-settings-half-skipped=0
+LEG-MUT-DONE

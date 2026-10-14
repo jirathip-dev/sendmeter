@@ -376,6 +376,17 @@ final class AccountSwitchInFlightAppTests: XCTestCase {
 
         secondInsert.release(status: 201, body: presetRowJSON(name: presetB.name))
         try await waitForQuietLog(server)
+        // #1015 (channel (b) — a wall-clock race, not account coupling: both
+        // accounts are fresh per harness). `waitForQuietLog` proves only that
+        // the TRANSPORT went idle; the asserted count is published later, after
+        // `upload` handles the response, the queue actor removes and persists
+        // the item, and `refreshQueueCount` republishes. On a contended runner
+        // that tail outlived the 0.4 s quiet window (CI job 111464153739:
+        // `("1") is not equal to ("0")`). Wait on the asserted subject itself,
+        // deadline-bound; the assertion is unchanged.
+        try await waitUntil("B's own upload to complete and its count to republish") {
+            model.queuedWriteCount == 0
+        }
         XCTAssertEqual(model.queuedWriteCount, 0, "B's own upload completes normally")
         XCTAssertEqual(queueCount(for: accountA), 1, "A's intent stays owned by A")
     }

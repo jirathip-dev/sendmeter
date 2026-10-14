@@ -59,6 +59,13 @@ public struct PersistedFailureLine: Equatable, Sendable {
     /// an `.unknown` here is the signal the taxonomy still lacks a class for
     /// the real failure.
     public let classification: String
+    /// #1020: what the domain/code pair cannot say. For a `DecodingError`, the
+    /// decode kind and the `codingPath` keys (`decode=keyNotFound
+    /// path=*.updated_at`); for a delta-reader failure, the case
+    /// (`delta=cursorDidNotAdvance`). Schema identifiers only — never a
+    /// value, a debug description, a token or user content (see
+    /// ``PersistedFailureLog/detail(for:)``). `nil` for every other error.
+    public let detail: String?
 
     public init(
         channel: Channel,
@@ -67,7 +74,8 @@ public struct PersistedFailureLine: Equatable, Sendable {
         domain: String,
         code: Int,
         surfaced: Bool,
-        classification: String
+        classification: String,
+        detail: String? = nil
     ) {
         self.channel = channel
         self.level = level
@@ -76,20 +84,21 @@ public struct PersistedFailureLine: Equatable, Sendable {
         self.code = code
         self.surfaced = surfaced
         self.classification = classification
+        self.detail = detail
     }
 
     /// The exact text the unified log carries — readable in a device
     /// transcript without grepping source.
     public var message: String {
         let operationKey = channel == .launchFailure ? "step" : "op"
-        return [
+        return ([
             channel.messagePrefix,
             "\(operationKey)=\(operation)",
             "domain=\(domain)",
             "code=\(code)",
             "class=\(classification)",
             "surfaced=\(surfaced)"
-        ].joined(separator: " ")
+        ] + (detail.map { [$0] } ?? [])).joined(separator: " ")
     }
 }
 
@@ -147,8 +156,64 @@ public enum PersistedFailureLog {
             domain: nsError.domain,
             code: nsError.code,
             surfaced: surfaced,
-            classification: String(describing: UserFacingError.classification(for: error))
+            classification: String(describing: UserFacingError.classification(for: error)),
+            detail: detail(for: error)
         )
+    }
+
+    /// #1020: the schema-only detail of a decode or delta-read failure.
+    ///
+    /// Built from the error's STRUCTURE, never its text: the decode kind, the
+    /// `codingPath` keys (array positions collapse to `*`, a key that is not a
+    /// plain identifier collapses to `?`, so a dictionary key carrying user
+    /// content can never reach the log), and the missing key of a
+    /// `keyNotFound`. A `DecodingError`'s `debugDescription` can quote the
+    /// offending value (`Invalid ISO-8601 timestamp: …`), so it is dropped.
+    public static func detail(for error: Error) -> String? {
+        if let deltaError = error as? DeltaReadError {
+            switch deltaError {
+            case .outOfOrderPage: return "delta=outOfOrderPage"
+            case .cursorDidNotAdvance: return "delta=cursorDidNotAdvance"
+            case .pageBudgetExhausted: return "delta=pageBudgetExhausted"
+            }
+        }
+        guard let decodingError = error as? DecodingError else { return nil }
+        let kind: String
+        let path: [CodingKey]
+        switch decodingError {
+        case .typeMismatch(_, let context):
+            kind = "typeMismatch"
+            path = context.codingPath
+        case .valueNotFound(_, let context):
+            kind = "valueNotFound"
+            path = context.codingPath
+        case .keyNotFound(let key, let context):
+            kind = "keyNotFound"
+            path = context.codingPath + [key]
+        case .dataCorrupted(let context):
+            kind = "dataCorrupted"
+            path = context.codingPath
+        @unknown default:
+            kind = "unknown"
+            path = []
+        }
+        let keys = path.map(schemaKey).joined(separator: ".")
+        return "decode=\(kind) path=\(keys.isEmpty ? "-" : keys)"
+    }
+
+    private static func schemaKey(_ key: CodingKey) -> String {
+        if key.intValue != nil { return "*" }
+        // A dictionary-keyed container's key is DATA (a tag name, a date),
+        // not schema, even when it looks like an identifier: Foundation
+        // decodes it through its own `_DictionaryCodingKey`-style type, while
+        // every schema key is a model's `CodingKeys`.
+        if String(describing: type(of: key)).hasPrefix("_") { return "?" }
+        let name = key.stringValue
+        let isIdentifier = !name.isEmpty
+            && name.count <= 64
+            && name.first.map { $0 == "_" || ($0.isASCII && $0.isLetter) } == true
+            && name.allSatisfy { $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) }
+        return isIdentifier ? name : "?"
     }
 
     // MARK: - Emission audit (#992 F2, round 2)

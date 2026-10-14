@@ -76,22 +76,13 @@ public struct DeltaCursor: Equatable, Sendable {
         return DeltaCursor(microseconds: microseconds, stamp: stamp, entityID: entityID)
     }
 
+    /// #1020: the stamp is parsed to the exact microsecond. The previous
+    /// fixed-width `DateFormatter` (`SSSSSS`) silently kept milliseconds only,
+    /// so the in-memory ordering key disagreed with the persisted text.
     private static func microseconds(fromStamp stamp: String) -> Int64? {
-        if let date = fixedWidthFormatter.date(from: stamp) {
-            return microseconds(of: date)
-        }
         guard let date = LocalDateSupport.iso8601Date(from: stamp) else { return nil }
         return microseconds(of: date)
     }
-
-    private static let fixedWidthFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'"
-        return formatter
-    }()
 }
 
 /// The PostgREST query for one page of a `(<timestamp>, <tie-break>)`-ordered

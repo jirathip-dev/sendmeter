@@ -1,0 +1,17 @@
+Available recipes:
+    build-ios           # Build the native iOS app (unsigned, generic destination)
+    build-watch         # Build the watch app (unsigned, generic destination)
+    check-static        # Static validation of the native empty-state SDK
+    check-watch-project # Generated-project ownership gate (run after any gen-affecting change)
+    ci                  # Everything CI gates on, in CI order (excludes simulator-only steps)
+    core                # PRIMARY gate: full native SwiftPM suite (~1136 tests, host, no simulator)
+    default             # default: show recipes
+    docs-check          # Stale-command check for the current contributor entrypoints (same as the "Docs stale-command check" job in native-swift.yml)
+    fast                # Slop scan + all three Swift test suites (the fast lane after edits)
+    gen                 # Regenerate Xcode projects from project.yml (XcodeGen)
+    health-core         # Health/readiness math tests (host, no simulator)
+    slop                # Anti-slop gate (same as native-swift.yml "Core tests")
+    slop-cold           # Anti-slop cold-check variant
+    ui-tests            # Bounded native UI smoke suite: menu activation + manual-workout End/refusal/minimize (CI: native-swift.yml)
+    watch-app-tests     # Watch app-target tests (SendLogWatchTests, needs a watchOS simulator; CI: native-swift.yml)
+    watch-core          # Watch pure-logic package tests (host, no simulator)

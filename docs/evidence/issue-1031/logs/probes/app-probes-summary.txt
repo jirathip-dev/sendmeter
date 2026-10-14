@@ -1,0 +1,10 @@
+probe=app-rule1 red_exit=65 (GREEN: the unmutated suite run)
+probe=app-rule2 red_exit=65 (GREEN: the unmutated suite run)
+probe=app-rule3 red_exit=65 (GREEN: the unmutated suite run)
+probe=app-p11 red_exit=65 (GREEN: the unmutated suite run)
+probe=ui-clearance red_exit=0 (GREEN: the unmutated suite run)
+docs/evidence/issue-1031/tools/red-probes.sh: line 105: syntax error near unexpected token `;;'
+docs/evidence/issue-1031/tools/red-probes.sh: line 105: `      SendmeterNativeUITests/TabBarClearanceUITests ;;'
+# Lane annotation (added at the evidence commit): line 5 is the ui-clearance probe against the old geometric bar
+# filter, which did NOT bite (red_exit=0) and led to 2a39c16. Lines 6-7 are a run aborted by a syntax error while
+# red-probes.sh was being edited; no test ran. The valid ui-clearance run is ui-clearance-summary.txt (RED 65, GREEN 0).

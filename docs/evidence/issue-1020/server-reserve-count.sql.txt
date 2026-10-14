@@ -1,0 +1,55 @@
+select 'sessions'::text as slice,
+ (select count(*) from public.sessions where user_id=':owner_user_id') as rows,
+ (select count(*) from public.sessions s, (select updated_at u, id k from public.sessions where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > date_trunc('milliseconds', l.u) or (s.updated_at = date_trunc('milliseconds', l.u) and s.id > l.k))) as served_for_ms_cursor,
+ (select count(*) from public.sessions s, (select updated_at u, id k from public.sessions where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > l.u or (s.updated_at = l.u and s.id > l.k))) as served_for_exact_cursor,
+ (select count(*) filter (where (e->>'updated_at') ~ '\.[0-9]{4,6}([+-]|Z)') from (select json_array_elements(json_agg(t)) e from (select updated_at from public.sessions where user_id=':owner_user_id') t) x) as json_agg_submillis union all select 'recordings'::text as slice,
+ (select count(*) from public.tindeq_recordings where user_id=':owner_user_id') as rows,
+ (select count(*) from public.tindeq_recordings s, (select updated_at u, id k from public.tindeq_recordings where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > date_trunc('milliseconds', l.u) or (s.updated_at = date_trunc('milliseconds', l.u) and s.id > l.k))) as served_for_ms_cursor,
+ (select count(*) from public.tindeq_recordings s, (select updated_at u, id k from public.tindeq_recordings where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > l.u or (s.updated_at = l.u and s.id > l.k))) as served_for_exact_cursor,
+ (select count(*) filter (where (e->>'updated_at') ~ '\.[0-9]{4,6}([+-]|Z)') from (select json_array_elements(json_agg(t)) e from (select updated_at from public.tindeq_recordings where user_id=':owner_user_id') t) x) as json_agg_submillis union all select 'settings'::text as slice,
+ (select count(*) from public.user_settings where user_id=':owner_user_id') as rows,
+ (select count(*) from public.user_settings s, (select updated_at u, user_id k from public.user_settings where user_id=':owner_user_id' order by updated_at desc, user_id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > date_trunc('milliseconds', l.u) or (s.updated_at = date_trunc('milliseconds', l.u) and s.user_id > l.k))) as served_for_ms_cursor,
+ (select count(*) from public.user_settings s, (select updated_at u, user_id k from public.user_settings where user_id=':owner_user_id' order by updated_at desc, user_id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > l.u or (s.updated_at = l.u and s.user_id > l.k))) as served_for_exact_cursor,
+ (select count(*) filter (where (e->>'updated_at') ~ '\.[0-9]{4,6}([+-]|Z)') from (select json_array_elements(json_agg(t)) e from (select updated_at from public.user_settings where user_id=':owner_user_id') t) x) as json_agg_submillis union all select 'phasePeriods'::text as slice,
+ (select count(*) from public.phase_periods where user_id=':owner_user_id') as rows,
+ (select count(*) from public.phase_periods s, (select updated_at u, id k from public.phase_periods where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > date_trunc('milliseconds', l.u) or (s.updated_at = date_trunc('milliseconds', l.u) and s.id > l.k))) as served_for_ms_cursor,
+ (select count(*) from public.phase_periods s, (select updated_at u, id k from public.phase_periods where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > l.u or (s.updated_at = l.u and s.id > l.k))) as served_for_exact_cursor,
+ (select count(*) filter (where (e->>'updated_at') ~ '\.[0-9]{4,6}([+-]|Z)') from (select json_array_elements(json_agg(t)) e from (select updated_at from public.phase_periods where user_id=':owner_user_id') t) x) as json_agg_submillis union all select 'healthMetrics'::text as slice,
+ (select count(*) from public.health_metrics where user_id=':owner_user_id') as rows,
+ (select count(*) from public.health_metrics s, (select updated_at u, date k from public.health_metrics where user_id=':owner_user_id' order by updated_at desc, date desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > date_trunc('milliseconds', l.u) or (s.updated_at = date_trunc('milliseconds', l.u) and s.date > l.k))) as served_for_ms_cursor,
+ (select count(*) from public.health_metrics s, (select updated_at u, date k from public.health_metrics where user_id=':owner_user_id' order by updated_at desc, date desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > l.u or (s.updated_at = l.u and s.date > l.k))) as served_for_exact_cursor,
+ (select count(*) filter (where (e->>'updated_at') ~ '\.[0-9]{4,6}([+-]|Z)') from (select json_array_elements(json_agg(t)) e from (select updated_at from public.health_metrics where user_id=':owner_user_id') t) x) as json_agg_submillis union all select 'presets'::text as slice,
+ (select count(*) from public.tindeq_presets where user_id=':owner_user_id') as rows,
+ (select count(*) from public.tindeq_presets s, (select updated_at u, id k from public.tindeq_presets where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > date_trunc('milliseconds', l.u) or (s.updated_at = date_trunc('milliseconds', l.u) and s.id > l.k))) as served_for_ms_cursor,
+ (select count(*) from public.tindeq_presets s, (select updated_at u, id k from public.tindeq_presets where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > l.u or (s.updated_at = l.u and s.id > l.k))) as served_for_exact_cursor,
+ (select count(*) filter (where (e->>'updated_at') ~ '\.[0-9]{4,6}([+-]|Z)') from (select json_array_elements(json_agg(t)) e from (select updated_at from public.tindeq_presets where user_id=':owner_user_id') t) x) as json_agg_submillis union all select 'routinePresets'::text as slice,
+ (select count(*) from public.routine_presets where user_id=':owner_user_id') as rows,
+ (select count(*) from public.routine_presets s, (select updated_at u, id k from public.routine_presets where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > date_trunc('milliseconds', l.u) or (s.updated_at = date_trunc('milliseconds', l.u) and s.id > l.k))) as served_for_ms_cursor,
+ (select count(*) from public.routine_presets s, (select updated_at u, id k from public.routine_presets where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > l.u or (s.updated_at = l.u and s.id > l.k))) as served_for_exact_cursor,
+ (select count(*) filter (where (e->>'updated_at') ~ '\.[0-9]{4,6}([+-]|Z)') from (select json_array_elements(json_agg(t)) e from (select updated_at from public.routine_presets where user_id=':owner_user_id') t) x) as json_agg_submillis union all select 'workoutsAndAttempts'::text as slice,
+ (select count(*) from public.climb_workouts where user_id=':owner_user_id') as rows,
+ (select count(*) from public.climb_workouts s, (select updated_at u, id k from public.climb_workouts where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > date_trunc('milliseconds', l.u) or (s.updated_at = date_trunc('milliseconds', l.u) and s.id > l.k))) as served_for_ms_cursor,
+ (select count(*) from public.climb_workouts s, (select updated_at u, id k from public.climb_workouts where user_id=':owner_user_id' order by updated_at desc, id desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > l.u or (s.updated_at = l.u and s.id > l.k))) as served_for_exact_cursor,
+ (select count(*) filter (where (e->>'updated_at') ~ '\.[0-9]{4,6}([+-]|Z)') from (select json_array_elements(json_agg(t)) e from (select updated_at from public.climb_workouts where user_id=':owner_user_id') t) x) as json_agg_submillis union all select 'tagMetadata'::text as slice,
+ (select count(*) from public.tindeq_tags where user_id=':owner_user_id') as rows,
+ (select count(*) from public.tindeq_tags s, (select updated_at u, name k from public.tindeq_tags where user_id=':owner_user_id' order by updated_at desc, name desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > date_trunc('milliseconds', l.u) or (s.updated_at = date_trunc('milliseconds', l.u) and s.name > l.k))) as served_for_ms_cursor,
+ (select count(*) from public.tindeq_tags s, (select updated_at u, name k from public.tindeq_tags where user_id=':owner_user_id' order by updated_at desc, name desc limit 1) l
+   where s.user_id=':owner_user_id' and (s.updated_at > l.u or (s.updated_at = l.u and s.name > l.k))) as served_for_exact_cursor,
+ (select count(*) filter (where (e->>'updated_at') ~ '\.[0-9]{4,6}([+-]|Z)') from (select json_array_elements(json_agg(t)) e from (select updated_at from public.tindeq_tags where user_id=':owner_user_id') t) x) as json_agg_submillis

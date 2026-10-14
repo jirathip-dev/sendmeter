@@ -50,26 +50,47 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
         await model.syncHealth(requestAuthorization: false)
 
         XCTAssertEqual(server.mutationCount, 0, "nothing reached the server")
-        XCTAssertEqual(model.queuedWriteCount, 1, "the intent is queued, not lost")
+        // #1015: wait first, then assert (the count is published by the queue
+        // actor's own refresh, not by the awaited pass).
         try await waitForQueueCount(model, expected: 1)
+        XCTAssertEqual(model.queuedWriteCount, 1, "the intent is queued, not lost")
 
         // AC1: the account, the row date and the intended payload are on disk
         // before the pass could have reported anything as saved.
-        let queueFile = try Self.queueFileContents()
+        // #1015: deadline-bounded raw-file read. One `DurableQueue` writes the
+        // file BEFORE it publishes (`transact`, OfflineQueue.swift:1739-1751),
+        // but the file is ONE per container and every live model owns its own
+        // queue actor, so a second instance can persist a whole-store
+        // snapshot over it between the count wait and this read. The read
+        // polls until the needles are present and, on expiry, returns the last
+        // read so the assertions below fail against the file's real contents.
+        let queueFile = try await Self.queueFileContents(
+            containingAll: [userID.uuidString, today, "63", "41.25"]
+        )
         XCTAssertTrue(queueFile.contains(userID.uuidString), "the intent is scoped to this account")
         XCTAssertTrue(queueFile.contains(today), "the row identity (date) is persisted")
         XCTAssertTrue(queueFile.contains("63"), "the intended score is persisted")
         XCTAssertTrue(queueFile.contains("41.25"), "the intended biometric is persisted")
 
         // Process death: a fresh instance reads the same on-disk state.
+        // #1015: the server is still down when the app relaunches. The settled
+        // relaunch runs its bootstrap drain to completion (the old harness
+        // returned before it, so :78 raced that drain); with the one-shot
+        // rejection already consumed, that drain replayed the intent before
+        // the survival assertion (green-offenders-iter3-STOPPED: 0 != 1, 3/3).
+        // `resume()` below clears an unconsumed rejection, so the explicit
+        // retry is unaffected either way. Assertions unchanged.
+        server.rejectNextMutation(status: 500, code: "08006")
         let relaunched = try await makeSignedInModel(server: server, readings: readings)
         await relaunched.refreshAll(showSpinner: false)
         XCTAssertEqual(relaunched.queuedWriteCount, 1, "the durable intent survives the restart")
+        let relaunchedQueueFile = try await Self.queueFileContents(containingAll: [today])
         XCTAssertTrue(
-            try Self.queueFileContents().contains(today),
+            relaunchedQueueFile.contains(today),
             "the intent is still on disk after the restart"
         )
 
+        server.resume()
         await relaunched.retryAllQueuedWrites()
         try await waitForQueueCount(relaunched, expected: 0)
 
@@ -306,7 +327,7 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
             "an explicit retry never spends the bounded quarantine budget"
         )
         XCTAssertNil(server.readiness(of: today), "nothing partial was written")
-        let queueFile = try Self.queueFileContents()
+        let queueFile = try await Self.queueFileContents(containingAll: [today])
         XCTAssertTrue(
             queueFile.contains(today),
             "AC4: the rejected recovery's payload is preserved, never silently cleared"
@@ -401,7 +422,12 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
             entityID: conflicted.date
         )
 
-        let model = try await makeSignedInModel(server: server, readings: readings)
+        // #1015: the residue is seeded before the model exists and the
+        // bootstrap's own drain is the first sweep, so this test cannot settle
+        // the bootstrap first (that drain would sweep before the "visible
+        // before the sweep" assertion). It settles at the END instead, so its
+        // bootstrap tail cannot outlive it. Assertions unchanged.
+        let model = try await makeSignedInModel(server: server, readings: readings, settleBootstrap: false)
         await model.refreshAll(showSpinner: false)
         XCTAssertEqual(
             model.pendingCacheWriteCount,
@@ -429,17 +455,24 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
             [conflicted.date],
             "a residue the server does not prove stays exactly where it is"
         )
+        await AppModelLaunchSettle.settle(model)
     }
 
     // MARK: - Harness
 
+    // #1015: the three harness waits are deadline-bound (wall clock, not a
+    // fixed iteration budget) and report the state observed on expiry.
     @MainActor
     private func waitForQueueCount(_ model: AppModel, expected: Int) async throws {
-        for _ in 0..<400 {
+        let started = ContinuousClock.now
+        while ContinuousClock.now - started < AppModelLaunchSettle.deadline {
             if model.queuedWriteCount == expected { return }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        XCTFail("queue count never reached \(expected) (still \(model.queuedWriteCount))")
+        guard model.queuedWriteCount == expected else {
+            XCTFail("queue count never reached \(expected) (still \(model.queuedWriteCount)); observed \(AppModelLaunchSettle.state(model))")
+            return
+        }
     }
 
     @MainActor
@@ -447,19 +480,27 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
         _ model: AppModel,
         expected: RejectionClass
     ) async throws {
-        for _ in 0..<400 {
+        let started = ContinuousClock.now
+        while ContinuousClock.now - started < AppModelLaunchSettle.deadline {
             if model.queuedWriteDiagnostics.first?.rejectionClass == expected { return }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        XCTFail("the queue never recorded a \(expected) failure")
+        guard model.queuedWriteDiagnostics.first?.rejectionClass == expected else {
+            XCTFail("the queue never recorded a \(expected) failure; observed \(model.queuedWriteDiagnostics.map(\.kind))")
+            return
+        }
     }
 
     private func waitForHeldMutation(_ server: FakeHealthPostgREST) async throws {
-        for _ in 0..<600 {
+        let started = ContinuousClock.now
+        while ContinuousClock.now - started < AppModelLaunchSettle.deadline {
             if server.isHoldingMutation { return }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        XCTFail("the stubbed server never held the expected mutation")
+        guard server.isHoldingMutation else {
+            XCTFail("the stubbed server never held the expected mutation")
+            return
+        }
     }
 
     @MainActor
@@ -472,7 +513,8 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
                     storage: storage,
                     autoRefreshToken: false,
                     emitLocalSessionAsInitialSession: true
-                )
+                ),
+                realtime: AppModelLaunchSettle.realtimeOptions
             )
         )
     }
@@ -500,7 +542,8 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
     private func makeSignedInModel(
         server: FakeHealthPostgREST,
         readings: HealthReadingBox,
-        userID: UUID? = nil
+        userID: UUID? = nil,
+        settleBootstrap: Bool = true
     ) async throws -> AppModel {
         let accountID = userID ?? self.userID
         let suite = "HealthWriteRecoveryAppTests.signed-in.\(UUID().uuidString)"
@@ -533,10 +576,13 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
             weather: WeatherService(defaults: defaults, session: server.makeURLSession())
         )
 
-        var waited = 0
-        while model.currentUserID == nil, waited < 200 {
-            waited += 1
-            await Task.yield()
+        // #1015: settle the account bootstrap before the test drives anything
+        // (see `AppModelLaunchSettle`); the fixed 200-yield budget returned
+        // while the bootstrap's refresh/drain was still in flight.
+        if settleBootstrap {
+            await AppModelLaunchSettle.settle(model)
+        } else {
+            await AppModelLaunchSettle.waitForAccount(model)
         }
         XCTAssertNotNil(model.currentUserID, "seeded auth session never became currentUserID")
         return model
@@ -575,6 +621,26 @@ final class HealthWriteRecoveryAppTests: XCTestCase {
 
     private static func cacheDatabaseURL() -> URL {
         supportDirectory().appendingPathComponent("local-cache.sqlite", isDirectory: false)
+    }
+
+    /// #1015: deadline-bounded raw-file read. The queue file is shared by every
+    /// `DurableQueue` instance in the app container (each live model owns
+    /// one), so a bare read right after an in-memory wait can see another
+    /// instance's whole-store write. Polls until every needle is present,
+    /// then returns that read; on expiry returns the last read so the caller's
+    /// own assertions fail against the real contents.
+    private static func queueFileContents(
+        containingAll needles: [String],
+        timeout: Duration = AppModelLaunchSettle.deadline
+    ) async throws -> String {
+        let started = ContinuousClock.now
+        var last = (try? queueFileContents()) ?? ""
+        while ContinuousClock.now - started < timeout {
+            if needles.allSatisfy(last.contains) { return last }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+            last = (try? queueFileContents()) ?? ""
+        }
+        return try queueFileContents()
     }
 
     private static func queueFileContents() throws -> String {

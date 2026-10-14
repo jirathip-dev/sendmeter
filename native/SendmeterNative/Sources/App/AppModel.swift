@@ -653,7 +653,84 @@ public final class AppModel {
     /// with Bluetooth off has no user gesture behind it and must stay silent.
     public func requestConnect() {
         transportUserInitiated = true
+        userDisconnectedProgressor = false
         tindeq.connect()
+    }
+
+    // MARK: #1021 auto-reconnect (rollout #1028 slice 2)
+
+    /// #1021: the user's own Disconnect (or Cancel) this launch. The
+    /// auto-reconnect never fights it; the next explicit Connect clears it.
+    public private(set) var userDisconnectedProgressor = false
+
+    /// #1021: the transport side of the auto-reconnect. Tests swap it (a
+    /// simulator has no Bluetooth radio); the app uses the real transport.
+    struct ProgressorLink {
+        var status: @MainActor () -> TindeqBluetooth.Status
+        var hasKnownProgressor: @MainActor () -> Bool
+        var reconnect: @MainActor () -> Void
+    }
+
+    @ObservationIgnored lazy var progressorLink = ProgressorLink(
+        status: { [unowned self] in tindeq.status },
+        hasKnownProgressor: { [unowned self] in tindeq.hasKnownProgressor },
+        reconnect: { [unowned self] in tindeq.reconnectKnownProgressor() }
+    )
+
+    /// #1028 P11: the last `.interrupted` dropped a LIVE link (connected or
+    /// recording). A failed first connect, Bluetooth off at launch and the
+    /// user's own Disconnect are not a lost connection.
+    public private(set) var progressorConnectionLost = false
+
+    /// The Force bar's device state. #1028 P11: only a dropped live link
+    /// reads as `.interrupted` ("Connection lost"); every other
+    /// `.interrupted` is plain idle ("Disconnected").
+    public var forceBarDevice: ForceBarDevice {
+        let device = progressorLink.status().forceBarDevice
+        return device == .interrupted && !progressorConnectionLost ? .disconnected : device
+    }
+
+    /// #1021: the one way a user disconnects the Progressor (or cancels a
+    /// connect). It also stops the auto-reconnect until the next Connect.
+    public func requestDisconnect() {
+        userDisconnectedProgressor = true
+        progressorConnectionLost = false
+        tindeq.disconnect()
+    }
+
+    /// #1028 P11: track whether an `.interrupted` cut a live link. A
+    /// duplicate `.interrupted` (#656) and a reconnect attempt keep the
+    /// verdict; a live link or plain idle clears it.
+    private func noteProgressorLink(_ status: TindeqBluetooth.Status, previous: TindeqBluetooth.Status?) {
+        switch status {
+        case .interrupted:
+            if previous == .connected || previous == .measuring {
+                progressorConnectionLost = !userDisconnectedProgressor
+            }
+        case .connected, .measuring, .idle, .unavailable:
+            progressorConnectionLost = false
+        case .scanning, .connecting:
+            break
+        }
+    }
+
+    /// #1021: reconnect the last Progressor on entering Force and on
+    /// foreground, when `ForceAutoReconnectPolicy` allows it: never after a
+    /// user Disconnect, never while a guided protocol, a hands-free arm or a
+    /// live pull owns the device.
+    @discardableResult
+    public func autoReconnectProgressor(_ trigger: ForceAutoReconnectTrigger) -> Bool {
+        let input = ForceAutoReconnectInput(
+            trigger: trigger,
+            device: forceBarDevice,
+            hasKnownProgressor: progressorLink.hasKnownProgressor(),
+            userDisconnected: userDisconnectedProgressor,
+            sessionActive: forceModel.guidedProtocolActive || handsFree.isArmed || handsFree.isMeasuring,
+            forceTabSelected: selectedTab == .force
+        )
+        guard ForceAutoReconnectPolicy.shouldReconnect(input) else { return false }
+        progressorLink.reconnect()
+        return true
     }
 
     private let queue: DurableQueue<PendingWrite>?
@@ -1152,6 +1229,7 @@ public final class AppModel {
     private func handleTindeqStatusChange(_ status: TindeqBluetooth.Status) {
         let previous = lastTransportStatus
         lastTransportStatus = status
+        noteProgressorLink(status, previous: previous)
         // #656 (review F1/F2): the transport cues success/error only when a
         // user gesture armed them this launch — `connect()` called from the
         // Force tab — and only once per logical event. A cold launch with
@@ -3025,11 +3103,18 @@ public final class AppModel {
             hasLastGoodData: hasLoadedSessions && forceModel.hasLoadedRecordings,
             publishedAnySlice: outcomes.didPublishAnyGroup
         )
-        recordLaunchFailure(
-            "refresh-slice:\(representativeSlice.rawValue)",
-            representativeError,
-            surfaced: willSurface
-        )
+        // #1020: one line PER failed slice, each naming its slice and (via
+        // the line's `detail`) the decode kind + codingPath keys or the
+        // delta-reader case. A device capture used to name only the first
+        // failed slice, so eight of the nine failing reads on the owner's
+        // phone left no trace. Only the representative carries the surface.
+        for (slice, error) in orderedFailures {
+            recordLaunchFailure(
+                "refresh-slice:\(slice.rawValue)",
+                error,
+                surfaced: willSurface && slice == representativeSlice
+            )
+        }
         if willSurface {
             surfaceLoadFailure(representativeError)
         }
@@ -4775,6 +4860,8 @@ public final class AppModel {
             // #671: resume the display-rate flush driver for a live stream
             // (recording/armed) torn down on backgrounding.
             tindeq.setFlushDriverPaused(false)
+            // #1021: back on the Force tab, reconnect the last Progressor.
+            autoReconnectProgressor(.foreground)
         } else {
             keepAwakeRelease?()
             keepAwakeRelease = nil

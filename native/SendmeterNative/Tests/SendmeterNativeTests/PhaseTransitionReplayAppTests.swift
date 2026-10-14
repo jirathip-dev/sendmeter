@@ -389,7 +389,13 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
             entityID: CacheEntityID.settings
         )
 
-        let model = try await makeSignedInModel(server: server)
+        // #1015: this test's premise IS the launch window — the residue is
+        // seeded before the model exists, and the bootstrap's own drain is the
+        // first sweep — so it cannot settle the bootstrap first (that drain
+        // would sweep before the "visible before the sweep" assertion). It
+        // settles at the END instead, so its bootstrap tail cannot outlive it
+        // into the next test's shared queue file. Assertions unchanged.
+        let model = try await makeSignedInModel(server: server, settleBootstrap: false)
         await model.refreshAll(showSpinner: false)
         XCTAssertEqual(model.pendingCacheWriteCount, 5, "AC4: the residue is visible before the sweep")
         XCTAssertEqual(model.queuedWriteCount, 0, "and none of it has a replay intent")
@@ -437,6 +443,7 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
             model.phasePeriods.contains { $0.id.uuidString.lowercased() == serverPeriod },
             "the authoritative period is visible after the sweep"
         )
+        await AppModelLaunchSettle.settle(model)
     }
 
     // MARK: - AC5: permanent rejection, and account scope
@@ -655,7 +662,8 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
                     storage: storage,
                     autoRefreshToken: false,
                     emitLocalSessionAsInitialSession: true
-                )
+                ),
+                realtime: AppModelLaunchSettle.realtimeOptions
             )
         )
     }
@@ -682,7 +690,8 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
     @MainActor
     private func makeSignedInModel(
         server: FakePhasePostgREST,
-        userID: UUID? = nil
+        userID: UUID? = nil,
+        settleBootstrap: Bool = true
     ) async throws -> AppModel {
         let accountID = userID ?? self.userID
         let suite = "PhaseTransitionReplayAppTests.signed-in.\(UUID().uuidString)"
@@ -708,10 +717,17 @@ final class PhaseTransitionReplayAppTests: XCTestCase {
             weather: WeatherService(defaults: defaults, session: server.makeURLSession())
         )
 
-        var waited = 0
-        while model.currentUserID == nil, waited < 400 {
-            waited += 1
-            await Task.yield()
+        // #1015: settle the account bootstrap before the test drives anything
+        // (see `AppModelLaunchSettle`). The fixed 400-yield budget returned
+        // while the bootstrap was still in flight, so its tail — and, after
+        // the test, the whole pass — could overlap the next model's. Observed
+        // on CI (job 111484058121): the relaunched model never saw the intent
+        // the first model had persisted (`queuedWriteCount=0`, settings half
+        // never completed). Deadline-bound; assertions unchanged.
+        if settleBootstrap {
+            await AppModelLaunchSettle.settle(model)
+        } else {
+            await AppModelLaunchSettle.waitForAccount(model)
         }
         XCTAssertNotNil(model.currentUserID, "seeded auth session never became currentUserID")
         return model
