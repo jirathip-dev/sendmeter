@@ -1,0 +1,5 @@
+probe=verdict-cell red_exit=1 green_exit=0
+probe=verdict-wiring red_exit=1 green_exit=0
+probe=copy-identity red_exit=1 green_exit=0
+probe=copy-sets red_exit=1 green_exit=0
+probe=copy-atomic red_exit=1 green_exit=0
