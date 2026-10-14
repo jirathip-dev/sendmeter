@@ -1,0 +1,16 @@
+head=eb39d9f date=2026-10-14T09:33:35Z df=26Gi
+just core exit=1
+just watch-core exit=0
+just health-core exit=0
+just slop exit=0
+just check-static exit=1 (base red: ManualForceFullscreen.swift)
+just gen exit=0
+just check-watch-project exit=0
+git diff --check origin/staging..HEAD exit=0 (origin/staging=d005404)
+git diff --check d005404..HEAD exit=0
+git diff origin/staging HEAD -- '*Mascot*' exit=0 bytes=0
+xcodebuild build (unsigned, generic iOS Simulator) exit=0
+xcodebuild test -only-testing:SendmeterNativeTests exit=0
+UI smoke (MenuActivation + ManualWorkoutEndRefusal) + TabBarClearanceUITests (all tabs) on iPhone SE (3rd gen) exit=0
+done
+just core (rerun) exit=0

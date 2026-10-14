@@ -68,7 +68,7 @@ struct ZoneFocusCard: View {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
-                    Text("Last 4 weeks · this exercise only · sets, not sessions")
+                    Text("Last 4 weeks · this exercise")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 

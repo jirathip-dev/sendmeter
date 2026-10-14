@@ -26,6 +26,9 @@ import SwiftUI
 /// yesterday's window.
 struct ReadinessTrendCard: View {
     @Environment(AppModel.self) private var model
+    /// #1023: the sparse state's one button opens the existing
+    /// recovery-inputs sheet (owned by the Dashboard).
+    var onOpenRecoveryInputs: () -> Void = {}
     @Environment(\.colorScheme) private var scheme
     @State private var selectedDate: Date?
     /// Measured tooltip size, updated as the tooltip renders, so the clamp
@@ -81,6 +84,20 @@ struct ReadinessTrendCard: View {
         model.healthMetrics.contains { $0.readiness != nil }
     }
 
+    /// #1023: fewer than `ReadinessTrendDensity.minimumScoredDays` scored days
+    /// in the 14-day window. Never true before `.onAppear` builds the
+    /// snapshot (the built window always holds 14 days), so the first body
+    /// pass cannot flash the sparse line over a dense trend (review L3).
+    private var isSparseWindow: Bool {
+        guard !snapshot.days.isEmpty else { return false }
+        return ReadinessTrendDensity.isSparse(scoredDaysInWindow: scoredDaysInWindow)
+    }
+
+    /// #1023: scored days inside the current 14-day window.
+    private var scoredDaysInWindow: Int {
+        snapshot.days.filter { $0.readiness != nil }.count
+    }
+
     /// VoiceOver label for one day — matches the web's per-day aria-label.
     private func accessibilityText(for day: ReadinessDay) -> String {
         if let readiness = day.readiness {
@@ -118,6 +135,27 @@ struct ReadinessTrendCard: View {
                     Text("Your metrics are syncing, but the score needs about a week of overnight HRV / resting-heart-rate history in Apple Health before the trend appears.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                } else if isSparseWindow {
+                    // #1023: below the threshold a chart reads as noise —
+                    // one line plus the way to fix it.
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(ReadinessTrendDensity.sparseLine(scoredDaysInWindow: scoredDaysInWindow))
+                            .font(.subheadline)
+                            .foregroundStyle(SendmeterStyle.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button {
+                            Haptics.shared.tap()
+                            onOpenRecoveryInputs()
+                        } label: {
+                            Label(ReadinessTrendDensity.sparseAction, systemImage: "heart.text.square")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(SendmeterStyle.primaryText)
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .hapticButtonStyle(.plain)
+                        .accessibilityIdentifier("readiness-trend-sparse-action")
+                    }
                 } else {
                     chart
                 }

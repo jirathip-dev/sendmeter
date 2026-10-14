@@ -760,3 +760,33 @@ public extension View {
         }
     }
 }
+
+// MARK: - #1028 F5: nothing scrolls under the tab bar
+
+public extension View {
+    /// #1028 F5: an opaque bottom edge behind the floating tab bar, so scroll
+    /// content ends above it and never shows through or under it. Pass the
+    /// screen's own background (Dashboard uses the shared `canvas`; the list
+    /// tabs keep the system grouped background). Force has its own edge under
+    /// its sticky bar (`ForceView`).
+    func sendmeterTabBarEdge(_ background: Color = SendmeterStyle.canvas) -> some View {
+        safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear
+                .frame(height: 0)
+                .background(alignment: .top) {
+                    background
+                        .ignoresSafeArea(edges: .bottom)
+                        .accessibilityHidden(true)
+                }
+                // Content passing behind the tab bar dissolves over 14 pt
+                // instead of slicing at a hard line.
+                .overlay(alignment: .top) {
+                    LinearGradient(colors: [background.opacity(0), background], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 14)
+                        .offset(y: -14)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+        }
+    }
+}

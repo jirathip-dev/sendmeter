@@ -205,9 +205,6 @@ struct ForceRecordingContextCard: View {
                     .font(.headline)
                     .foregroundStyle(.primary)
                 Spacer(minLength: 8)
-                Text("Identity dot · tap to arm")
-                    .font(.caption)
-                    .foregroundStyle(RecordingContextPalette.metadata(scheme))
             }
             .padding(.horizontal, 12)
             .padding(.top, 10)

@@ -73,6 +73,8 @@ struct WorkoutView: View {
                 }
                 .padding()
             }
+            // #1028 F5: opaque edge under the tab bar.
+            .sendmeterTabBarEdge(Color(uiColor: .systemGroupedBackground))
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Workout")
             .toolbar {
@@ -409,7 +411,7 @@ private struct StartWorkoutCard: View {
                 VStack(spacing: 6) {
                     Text("Manual workout")
                         .font(.title2.bold())
-                    Text("Start once, tap for each attempt, then finish. The complete workout is written atomically and appears in History immediately.")
+                    Text("Tap once per attempt, then finish.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -550,7 +552,7 @@ private struct WatchWorkoutMirrorCard: View {
 
     private var transportLabel: String {
         switch model.liveWorkoutSyncState {
-        case .watchDirect: return "Direct WatchConnectivity mirror"
+        case .watchDirect: return "Live from your Apple Watch"
         case .serverFallback: return "Server mirror"
         case .temporarilyUnreachable: return "Link paused"
         case .unknown: return "Mirror"

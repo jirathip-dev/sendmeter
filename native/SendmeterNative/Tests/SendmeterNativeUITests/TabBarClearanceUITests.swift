@@ -3,7 +3,8 @@ import XCTest
 /// #1028 F5 + P4 (rollout slice 2, #1031): on the Force tab nothing ends up
 /// under the sticky Force bar or the tab bar. At the end of the scroll the
 /// last content row is fully visible above both bars, and the Force bar
-/// sits above the tab bar. Every-tab clearance is slice 3 (#1032).
+/// sits above the tab bar. Slice 3 (#1032) adds the same last-row check for
+/// Dashboard, Workout, History and Settings (tab bar only).
 ///
 /// Runs on the existing `--tabs-fixture force` harness (the real
 /// `MainTabView` without a signed-in session) on an iPhone SE (3rd
@@ -80,6 +81,109 @@ final class TabBarClearanceUITests: XCTestCase {
             barTop + 0.5,
             "Force: the last row \"\(last.label)\" ends at \(last.frame.maxY) under the bars (top \(barTop))"
         )
+    }
+
+    func testDashboardLastRowIsFullyVisibleAboveTheTabBar() {
+        assertLastRowClearsTheTabBar(fixture: "dashboard", tab: "Dashboard")
+    }
+
+    func testWorkoutLastRowIsFullyVisibleAboveTheTabBar() {
+        assertLastRowClearsTheTabBar(fixture: "workout", tab: "Workout")
+    }
+
+    func testHistoryLastRowIsFullyVisibleAboveTheTabBar() {
+        assertLastRowClearsTheTabBar(fixture: "history", tab: "History")
+    }
+
+    func testSettingsLastRowIsFullyVisibleAboveTheTabBar() {
+        assertLastRowClearsTheTabBar(fixture: "settings", tab: "Settings")
+    }
+
+    /// #1032 F5: the Force contract above for a tab without the sticky bar —
+    /// at the end of the scroll the last content row ends above the tab bar.
+    ///
+    /// The signed-out `--tabs-fixture` has no account data, so at the default
+    /// text size a tab can be shorter than the SE screen and never reach the
+    /// bar. The largest accessibility size makes every tab overflow, so the
+    /// end of the scroll pins the last row against the bottom edge; the
+    /// `filledEnd` check fails the test if it did not (a vacuous pass).
+    private func assertLastRowClearsTheTabBar(fixture: String, tab: String) {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--tabs-fixture", fixture,
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launch()
+        defer { app.terminate() }
+
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 20), "\(tab): no tab bar")
+        XCTAssertTrue(tabBar.buttons[tab].waitForExistence(timeout: 10), "\(tab): no tab button")
+        XCTAssertFalse(app.otherElements["force-bottom-bar"].exists, "\(tab): the Force bar belongs to Force only")
+        guard let scroller = mainScrollContainer(in: app) else {
+            XCTFail("\(tab): no vertical scroll container")
+            return
+        }
+
+        // Drag to the end of the scroll, inside the middle of the window (a
+        // drag that starts on the floating tab bar would switch tabs). At the
+        // largest text size a tab runs several screens, so keep dragging until
+        // the last row stops moving (the end of the scroll), within a bound.
+        let window = app.windows.firstMatch
+        let screen = window.frame
+        var last = lastRow(in: scroller, screen: screen)
+        for _ in 0..<12 {
+            for _ in 0..<5 {
+                window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+                    .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)))
+            }
+            Thread.sleep(forTimeInterval: 1.5)
+            let next = lastRow(in: scroller, screen: screen)
+            defer { last = next }
+            if let next, let previous = last, next.frame.maxY == previous.frame.maxY, next.label == previous.label {
+                break
+            }
+        }
+        XCTAssertTrue(
+            tabBar.buttons[tab].isSelected || tabBar.buttons[tab].value as? String == "1",
+            "\(tab): the drag changed the selected tab"
+        )
+
+        let barTop = tabBar.frame.minY
+        XCTContext.runActivity(named: "window \(screen.width)x\(screen.height) pt") { _ in }
+        guard let last else {
+            XCTFail("\(tab): no visible content rows")
+            return
+        }
+        XCTContext.runActivity(
+            named: "\(tab): last row \"\(last.label)\" ends at \(last.frame.maxY), tab bar starts at \(barTop)"
+        ) { _ in }
+        XCTAssertLessThanOrEqual(
+            last.frame.maxY,
+            barTop + 0.5,
+            "\(tab): the last row \"\(last.label)\" ends at \(last.frame.maxY) under the tab bar (top \(barTop))"
+        )
+        let filledEnd: CGFloat = 120
+        XCTAssertGreaterThan(
+            last.frame.maxY,
+            barTop - filledEnd,
+            "\(tab): the content ended at \(last.frame.maxY), more than \(filledEnd) pt above the tab bar (top \(barTop)); the scroll never reached a filled end, so the check proves nothing"
+        )
+    }
+
+    /// The content row inside the tab's scroller that ends lowest (nil when
+    /// the snapshot fails). Only rows wholly inside the window count: at the
+    /// end of a scroll no content row runs past the bottom edge, while system
+    /// overlays a List carries (an `AdditionalDimmingOverlay` image ending
+    /// 140 pt below an SE screen) do — they are not rows.
+    private func lastRow(in scroller: XCUIElement, screen: CGRect) -> (label: String, frame: CGRect)? {
+        guard let snapshot = try? scroller.snapshot() else { return nil }
+        return contentFrames(in: snapshot)
+            .filter { row in
+                row.frame.width > 0 && row.frame.height > 0
+                    && row.frame.minY >= screen.minY && row.frame.maxY <= screen.maxY + 0.5
+            }
+            .max { $0.frame.maxY < $1.frame.maxY }
     }
 
     /// The tab's main vertical scroller, whichever covers most of the window.
