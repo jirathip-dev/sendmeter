@@ -48,8 +48,9 @@ anchor (`harness.patch` no longer applies at this head). It adds three states:
 The trees:
 
 - **before**: `2a13b04` + harness
-- **after**: source head + harness. The capture tree is `8430e69` with `e1bd3b0`'s `ForceView.swift` copied in, so its
-  sources equal `e1bd3b0`.
+- **after**: source head + harness. The capture tree is `8430e69` with `e1bd3b0`'s `ForceView.swift` copied in. Its
+  sources equal `e1bd3b0` except for one stale doc-comment line (`/// #1028 P9: the Force screen's height …`) that
+  `e1bd3b0` removed before commit: a comment only, with no behavioural difference.
 
 Nothing from the harness is committed as app code. To reproduce, run `tools/capture-all.sh <before-tree> <after-tree>
 <root>`, which drives `../issue-1030/tools/capture-phone.sh`, then `tools/stage-screens.sh <root>` and
