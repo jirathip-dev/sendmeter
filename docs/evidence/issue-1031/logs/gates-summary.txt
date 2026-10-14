@@ -1,0 +1,13 @@
+head=e1bd3b0 date=2026-10-14T04:46:23Z
+just core exit=0
+just watch-core exit=0
+just slop exit=0
+just check-static exit=1 (base red: ManualForceFullscreen.swift)
+just gen exit=0
+git diff --check 2a13b04..HEAD exit=0
+git diff --stat origin/staging HEAD -- '*Mascot*' exit=0 bytes=0
+xcodebuild build (unsigned, generic iOS Simulator) exit=0
+xcodebuild test -only-testing:SendmeterNativeTests exit=0
+UI smoke (MenuActivation + ManualWorkoutEndRefusal) + TabBarClearanceUITests on iPhone SE (3rd gen) exit=0
+done
+(the last four lines were recovered from gates.sh's stdout: the script's tee wrote them relative to native/SendmeterNative and failed; each gate's own log is complete)

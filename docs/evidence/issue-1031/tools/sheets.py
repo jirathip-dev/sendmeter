@@ -39,7 +39,8 @@ STATE_TITLES = {
     "force-recording": "Force · Hands-free recording (P1, P8; SE = P9)",
     "force-handsfree-armed": "Force · Hands-free armed (P2, P8)",
     "force-interrupted": "Force · connection lost (P11)",
-    "force-held": "Force · #1004 recovery: held pull (Save / Discard)",
+    "force-held": "Force · #1004 recovery: held pull (top of screen)",
+    "force-held-progressor": "Force · #1004 recovery: Save / Discard reachable above the bar",
 }
 ORDER = list(STATE_TITLES)
 

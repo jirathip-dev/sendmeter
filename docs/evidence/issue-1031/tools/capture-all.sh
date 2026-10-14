@@ -17,8 +17,9 @@ TOOLS="$(cd "$(dirname "$0")" && pwd)"
 PHONE="$(cd "$TOOLS/../../issue-1030/tools" && pwd)/capture-phone.sh"
 PRO=EAF1D958-7274-43E0-94F1-8CC8E0285B93
 SE=EBB29F51-CA98-438D-8823-F487F60BE5BE
-STATES=(force-disconnected force-guided-idle force-guided-armed force-guided-armed@bottom
-        force-guided-recording force-recording force-handsfree-armed force-interrupted force-held)
+STATES=(${CAPTURE_STATES:-force-disconnected force-guided-idle force-guided-armed force-guided-armed@bottom
+        force-guided-recording force-recording force-handsfree-armed force-interrupted force-held
+        force-held@progressor})
 
 build() { # tree derived-data
   while pgrep -x xcodebuild >/dev/null; do sleep 30; done
@@ -28,9 +29,12 @@ build() { # tree derived-data
   echo "$2/Build/Products/Debug-iphonesimulator/Sendmeter.app"
 }
 
-for VERSION in before after; do
+# VERSIONS="after" re-captures one side only (e.g. after a failed build).
+for VERSION in ${VERSIONS:-before after}; do
   TREE="$BEFORE"; [[ "$VERSION" == after ]] && TREE="$AFTER"
   APP=$(build "$TREE" "$TMPDIR/l1031-dd-cap-$VERSION")
   bash "$PHONE" "$APP" "$PRO" "$OUT/$VERSION/17pro" "$VERSION" "${STATES[@]}"
   bash "$PHONE" "$APP" "$SE" "$OUT/$VERSION/se" "$VERSION" "${STATES[@]}"
+  # The capture build is ~2 GB; drop it once its captures are taken.
+  rm -rf "$TMPDIR/l1031-dd-cap-$VERSION"
 done
