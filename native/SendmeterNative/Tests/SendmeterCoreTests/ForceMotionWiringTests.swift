@@ -92,6 +92,8 @@ final class ForceMotionWiringTests: XCTestCase {
         // and renders the module's live readout + intensity dial copy.
         XCTAssertTrue(contextCardFile.contains("No target configured for this protocol"))
         XCTAssertTrue(contextCardFile.contains("Live readout"))
+        // #1028 F3: …but only with a live link.
+        XCTAssertTrue(normalizeWhitespace(contextCardFile).contains("if readiness.showsLiveReadout, displayBand != nil { Text(\"Live readout\")"))
         XCTAssertTrue(contextCardFile.contains("60–110 · 5% steps"))
         XCTAssertTrue(contextCardFile.contains("Intensity"))
 
@@ -192,8 +194,10 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertFalse(force.contains("cancelManualArm"))
         XCTAssertFalse(force.contains("\"Record a pull\""))
         XCTAssertFalse(force.contains("Label(\"Start Pull\""))
-        // Empty/connected surfaces route to guided + hands-free.
-        XCTAssertTrue(force.contains("return \"Arm Hands-free\""))
+        // Empty/connected surfaces route to guided + hands-free (#1028: the
+        // bar's mode switch and its Arm action).
+        XCTAssertTrue(force.contains("case .armHandsFree:"))
+        XCTAssertTrue(force.contains("if !handsFreeEnabled { handsFreeEnabled = true }"))
         XCTAssertFalse(force.contains("\"Tap Start Pull when ready\""))
     }
 
@@ -246,11 +250,21 @@ final class ForceMotionWiringTests: XCTestCase {
     func testOutsideContextCardKeepsHandsFreeNextActionProminence() {
         let card = code(source("Sources/Features/Force/ForceRecordingContextCard.swift"))
 
-        XCTAssertTrue(card.contains("\"Hands-free\""))
-        XCTAssertTrue(card.contains("\"Pull to start · release to stop\""))
+        // #1028 F2/F3: the copy moved into `ForceContextReadiness` (Core),
+        // which the card renders; the claim follows the link and the mode.
+        let readiness = code(source("Sources/Core/ForceBarPolicy.swift"))
+        XCTAssertTrue(readiness.contains("\"Hands-free\""))
+        XCTAssertTrue(readiness.contains("\"Pull to start · release to stop\""))
+        XCTAssertTrue(readiness.contains("\"Armed now · no confirmation step\""))
+        XCTAssertTrue(readiness.contains("\"Waiting for Progressor\""))
+        XCTAssertTrue(card.contains("Text(readiness.title)"))
+        XCTAssertTrue(card.contains("Text(readiness.detail)"))
+        XCTAssertFalse(card.contains("\"Armed now · no confirmation step\""), "the card must not hard-code the armed claim")
         XCTAssertFalse(card.contains("\"Tap Start Pull when ready\""))
         XCTAssertFalse(card.contains("handsFreeEnabled"))
-        XCTAssertTrue(card.contains("\"Armed now · no confirmation step\""))
+        // F1: no device row on this card.
+        XCTAssertFalse(card.contains("\"Recording device\""))
+        XCTAssertFalse(card.contains("private var deviceRow"))
         XCTAssertTrue(card.contains("\"MOVEMENT\""))
     }
 
