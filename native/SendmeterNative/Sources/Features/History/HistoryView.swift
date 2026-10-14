@@ -161,6 +161,8 @@ struct HistoryView: View {
                     forceList
                 }
             }
+            // #1028 F5: opaque edge under the tab bar.
+            .sendmeterTabBarEdge(Color(uiColor: .systemGroupedBackground))
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("History")
             .searchable(text: $query, prompt: searchPrompt)

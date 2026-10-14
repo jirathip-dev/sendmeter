@@ -230,7 +230,9 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertTrue(card.contains("\"Armed protocol\""))
         XCTAssertTrue(card.contains("Text(preset.name)"))
         XCTAssertTrue(card.contains("\"Change\""))
-        XCTAssertTrue(card.contains("\"Identity dot · tap to arm\""))
+        // #1028 P10 (owner-approved): the "Identity dot · tap to arm" caption
+        // described how the UI is built; the dot and the tiles already say it.
+        XCTAssertFalse(card.contains("Identity dot"))
     }
 
     /// AC2: between the armed-target branch and the hands-free action label

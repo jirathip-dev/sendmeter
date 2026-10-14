@@ -84,7 +84,8 @@ final class HeroMetricWiringTests: XCTestCase {
         // ring shown immediately above that trend and is its primary-number
         // owner.
         XCTAssertTrue(trend.contains("struct ReadinessTrendCard: View"))
-        XCTAssertTrue(dashboard.contains("ReadinessTrendCard()"))
+        // #1023: the sparse state hands off to the Dashboard's recovery sheet.
+        XCTAssertTrue(dashboard.contains("ReadinessTrendCard(onOpenRecoveryInputs: { showRecovery = true })"))
         XCTAssertTrue(decision.contains("if let score = model.readiness?.readiness"))
         XCTAssertTrue(decision.contains("Text(\"\\(score)\")"))
         XCTAssertTrue(decision.contains(".modifier(SendmeterStyle.heroMetric)"))

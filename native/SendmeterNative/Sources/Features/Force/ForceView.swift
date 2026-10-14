@@ -1114,10 +1114,10 @@ private struct GuidedForceProtocolView: View {
                 color: handsFreeStatus.color
             )
             Spacer(minLength: 4)
-            Text("\(session.savedCount) queued")
+            Text("\(session.savedCount) saved")
                 .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.secondary)
-                .accessibilityLabel("\(session.savedCount) pulls durably queued")
+                .accessibilityLabel("\(session.savedCount) pulls saved")
         }
     }
 
@@ -2953,7 +2953,7 @@ private struct GuidedForceResumeCard: View {
                     Text("\(session.preset.name) · \(session.run.currentStage.label)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text("\(session.savedCount) pull\(session.savedCount == 1 ? "" : "s") durably queued")
+                    Text("\(session.savedCount) pull\(session.savedCount == 1 ? "" : "s") saved")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -3237,7 +3237,7 @@ private struct ForceDeviceCard: View {
                     .background(SendmeterStyle.caution.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 } else if device.completedSummary != nil, device.status != .measuring, recoveryControls.showsRecoveryCard {
                     VStack(alignment: .leading, spacing: 10) {
-                        Label("Completed pull is ready for a durable save", systemImage: "checkmark.circle")
+                        Label("Pull finished — save it to keep it", systemImage: "checkmark.circle")
                             .font(.subheadline.weight(.semibold))
                         HStack {
                             Button("Save Completed Pull", action: saveCompleted)
@@ -3277,7 +3277,7 @@ private struct ForceDeviceCard: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This pull has not been placed in the durable on-device queue and cannot be recovered after it is discarded.")
+            Text("This pull hasn't been saved yet. Once discarded, it can't be recovered.")
         }
     }
 
@@ -3578,7 +3578,7 @@ private struct WatchForceMirrorCard: View {
                             )
                         )
                 }
-                Text("Direct WatchConnectivity · updated \(force.updatedAt, style: .relative) ago")
+                Text("From your Apple Watch · updated \(force.updatedAt, style: .relative) ago")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -3667,7 +3667,7 @@ private struct RecentForceCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 SectionLabel("Recent recordings", systemImage: "clock")
                 if recordings.isEmpty {
-                    Text("Completed pulls will appear here after their durable local save is queued.")
+                    Text("Saved pulls appear here.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {

@@ -3,7 +3,8 @@ import XCTest
 /// #1028 F5 + P4 (rollout slice 2, #1031): on the Force tab nothing ends up
 /// under the sticky Force bar or the tab bar. At the end of the scroll the
 /// last content row is fully visible above both bars, and the Force bar
-/// sits above the tab bar. Every-tab clearance is slice 3 (#1032).
+/// sits above the tab bar. Slice 3 (#1032) adds the same last-row check for
+/// Dashboard, Workout, History and Settings (tab bar only).
 ///
 /// Runs on the existing `--tabs-fixture force` harness (the real
 /// `MainTabView` without a signed-in session) on an iPhone SE (3rd
@@ -79,6 +80,77 @@ final class TabBarClearanceUITests: XCTestCase {
             last.frame.maxY,
             barTop + 0.5,
             "Force: the last row \"\(last.label)\" ends at \(last.frame.maxY) under the bars (top \(barTop))"
+        )
+    }
+
+    func testDashboardLastRowIsFullyVisibleAboveTheTabBar() {
+        assertLastRowClearsTheTabBar(fixture: "dashboard", tab: "Dashboard")
+    }
+
+    func testWorkoutLastRowIsFullyVisibleAboveTheTabBar() {
+        assertLastRowClearsTheTabBar(fixture: "workout", tab: "Workout")
+    }
+
+    func testHistoryLastRowIsFullyVisibleAboveTheTabBar() {
+        assertLastRowClearsTheTabBar(fixture: "history", tab: "History")
+    }
+
+    func testSettingsLastRowIsFullyVisibleAboveTheTabBar() {
+        assertLastRowClearsTheTabBar(fixture: "settings", tab: "Settings")
+    }
+
+    /// #1032 F5: the Force contract above for a tab without the sticky bar —
+    /// at the end of the scroll the last content row ends above the tab bar.
+    private func assertLastRowClearsTheTabBar(fixture: String, tab: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--tabs-fixture", fixture]
+        app.launch()
+        defer { app.terminate() }
+
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 20), "\(tab): no tab bar")
+        XCTAssertTrue(tabBar.buttons[tab].waitForExistence(timeout: 10), "\(tab): no tab button")
+        XCTAssertFalse(app.otherElements["force-bottom-bar"].exists, "\(tab): the Force bar belongs to Force only")
+        XCTAssertNotNil(mainScrollContainer(in: app), "\(tab): no vertical scroll container")
+
+        // Drag to the end of the scroll, inside the middle of the window (a
+        // drag that starts on the floating tab bar would switch tabs).
+        let window = app.windows.firstMatch
+        for _ in 0..<10 {
+            window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+                .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)))
+        }
+        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertTrue(
+            tabBar.buttons[tab].isSelected || tabBar.buttons[tab].value as? String == "1",
+            "\(tab): the drag changed the selected tab"
+        )
+
+        let barTop = tabBar.frame.minY
+        let screen = window.frame
+        XCTContext.runActivity(named: "window \(screen.width)x\(screen.height) pt") { _ in }
+        let frames: [(label: String, frame: CGRect)]
+        do {
+            frames = contentFrames(in: try app.snapshot())
+        } catch {
+            XCTFail("\(tab): accessibility snapshot failed: \(error.localizedDescription)")
+            return
+        }
+        let rows = frames.filter { row in
+            row.frame.width > 0 && row.frame.height > 0
+                && row.frame.maxY > screen.minY && row.frame.minY < screen.maxY
+        }
+        guard let last = rows.max(by: { $0.frame.maxY < $1.frame.maxY }) else {
+            XCTFail("\(tab): no visible content rows")
+            return
+        }
+        XCTContext.runActivity(
+            named: "\(tab): last row \"\(last.label)\" ends at \(last.frame.maxY), tab bar starts at \(barTop)"
+        ) { _ in }
+        XCTAssertLessThanOrEqual(
+            last.frame.maxY,
+            barTop + 0.5,
+            "\(tab): the last row \"\(last.label)\" ends at \(last.frame.maxY) under the tab bar (top \(barTop))"
         )
     }
 

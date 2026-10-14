@@ -42,6 +42,8 @@ struct SettingsView: View {
                 aboutSupportSection
                 dangerZoneSection
             }
+            // #1028 F5: opaque edge under the tab bar.
+            .sendmeterTabBarEdge(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Settings")
             .refreshable {
                 model.watch.refreshPairingState()
