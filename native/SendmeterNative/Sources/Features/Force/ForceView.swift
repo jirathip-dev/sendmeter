@@ -1996,7 +1996,12 @@ struct ForceView: View {
         NavigationStack {
             ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 16) {
+                // #1032: a plain VStack. Under the sticky bar's bottom
+                // safe-area inset (#1031) a LazyVStack can re-measure forever
+                // at the end of the scroll for some content heights (a 99%
+                // CPU main-thread hang on SE; sampled in issue-1032 logs).
+                // The tab holds about ten cards, so lazy loading saves nothing.
+                VStack(spacing: 16) {
                     if let guidedSession, !guidedSession.isEnded {
                         GuidedForceResumeCard(session: guidedSession) {
                             Haptics.shared.tap()

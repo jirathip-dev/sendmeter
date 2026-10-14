@@ -112,6 +112,36 @@ final class DashboardVerdictTests: XCTestCase {
         XCTAssertEqual(ReadinessTrendDensity.sparseLine(scoredDaysInWindow: 1).hasPrefix("1 readiness score "), true)
     }
 
+    /// #1022/#1023 wiring: Today's decision renders the table's copy (no
+    /// unqualified status word beside it, recovery advice not repeated by the
+    /// block card), and the sparse trend's one button hands off to the
+    /// Dashboard's EXISTING recovery-inputs sheet — the trend adds no sheet.
+    func testDashboardRendersTheVerdictAndTheSparseTrendOpensTheExistingSheet() throws {
+        let dashboard = try source("Sources/Features/Dashboard/DashboardView.swift")
+        let trend = try source("Sources/Features/Dashboard/ReadinessTrendCard.swift")
+
+        XCTAssertTrue(dashboard.contains("DashboardVerdict.copy(readiness: readiness, ratio: model.acwr.ratio)"))
+        XCTAssertTrue(dashboard.contains("Text(loadLine)"))
+        XCTAssertFalse(dashboard.contains("TrainingMetrics.acwrStatus("))
+        XCTAssertFalse(dashboard.contains("consider recovery"))
+
+        XCTAssertTrue(dashboard.contains("ReadinessTrendCard(onOpenRecoveryInputs: { showRecovery = true })"))
+        XCTAssertEqual(dashboard.components(separatedBy: ".sheet(isPresented: $showRecovery)").count - 1, 1)
+        XCTAssertTrue(dashboard.contains("RecoveryInputsSheet()"))
+        XCTAssertTrue(trend.contains("} else if isSparseWindow {"))
+        XCTAssertTrue(trend.contains("Text(ReadinessTrendDensity.sparseLine(scoredDaysInWindow: scoredDaysInWindow))"))
+        XCTAssertTrue(trend.contains("Label(ReadinessTrendDensity.sparseAction"))
+        XCTAssertTrue(trend.contains("onOpenRecoveryInputs()"))
+        XCTAssertFalse(trend.contains(".sheet("))
+        XCTAssertFalse(trend.contains(".fullScreenCover("))
+    }
+
+    private func source(_ relativePath: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+
     /// #1024: no implementation prose in user-facing copy (grep gate).
     func testNoImplementationProseInUserFacingCopy() throws {
         let banned = [
