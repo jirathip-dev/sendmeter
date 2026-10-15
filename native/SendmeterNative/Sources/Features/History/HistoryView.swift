@@ -22,6 +22,9 @@ struct HistoryView: View {
     /// to nil in `filterOptions` and committed back via `onChange`.
     @State private var selectedType: String?
     @State private var selectedTag: String?
+    /// #1038 G6: the deep link from the Force tab's last-pull summary —
+    /// History filtered to Force with that pull's detail on screen.
+    @State private var focusedRecording: TindeqRecording?
 
     private enum HistoryMode: String, CaseIterable, Identifiable {
         case all = "All"
@@ -198,6 +201,17 @@ struct HistoryView: View {
                 )
                 .sendmeterSheetPresentation()
             }
+            // #1038 G6: the last-pull deep link opens the pull here.
+            .sheet(item: $focusedRecording) { recording in
+                NavigationStack {
+                    ForceRecordingDetailView(recording: recording)
+                }
+                .sendmeterSheetPresentation()
+            }
+            .onChange(of: model.historyFocusRevision) { _ in
+                consumeHistoryFocus()
+            }
+            .onAppear { consumeHistoryFocus() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 selectionBar
             }
@@ -222,6 +236,19 @@ struct HistoryView: View {
 
     private var selectedRecordings: [TindeqRecording] {
         filteredLooseRecordings.filter { selectedIDs.contains($0.id) }
+    }
+
+    /// #1038 G6: land on the Force list with the pull the summary pointed at,
+    /// then clear the request so a tab revisit does not reopen it.
+    private func consumeHistoryFocus() {
+        guard let target = model.historyFocusRecording else { return }
+        mode = .force
+        query = ""
+        selectedType = nil
+        selectedTag = nil
+        visibleCount = HistoryPaging.pageSize
+        focusedRecording = model.recordings.first { $0.id == target }
+        model.historyFocusRecording = nil
     }
 
     private func toggleSelect(_ id: UUID) {

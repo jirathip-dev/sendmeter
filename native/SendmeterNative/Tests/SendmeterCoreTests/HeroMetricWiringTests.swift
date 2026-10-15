@@ -126,22 +126,33 @@ final class HeroMetricWiringTests: XCTestCase {
         XCTAssertFalse(content.contains(".system(size:"))
     }
 
-    func testForceDeviceKeepsCurrentHeroAndLabelsPeak() {
+    /// #1038 G1: the tab keeps NO live force — the current-force hero moved
+    /// to the Free hold full screen, which is now the only free-pull
+    /// recording surface. The old assertion (the card owns exactly one hero)
+    /// is inverted on purpose: a hero reappearing on the card must fail.
+    func testForceDeviceKeepsNoLiveHeroAndTheFullScreenOwnsIt() {
         let force = code(source("Sources/Features/Force/ForceView.swift"))
         let deviceCard = exactBlock(force, startingWith: "private struct ForceDeviceCard: View")
-        let normalized = normalizeWhitespace(deviceCard)
         let structural = withoutWhitespace(deviceCard)
 
-        XCTAssertTrue(normalized.contains("device.peakKilograms.formatted"))
-        XCTAssertTrue(normalized.contains("Text(\"Peak "))
-        XCTAssertTrue(structural.contains("accessibilityLabel(\"Peak"))
-        XCTAssertTrue(normalized.contains(".accessibilityElement(children: .combine) .accessibilityLabel( \"Current force"))
         XCTAssertEqual(
             countOccurrences("MetricValue(device.currentKilograms", in: structural),
-            1,
-            "ForceDeviceCard must keep exactly one current-force hero; a reintroduced duplicate must fail"
+            0,
+            "the tab's card must not display live force; the full screen owns it"
         )
         XCTAssertFalse(structural.contains("MetricValue(device.peakKilograms"))
+        XCTAssertFalse(
+            structural.contains("device.currentKilograms.formatted"),
+            "no live readout may creep back onto the card"
+        )
+
+        // The Free hold full screen owns the hero, with the peak and average
+        // labelled beside it.
+        let freeHold = code(source("Sources/Features/Force/FreeHoldFullscreenView.swift"))
+        let normalizedFreeHold = normalizeWhitespace(freeHold)
+        XCTAssertTrue(normalizedFreeHold.contains("SendmeterStyle.countdownMetric(baseSize: 68)"))
+        XCTAssertTrue(normalizedFreeHold.contains("Peak \\(forceText(device.peakKilograms)) kg"))
+        XCTAssertTrue(normalizedFreeHold.contains("Avg \\(forceText(device.averageKilograms)) kg"))
     }
 
     func testManualWorkoutRestCountdownUsesTheSharedHeroTreatment() {

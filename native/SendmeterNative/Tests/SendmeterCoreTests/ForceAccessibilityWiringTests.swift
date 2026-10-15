@@ -18,11 +18,19 @@ final class ForceAccessibilityWiringTests: XCTestCase {
 
     func testEveryLiveForceTraceAnnouncesItsPeakSummary() {
         let force = code(source("Sources/Features/Force/ForceView.swift"))
-
+        // #1038 G1: the tab's inline Progressor trace is gone — the guided
+        // full screen and the watch mirror stay in ForceView, and the Free
+        // hold full screen carries the third.
         XCTAssertEqual(
             countOccurrences("ForceTraceAccessibility.liveSummary(", in: force),
-            3,
-            "guided, Progressor, and Watch live traces must all announce a peak"
+            2,
+            "the guided full screen and the watch mirror must announce a peak"
+        )
+        let freeHold = code(source("Sources/Features/Force/FreeHoldFullscreenView.swift"))
+        XCTAssertEqual(
+            countOccurrences("ForceTraceAccessibility.liveSummary(", in: freeHold),
+            1,
+            "the Free hold full screen's trace must announce a peak too"
         )
         XCTAssertFalse(force.contains(".accessibilityLabel(\\\"Live force trace\\\")"))
     }

@@ -37,13 +37,18 @@ final class ForceBarPolicyTests: XCTestCase {
         XCTAssertEqual(bar(.measuring).actionTitle, "Stop & save")
     }
 
-    // F2 — Hands-free: Connect → Arm → (pull) → saves on release.
+    // F2 — Free hold: Connect → (self-armed, no step) → (pull) → saves on
+    // release. #1038 G3: arming is automatic, so the bar's big action once
+    // armed is the way OUT (Disarm); "Arm" survives only as the manual
+    // re-arm after the user explicitly disarmed.
     func testHandsFreeSequence() {
         XCTAssertEqual(bar(.disconnected, .handsFree, recordings: false).action, .connect)
         XCTAssertEqual(bar(.connected, .handsFree).action, .armHandsFree)
         XCTAssertEqual(bar(.connected, .handsFree).actionTitle, "Arm")
         let armed = bar(.connected, .handsFree, handsFreeArmed: true)
         XCTAssertEqual(armed.action, .disarmHandsFree)
+        XCTAssertEqual(armed.actionTitle, "Disarm")
+        XCTAssertFalse(armed.actionIsPrimary, "arming owns arming; the tap is the exit")
         XCTAssertEqual(armed.status, "Armed · pull to start")
         XCTAssertEqual(bar(.measuring, .handsFree, handsFreeMeasuring: true).action, .stopAndSave)
     }
@@ -109,7 +114,14 @@ final class ForceBarPolicyTests: XCTestCase {
     func testModeSwitchLocks() {
         XCTAssertFalse(bar(.connected).modeLocked)
         XCTAssertTrue(bar(.measuring).modeLocked)
-        XCTAssertTrue(bar(.connected, .handsFree, handsFreeArmed: true).modeLocked)
+        // #1038 G3: an ARMED Free hold does NOT lock the switch. Switching
+        // away is how the user leaves Free hold — the loop disarms with it,
+        // and nothing is being recorded at that moment.
+        XCTAssertFalse(bar(.connected, .handsFree, handsFreeArmed: true).modeLocked)
+        XCTAssertTrue(
+            bar(.connected, .handsFree, handsFreeArmed: true, handsFreeMeasuring: true).modeLocked,
+            "a live pull still locks the switch"
+        )
         XCTAssertTrue(bar(.connected, session: true).modeLocked)
     }
 
@@ -155,7 +167,9 @@ final class ForceBarPolicyTests: XCTestCase {
         XCTAssertFalse(ready.detail.contains("Armed now"), "not armed yet — must not claim it")
         let armed = ForceContextReadiness(device: .connected, mode: .handsFree, handsFreeArmed: true)
         XCTAssertEqual(armed.detail, "Armed now · no confirmation step")
-        XCTAssertEqual(armed.modeChip, "Hands-free")
+        // #1038 G2: the mode is "Free hold" — "Hands-free" is gone as a mode
+        // NAME (the raw enum value stays for the persisted switch).
+        XCTAssertEqual(armed.modeChip, "Free hold")
     }
 
     // F4: labelled hold time.

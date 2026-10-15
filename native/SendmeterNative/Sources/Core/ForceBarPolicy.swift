@@ -13,10 +13,14 @@ public enum ForceBarMode: String, CaseIterable, Sendable {
     case guided
     case handsFree
 
+    /// #1038 G2: the mode is "Free hold" — every mode is hands-free (pull to
+    /// start, release to stop), so the old word is not used as a mode name.
+    /// The raw value stays `handsFree` so the persisted switch and the
+    /// accessibility identifiers do not churn.
     public var title: String {
         switch self {
         case .guided: return "Guided"
-        case .handsFree: return "Hands-free"
+        case .handsFree: return "Free hold"
         }
     }
 }
@@ -49,6 +53,13 @@ public struct ForceBarInput: Equatable, Sendable {
     public var saving: Bool
     /// A pull has been recorded on this account before (Reconnect vs Connect).
     public var hasRecordings: Bool
+    /// #1038 I1: recordings in the active gauge session — the sticky bar owns
+    /// the count and the Finish action (both left the device card).
+    public var gaugeSessionCount: Int
+    /// #1038 G1/G2: the Free hold subject — the movement + side the pull will
+    /// record under ("FDP · Left"). Without it the subject would just repeat
+    /// the caption, which is not information.
+    public var freeHoldContext: String?
 
     public init(
         device: ForceBarDevice,
@@ -59,7 +70,9 @@ public struct ForceBarInput: Equatable, Sendable {
         hasHeldPull: Bool = false,
         guidedSessionActive: Bool = false,
         saving: Bool = false,
-        hasRecordings: Bool = false
+        hasRecordings: Bool = false,
+        gaugeSessionCount: Int = 0,
+        freeHoldContext: String? = nil
     ) {
         self.device = device
         self.mode = mode
@@ -70,6 +83,81 @@ public struct ForceBarInput: Equatable, Sendable {
         self.guidedSessionActive = guidedSessionActive
         self.saving = saving
         self.hasRecordings = hasRecordings
+        self.gaugeSessionCount = gaugeSessionCount
+        self.freeHoldContext = freeHoldContext
+    }
+}
+
+/// #1038 I3: why Finish is unavailable, in the order the bar can meet the
+/// conditions. The strings become the disabled control's accessibility hint,
+/// so a greyed Finish never reads as broken.
+public enum ForceFinishPolicy {
+    public static func finishBlockedReason(
+        measuring: Bool,
+        guidedSessionActive: Bool,
+        hasHeldPull: Bool,
+        saving: Bool
+    ) -> String? {
+        if measuring { return "Finish after this pull is saved" }
+        if guidedSessionActive { return "Finish after the guided protocol ends" }
+        if hasHeldPull { return "Save or discard the held pull first" }
+        if saving { return "Finishing…" }
+        return nil
+    }
+
+    /// #1038 I2: Finish is an explicit disconnect, so the auto-reconnect
+    /// (#1021) must not immediately reconnect. A count of zero means there is
+    /// no session to log.
+    public static func canFinish(count: Int, blockedReason: String?) -> Bool {
+        count > 0 && blockedReason == nil
+    }
+}
+
+/// #1038 I2: the Finish-session outcome, so the Force bar can disconnect ONLY
+/// after the session group is durably enqueued. A failure keeps the
+/// Progressor connected and surfaces the error (I3: never drop a recording).
+public enum ForceSessionEndOutcome: Equatable, Sendable {
+    /// The session's History entry is enqueued.
+    case logged
+    /// No active session (or no account scope) — nothing to log.
+    case nothingToEnd
+    /// The session could not be logged; the pull data is intact.
+    case failed
+}
+
+/// #1038 I2: the ordering rule for Finish, as a pure decision.
+public enum ForceFinishSequence {
+    /// Finish = end the session, THEN disconnect, counted as an explicit
+    /// disconnect so the #1021 auto-reconnect does not fire. The disconnect
+    /// runs only for an end that did not fail.
+    public static func disconnects(after outcome: ForceSessionEndOutcome) -> Bool {
+        switch outcome {
+        case .logged, .nothingToEnd:
+            // Nothing was recorded into the session, so the session itself is
+            // not at risk and the user's own Finish still stands.
+            return true
+        case .failed:
+            // The pull data is still on the Progressor: stay connected.
+            return false
+        }
+    }
+}
+
+/// #1038 I1: the sticky bar's gauge-session strip.
+public struct ForceBarSession: Equatable, Sendable {
+    /// Recordings in the active gauge session.
+    public let count: Int
+    public let canFinish: Bool
+    public let finishBlockedReason: String?
+
+    public init(count: Int, canFinish: Bool, finishBlockedReason: String? = nil) {
+        self.count = count
+        self.canFinish = canFinish
+        self.finishBlockedReason = finishBlockedReason
+    }
+
+    public var countLabel: String {
+        "\(count) recording\(count == 1 ? "" : "s")"
     }
 }
 
@@ -112,10 +200,16 @@ public struct ForceBarState: Equatable, Sendable {
     /// the device.
     public let modeLocked: Bool
     /// What the leading label shows: the armed protocol (Guided) or the
-    /// free-pull line (Hands-free).
+    /// free-hold line (Free hold).
     public let subject: String
     /// Guided mode: tapping the subject opens the protocol list (D2).
     public let subjectOpensProtocolList: Bool
+    /// The subject's small caption — "Protocol" in Guided, "Free hold" in
+    /// Free hold (#1038 G2), so the two modes never both read "Hands-free".
+    public let subjectCaption: String
+    /// #1038 I1: the gauge-session strip — nil when connected with no
+    /// recordings yet, which shows the guidance line instead.
+    public let session: ForceBarSession?
 }
 
 public enum ForceBarPolicy {
@@ -125,10 +219,13 @@ public enum ForceBarPolicy {
     /// `disconnectedWord`.
     public static let connectionLostWord = "Connection lost"
     public static let nothingArmedSubject = "Choose a protocol"
-    public static let freePullSubject = "Free pull"
+    /// #1038 G2: the free-hold mode's subject line.
+    public static let freeHoldSubject = "Free hold"
+    /// #1038 G3: connected + armed Free hold needs no tap — the pull starts it.
+    public static let armedPullToStartStatus = "Armed · pull to start"
 
     public static func state(_ input: ForceBarInput) -> ForceBarState {
-        let modeLocked = input.handsFreeArmed || input.handsFreeMeasuring
+        let modeLocked = input.handsFreeMeasuring
             || input.device == .measuring || input.guidedSessionActive || input.saving
         let subject: String
         let opensList: Bool
@@ -137,9 +234,34 @@ public enum ForceBarPolicy {
             subject = input.armedProtocolName ?? nothingArmedSubject
             opensList = !input.guidedSessionActive
         case .handsFree:
-            subject = freePullSubject
+            // #1038 G2: the subject is the movement the pull records under —
+            // the caption above it already says "Free hold", so repeating the
+            // mode word there would be a line of no information.
+            subject = input.freeHoldContext ?? freeHoldSubject
             opensList = false
         }
+        let caption = input.mode == .guided ? "Protocol" : "Free hold"
+
+        // #1038 I1/I3: the strip is present whenever a session has
+        // recordings. Finish availability is decided by one policy, and the
+        // count stays visible while Finish is blocked — the user can always
+        // see what the session holds.
+        let blockedReason = ForceFinishPolicy.finishBlockedReason(
+            measuring: input.device == .measuring || input.handsFreeMeasuring,
+            guidedSessionActive: input.guidedSessionActive,
+            hasHeldPull: input.hasHeldPull,
+            saving: input.saving
+        )
+        let session = input.gaugeSessionCount > 0
+            ? ForceBarSession(
+                count: input.gaugeSessionCount,
+                canFinish: ForceFinishPolicy.canFinish(
+                    count: input.gaugeSessionCount,
+                    blockedReason: blockedReason
+                ),
+                finishBlockedReason: blockedReason
+            )
+            : nil
 
         func make(
             _ status: String,
@@ -160,7 +282,9 @@ public enum ForceBarPolicy {
                 actionEnabled: enabled,
                 modeLocked: modeLocked,
                 subject: subject,
-                subjectOpensProtocolList: opensList
+                subjectOpensProtocolList: opensList,
+                subjectCaption: caption,
+                session: session
             )
         }
 
@@ -211,8 +335,11 @@ public enum ForceBarPolicy {
                 }
                 return make("Connected", .ready, .startGuided, "Start", "play.fill")
             case .handsFree:
+                // #1038 G3: armed the moment you are connected — no Arm step,
+                // so the big action is the safety way OUT (disarm), not a
+                // second way in. Auto-arm owns arming.
                 if input.handsFreeArmed {
-                    return make("Armed · pull to start", .armed, .disarmHandsFree, "Disarm", "xmark", primary: false)
+                    return make(armedPullToStartStatus, .armed, .disarmHandsFree, "Disarm", "xmark", primary: false)
                 }
                 return make("Connected", .ready, .armHandsFree, "Arm", "scope")
             }
@@ -287,7 +414,9 @@ public struct ForceContextReadiness: Equatable, Sendable {
             default: return "\(connectWord) from the bar below"
             }
         case .guidedReady: return "After Start, each rep begins when you pull"
-        case .handsFreeReady: return "Arm from the bar below"
+        // #1038 G3: Free hold arms itself on connect — there is no Arm step
+        // to point at.
+        case .handsFreeReady: return "Arming as soon as the link settles"
         case .handsFreeArmed: return "Armed now · no confirmation step"
         }
     }
@@ -303,7 +432,7 @@ public struct ForceContextReadiness: Equatable, Sendable {
     /// The mode chip on the armed hero.
     public var modeChip: String {
         switch claim {
-        case .handsFreeReady, .handsFreeArmed: return "Hands-free"
+        case .handsFreeReady, .handsFreeArmed: return "Free hold"
         case .waitingForProgressor, .guidedReady: return "Guided"
         }
     }

@@ -34,17 +34,23 @@ final class ForceTraceChartDomainWiringTests: XCTestCase {
         )
     }
 
-    /// The guided fullscreen feed AND the inline Progressor-card feed both
-    /// construct the same shared `ForceTraceChart` (with the stage band), so
-    /// they draw the band at the identical level from the identical domain.
-    /// Three feeds total in ForceView: fullscreen, inline card, watch mirror.
+    /// #1038 G1: the guided fullscreen feed, the Free hold feed and the watch
+    /// mirror all construct the same shared `ForceTraceChart`, so every
+    /// surface draws the band at the identical level from the identical
+    /// domain. The tab's inline Progressor feed is gone with the live gauge.
     func testEveryForceViewTraceFeedUsesTheSharedChart() {
         let force = code(source("Sources/Features/Force/ForceView.swift"))
 
         XCTAssertEqual(
             countOccurrences("ForceTraceChart(", in: force),
-            3,
-            "fullscreen, inline Progressor card, and watch mirror must all render through the one shared chart"
+            2,
+            "the guided fullscreen and the watch mirror must render through the one shared chart"
+        )
+        let freeHold = code(source("Sources/Features/Force/FreeHoldFullscreenView.swift"))
+        XCTAssertEqual(
+            countOccurrences("ForceTraceChart(", in: freeHold),
+            1,
+            "the Free hold full screen must render through the same shared chart"
         )
         XCTAssertEqual(
             countOccurrences("ForceChartYDomain.maxValue(", in: force),

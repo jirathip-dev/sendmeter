@@ -3,8 +3,11 @@ import SwiftUI
 
 /// #1028 D + F: the Force tab's sticky bottom bar (always visible above the
 /// tab bar). The ONLY place for device status and Connect/Reconnect (F1);
-/// carries the Guided | Hands-free switch (F2); the big action follows the
+/// carries the Guided | Free hold switch (F2); the big action follows the
 /// mode (`ForceBarPolicy`). Tapping the armed protocol opens the list (D2).
+///
+/// #1038 I1: the bar also owns the GAUGE SESSION — its recording count and a
+/// full-size Finish action, on their own strip above the status line.
 struct ForceBottomBar: View {
     let state: ForceBarState
     @Binding var mode: ForceBarMode
@@ -12,11 +15,16 @@ struct ForceBottomBar: View {
     let liveLine: String?
     let onSubject: () -> Void
     let onAction: () -> Void
+    /// #1038 I1/I2: end the gauge session and disconnect the Progressor.
+    let onFinishSession: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 10) {
+            if let session = state.session {
+                sessionStrip(session)
+            }
             HStack(spacing: 8) {
                 statusDot
                 Text(state.status)
@@ -59,6 +67,70 @@ struct ForceBottomBar: View {
         .padding(.bottom, 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("force-bottom-bar")
+    }
+
+    // MARK: Gauge session strip (#1038 I1)
+
+    /// The session line: what the session holds on the left, and Finish —
+    /// a real, full-size control, never a caption. Blocked (mid-pull, a
+    /// guided run, a held pull) it stays visible but disabled, with the
+    /// reason as its hint: it must never drop a recording (I3).
+    private func sessionStrip(_ session: ForceBarSession) -> some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.caption.weight(.semibold))
+                    .accessibilityHidden(true)
+                Text(session.countLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .foregroundStyle(SendmeterStyle.textSecondary)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("force-bar-session-count")
+
+            Spacer(minLength: 4)
+
+            Button(action: onFinishSession) {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.subheadline.weight(.semibold))
+                        .accessibilityHidden(true)
+                    Text("Finish")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(session.canFinish ? SendmeterStyle.textPrimary : SendmeterStyle.textTertiary)
+                .padding(.horizontal, 12)
+                .frame(minWidth: 96, minHeight: 44)
+                .background(
+                    SendmeterStyle.surfaceNested,
+                    in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .strokeBorder(SendmeterStyle.line, lineWidth: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            }
+            .hapticButtonStyle(.plain)
+            .disabled(!session.canFinish)
+            .accessibilityIdentifier("force-bar-finish")
+            .accessibilityLabel("Finish session")
+            .accessibilityHint(
+                session.finishBlockedReason
+                    ?? "Saves the session to History and disconnects the Progressor"
+            )
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 3)
+        .background(
+            SendmeterStyle.primary.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 15, style: .continuous)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("force-bar-session")
     }
 
     // MARK: Status
@@ -199,7 +271,7 @@ struct ForceBottomBar: View {
             .accessibilityIdentifier("force-bar-protocol")
         } else {
             VStack(alignment: .leading, spacing: 1) {
-                Text(state.status == "Guided session" ? "Protocol" : "Hands-free")
+                Text(state.subjectCaption)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(SendmeterStyle.textSecondary)
                 Text(state.subject)

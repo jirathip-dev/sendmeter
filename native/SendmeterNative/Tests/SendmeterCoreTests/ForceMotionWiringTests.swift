@@ -255,7 +255,8 @@ final class ForceMotionWiringTests: XCTestCase {
         // #1028 F2/F3: the copy moved into `ForceContextReadiness` (Core),
         // which the card renders; the claim follows the link and the mode.
         let readiness = code(source("Sources/Core/ForceBarPolicy.swift"))
-        XCTAssertTrue(readiness.contains("\"Hands-free\""))
+        // #1038 G2: the mode reads "Free hold".
+        XCTAssertTrue(readiness.contains("\"Free hold\""))
         XCTAssertTrue(readiness.contains("\"Pull to start · release to stop\""))
         XCTAssertTrue(readiness.contains("\"Armed now · no confirmation step\""))
         XCTAssertTrue(readiness.contains("\"Waiting for Progressor\""))

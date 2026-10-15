@@ -92,7 +92,11 @@ struct RootView: View {
                     SplashView()
                 case .signedOut:
                     #if DEBUG
-                    if CommandLine.arguments.contains("--error-banner-fixture") {
+                    if DesignFixture1038.state != nil {
+                        // #1038 design-round harness: the real tab shell over
+                        // seeded owner state (see DesignFixture1038.swift).
+                        DesignFixture1038View()
+                    } else if CommandLine.arguments.contains("--error-banner-fixture") {
                         // #927 evidence harness: raises the REAL banner through
                         // `model.errorMessage`, so RootView's own host draws it
                         // over the real signed-out screen or, with

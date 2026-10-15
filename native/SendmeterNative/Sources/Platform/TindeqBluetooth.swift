@@ -711,3 +711,39 @@ extension TindeqBluetooth.Status {
         }
     }
 }
+
+#if DEBUG
+extension TindeqBluetooth {
+    /// #1038 design harness only (`--design-1038`, DEBUG): sets the published
+    /// transport state directly so the real Force screen renders a device
+    /// state without a Progressor. Never called outside `DesignFixture1038`.
+    func designFixtureSet(status: Status, samples: [TindeqSample] = []) {
+        sampleBuffer.removeAll()
+        for sample in samples { sampleBuffer.append(sample) }
+        visibleSampleRange = samples.isEmpty ? 0..<0 : sampleBuffer.visibleRange()
+        let values = samples.map(\.kilograms)
+        currentKilograms = values.last ?? 0
+        peakKilograms = values.max() ?? 0
+        averageKilograms = values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
+        elapsedMilliseconds = samples.last?.milliseconds ?? 0
+        self.status = status
+    }
+
+    /// #1038: a completed pull held unsaved (the "Save completed pull" card
+    /// and the #1004 held-pull Finish gate).
+    func designFixtureHoldCompleted(_ summary: ForceSummary?) {
+        completedSummary = summary
+    }
+
+    /// #1038: a pull salvaged after a mid-rep disconnect (the recovery card).
+    func designFixtureHoldInterrupted(_ summary: ForceSummary?, wasHandsFree: Bool = false) {
+        interruptedSummary = summary
+        interruptedWasHandsFree = wasHandsFree
+    }
+
+    /// #1038: the free-hold arm flag the transport mirrors from the machine.
+    func designFixtureSetHandsFreeArmed(_ armed: Bool) {
+        handsFreeArmed = armed
+    }
+}
+#endif

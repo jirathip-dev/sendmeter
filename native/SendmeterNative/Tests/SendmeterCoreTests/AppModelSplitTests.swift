@@ -99,9 +99,13 @@ final class AppModelSplitTests: XCTestCase {
 
         let forceView = code(source("Sources/Features/Force/ForceView.swift"))
         XCTAssertTrue(forceView.contains("let device: TindeqBluetooth"))
-        XCTAssertTrue(forceView.contains("buffer: device.sampleBuffer"))
-        XCTAssertTrue(forceView.contains("range: device.visibleSampleRange"))
         XCTAssertTrue(forceView.contains("case buffer(ForceSampleBuffer, Range<Int>)"))
+
+        // #1038 G1: the tab's live trace moved into the Free hold full
+        // screen, so the range-backed feed lives there now.
+        let freeHold = code(source("Sources/Features/Force/FreeHoldFullscreenView.swift"))
+        XCTAssertTrue(freeHold.contains("buffer: device.sampleBuffer"))
+        XCTAssertTrue(freeHold.contains("range: device.visibleSampleRange"))
     }
 
     func testTindeqTimerDeinitAndMainActorBoundaryAreExplicit() {

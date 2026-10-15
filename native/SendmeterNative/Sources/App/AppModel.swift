@@ -516,6 +516,19 @@ public final class AppModel {
     }
     public var passwordRecovery = false
     public var selectedTab: AppTab = .dashboard
+
+    /// #1038 G6: a recording the Force tab asked History to reveal (the
+    /// last-pull summary deep link). History consumes it and clears it; the
+    /// revision makes a repeat request for the same row re-fire.
+    public var historyFocusRecording: UUID?
+    public private(set) var historyFocusRevision: UInt64 = 0
+
+    /// #1038 G6: open History → Force with the given recording on screen.
+    public func focusHistory(on recordingID: UUID) {
+        historyFocusRecording = recordingID
+        historyFocusRevision &+= 1
+        selectedTab = .history
+    }
     /// The Force owner registers this while a guided run exists, including
     /// while its fullscreen is minimized. Auth teardown calls it before
     /// revoking the old bearer token so an active pull can be preserved under
@@ -4743,6 +4756,20 @@ public final class AppModel {
 
     // MARK: Gauge session (#627)
 
+    /// #1038 I2: end-and-disconnect, ordered. The disconnect runs only for a
+    /// completed end, and it is the user's own Disconnect — so the #1021
+    /// auto-reconnect stays off until the next Connect. The ordering rule is
+    /// `ForceFinishSequence`, a pure Core decision, so it is unit-tested
+    /// without touching Bluetooth.
+    @discardableResult
+    public func finishGaugeSessionAndDisconnect() async -> ForceSessionEndOutcome {
+        let outcome = await endGaugeSessionReportingOutcome()
+        if ForceFinishSequence.disconnects(after: outcome) {
+            requestDisconnect()
+        }
+        return outcome
+    }
+
     /// End the active gauge session and auto-log it immediately at the
     /// W'-depletion predicted RPE (#627) — no confirm step, mirroring the
     /// web's `endGaugeSession` (#295) and the watch's `logSessionNow()`
@@ -4753,8 +4780,14 @@ public final class AppModel {
     /// per-tag curves — never a fresh fetch — so a missing curve falls back
     /// instead of stalling the log.
     public func endGaugeSession(ifCurrentAccountScope expectedScope: NativeAccountScope? = nil) async {
-        guard expectedScope == nil || accountScope == expectedScope else { return }
-        guard let userID = currentUserID else { return }
+        _ = await endGaugeSessionReportingOutcome(ifCurrentAccountScope: expectedScope)
+    }
+
+    func endGaugeSessionReportingOutcome(
+        ifCurrentAccountScope expectedScope: NativeAccountScope? = nil
+    ) async -> ForceSessionEndOutcome {
+        guard expectedScope == nil || accountScope == expectedScope else { return .nothingToEnd }
+        guard let userID = currentUserID else { return .nothingToEnd }
         let accountFetch = AccountScopedFetch(
             accountUserID: userID,
             accountEpoch: accountEpoch
@@ -4771,8 +4804,8 @@ public final class AppModel {
               accountFetch.canApply(
                   to: currentUserID,
                   accountEpoch: accountEpoch
-              ) else { return }
-        guard let ended = gaugeSessionTracker.endActive() else { return }
+              ) else { return .nothingToEnd }
+        guard let ended = gaugeSessionTracker.endActive() else { return .nothingToEnd }
 
         let groupRecordings = recordings.filter { $0.groupID == ended.groupID }
         let prediction = GaugeSessionRPE.predict(
@@ -4803,10 +4836,11 @@ public final class AppModel {
               accountFetch.canApply(
                   to: currentUserID,
                   accountEpoch: accountEpoch
-              ) else { return }
+              ) else { return .nothingToEnd }
         toastMessage = ok
             ? "Gauge session logged to history"
             : "Couldn\u{2019}t log gauge session. Try again."
+        return ok ? .logged : .failed
     }
 
     /// #628: a guided protocol's run owns the disconnect-triggered session
@@ -12956,3 +12990,60 @@ public final class AppModel {
         }
     }
 }
+
+#if DEBUG
+extension AppModel {
+    /// #1038 design harness only (`--design-1038`, DEBUG): publishes a
+    /// deterministic account snapshot so the real Force, History and tab
+    /// views render the owner's state without a backend. Never called outside
+    /// `DesignFixture1038`.
+    func designFixtureSeed(
+        sessions: [SendmeterCore.Session],
+        healthMetrics: [HealthMetric],
+        presets: [TindeqPreset],
+        recordings: [TindeqRecording],
+        healthSyncedAt: Date?
+    ) {
+        self.sessions = sessions
+        hasLoadedSessions = true
+        self.healthMetrics = healthMetrics
+        self.presets = presets
+        self.recordings = recordings
+        hasLoadedRecordings = true
+        lastHealthSyncedAt = healthSyncedAt
+        forceModel.hasLoadedRecordings = true
+    }
+
+    /// #1038 amendment I: an ACTIVE gauge session holding `count` recordings —
+    /// the state the sticky bar's strip renders. The session is minted the
+    /// same way a real first save mints it, so `finishGaugeSessionAndDisconnect`
+    /// runs its real path from here.
+    func designFixtureActivateGaugeSession(
+        count: Int,
+        recordings: [TindeqRecording]
+    ) {
+        let session = gaugeSessionTracker.ensureSession()
+        let groupID = session.groupID
+        let ending = Date()
+        var seeded: [TindeqRecording] = []
+        for index in 0..<max(0, count) {
+            seeded.append(TindeqRecording(
+                id: UUID(uuidString: String(format: "10380000-0000-0000-0004-%012d", index))!,
+                recordedAt: ending.addingTimeInterval(-Double(count - index) * 210),
+                durationMilliseconds: 10_200,
+                peakKilograms: 30.4 + Double(index) * 0.6,
+                averageKilograms: 28.2 + Double(index) * 0.6,
+                sampleCount: 820,
+                note: "",
+                tag: "FDP",
+                side: .left,
+                groupID: groupID,
+                zone: .strength
+            ))
+        }
+        self.recordings = seeded + recordings.filter { $0.groupID != groupID }
+        hasLoadedRecordings = true
+        forceModel.hasLoadedRecordings = true
+    }
+}
+#endif

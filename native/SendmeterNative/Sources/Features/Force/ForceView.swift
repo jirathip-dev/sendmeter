@@ -686,7 +686,9 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
     }
 }
 
-private struct GuidedGlassButtonStyle: ButtonStyle {
+/// #938/#1038: the guided and free-hold full screens share this glass control
+/// style, so the two full-screen surfaces read as one product.
+struct GuidedGlassButtonStyle: ButtonStyle {
     let tint: Color
 
     func makeBody(configuration: Configuration) -> some View {
@@ -1399,6 +1401,13 @@ struct ForceView: View {
     @AppStorage("sendmeter.native.force.zone-intensity") private var zoneIntensityPercent = ZoneMix.zoneIntensityDefault
     /// #903: the combined movement + side full-screen picker presentation.
     @State private var movementPickerPresented = false
+    /// #1038 G1/G3: the Free hold full screen — the ONLY free-pull recording
+    /// surface. It opens on the first pull (never on arming) and stays for
+    /// the next one until the user leaves.
+    @State private var freeHoldFullscreenPresented = false
+    /// #1038 G3: the user tapped Disarm / left Free hold on this link, so the
+    /// auto-arm must not fight them. Cleared by a reconnect or a mode switch.
+    @State private var userDisarmedFreeHold = false
     /// #710: a maintenance suggestion (Warm-up / Prehab) arms its own guided
     /// preset but is NOT a `ZoneQuality` — it records under a maintenance zone
     /// and never feeds training balance. Kept parallel to `armedZoneQuality`
@@ -1877,7 +1886,11 @@ struct ForceView: View {
                     && forceRecoveryControls.showsRecoveryCard,
                 guidedSessionActive: guidedSession.map { !$0.isEnded } ?? false,
                 saving: savingSummary,
-                hasRecordings: !model.recordings.isEmpty
+                hasRecordings: !model.recordings.isEmpty,
+                // #1038 I1: the sticky bar owns the session count.
+                gaugeSessionCount: gaugeSessionCount,
+                // #1038 G2: the Free hold subject is the movement itself.
+                freeHoldContext: freeHoldMovementSummary
             )
         )
     }
@@ -1915,6 +1928,39 @@ struct ForceView: View {
         guard model.tindeq.status == .measuring || model.handsFree.isMeasuring else { return nil }
         let kg = model.tindeq.currentKilograms.formatted(.number.precision(.fractionLength(1)))
         return "\(kg) kg · " + ForceReadoutFormat.hold(milliseconds: model.tindeq.elapsedMilliseconds)
+    }
+
+    /// #1038 G1/G2: the Free hold identity line — the movement + side the pull
+    /// will record under. The published context is authoritative (it is what
+    /// the save writes); the local selection is the fallback for the moment
+    /// before it is published.
+    private var freeHoldMovementSummary: String {
+        let context = model.freePullContext
+        var parts: [String] = []
+        if !context.tag.isEmpty {
+            parts.append(context.tag)
+        } else if !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append(tag)
+        }
+        let contextSide = context.side == .unspecified ? side : context.side
+        if contextSide != .unspecified { parts.append(contextSide.label) }
+        // No movement named yet: the mode word is the honest subject.
+        return parts.isEmpty ? ForceBarPolicy.freeHoldSubject : parts.joined(separator: " · ")
+    }
+
+    /// #1038 G6: the most recent saved pull, for the device card's summary.
+    private var forceLastPull: TindeqRecording? {
+        model.recordings
+            .filter { $0.peakKilograms != nil }
+            .max { $0.recordedAt < $1.recordedAt }
+    }
+
+    /// #1038 G6: the summary is a deep link — History, with the pull's own
+    /// detail on screen.
+    private func openLastPullInHistory() {
+        guard let pull = forceLastPull else { return }
+        Haptics.shared.tap()
+        model.focusHistory(on: pull.id)
     }
 
     private func performForceBarAction(_ action: ForceBarAction) {
@@ -1956,13 +2002,25 @@ struct ForceView: View {
         }
     }
 
+    /// #1038 I1/I2/I3: the sticky bar's Finish — end the gauge session and
+    /// THEN disconnect the Progressor, counted as an explicit disconnect so
+    /// the #1021 auto-reconnect does not fire. The gate is the same policy the
+    /// bar renders from, re-checked here so a stale tap can never end a
+    /// session mid-pull, mid-guided-run, or over a held pull.
+    private func finishGaugeSession() {
+        guard let session = forceBarState.session, session.canFinish else { return }
+        Haptics.shared.tap()
+        Task { await model.finishGaugeSessionAndDisconnect() }
+    }
+
     private var forceBottomBar: some View {
         ForceBottomBar(
             state: forceBarState,
             mode: forceBarMode,
             liveLine: forceBarLiveLine,
             onSubject: openProtocolList,
-            onAction: { performForceBarAction(forceBarState.action) }
+            onAction: { performForceBarAction(forceBarState.action) },
+            onFinishSession: { finishGaugeSession() }
         )
     }
 
@@ -2057,6 +2115,10 @@ struct ForceView: View {
                         gaugeSessionCount: gaugeSessionCount,
                         hasLoadedRecordings: forceModel.hasLoadedRecordings,
                         hasForceRecordings: !model.recordings.isEmpty,
+                        // #1038 G6: the card's summary replaces the live
+                        // gauge, so the card needs the pull itself.
+                        lastPull: forceLastPull,
+                        openLastPull: openLastPullInHistory,
                         refuseAction: { message in refuseAction(message) },
                         disconnect: { model.requestDisconnect() },
                         finishSession: {
@@ -2247,7 +2309,39 @@ struct ForceView: View {
             .onChange(of: selectedTargetPlan) { _ in publishFreePullContext() }
             .onChange(of: handsFreeEnabled) { enabled in
                 if !enabled, !guidedControlsLocked { model.handsFree.disarm() }
+                // #1038 G3: a switch INTO Free hold arms it; switching away
+                // clears any prior Disarm so the next visit arms again.
+                userDisarmedFreeHold = false
+                evaluateFreeHoldAutoArm()
                 model.updateKeepAwake()
+            }
+            // #1038 G3: Free hold self-arms on connect — no Arm step. The
+            // policy refuses to fight a user's Disarm or any unsafe moment.
+            .onChange(of: model.tindeq.status) { status in
+                if status != .connected { userDisarmedFreeHold = false }
+                evaluateFreeHoldAutoArm()
+            }
+            // #1038 G1: the full screen opens on the FIRST PULL — never on
+            // arming, and never for a sub-threshold wobble (the machine's own
+            // start threshold is the trigger).
+            .onChange(of: model.handsFree.isMeasuring) { _ in
+                evaluateFreeHoldSurface()
+            }
+            .onChange(of: model.handsFree.isArmed) { _ in
+                evaluateFreeHoldAutoArm()
+            }
+            .onChange(of: model.tindeq.completedSummary) { _ in
+                // A pull that completed while the app was elsewhere (the
+                // phone in a pocket) opens the screen on return, so the SAVED
+                // panel is what greets the climber.
+                evaluateFreeHoldSurface()
+            }
+            .onAppear {
+                evaluateFreeHoldAutoArm()
+                evaluateFreeHoldSurface()
+                #if DEBUG
+                applyDesignFixtureHooks()
+                #endif
             }
             .onChange(of: model.currentUserID) { _ in
                 teardownGuidedSessionIfNeeded()
@@ -2292,6 +2386,35 @@ struct ForceView: View {
             // CANCEL/STOP/SAVE phase machine) is removed — hands-free free
             // pulls live on the Force card, guided protocols own the guided
             // fullscreen above.
+            // #1038 G1: the Free hold full screen — the only free-pull
+            // recording surface. Its own cover, so it never fights the guided
+            // one, and it stays presented for the next pull.
+            .fullScreenCover(
+                isPresented: $freeHoldFullscreenPresented,
+                onDismiss: {
+                    Haptics.shared.sheetDismissed()
+                    // #1038 G3: leaving the screen while armed keeps the loop
+                    // armed (the next pull re-opens it). Leaving while
+                    // disarmed is a real exit.
+                    evaluateFreeHoldAutoArm()
+                }
+            ) {
+                FreeHoldFullscreenView(
+                    device: model.tindeq,
+                    sessionCount: gaugeSessionCount,
+                    movementSummary: freeHoldMovementSummary,
+                    onFinishSession: {
+                        freeHoldFullscreenPresented = false
+                        finishGaugeSession()
+                    },
+                    onStopAndSave: { stopAndSave() },
+                    onMinimize: {
+                        guidedMinimizeRequested = false
+                        freeHoldFullscreenPresented = false
+                    }
+                )
+                .onAppear { Haptics.shared.sheetPresented() }
+            }
             // #903: the combined movement + side picker — a true full-screen
             // modal with its own 44px Close control and no app tab bar.
             .fullScreenCover(isPresented: $movementPickerPresented, onDismiss: {
@@ -2418,6 +2541,76 @@ struct ForceView: View {
     /// the only free-pull start — measurement begins when the athlete pulls
     /// and saves on release (the Force card renders the armed/measuring
     /// states; the standalone manual fullscreen is gone).
+    /// #1038 G3: Free hold self-arms on connect — the policy refuses to fight
+    /// a user's own Disarm, or to arm into a live/held/guided/saving moment.
+    private func evaluateFreeHoldAutoArm() {
+        guard model.handsFree.isArmed == false, !userDisarmedFreeHold else { return }
+        let shouldArm = FreeHoldAutoArmPolicy.shouldArm(
+            FreeHoldAutoArmInput(
+                mode: handsFreeEnabled ? .handsFree : .guided,
+                connected: model.tindeq.status == .connected,
+                armed: model.handsFree.isArmed,
+                measuring: model.handsFree.isMeasuring,
+                hasHeldPull: model.tindeq.hasUnsavedRecording,
+                guidedSessionActive: guidedControlsLocked,
+                saving: savingSummary,
+                userDisarmed: userDisarmedFreeHold
+            )
+        )
+        guard shouldArm else { return }
+        armHandsFree()
+    }
+
+    /// #1038 G1: present the Free hold full screen on the first pull (and on a
+    /// pull that completed while the app was elsewhere), never on arming.
+    private func evaluateFreeHoldSurface() {
+        guard handsFreeEnabled || freeHoldFullscreenPresented else { return }
+        let measureRequest = FreeHoldPresentation.request(
+            measuring: model.handsFree.isMeasuring,
+            alreadyPresented: freeHoldFullscreenPresented,
+            guidedSessionActive: guidedControlsLocked
+        )
+        if measureRequest == .present {
+            presentFreeHoldFullscreen()
+            return
+        }
+        // The pull finished while the screen was closed (backgrounded phone):
+        // open it so the SAVED panel is what greets the climber.
+        if !freeHoldFullscreenPresented,
+           !guidedControlsLocked,
+           model.tindeq.completedSummary != nil,
+           model.tindeq.status != .measuring,
+           model.handsFree.isArmed {
+            presentFreeHoldFullscreen()
+        }
+    }
+
+    private func presentFreeHoldFullscreen() {
+        guard !freeHoldFullscreenPresented else { return }
+        freeHoldFullscreenPresented = true
+    }
+
+    #if DEBUG
+    /// #1038 design harness only (`--design-1038`, DEBUG): arms the fixture's
+    /// saved preset and opens the presenter the capture state asks for. The
+    /// views, policies and state transitions are the real ones — only the
+    /// launch-argument gate lives here.
+    private func applyDesignFixtureHooks() {
+        guard let state = DesignFixture1038.state else { return }
+        if let armedID = DesignFixture1038.armedPresetID {
+            selectedPresetID = armedID
+        }
+        if state == .forcePicker {
+            movementPickerPresented = true
+        }
+        if DesignFixture1038.presentsFreeHoldScreen != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                presentFreeHoldFullscreen()
+            }
+        }
+    }
+    #endif
+
     private func armHandsFree() {
         guard !guidedControlsLocked else {
             refuseAction("Resume or end the active guided protocol before arming hands-free.")
@@ -2495,6 +2688,9 @@ struct ForceView: View {
     }
 
     private func cancelHandsFreeArm() {
+        // #1038 G3: an explicit Disarm is the user's own decision — the
+        // auto-arm must not immediately undo it on this link.
+        userDisarmedFreeHold = true
         model.handsFree.cancelArm()
         model.updateKeepAwake()
     }
@@ -3003,6 +3199,11 @@ private struct ForceDeviceCard: View {
     let gaugeSessionCount: Int
     let hasLoadedRecordings: Bool
     let hasForceRecordings: Bool
+    /// #1038 G6: the most recent pull, summarised on the card in place of
+    /// #1028's live gauge (G1 moved live force to the full screen only).
+    let lastPull: TindeqRecording?
+    /// #1038 G6: the summary is a deep link into History.
+    let openLastPull: () -> Void
     /// #1028 F1: Connect / Start / Arm / Stop & save live only in the bottom
     /// bar; the card keeps device tools (Tare, Battery, Disconnect) and the
     /// #1004 recovery controls.
@@ -3069,6 +3270,77 @@ private struct ForceDeviceCard: View {
         showsDisconnectedEmptyState || showsForceDataEmptyState
     }
 
+    // MARK: #1038 G6 — the last-pull summary (replaces the live gauge)
+
+    /// #1038 G1: no live force on the tab, so this card summarises the pull
+    /// the session ended with — the same values History holds — and deep
+    /// links to it. It is shown only when nothing is live or held: while a
+    /// pull is in play the card is the operate surface, not a summary.
+    private var showsLastPullSummary: Bool {
+        guard lastPull != nil else { return false }
+        guard device.status != .measuring,
+              !device.hasUnsavedRecording,
+              device.completedSummary == nil,
+              device.interruptedRecording == nil
+        else { return false }
+        return true
+    }
+
+    private var lastPullSummary: some View {
+        Button(action: openLastPull) {
+            HStack(spacing: 12) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(SendmeterStyle.primary)
+                    .frame(width: 42, height: 42)
+                    .background(SendmeterStyle.primary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("LAST PULL")
+                        .font(.caption2.weight(.bold))
+                        .tracking(1.0)
+                        .foregroundStyle(SendmeterStyle.textSecondary)
+                    if let lastPull {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            MetricValue(
+                                (lastPull.peakKilograms ?? 0).formatted(.number.precision(.fractionLength(1))),
+                                unit: "kg",
+                                color: .primary
+                            )
+                            Text(ForceReadoutFormat.hold(milliseconds: Double(lastPull.durationMilliseconds)))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(SendmeterStyle.textSecondary)
+                        }
+                        Text(ForceLastPullFormat.contextLine(lastPull))
+                            .font(.caption)
+                            .foregroundStyle(SendmeterStyle.textSecondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                HStack(spacing: 3) {
+                    Text("History")
+                        .font(.subheadline.weight(.semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(SendmeterStyle.primary)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .hapticButtonStyle(.plain)
+        .accessibilityLabel(lastPullAccessibilityLabel)
+        .accessibilityHint("Opens this pull in History")
+        .accessibilityIdentifier("force-last-pull")
+    }
+
+    private var lastPullAccessibilityLabel: String {
+        guard let lastPull else { return "Last pull" }
+        let peak = (lastPull.peakKilograms ?? 0).formatted(.number.precision(.fractionLength(1)))
+        return "Last pull, peak \(peak) kilograms, " + ForceLastPullFormat.contextLine(lastPull)
+    }
+
     /// #1028 F1: the empty state points at the bar — it never carries a
     /// second Connect/Reconnect of its own.
     private var primaryEmptyMessage: String {
@@ -3108,45 +3380,11 @@ private struct ForceDeviceCard: View {
                         message: primaryEmptyMessage,
                         inlineArtwork: .forceMascot
                     )
-                } else if device.status == .measuring || device.handsFreeArmed || !device.visibleSampleRange.isEmpty {
-                    HStack(alignment: .firstTextBaseline) {
-                        MetricValue(
-                            device.currentKilograms.formatted(.number.precision(.fractionLength(1))),
-                            unit: "kg",
-                            color: inTarget ? SendmeterStyle.optimal : .primary
-                        )
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel(
-                            "Current force \(device.currentKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
-                        )
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 5) {
-                            Text("Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
-                                .accessibilityLabel(
-                                    "Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kilograms"
-                                )
-                            Text("Average \(device.averageKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
-                            // #1028 F4: the time is labelled.
-                            Text(ForceReadoutFormat.hold(milliseconds: device.elapsedMilliseconds))
-                                .accessibilityIdentifier("force-live-hold")
-                        }
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                    }
-                    ForceTraceChart(
-                        buffer: device.sampleBuffer,
-                        range: device.visibleSampleRange,
-                        targetRange: targetRange,
-                        target: targetBand?.kilograms,
-                        showsKilogramScale: true
-                    )
-                    .frame(height: 190)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(
-                        ForceTraceAccessibility.liveSummary(
-                            peakKilograms: device.peakKilograms
-                        )
-                    )
+                } else if showsLastPullSummary {
+                    // #1038 G1/G6: no live force on the tab — the card's
+                    // readout and trace are gone; the last pull takes their
+                    // place, and it opens that recording in History.
+                    lastPullSummary
                 } else {
                     // #1028 D3: compact ready state (was a 170 pt panel).
                     HStack(spacing: 12) {
@@ -3157,9 +3395,9 @@ private struct ForceDeviceCard: View {
                             .background(SendmeterStyle.primary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Ready to measure")
+                            Text("Ready to pull")
                                 .font(.headline)
-                            Text("Tare before your first pull. The live trace appears here.")
+                            Text("Every pull records in the full screen and saves on release.")
                                 .font(.subheadline)
                                 .foregroundStyle(SendmeterStyle.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -3202,20 +3440,9 @@ private struct ForceDeviceCard: View {
                 controls
                     .disabled(guidedSessionActive)
 
-                if gaugeSessionCount > 0, device.status == .connected {
-                    HStack {
-                        Label("Gauge session · \(gaugeSessionCount) recording\(gaugeSessionCount == 1 ? "" : "s")", systemImage: "waveform.path.ecg")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Finish", action: finishSession)
-                            .font(.subheadline.weight(.semibold))
-                            .disabled(guidedSessionActive)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(SendmeterStyle.primary.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
-                }
+                // #1038 I1: the gauge-session row LEFT this card — the count
+                // and Finish now live in the sticky bottom bar. The card keeps
+                // only the Progressor's own controls.
 
                 if device.interruptedRecording != nil, recoveryControls.showsRecoveryCard {
                     VStack(alignment: .leading, spacing: 10) {
