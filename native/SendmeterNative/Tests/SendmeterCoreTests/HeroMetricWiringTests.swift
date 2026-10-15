@@ -146,13 +146,25 @@ final class HeroMetricWiringTests: XCTestCase {
             "no live readout may creep back onto the card"
         )
 
-        // The Free hold full screen owns the hero, with the peak and average
-        // labelled beside it.
+        // The Free hold full screen owns the live readout. #1038: it now
+        // mirrors the guided screen — the hero is the hold CLOCK, and live
+        // force + peak/average sit in the live card, labelled.
         let freeHold = code(source("Sources/Features/Force/FreeHoldFullscreenView.swift"))
         let normalizedFreeHold = normalizeWhitespace(freeHold)
         XCTAssertTrue(normalizedFreeHold.contains("SendmeterStyle.countdownMetric(baseSize: 68)"))
-        XCTAssertTrue(normalizedFreeHold.contains("Peak \\(forceText(device.peakKilograms)) kg"))
-        XCTAssertTrue(normalizedFreeHold.contains("Avg \\(forceText(device.averageKilograms)) kg"))
+        XCTAssertTrue(normalizedFreeHold.contains("Text(holdText(heroMilliseconds))"))
+        // While a pull records the card reads the live device; once saved it
+        // shows that pull's own numbers until the next pull.
+        XCTAssertTrue(normalizedFreeHold.contains("let current = saved?.peakKilograms ?? device.currentKilograms"))
+        XCTAssertTrue(normalizedFreeHold.contains("let peak = saved?.peakKilograms ?? device.peakKilograms"))
+        XCTAssertTrue(normalizedFreeHold.contains("let average = saved?.averageKilograms ?? device.averageKilograms"))
+        XCTAssertTrue(normalizedFreeHold.contains("MetricValue(forceText(current), unit: \"kg\""))
+        XCTAssertTrue(normalizedFreeHold.contains("Peak \\(forceText(peak)) kg"))
+        XCTAssertTrue(normalizedFreeHold.contains("Avg \\(forceText(average)) kg"))
+        // The saved card's headline IS the peak: the "Peak" line is not
+        // repeated under it, and the hero does not restate it either.
+        XCTAssertTrue(normalizedFreeHold.contains("if saved == nil { Text(\"Peak \\(forceText(peak)) kg\") }"))
+        XCTAssertFalse(normalizedFreeHold.contains("pull again for the next one"))
     }
 
     func testManualWorkoutRestCountdownUsesTheSharedHeroTreatment() {

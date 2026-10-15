@@ -1,0 +1,14 @@
+force-free-hold-armed
+force-free-hold-armed-last-pull
+force-free-hold-waiting
+force-free-hold-recording
+force-free-hold-saved
+force-guided-armed
+force-zone-armed
+force-disconnected
+force-picker
+force-picker-side
+force-bar-session
+force-held-pull
+force-after-finish
+guided-fullscreen@guided=work

@@ -89,12 +89,16 @@ final class ForceMotionWiringTests: XCTestCase {
         XCTAssertFalse(forceBody.contains("DisclosureGroup(\"Protocol details\""))
         XCTAssertTrue(forceBody.contains(".safeAreaInset(edge: .bottom"))
         // The redesigned outside card keeps its own explicit no-target state
-        // and renders the module's live readout + intensity dial copy.
+        // and renders the intensity dial copy.
         XCTAssertTrue(contextCardFile.contains("No target configured for this protocol"))
-        XCTAssertTrue(contextCardFile.contains("Live readout"))
-        // #1028 F3: …but only with a live link.
-        XCTAssertTrue(normalizeWhitespace(contextCardFile).contains("if readiness.showsLiveReadout, displayBand != nil { Text(\"Live readout\")"))
-        XCTAssertTrue(contextCardFile.contains("60–110 · 5% steps"))
+        // #1038 G1 + H: the tab shows no live force, so the card's "Live
+        // readout" chip is gone — it would claim a readout that is not there.
+        XCTAssertFalse(normalizeWhitespace(contextCardFile).contains("Text(\"Live readout\")"))
+        // #1038 H1: the reference ticks are placed by VALUE through the same
+        // mapping the thumb uses, never evenly spaced.
+        XCTAssertTrue(contextCardFile.contains("IntensityScale.center(value:"))
+        XCTAssertTrue(contextCardFile.contains("IntensityScale.tickValues"))
+        XCTAssertFalse(contextCardFile.contains("60–110 · 5% steps"))
         XCTAssertTrue(contextCardFile.contains("Intensity"))
 
         let branches = protocolSummaryBranches(guidedSummary)

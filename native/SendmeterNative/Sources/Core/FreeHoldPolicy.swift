@@ -21,9 +21,9 @@ public enum FreeHoldPhase: Equatable, Sendable {
 
     public var detail: String {
         switch self {
-        case .waiting: return "Release to stop the recording"
-        case .recording: return "Release to stop · saved automatically"
-        case .saved: return "Pull again for the next recording"
+        case .waiting: return "Pull to record · release to stop and save"
+        case .recording: return "Release to stop · saves on its own"
+        case .saved: return "Pull again for the next one"
         }
     }
 
@@ -32,6 +32,29 @@ public enum FreeHoldPhase: Equatable, Sendable {
         case .waiting, .recording: return "hand.draw.fill"
         case .saved: return "checkmark.circle.fill"
         }
+    }
+}
+
+/// #1038: the Free hold full screen's chart takes the height left after the
+/// fixed sections, so the screen has no dead gap above the controls on any
+/// phone, and never shrinks below a readable trace.
+public enum FreeHoldLayout {
+    public static let minimumChartHeight: Double = 150
+    /// Phones always fill (the tallest phone cover leaves ~460 pt); the cap
+    /// only bounds an iPad-size cover, where an unbounded chart reads as a
+    /// wall. 360 under-filled the 17 Pro once the stop control left the
+    /// between-pulls layout (a ~15 pt dead band above the safe area).
+    public static let maximumChartHeight: Double = 480
+
+    /// - Parameters:
+    ///   - viewport: the cover's height (its safe-area rect).
+    ///   - controls: the pinned controls row's measured height.
+    ///   - nonChart: everything in the scroll stack except the chart itself
+    ///     (nil until the first layout pass is measured).
+    public static func chartHeight(viewport: Double, controls: Double, nonChart: Double?) -> Double {
+        guard let nonChart else { return minimumChartHeight }
+        let available = viewport - controls - nonChart
+        return min(maximumChartHeight, max(minimumChartHeight, available.rounded(.down)))
     }
 }
 
@@ -154,6 +177,25 @@ public enum IntensityScale {
         let usable = Swift.max(0, trackWidth - inset * 2)
         return inset + fraction(value) * usable
     }
+
+    public static let step = 5
+
+    /// The inverse of `center`: a touch at `x` → the nearest 5 % step,
+    /// clamped to the scale. Dragging and the drawn thumb share one mapping.
+    public static func value(atX x: Double, trackWidth: Double) -> Int {
+        let inset = Swift.min(thumbRadius, trackWidth / 2)
+        let usable = Swift.max(0, trackWidth - inset * 2)
+        guard usable > 0 else { return minimum }
+        let fraction = Swift.min(1, Swift.max(0, (x - inset) / usable))
+        let raw = Double(minimum) + fraction * Double(maximum - minimum)
+        let snapped = Int((raw / Double(step)).rounded()) * step
+        return Swift.min(maximum, Swift.max(minimum, snapped))
+    }
+
+    /// VoiceOver increment/decrement: one 5 % step, clamped.
+    public static func stepped(_ value: Int, by steps: Int) -> Int {
+        Swift.min(maximum, Swift.max(minimum, value + steps * step))
+    }
 }
 
 /// #1038 H2 / picker proposal: the movement rows carry a short area hint so
@@ -180,10 +222,126 @@ public enum MovementAreaHint {
         ("pinch", "Thumb and fingers"),
         ("sloper", "Fingers · open grip"),
         ("edge block", "Fingers · block hold"),
-        ("wrist", "Wrist"),
+        ("wrist", "Forearm"),
         ("pull-up", "Back and arms"),
         ("lock-off", "Back and arms"),
         ("campus", "Back and arms"),
         ("core", "Trunk")
     ]
+}
+
+/// #1038 (Conductor sheet review): the Free hold chart's kg axis, fitted to
+/// what is drawn.
+///
+/// The guided chart keeps its zero-based domain (`ForceChartYDomain`: a stage
+/// band needs its absolute level). Free hold has no band, so a zero-based
+/// axis parked a late-hold window (26–30 kg) in the top fifth of the card,
+/// and its unlabelled quarter-lines (9 / 18 / 27 kg) made the Best line at
+/// 31.5 read as "about 35". The fit:
+/// - spans the drawn samples AND the Best line (the line is always on the
+///   canvas, before the first sample too);
+/// - starts at 0 kg when the data comes near zero (the first seconds of a
+///   pull, while the ramp is most of the window): a floor under a third of
+///   the top is not worth a broken axis. The extent it fits is the hold, not
+///   the ramp (`holdExtent`);
+/// - never spans less than `minimumSpanKilograms`, so a steady hold's tremor
+///   is not blown up into drama;
+/// - snaps both ends to a whole-kg step (1 / 2 / 5 / 10 …), so every gridline
+///   is a round number, at most four are labelled, and the scale moves in
+///   whole steps a few times a pull, not every frame.
+public struct FreeHoldChartDomain: Equatable, Sendable {
+    public static let floorKilograms = 10.0
+    public static let minimumSpanKilograms = 8.0
+    public static let paddingFraction = 0.1
+    public static let zeroSnapFraction = 0.35
+    public static let maxIntervals = 4
+    /// Outward snapping may add up to one interval (24–33 kg in steps of 2).
+    public static let maxSnappedIntervals = 5.0
+
+    public let lower: Double
+    public let upper: Double
+    public let step: Double
+
+    /// - Parameters:
+    ///   - lowKilograms / highKilograms: the drawn samples' range (nil when
+    ///     nothing is drawn yet).
+    ///   - referenceKilograms: the dashed Best line, if any.
+    public init(lowKilograms: Double?, highKilograms: Double?, referenceKilograms: Double?) {
+        let top = max(Self.floorKilograms, highKilograms ?? 0, referenceKilograms ?? 0)
+        var bottom = min(lowKilograms ?? 0, referenceKilograms ?? .infinity)
+        if bottom <= top * Self.zeroSnapFraction { bottom = 0 }
+        let span = max(top - bottom, Self.minimumSpanKilograms)
+        let rawUpper = top + span * Self.paddingFraction
+        var rawLower = bottom == 0 ? 0 : max(0, bottom - span * Self.paddingFraction)
+        if rawUpper - rawLower < Self.minimumSpanKilograms {
+            rawLower = max(0, rawUpper - Self.minimumSpanKilograms)
+        }
+        // Snap outward to the step; a snap that adds an interval re-picks
+        // the step (two rounds settle every case).
+        var step = Self.niceStep(for: rawUpper - rawLower)
+        var lower = (rawLower / step).rounded(.down) * step
+        var upper = (rawUpper / (step / 2) - 1e-9).rounded(.up) * (step / 2)
+        if (upper - lower) / step > Self.maxSnappedIntervals {
+            step = Self.niceStep(for: upper - lower)
+            lower = (rawLower / step).rounded(.down) * step
+            upper = (rawUpper / (step / 2) - 1e-9).rounded(.up) * (step / 2)
+        }
+        self.lower = lower
+        self.upper = upper
+        self.step = step
+    }
+
+    /// Round-number gridlines above the bottom edge (an edge label would
+    /// clip); a line within 4 % of the top is skipped for the same reason.
+    /// A fitted axis that starts above 0 shows it by its first label (25,
+    /// not 10), never by pretending to start at 0.
+    public var ticks: [Double] {
+        var result: [Double] = []
+        var value = lower + step
+        while value <= upper - (upper - lower) * 0.04 + 1e-9 {
+            result.append((value * 1_000).rounded() / 1_000)
+            value += step
+        }
+        return result
+    }
+
+    /// Share of the lowest samples the fit leaves out: the climb from 0 at
+    /// the start of a pull and the drop at release.
+    public static let rampExclusionFraction = 0.05
+
+    /// The extent the axis fits: the HOLD, not the ramp. A saved pull starts
+    /// at 0 kg, so fitting its true minimum parked the whole plateau in the
+    /// top sixth of the card (the same squash as the late-hold window). The
+    /// lowest 5 % of samples are left out; they run off the bottom edge, and
+    /// the axis says it does not start at 0 by its first label. The high is
+    /// the true maximum: the peak is never cut. Early in a pull, while the
+    /// ramp is still most of the window, the low stays near 0 and the axis
+    /// stays zero-based.
+    public static func holdExtent(of kilograms: [Double]) -> (low: Double, high: Double)? {
+        guard !kilograms.isEmpty else { return nil }
+        let sorted = kilograms.sorted()
+        let index = Int((Double(sorted.count - 1) * rampExclusionFraction).rounded(.down))
+        return (sorted[index], sorted[sorted.count - 1])
+    }
+
+    /// 0 at the bottom edge, 1 at the top; values under the floor sit on it.
+    public func fraction(of kilograms: Double) -> Double {
+        Self.fraction(of: kilograms, lower: lower, upper: upper)
+    }
+
+    /// The one y-mapping every force trace uses (guided: `lower` 0, so the
+    /// zero-based domain maps exactly as before).
+    public static func fraction(of kilograms: Double, lower: Double, upper: Double) -> Double {
+        guard upper > lower, kilograms.isFinite else { return 0 }
+        return (max(lower, kilograms) - lower) / (upper - lower)
+    }
+
+    static func niceStep(for span: Double) -> Double {
+        guard span.isFinite, span > 0 else { return 5 }
+        let magnitude = pow(10, (log10(span / Double(maxIntervals))).rounded(.down))
+        // Whole kg (no 2.5 / 7.5 labels) — the guided scale keeps its own.
+        return [1.0, 2.0, 5.0, 10.0]
+            .map { $0 * magnitude }
+            .first { span / $0 <= Double(maxIntervals) } ?? 10 * magnitude
+    }
 }

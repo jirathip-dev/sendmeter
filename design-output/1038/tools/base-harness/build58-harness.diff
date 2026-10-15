@@ -1,0 +1,111 @@
+diff --git a/native/SendmeterNative/Sources/App/AppModel.swift b/native/SendmeterNative/Sources/App/AppModel.swift
+index faafd09..1c5f11e 100644
+--- a/native/SendmeterNative/Sources/App/AppModel.swift
++++ b/native/SendmeterNative/Sources/App/AppModel.swift
+@@ -12956,3 +12956,36 @@ public final class AppModel {
+         }
+     }
+ }
++
++#if DEBUG
++extension AppModel {
++    /// #1038 design-round harness only (`--design-1038`, DEBUG) — the base
++    /// copy: publishes a deterministic account snapshot so the real Force tab
++    /// renders the owner's state without a backend.
++    func designFixtureSeed(
++        sessions: [SendmeterCore.Session],
++        healthMetrics: [HealthMetric],
++        presets: [TindeqPreset],
++        recordings: [TindeqRecording],
++        healthSyncedAt: Date?
++    ) {
++        self.sessions = sessions
++        hasLoadedSessions = true
++        self.healthMetrics = healthMetrics
++        self.presets = presets
++        self.recordings = recordings
++        hasLoadedRecordings = true
++        lastHealthSyncedAt = healthSyncedAt
++        forceModel.hasLoadedRecordings = true
++    }
++
++    /// The fitted static curves the suggested zones read (same code as the
++    /// after harness).
++    func designFixtureSetTagCurves(_ curves: [TagForceCurve]) {
++        for curve in curves {
++            tagCurveCache[TagCurveCacheKey(tag: curve.tag, modality: curve.modality)] = curve
++        }
++        publishTagCurves()
++    }
++}
++#endif
+diff --git a/native/SendmeterNative/Sources/App/SendmeterNativeApp.swift b/native/SendmeterNative/Sources/App/SendmeterNativeApp.swift
+index a017f38..9280df2 100644
+--- a/native/SendmeterNative/Sources/App/SendmeterNativeApp.swift
++++ b/native/SendmeterNative/Sources/App/SendmeterNativeApp.swift
+@@ -92,7 +92,10 @@ struct RootView: View {
+                     SplashView()
+                 case .signedOut:
+                     #if DEBUG
+-                    if CommandLine.arguments.contains("--error-banner-fixture") {
++                    if DesignFixture1038Base.state != nil {
++                        // #1038 design-round BEFORE harness (base build 58).
++                        DesignFixture1038BaseView()
++                    } else if CommandLine.arguments.contains("--error-banner-fixture") {
+                         // #927 evidence harness: raises the REAL banner through
+                         // `model.errorMessage`, so RootView's own host draws it
+                         // over the real signed-out screen or, with
+diff --git a/native/SendmeterNative/Sources/Features/Force/ForceView.swift b/native/SendmeterNative/Sources/Features/Force/ForceView.swift
+index fdbd3aa..55e90d1 100644
+--- a/native/SendmeterNative/Sources/Features/Force/ForceView.swift
++++ b/native/SendmeterNative/Sources/Features/Force/ForceView.swift
+@@ -2249,6 +2249,23 @@ struct ForceView: View {
+                 if !enabled, !guidedControlsLocked { model.handsFree.disarm() }
+                 model.updateKeepAwake()
+             }
++            .onAppear {
++                #if DEBUG
++                if let armedID = DesignFixture1038Base.armedPresetID {
++                    selectedPresetID = armedID
++                }
++                if let quality = DesignFixture1038Base.armedZoneQuality {
++                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
++                        handleSelectTarget(.suggestedZone(quality))
++                    }
++                }
++                if DesignFixture1038Base.presentsMovementPicker {
++                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
++                        movementPickerPresented = true
++                    }
++                }
++                #endif
++            }
+             .onChange(of: model.currentUserID) { _ in
+                 teardownGuidedSessionIfNeeded()
+             }
+diff --git a/native/SendmeterNative/Sources/Platform/TindeqBluetooth.swift b/native/SendmeterNative/Sources/Platform/TindeqBluetooth.swift
+index 74219c0..45fa195 100644
+--- a/native/SendmeterNative/Sources/Platform/TindeqBluetooth.swift
++++ b/native/SendmeterNative/Sources/Platform/TindeqBluetooth.swift
+@@ -711,3 +711,21 @@ extension TindeqBluetooth.Status {
+         }
+     }
+ }
++
++#if DEBUG
++extension TindeqBluetooth {
++    /// #1038 design-round harness only (`--design-1038`, DEBUG) — the base
++    /// copy: sets the published transport state directly.
++    func designFixtureSet(status: Status, samples: [TindeqSample] = []) {
++        sampleBuffer.removeAll()
++        for sample in samples { sampleBuffer.append(sample) }
++        visibleSampleRange = samples.isEmpty ? 0..<0 : sampleBuffer.visibleRange()
++        let values = samples.map(\.kilograms)
++        currentKilograms = values.last ?? 0
++        peakKilograms = values.max() ?? 0
++        averageKilograms = values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
++        elapsedMilliseconds = samples.last?.milliseconds ?? 0
++        self.status = status
++    }
++}
++#endif

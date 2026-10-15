@@ -102,10 +102,13 @@ final class AppModelSplitTests: XCTestCase {
         XCTAssertTrue(forceView.contains("case buffer(ForceSampleBuffer, Range<Int>)"))
 
         // #1038 G1: the tab's live trace moved into the Free hold full
-        // screen, so the range-backed feed lives there now.
+        // screen, so the range-backed feed lives there now. Between pulls the
+        // card draws the saved pull's own snapshot (auto re-arm clears the
+        // live buffer), and falls back to the live range-backed feed.
         let freeHold = code(source("Sources/Features/Force/FreeHoldFullscreenView.swift"))
-        XCTAssertTrue(freeHold.contains("buffer: device.sampleBuffer"))
-        XCTAssertTrue(freeHold.contains("range: device.visibleSampleRange"))
+        XCTAssertTrue(freeHold.contains("buffer: saved?.trace ?? device.sampleBuffer"))
+        XCTAssertTrue(freeHold.contains("range: saved?.traceRange ?? device.visibleSampleRange"))
+        XCTAssertFalse(freeHold.contains("visibleSamples"))
     }
 
     func testTindeqTimerDeinitAndMainActorBoundaryAreExplicit() {

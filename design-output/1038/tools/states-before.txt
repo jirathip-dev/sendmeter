@@ -1,0 +1,6 @@
+force-handsfree-armed
+force-recording
+force-guided-armed
+force-zone-armed
+force-disconnected
+force-picker

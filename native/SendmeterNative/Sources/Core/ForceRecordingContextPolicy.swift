@@ -93,10 +93,17 @@ public struct ForceContextLockState: Equatable, Sendable {
 }
 
 public enum ForceContextLockPolicy {
+    /// #1038 G3/G4: Free hold is armed whenever it is connected, so an ARMED
+    /// but idle loop can no longer lock the context — otherwise the movement,
+    /// the side and the protocol list (G4: picking a protocol switches to
+    /// Guided) would be unreachable for the whole connected session. The lock
+    /// holds for exactly the moments a rep is owned: a live pull, a salvaged
+    /// rep awaiting recovery, a measuring loop, or a guided run. Attribution
+    /// stays safe because ForceView re-publishes and re-locks the context on
+    /// every change while armed (the next pull saves under what is shown).
     public static func isLocked(_ state: ForceContextLockState) -> Bool {
         state.liveRecording
             || state.interruptedRecording
-            || state.handsFreeArmed
             || state.handsFreeMeasuring
             || state.guidedSessionActive
     }

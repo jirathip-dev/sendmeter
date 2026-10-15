@@ -15,7 +15,9 @@ import UIKit
 /// `force-disconnected`, `force-guided-armed`, `force-free-hold-armed`,
 /// `force-bar-session`, `force-after-finish`, `force-held-pull`,
 /// `force-free-hold-waiting`, `force-free-hold-recording`,
-/// `force-free-hold-saved`, `force-picker`.
+/// `force-free-hold-saved`, `force-picker`, `force-picker-side`,
+/// `force-zone-armed`, `force-free-hold-armed-last-pull` (scrolled to the
+/// Progressor card's last-pull summary).
 ///
 /// The guided full screen keeps its own #938 harness
 /// (`--guided-force-fixture=work|rest|complete`), which this round reuses
@@ -25,6 +27,9 @@ enum DesignFixture1038 {
         case forceDisconnected = "force-disconnected"
         case forceGuidedArmed = "force-guided-armed"
         case forceFreeHoldArmed = "force-free-hold-armed"
+        /// G6: the same state scrolled to the Progressor card — the last-pull summary
+        /// that replaces the gauge card sits below the protocol grid.
+        case forceFreeHoldArmedLastPull = "force-free-hold-armed-last-pull"
         /// Amendment I: the sticky bar owning the session count + Finish.
         case forceBarSession = "force-bar-session"
         /// Amendment I: after Finish — session logged, Progressor
@@ -36,6 +41,12 @@ enum DesignFixture1038 {
         case forceFreeHoldRecording = "force-free-hold-recording"
         case forceFreeHoldSaved = "force-free-hold-saved"
         case forcePicker = "force-picker"
+        /// G5: a movement tapped with no usable side history — the sheet
+        /// stays open until the side is set, then closes.
+        case forcePickerSide = "force-picker-side"
+        /// H1 + H proposals: a SUGGESTED zone armed — the target row, its
+        /// basis line and the intensity dial with value-placed ticks.
+        case forceZoneArmed = "force-zone-armed"
         /// The face of the guided full screen is its own harness; this state
         /// only exists so the matrix has one entry per captured surface.
         case guidedFullscreen = "guided-fullscreen"
@@ -45,11 +56,11 @@ enum DesignFixture1038 {
         /// Free hold or Guided on the bar's switch.
         var handsFreeMode: Bool {
             switch self {
-            case .forceFreeHoldArmed, .forceBarSession, .forceAfterFinish,
+            case .forceFreeHoldArmed, .forceFreeHoldArmedLastPull, .forceBarSession, .forceAfterFinish,
                  .forceHeldPull, .forceFreeHoldWaiting, .forceFreeHoldRecording,
-                 .forceFreeHoldSaved, .forcePicker:
+                 .forceFreeHoldSaved, .forcePicker, .forcePickerSide:
                 return true
-            case .forceDisconnected, .forceGuidedArmed, .guidedFullscreen:
+            case .forceDisconnected, .forceGuidedArmed, .guidedFullscreen, .forceZoneArmed:
                 return false
             }
         }
@@ -67,6 +78,10 @@ enum DesignFixture1038 {
         var gaugeSessionCount: Int {
             switch self {
             case .forceBarSession, .forceHeldPull: return 3
+            // Free hold: two pulls already saved this session; the third is
+            // recording, or has just saved.
+            case .forceFreeHoldRecording: return 2
+            case .forceFreeHoldSaved: return 3
             default: return 0
             }
         }
@@ -111,9 +126,42 @@ enum DesignFixture1038 {
         state?.freeHoldScreen
     }
 
-    static var presentsMovementPicker: Bool {
-        state == .forcePicker
+    /// `force-zone-armed` arms the suggested Strength zone at 100 %.
+    static var armedZoneQuality: ZoneQuality? {
+        state == .forceZoneArmed ? .strength : nil
     }
+
+    /// The FDP static fit the suggested zones are computed from (CF 10.1 kg,
+    /// W′ 210 kg·s — the owner's build-58 screenshot numbers). Without it a
+    /// zone tile is disabled, exactly as on a fresh account.
+    static let fdpCurve = TagForceCurve(
+        tag: "FDP",
+        modality: "static",
+        cf: 10.1,
+        wPrime: 210,
+        maxForceKilograms: 31.5
+    )
+
+    static var presentsMovementPicker: Bool {
+        state == .forcePicker || state == .forcePickerSide
+    }
+
+    /// `force-picker-side`: Lock-off — one side at a time, and its only
+    /// pulls predate side tracking, so there is no side to default to.
+    static var pickerPendingMovement: String? {
+        state == .forcePickerSide ? "Lock-off" : nil
+    }
+
+    /// The movement catalog's side policies (device-local, #720). Only the
+    /// movements that DIFFER from "either side or both" are listed — the
+    /// rest read as the default, exactly like a real account.
+    static let sideModes: [(String, ExerciseSideMode)] = [
+        ("Pinch", .unilateralOnly),
+        ("Lock-off", .unilateralOnly),
+        ("Edge block", .bilateralOnly),
+        ("Pull-up", .bilateralOnly),
+        ("Core", .notApplicable)
+    ]
 
     /// Persisted Force preferences the real ForceView reads through
     /// `@AppStorage`. Written (not passed as argument-domain overrides) so a
@@ -140,6 +188,10 @@ enum DesignFixture1038 {
             )
         )
         model.selectedTab = state.tab
+        model.designFixtureSetTagCurves([fdpCurve])
+        for (name, mode) in sideModes {
+            model.setTagSideMode(name: name, mode: mode)
+        }
 
         // The free-hold arm stream needs a live Progressor; the fixture keeps
         // the real state machine and swaps only the BLE side effect.
@@ -152,9 +204,9 @@ enum DesignFixture1038 {
         switch state {
         case .forceDisconnected:
             model.tindeq.designFixtureSet(status: .idle)
-        case .forceGuidedArmed, .guidedFullscreen, .forcePicker:
+        case .forceGuidedArmed, .guidedFullscreen, .forcePicker, .forcePickerSide, .forceZoneArmed:
             model.tindeq.designFixtureSet(status: .connected)
-        case .forceFreeHoldArmed:
+        case .forceFreeHoldArmed, .forceFreeHoldArmedLastPull:
             model.tindeq.designFixtureSet(status: .connected)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 model.handsFree.arm()
@@ -186,6 +238,7 @@ enum DesignFixture1038 {
                 model.tindeq.designFixtureSetHandsFreeArmed(true)
             }
         case .forceFreeHoldRecording:
+            model.designFixtureActivateGaugeSession(count: state.gaugeSessionCount, recordings: model.recordings)
             model.tindeq.designFixtureSet(status: .measuring, samples: holdSamples())
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 model.handsFree.arm()
@@ -194,6 +247,9 @@ enum DesignFixture1038 {
                 }
             }
         case .forceFreeHoldSaved:
+            model.designFixtureActivateGaugeSession(count: state.gaugeSessionCount, recordings: model.recordings)
+            // The machine re-armed for the next pull: the live buffer is
+            // empty, exactly as after a real auto re-arm.
             model.tindeq.designFixtureSet(status: .connected)
             model.tindeq.designFixtureHoldCompleted(holdSummary())
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
@@ -268,8 +324,44 @@ enum DesignFixture1038 {
         }
     }
 
-    /// Twelve pulls over three weeks at 10.2 s each, alternating sides.
+    /// Twelve FDP pulls over three weeks at 10.2 s each, alternating sides,
+    /// plus one or two older pulls on each of eight other movements — the
+    /// nine-movement catalog the owner's build-58 picker showed. FDP stays
+    /// the newest movement; Half crimp and Pinch are the next most recent.
     static func recordings(reference: Date) -> [TindeqRecording] {
+        fdpRecordings(reference: reference) + otherMovementRecordings(reference: reference)
+    }
+
+    static func otherMovementRecordings(reference: Date) -> [TindeqRecording] {
+        let pulls: [(String, Double, TindeqSide, Double)] = [
+            ("Half crimp", 2, .right, 27.8),
+            ("Half crimp", 9, .left, 27.1),
+            ("Pinch", 4, .left, 14.6),
+            ("Edge block", 6, .both, 52.0),
+            ("Open hand", 12, .right, 24.9),
+            ("Pull-up", 15, .both, 38.5),
+            // Logged before side tracking: no side to default to (G5).
+            ("Lock-off", 20, .unspecified, 21.0),
+            ("Wrist", 26, .left, 11.2),
+            ("Core", 30, .unspecified, 18.4)
+        ]
+        return pulls.enumerated().map { index, pull in
+            TindeqRecording(
+                id: UUID(uuidString: String(format: "10380000-0000-0000-0005-%012d", index))!,
+                recordedAt: reference.addingTimeInterval(-(pull.1 + 0.5) * 86_400),
+                durationMilliseconds: 10_200,
+                peakKilograms: pull.3,
+                averageKilograms: pull.3 - 1.8,
+                sampleCount: 820,
+                note: "",
+                tag: pull.0,
+                side: pull.2,
+                groupID: nil
+            )
+        }
+    }
+
+    static func fdpRecordings(reference: Date) -> [TindeqRecording] {
         let zones: [RecordedZone] = [.strength, .power, .capacity, .strength, .endurance, .strength]
         return (0..<12).map { index in
             let daysBack = Double(index * 2 + 1)
@@ -290,27 +382,43 @@ enum DesignFixture1038 {
         }
     }
 
-    /// The pull the SAVED panel and the held-pull states show: 30.3 s at
-    /// 31.2 kg.
+    /// The pull the SAVED panel and the held-pull states show. Its peak and
+    /// average are DERIVED from the trace, so the hero, the card and the
+    /// chart can never disagree (the WIP fixture claimed 31.2 kg over a
+    /// trace that peaked at 31.9).
     static func holdSummary() -> ForceSummary {
-        ForceSummary(
-            durationMilliseconds: 30_300,
-            peakKilograms: 31.2,
-            averageKilograms: 29.4,
-            samples: holdSamples()
+        let samples = holdSamples()
+        let values = samples.map(\.kilograms)
+        return ForceSummary(
+            durationMilliseconds: Int(samples.last?.milliseconds ?? 0),
+            peakKilograms: values.max() ?? 0,
+            averageKilograms: values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count),
+            samples: samples
         )
     }
 
-    /// A 30.3 s hold around 30 kg (80 Hz): ramp, hold with a slow fade and a
-    /// little tremor. Deterministic — no randomness.
+    /// A 24.0 s hold around 29 kg (80 Hz): ramp, hold with a slow fade and a
+    /// little tremor; it stays under the seeded FDP best (31.5 kg), the
+    /// usual case. Deterministic — no randomness.
     static func holdSamples() -> [TindeqSample] {
-        stride(from: 0.0, through: 30_300.0, by: 12.5).map { ms in
+        stride(from: 0.0, through: 24_000.0, by: 12.5).map { ms in
             let t = ms / 1_000
             let ramp = min(1, t / 0.9)
-            let fade = 1 - max(0, t - 18) * 0.012
-            let tremor = 0.45 * sin(t * 9.1) + 0.25 * sin(t * 23.7)
-            return TindeqSample(milliseconds: ms, kilograms: max(0, ramp * (31.2 * fade) + ramp * tremor))
+            let fade = 1 - max(0, t - 14) * 0.012
+            // Slow sway only: high-frequency tremor aliases into a sawtooth
+            // when 24 s is drawn across one phone width.
+            let tremor = 0.45 * sin(t * 1.7) + 0.2 * sin(t * 4.3)
+            return TindeqSample(milliseconds: ms, kilograms: max(0, ramp * (29.6 * fade) + ramp * tremor))
         }
+    }
+
+    // MARK: G6 capture
+
+    /// `force-free-hold-armed-last-pull` scrolls the Force tab so the
+    /// Progressor card — the last-pull summary that replaces the gauge —
+    /// is centred in frame (ForceView owns the scroll, via its proxy).
+    static var scrollsToProgressorCard: Bool {
+        state == .forceFreeHoldArmedLastPull
     }
 }
 

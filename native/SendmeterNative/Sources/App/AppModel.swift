@@ -13014,6 +13014,15 @@ extension AppModel {
         forceModel.hasLoadedRecordings = true
     }
 
+    /// #1038: the fitted static curves the suggested zones read, published
+    /// through the same cache + publisher the real fetch uses.
+    func designFixtureSetTagCurves(_ curves: [TagForceCurve]) {
+        for curve in curves {
+            tagCurveCache[TagCurveKey(tag: curve.tag, modality: curve.modality)] = curve
+        }
+        publishTagCurves()
+    }
+
     /// #1038 amendment I: an ACTIVE gauge session holding `count` recordings —
     /// the state the sticky bar's strip renders. The session is minted the
     /// same way a real first save mints it, so `finishGaugeSessionAndDisconnect`
@@ -13031,8 +13040,10 @@ extension AppModel {
                 id: UUID(uuidString: String(format: "10380000-0000-0000-0004-%012d", index))!,
                 recordedAt: ending.addingTimeInterval(-Double(count - index) * 210),
                 durationMilliseconds: 10_200,
-                peakKilograms: 30.4 + Double(index) * 0.6,
-                averageKilograms: 28.2 + Double(index) * 0.6,
+                // Under the seeded FDP best (31.5 kg) so a session never
+                // silently moves the reference line between states.
+                peakKilograms: 29.0 + Double(index) * 0.6,
+                averageKilograms: 26.8 + Double(index) * 0.6,
                 sampleCount: 820,
                 note: "",
                 tag: "FDP",

@@ -52,6 +52,10 @@ public enum SendmeterStyle {
     public static let optimalText = Color.palette(SendmeterPalette.optimalText)
     public static let cautionText = Color.palette(SendmeterPalette.cautionText)
     public static let dangerText = Color.palette(SendmeterPalette.dangerText)
+    /// #1038: a danger-tinted control label on its own 12 % danger fill (the
+    /// #1028 B3 pill mix: AA 5.7:1+ light, 8.6:1+ dark on the full-screen
+    /// tints, where the raw hue was 2.1:1 in light).
+    public static let alertPillText = Color.palette(SendmeterPalette.pillText(SendmeterPalette.danger))
     public static let executionText = Color.palette(SendmeterPalette.executionText)
     public static let zonePowerEndurance = Color.palette(SendmeterPalette.zonePowerEndurance)
     public static let zoneEndurance = Color.palette(SendmeterPalette.zoneEndurance)

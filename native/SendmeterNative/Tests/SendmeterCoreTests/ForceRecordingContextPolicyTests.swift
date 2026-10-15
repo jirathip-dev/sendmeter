@@ -2,8 +2,11 @@ import XCTest
 @testable import SendmeterCore
 
 final class ForceRecordingContextPolicyTests: XCTestCase {
-    func testAnArmedHandsFreeStreamLocksTheRecordingContextBeforeTheFirstPull() {
-        XCTAssertTrue(
+    /// #1038 G3/G4: Free hold is armed for the whole connected session, so
+    /// an armed-but-idle loop must leave the context editable — movement,
+    /// side and the protocol list (G4) stay reachable.
+    func testAnArmedIdleFreeHoldLeavesTheContextEditable() {
+        XCTAssertFalse(
             ForceContextLockPolicy.isLocked(
                 ForceContextLockState(
                     liveRecording: false,
@@ -14,6 +17,20 @@ final class ForceRecordingContextPolicyTests: XCTestCase {
                 )
             )
         )
+    }
+
+    /// The moment a rep is owned, the context locks: a measuring loop, a live
+    /// pull, a salvaged rep, or a guided run.
+    func testEveryOwnedRepLocksTheContext() {
+        let owned = [
+            ForceContextLockState(liveRecording: true, interruptedRecording: false, handsFreeArmed: false, handsFreeMeasuring: false, guidedSessionActive: false),
+            ForceContextLockState(liveRecording: false, interruptedRecording: true, handsFreeArmed: false, handsFreeMeasuring: false, guidedSessionActive: false),
+            ForceContextLockState(liveRecording: false, interruptedRecording: false, handsFreeArmed: true, handsFreeMeasuring: true, guidedSessionActive: false),
+            ForceContextLockState(liveRecording: false, interruptedRecording: false, handsFreeArmed: false, handsFreeMeasuring: false, guidedSessionActive: true)
+        ]
+        for state in owned {
+            XCTAssertTrue(ForceContextLockPolicy.isLocked(state), "\(state)")
+        }
     }
 
     func testHandsFreePreferenceWithoutAnArmLeavesTheContextEditable() {

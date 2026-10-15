@@ -688,8 +688,29 @@ final class GuidedForceProtocolSession: ObservableObject, Identifiable {
 
 /// #938/#1038: the guided and free-hold full screens share this glass control
 /// style, so the two full-screen surfaces read as one product.
+/// #1038: the collapsed title sits on the canvas, not on a blur. The bar
+/// background is the canvas (applies wherever the system shows one), and on
+/// iOS 26 the top scroll-edge blur is hidden, so nothing ghosts behind the
+/// title. Do NOT force the background `.visible`: with a large title that
+/// hid the "Force" title entirely (measured in the final capture review).
+private struct OpaqueCanvasNavigationBar: ViewModifier {
+    func body(content: Content) -> some View {
+        let bar = content
+            .toolbarBackground(SendmeterStyle.canvas, for: .navigationBar)
+        if #available(iOS 26.0, *) {
+            bar.scrollEdgeEffectHidden(true, for: .top)
+        } else {
+            bar
+        }
+    }
+}
+
 struct GuidedGlassButtonStyle: ButtonStyle {
     let tint: Color
+    /// #1038: the label colour when the raw tint is not AA on its own fill
+    /// (Free hold's Finish uses `alertPillText`). Nil keeps the tint, so the
+    /// guided screen is unchanged.
+    var label: Color? = nil
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -699,7 +720,7 @@ struct GuidedGlassButtonStyle: ButtonStyle {
                 }
             }
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(tint)
+            .foregroundStyle(label ?? tint)
             .padding(.horizontal, 10)
             .frame(minWidth: 44, minHeight: 44)
             .background(
@@ -1125,12 +1146,12 @@ private struct GuidedForceProtocolView: View {
 
     private var handsFreeStatus: (label: String, color: Color) {
         if session.model.handsFree.isMeasuring {
-            return ("Hands-free · measuring", SendmeterStyle.optimal)
+            return ("Pull · recording", SendmeterStyle.optimal)
         }
         if session.model.handsFree.isArmed {
-            return ("Hands-free · pull to start", SendmeterStyle.caution)
+            return ("Armed · pull to start", SendmeterStyle.caution)
         }
-        return ("Hands-free · ready", SendmeterStyle.caution)
+        return ("Ready · pull to start", SendmeterStyle.caution)
     }
 
     @ViewBuilder
@@ -1536,12 +1557,12 @@ struct ForceView: View {
         switch model.tindeq.status {
         case .connected:
             if model.handsFree.isArmed {
-                return "Cancel hands-free arm"
+                return "Disarm free hold"
             }
             // #899: nothing armed — the only free-pull start is the
             // hands-free arm (the toggle is adopted by the action).
             if selectedPreset == nil {
-                return "Arm Hands-free"
+                return "Arm free hold"
             }
             return "Start guided pull"
         case .measuring: return "Stop & save"
@@ -1573,7 +1594,7 @@ struct ForceView: View {
             // Force card renders this action only when a guided protocol is
             // armed; without one the honest route is arming a protocol above
             // or arming hands-free.
-            refuseAction("Arm a guided protocol above or arm Hands-free to record a pull.")
+            refuseAction("Pick a protocol above, or switch to Free hold, to record a pull.")
             return
         }
         launch(preset)
@@ -1748,12 +1769,17 @@ struct ForceView: View {
     /// republishes the free-pull context, exactly as the previous inline
     /// closure did.
     private func handleSelectTarget(_ tapped: ForceProtocolSelection) {
-        applySelection(
-            ForceProtocolPicker.next(
-                current: selectedSelection,
-                tapped: tapped
-            )
+        let next = ForceProtocolPicker.next(
+            current: selectedSelection,
+            tapped: tapped
         )
+        applySelection(next)
+        // #1038 G4: picking a protocol selects Guided immediately — including
+        // from Free hold (the bar's switch follows; G3 arms it).
+        if ForceProtocolSelectionRouting.mode(afterSelecting: next) == .guided,
+           handsFreeEnabled, !guidedControlsLocked, !model.handsFree.isMeasuring {
+            handsFreeEnabled = false
+        }
         publishFreePullContext()
     }
 
@@ -1848,6 +1874,9 @@ struct ForceView: View {
     }
 
     static let recordingContextAnchor = "force-recording-context"
+    /// #1038 G6: the Progressor card (last-pull summary) — the design
+    /// harness scrolls it into frame for the G6 capture.
+    static let progressorCardAnchor = "force-progressor-card"
 
     // MARK: #1028 sticky bottom bar (spec D + amendment F)
 
@@ -2041,13 +2070,14 @@ struct ForceView: View {
         )
     }
 
-    /// #903: the collapsed decision row's value — "FDP · Side Left" (the side
+    /// #903: the collapsed decision row's value — "FDP · Left" (the side
     /// segment is omitted until one is chosen; a missing exercise reads
-    /// honestly as "No exercise").
+    /// honestly as "No exercise"). #1038: the same words as the bar's Free
+    /// hold line, so the card and the bar never name the pair two ways.
     private var movementContextSummary: String {
         let exercise = activeTag.isEmpty ? "No exercise" : activeTag
         guard !activeTag.isEmpty, side != .unspecified else { return exercise }
-        return exercise + " · Side " + side.label
+        return exercise + " · " + side.label
     }
 
     var body: some View {
@@ -2138,6 +2168,7 @@ struct ForceView: View {
                             recoverySaveFailed = false
                         }
                     )
+                    .id(Self.progressorCardAnchor)
 
                     // #903: Focus Next (training balance) leaves the
                     // recording-context card — the redesigned card carries
@@ -2228,6 +2259,13 @@ struct ForceView: View {
             }
             .onAppear {
                 forceScrollProxy = proxy
+                #if DEBUG
+                if DesignFixture1038.scrollsToProgressorCard {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        proxy.scrollTo(Self.progressorCardAnchor, anchor: .center)
+                    }
+                }
+                #endif
             }
             }
             // #1028 D1/F5: the sticky bar sits in the bottom safe-area inset,
@@ -2255,6 +2293,11 @@ struct ForceView: View {
             }
             // #1028 B1: the shared palette canvas (phone = Watch).
             .background(SendmeterStyle.canvas)
+            // #1038: the collapsed title sits on an opaque canvas bar. The
+            // iOS 26 scroll edge (soft or hard) is a blur, and the dense tile
+            // grid read through it on the "Force" baseline. Canvas = the page,
+            // so nothing changes at rest; scrolled, content passes under.
+            .modifier(OpaqueCanvasNavigationBar())
             .navigationTitle("Force")
             // #1028 P9: on a compact-height phone the large title collapses
             // while a pull records, so the live trace stays above the bar.
@@ -2324,7 +2367,12 @@ struct ForceView: View {
             // #1038 G1: the full screen opens on the FIRST PULL — never on
             // arming, and never for a sub-threshold wobble (the machine's own
             // start threshold is the trigger).
-            .onChange(of: model.handsFree.isMeasuring) { _ in
+            .onChange(of: model.handsFree.isMeasuring) { measuring in
+                // #1038 G3 + #678: an armed-but-idle loop no longer locks the
+                // card (movement/side/protocol stay editable), so the salvage
+                // lock is re-taken at the TRUE recording start — the context
+                // the pull will be saved under, frozen for this rep.
+                if measuring { model.lockForceRecordingContext(model.freePullContext) }
                 evaluateFreeHoldSurface()
             }
             .onChange(of: model.handsFree.isArmed) { _ in
@@ -2403,6 +2451,7 @@ struct ForceView: View {
                     device: model.tindeq,
                     sessionCount: gaugeSessionCount,
                     movementSummary: freeHoldMovementSummary,
+                    bestKilograms: personalRecordForTag,
                     onFinishSession: {
                         freeHoldFullscreenPresented = false
                         finishGaugeSession()
@@ -2415,23 +2464,31 @@ struct ForceView: View {
                 )
                 .onAppear { Haptics.shared.sheetPresented() }
             }
-            // #903: the combined movement + side picker — a true full-screen
-            // modal with its own 44px Close control and no app tab bar.
-            .fullScreenCover(isPresented: $movementPickerPresented, onDismiss: {
-                Haptics.shared.sheetDismissed()
+            // #1038 G5: the movement & side picker is a bottom sheet with a
+            // grabber. A tap applies and closes; swiping down cancels with no
+            // change (the picker edits a draft — only `onCommit` writes the
+            // recording context). No X, no full-screen modal.
+            .sheet(isPresented: $movementPickerPresented, onDismiss: {
                 publishFreePullContext()
             }) {
+                let lastSides = MovementSidePickerPolicy.lastSides(from: model.recordings)
                 ForceMovementSidePicker(
-                    tag: $tag,
-                    side: Binding(
-                        get: { side },
-                        set: { side = $0 }
-                    ),
+                    initialMovement: tag,
+                    initialSide: side,
                     knownTags: model.visibleTagNames,
+                    recentMovements: MovementSidePickerPolicy.recentFirst(
+                        model.visibleTagNames,
+                        recordings: model.recordings
+                    ).recent,
                     modeProvider: { model.sideMode(for: $0) },
-                    onClose: { movementPickerPresented = false }
+                    lastSideProvider: { lastSides[$0] },
+                    onCommit: { pair in
+                        tag = pair.movement
+                        side = pair.side
+                        movementPickerPresented = false
+                    }
                 )
-                .onAppear { Haptics.shared.sheetPresented() }
+                .sendmeterSheetPresentation()
             }
         }
     }
@@ -2469,7 +2526,7 @@ struct ForceView: View {
         let message: String
         switch action {
         case .handsFree:
-            message = "Finish the active pull before arming hands-free."
+            message = "Finish the active pull before arming free hold."
         case .guidedProtocol:
             message = "Finish the active pull before starting a guided protocol."
         }
@@ -2600,7 +2657,13 @@ struct ForceView: View {
         if let armedID = DesignFixture1038.armedPresetID {
             selectedPresetID = armedID
         }
-        if state == .forcePicker {
+        if let quality = DesignFixture1038.armedZoneQuality {
+            // The real tile path: the tap handler, not a direct state write.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                handleSelectTarget(.suggestedZone(quality))
+            }
+        }
+        if DesignFixture1038.presentsMovementPicker {
             movementPickerPresented = true
         }
         if DesignFixture1038.presentsFreeHoldScreen != nil {
@@ -2613,7 +2676,7 @@ struct ForceView: View {
 
     private func armHandsFree() {
         guard !guidedControlsLocked else {
-            refuseAction("Resume or end the active guided protocol before arming hands-free.")
+            refuseAction("Resume or end the active guided protocol before arming free hold.")
             return
         }
         switch forceRecordingDecision(for: .handsFree) {
@@ -3288,17 +3351,12 @@ private struct ForceDeviceCard: View {
 
     private var lastPullSummary: some View {
         Button(action: openLastPull) {
-            HStack(spacing: 12) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(SendmeterStyle.primary)
-                    .frame(width: 42, height: 42)
-                    .background(SendmeterStyle.primary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .accessibilityHidden(true)
+            HStack(alignment: .center, spacing: 12) {
+                // #1038 G6: number-led, no icon tile — peak is the headline,
+                // hold time and "when" are the secondary line.
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("LAST PULL")
-                        .font(.caption2.weight(.bold))
-                        .tracking(1.0)
+                    Text("Last pull")
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(SendmeterStyle.textSecondary)
                     if let lastPull {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -3308,7 +3366,7 @@ private struct ForceDeviceCard: View {
                                 color: .primary
                             )
                             Text(ForceReadoutFormat.hold(milliseconds: Double(lastPull.durationMilliseconds)))
-                                .font(.caption.monospacedDigit())
+                                .font(.subheadline.monospacedDigit())
                                 .foregroundStyle(SendmeterStyle.textSecondary)
                         }
                         Text(ForceLastPullFormat.contextLine(lastPull))
@@ -3356,7 +3414,7 @@ private struct ForceDeviceCard: View {
         case .interrupted:
             return "Reconnect from the bar below to turn a pull into a force curve."
         case .connected:
-            return "Choose Guided or Hands-free in the bar below to record your first pull."
+            return "Pick a protocol above, or use Free hold in the bar below, to record your first pull."
         default:
             return "Connect from the bar below to turn a pull into a force curve."
         }
@@ -3588,6 +3646,11 @@ struct ForceTraceChart: View {
     let target: Double?
     /// #1028 F4: a light kg scale (labels in a right gutter, hairline guides).
     var showsKilogramScale = false
+    /// #1038: Free hold has no stage band, so the axis fits what is drawn
+    /// (`FreeHoldChartDomain`) instead of the guided zero-based domain.
+    var fitsDomainToData = false
+    /// #1038: the dashed line's own label, drawn on the line ("Best 31.5").
+    var targetLabel: String?
     @Environment(\.colorScheme) private var scheme
     /// #900: rep-boundary hysteresis — the held peak lives here so a rep
     /// boundary that empties the visible window cannot collapse the scale
@@ -3609,12 +3672,16 @@ struct ForceTraceChart: View {
         range: Range<Int>,
         targetRange: ClosedRange<Double>?,
         target: Double?,
-        showsKilogramScale: Bool = false
+        showsKilogramScale: Bool = false,
+        fitsDomainToData: Bool = false,
+        targetLabel: String? = nil
     ) {
         self.source = .buffer(buffer, range)
         self.targetRange = targetRange
         self.target = target
         self.showsKilogramScale = showsKilogramScale
+        self.fitsDomainToData = fitsDomainToData
+        self.targetLabel = targetLabel
     }
 
     /// #1028 F4: the label gutter's width (the plot never runs under labels).
@@ -3646,11 +3713,23 @@ struct ForceTraceChart: View {
                 height: canvasSize.height
             )
             let sampleRange = self.sampleRange
-            let maxValue = ForceChartYDomain.maxValue(
-                bandUpperBoundKilograms: targetRange?.upperBound,
-                windowPeakKilograms: windowPeakKilograms,
-                heldPeakKilograms: domainTracker.heldPeakKilograms
-            )
+            let domain: (lower: Double, upper: Double, ticks: [Double])
+            if fitsDomainToData {
+                let window = windowExtent
+                let fit = FreeHoldChartDomain(
+                    lowKilograms: window?.low,
+                    highKilograms: window?.high,
+                    referenceKilograms: target
+                )
+                domain = (fit.lower, fit.upper, fit.ticks)
+            } else {
+                let maxValue = ForceChartYDomain.maxValue(
+                    bandUpperBoundKilograms: targetRange?.upperBound,
+                    windowPeakKilograms: windowPeakKilograms,
+                    heldPeakKilograms: domainTracker.heldPeakKilograms
+                )
+                domain = (0, maxValue, ForceTraceScale.ticks(maxValue: maxValue))
+            }
             let firstSample = sampleRange.first.map(self.sample(at:))
             let lastSample = sampleRange.last.map(self.sample(at:))
             let firstTime = firstSample?.milliseconds ?? 0
@@ -3658,8 +3737,12 @@ struct ForceTraceChart: View {
             let gridColor = ChartToken.forceTraceGridColor(scheme)
             let optimalColor = ChartToken.optimal.color(scheme)
 
+            // One mapping for trace, line, band and gridlines (guided: lower 0,
+            // exactly the old `max(0, kg) / maxValue`).
             func y(_ kilograms: Double) -> CGFloat {
-                size.height - CGFloat(max(0, kilograms) / maxValue) * size.height
+                size.height - CGFloat(
+                    FreeHoldChartDomain.fraction(of: kilograms, lower: domain.lower, upper: domain.upper)
+                ) * size.height
             }
             func x(_ milliseconds: Double) -> CGFloat {
                 CGFloat((milliseconds - firstTime) / (lastTime - firstTime)) * size.width
@@ -3667,7 +3750,7 @@ struct ForceTraceChart: View {
 
             if showsScale {
                 // #1028 F4: quiet scale — hairlines at the labelled ticks only.
-                let ticks = ForceTraceScale.ticks(maxValue: maxValue)
+                let ticks = domain.ticks
                 for (offset, tick) in ticks.enumerated() {
                     let lineY = y(tick)
                     var grid = Path()
@@ -3711,7 +3794,34 @@ struct ForceTraceChart: View {
                 )
             }
 
-            guard sampleRange.count > 1 else { return }
+            // Drawn last (after the trace) on a chip of the chart's own fill,
+            // so a pull that crosses the line never strikes through its label.
+            func drawTargetLabel() {
+                guard let target, let targetLabel else { return }
+                let text = context.resolve(
+                    Text(targetLabel)
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundColor(SendmeterStyle.optimalText)
+                )
+                let textSize = text.measure(in: CGSize(width: size.width, height: 40))
+                let lineY = y(target)
+                // Above the line; below it when the line hugs the top edge.
+                let above = lineY - textSize.height - 3 >= 0
+                let origin = CGPoint(x: 8, y: above ? lineY - textSize.height - 3 : lineY + 3)
+                context.fill(
+                    Path(
+                        roundedRect: CGRect(origin: origin, size: textSize).insetBy(dx: -4, dy: -1),
+                        cornerRadius: 4
+                    ),
+                    with: .color(ChartToken.forceTraceBackground(scheme).opacity(0.9))
+                )
+                context.draw(text, at: origin, anchor: .topLeading)
+            }
+
+            guard sampleRange.count > 1 else {
+                drawTargetLabel()
+                return
+            }
             var trace = Path()
             var pointIndex = 0
             for index in sampleRange {
@@ -3725,6 +3835,7 @@ struct ForceTraceChart: View {
                 with: .color(ChartToken.force.color(scheme)),
                 style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
             )
+            drawTargetLabel()
         }
         .background(ChartToken.forceTraceBackground(scheme), in: RoundedRectangle(cornerRadius: 12))
         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -3745,6 +3856,12 @@ struct ForceTraceChart: View {
             peak = max(peak, self.sample(at: index).kilograms)
         }
         return peak
+    }
+
+    /// The drawn window's lowest and highest sample (nil when empty) — the
+    /// Free hold axis fits both.
+    private var windowExtent: (low: Double, high: Double)? {
+        FreeHoldChartDomain.holdExtent(of: sampleRange.map { self.sample(at: $0).kilograms })
     }
 
     /// The live window's change identity: published range plus buffer content

@@ -498,7 +498,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         // No more samples: only the wall-clock Timer can disarm this stream.
         try await waitUntil { !manager.handsFreeRequested }
         XCTAssertEqual(manager.handsFreeState, .idle)
-        XCTAssertEqual(manager.savedMsg, "Hands-free disarmed after 10 min idle")
+        XCTAssertEqual(manager.savedMsg, "Free hold disarmed after 10 min idle")
         // #681: the tap save keeps the stream live (no .stop); only the
         // timeout's own disarm writes .stop.
         XCTAssertEqual(commands, [.startWeight, .stop])

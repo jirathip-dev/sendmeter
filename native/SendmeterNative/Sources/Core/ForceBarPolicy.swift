@@ -223,6 +223,9 @@ public enum ForceBarPolicy {
     public static let freeHoldSubject = "Free hold"
     /// #1038 G3: connected + armed Free hold needs no tap — the pull starts it.
     public static let armedPullToStartStatus = "Armed · pull to start"
+    /// #1038 G3: Guided with a protocol picked is armed; Start opens the
+    /// full screen once, then each rep starts on the pull.
+    public static let guidedArmedStatus = "Armed · tap Start"
 
     public static func state(_ input: ForceBarInput) -> ForceBarState {
         let modeLocked = input.handsFreeMeasuring
@@ -333,7 +336,9 @@ public enum ForceBarPolicy {
                 if input.armedProtocolName == nil {
                     return make("Connected", .ready, .chooseProtocol, "Choose", "list.bullet", primary: false)
                 }
-                return make("Connected", .ready, .startGuided, "Start", "play.fill")
+                // #1038 G3: picking a protocol ARMS it — the bar says so, and
+                // names the one tap left (the card's hero says "Armed" too).
+                return make(guidedArmedStatus, .armed, .startGuided, "Start", "play.fill")
             case .handsFree:
                 // #1038 G3: armed the moment you are connected — no Arm step,
                 // so the big action is the safety way OUT (disarm), not a
@@ -435,6 +440,14 @@ public struct ForceContextReadiness: Equatable, Sendable {
         case .handsFreeReady, .handsFreeArmed: return "Free hold"
         case .waitingForProgressor, .guidedReady: return "Guided"
         }
+    }
+
+    /// #1038 G2: the card's header names the free pull "Free hold" only when
+    /// the bar is in Free hold with a link (decided on the claim, never on a
+    /// display string — the old `modeChip == "Hands-free"` compare went dead
+    /// the moment the mode was renamed).
+    public var isFreeHold: Bool {
+        claim == .handsFreeReady || claim == .handsFreeArmed
     }
 }
 

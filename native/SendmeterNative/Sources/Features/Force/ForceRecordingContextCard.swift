@@ -62,7 +62,7 @@ struct ForceRecordingContextCard: View {
     /// arming again returns to the hero. Owned by the parent so the bar can
     /// open it.
     @Binding var showProtocolList: Bool
-    /// Movement & side summary value, e.g. "FDP · Side Left".
+    /// Movement & side summary value, e.g. "FDP · Left".
     let movementSummary: String
     /// Opens the combined movement + side picker.
     let onOpenPicker: () -> Void
@@ -149,8 +149,11 @@ struct ForceRecordingContextCard: View {
         .frame(minHeight: 40)
     }
 
+    /// #1038 H: the card's ONE status word. In Free hold the free pull IS
+    /// the plan (G2 names it "Free hold"); in Guided it is the protocol's
+    /// state — "Armed" with a link (G3), "Selected" without one.
     private var headerWord: String {
-        if isFree { return readiness.modeChip == "Hands-free" ? "Free pull" : "Nothing armed" }
+        if isFree { return readiness.isFreeHold ? "Free hold" : "Nothing armed" }
         return readiness.claim == .waitingForProgressor ? "Selected" : "Armed"
     }
 
@@ -169,13 +172,7 @@ struct ForceRecordingContextCard: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
-                HStack(spacing: 4) {
-                    Text("Change")
-                        .font(.subheadline.weight(.semibold))
-                    Image(systemName: "chevron.right")
-                        .font(.subheadline.weight(.semibold))
-                }
-                .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
+                changeLabel
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 7)
@@ -248,7 +245,7 @@ struct ForceRecordingContextCard: View {
                 .foregroundStyle(RecordingContextPalette.metadata(scheme))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(movementSummary) · \(isFree ? "Free pull" : (selectedPreset?.name ?? "Free pull"))")
+                Text("\(movementSummary) · \(isFree ? "Free hold" : (selectedPreset?.name ?? "Free hold"))")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
@@ -285,10 +282,17 @@ struct ForceRecordingContextCard: View {
     /// the last odd row (Resisted movement) spans the full width.
     private var suggestedGrid: some View {
         let columns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
-        return LazyVGrid(columns: columns, spacing: 6) {
-            ForEach(SuggestedProtocol.allCases, id: \.identity) { suggestion in
-                suggestionRow(suggestion)
-                    .gridCellColumns(suggestion == .movement ? 2 : 1)
+        // `gridCellColumns` is a Grid modifier — LazyVGrid ignores it, so the
+        // full-width last row is laid out after the grid (it truncated to
+        // "Resisted mov…" in one column).
+        return VStack(spacing: 6) {
+            LazyVGrid(columns: columns, spacing: 6) {
+                ForEach(SuggestedProtocol.allCases.filter { $0 != .movement }, id: \.identity) { suggestion in
+                    suggestionRow(suggestion)
+                }
+            }
+            if SuggestedProtocol.allCases.contains(.movement) {
+                suggestionRow(.movement)
             }
         }
         .padding(.top, 9)
@@ -485,37 +489,16 @@ struct ForceRecordingContextCard: View {
 
     // MARK: Armed protocol hero (S3 / S4)
 
+    /// #1038 H (density): the armed hero is ONE flat block inside the card —
+    /// no card-in-card-in-card. Rows are separated by hairlines: identity
+    /// (dot + name + Change), the timing line, the target (band + one basis
+    /// line), and the intensity dial when a suggested zone is armed. The
+    /// mode chip is gone (the bar's switch already names the mode) and the
+    /// connected readiness row is gone (the bar's status says "Armed · tap
+    /// Start"); without a link the row stays, because it explains why the
+    /// header says "Selected" instead of "Armed".
     private var protocolHero: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                RecordingContextEyebrow(
-                    title: readiness.claim == .waitingForProgressor ? "Selected protocol" : "Armed protocol",
-                    systemImage: "waveform.path.ecg"
-                )
-                Spacer(minLength: 8)
-                // #1028 F2: the chip names the bar's mode (it used to claim
-                // Hands-free unconditionally).
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(
-                            readiness.modeChip == "Hands-free"
-                                ? RecordingContextPalette.handsFreeGold
-                                : RecordingContextPalette.primary(scheme)
-                        )
-                        .frame(width: 6, height: 6)
-                    Text(readiness.modeChip)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                }
-                .padding(.horizontal, 9)
-                .frame(minHeight: 28)
-                .overlay(
-                    Capsule()
-                        .strokeBorder(RecordingContextPalette.line(scheme), lineWidth: 1)
-                )
-                .accessibilityElement(children: .combine)
-            }
-
             if let preset = selectedPreset {
                 HStack(spacing: 10) {
                     RecordingContextPalette.identityDot(
@@ -528,6 +511,7 @@ struct ForceRecordingContextCard: View {
                         .font(.headline)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                     if preset.protocolMode == .reverseAction {
                         Text("MOVEMENT")
                             .font(.caption2.weight(.semibold))
@@ -541,28 +525,20 @@ struct ForceRecordingContextCard: View {
                             .accessibilityLabel("Movement protocol")
                     }
                     Spacer(minLength: 8)
+                    // #1038 H: ONE "Change" idiom on the card — the same
+                    // text + chevron as the movement row above.
                     Button {
                         Haptics.shared.tap()
                         showProtocolList = true
                     } label: {
-                        Text("Change")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
-                            .padding(.horizontal, 11)
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
+                        changeLabel
                     }
                     .hapticButtonStyle(.plain)
                     .disabled(locked)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(RecordingContextPalette.primaryBorder(scheme), lineWidth: 1)
-                    )
                     .accessibilityLabel("Change protocol")
                     .accessibilityHint("Shows the suggested and saved protocol list")
                 }
-                .padding(.top, 4)
-                .padding(.bottom, 5)
+                .frame(minHeight: 44)
 
                 timingRow(preset)
 
@@ -570,22 +546,31 @@ struct ForceRecordingContextCard: View {
 
                 if preset.protocolMode == .reverseAction {
                     movementGuide
+                        .padding(.top, 10)
                 }
 
-                readinessRow
+                if readiness.claim == .waitingForProgressor {
+                    readinessRow
+                }
             }
         }
-        .padding(12)
-        .background(
-            RecordingContextPalette.heroSurface(scheme),
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(RecordingContextPalette.line(scheme), lineWidth: 1)
-        )
-        .padding(.horizontal, 10)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 15)
+        .padding(.top, 6)
+        .padding(.bottom, 12)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Armed protocol")
+    }
+
+    private var changeLabel: some View {
+        HStack(spacing: 4) {
+            Text("Change")
+                .font(.subheadline.weight(.semibold))
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+        }
+        .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     /// The identity quality the armed hero's dot carries: the suggested
@@ -606,25 +591,17 @@ struct ForceRecordingContextCard: View {
     /// holds read `~7s hold` — the exact value is fractional).
     private func timingRow(_ preset: TindeqPreset) -> some View {
         let segments = armedTimingSegments(preset)
-        return HStack(spacing: 0) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
-                if index > 0 {
-                    Rectangle()
-                        .fill(RecordingContextPalette.line(scheme))
-                        .frame(width: 1, height: 12)
-                        .padding(.horizontal, 6)
-                }
-                Text(segment.text)
-                    .font(segment.isLead ? .caption.weight(.semibold) : .caption)
-                    .foregroundStyle(
-                        segment.isLead ? Color.primary : RecordingContextPalette.metadata(scheme)
-                    )
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.bottom, 9)
-        .accessibilityElement(children: .combine)
+        // #1038 H (stats row): kept — it is the protocol's dose, and the name
+        // alone ("Max Hangs 10 s") does not carry reps/sets. One quiet line
+        // with middle dots instead of boxed separators.
+        return Text(segments.map(\.text).joined(separator: " · "))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(RecordingContextPalette.metadata(scheme))
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 10)
+            .accessibilityElement(children: .combine)
     }
 
     private struct TimingSegment {
@@ -683,31 +660,21 @@ struct ForceRecordingContextCard: View {
         return false
     }
 
+    /// #1038 H (density): the target is one row — label, band — plus ONE
+    /// basis line. The old third line ("From CF 10.1 kg") repeated the CF the
+    /// basis already names; it only returns when the intensity moved the
+    /// schedule ("Adjusted from 30s @100%"), where it is new information.
+    /// No "Live readout" chip: with G1 the tab shows no live force.
     @ViewBuilder
     private func loadModule(_ preset: TindeqPreset) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                RecordingContextEyebrow(title: "Target band", systemImage: "scope")
-                Spacer(minLength: 8)
-                // #1028 F3: only claimed with a live link.
-                if readiness.showsLiveReadout, displayBand != nil {
-                    Text("Live readout")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(
-                            RecordingContextPalette.nestedRaised(scheme),
-                            in: Capsule()
-                        )
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 9)
-            .padding(.bottom, 4)
-
+        VStack(alignment: .leading, spacing: 0) {
+            hairline
             if let band = displayBand {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Target")
+                        .font(.subheadline)
+                        .foregroundStyle(RecordingContextPalette.metadata(scheme))
+                    Spacer(minLength: 8)
                     Text("\(RecordingContextFormat.kg(band.low))–\(RecordingContextFormat.kg(band.high))")
                         .font(.title3.bold())
                         .monospacedDigit()
@@ -719,69 +686,36 @@ struct ForceRecordingContextCard: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(RecordingContextPalette.metadata(scheme))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.bottom, 3)
+                .padding(.top, 10)
 
                 if let zoneTarget {
-                    Text(zoneTarget.basis)
-                        .font(.caption2)
+                    Text(zoneTarget.isAdjusted ? "\(zoneTarget.basis) · \(moduleSourceNote)" : zoneTarget.basis)
+                        .font(.caption)
                         .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 2)
-                        .accessibilityLabel(zoneTarget.basis)
-                }
-
-                if zoneTarget != nil {
-                    HStack(spacing: 5) {
-                        Text("↳")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
-                        Text(moduleSourceNote)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Spacer(minLength: 0)
-                    }
-                    .frame(minHeight: 15)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 8)
-                } else {
-                    Color.clear
-                        .frame(height: 6)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .multilineTextAlignment(.trailing)
+                        .padding(.top, 2)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("No target configured for this protocol")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                        .font(.subheadline)
+                        .foregroundStyle(RecordingContextPalette.metadata(scheme))
                     if preset.zoneQuality != nil {
                         Text("No reference curve for this exercise yet")
-                            .font(.caption)
-                            .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                    } else {
-                        Text("This protocol records without a target band")
                             .font(.caption)
                             .foregroundStyle(RecordingContextPalette.metadata(scheme))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.top, 10)
             }
 
             if showIntensityDial, let intensityPercent {
                 intensityDial(intensityPercent)
+                    .padding(.top, 10)
             }
         }
-        .background(
-            RecordingContextPalette.moduleBackground(scheme),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(RecordingContextPalette.line(scheme), lineWidth: 1)
-        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Target band and intensity bound control")
     }
@@ -793,52 +727,28 @@ struct ForceRecordingContextCard: View {
     }
 
     private func intensityDial(_ intensityPercent: Binding<Int>) -> some View {
-        let intensity = Binding(
-            get: { Double(intensityPercent.wrappedValue) },
-            set: { intensityPercent.wrappedValue = Int($0.rounded()) }
-        )
-        return VStack(spacing: 0) {
+        VStack(spacing: 2) {
             HStack(alignment: .firstTextBaseline) {
-                HStack(spacing: 5) {
-                    Text("Intensity")
-                        .font(.caption)
-                        .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                    Text("\(intensityPercent.wrappedValue)%")
-                        .font(.subheadline.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(.primary)
-                }
-                Spacer(minLength: 8)
-                Text("60–110 · 5% steps")
-                    .font(.caption2)
+                Text("Intensity")
+                    .font(.subheadline)
                     .foregroundStyle(RecordingContextPalette.metadata(scheme))
+                Spacer(minLength: 8)
+                Text("\(intensityPercent.wrappedValue)%")
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
 
-            Slider(value: intensity, in: 60...110, step: 5)
-                .tint(RecordingContextPalette.primary(scheme))
-                .disabled(locked)
-                .accessibilityLabel("Intensity")
-                .accessibilityValue("\(intensityPercent.wrappedValue) percent")
-
-            HStack {
-                Text("60%")
-                Spacer()
-                Text("100%")
-                Spacer()
-                Text("110%")
-            }
-            .font(.caption2)
-            .monospacedDigit()
-            .foregroundStyle(RecordingContextPalette.metadata(scheme))
-            .padding(.horizontal, 2)
-            .padding(.bottom, 7)
+            IntensityTrack(
+                value: intensityPercent.wrappedValue,
+                locked: locked,
+                tint: RecordingContextPalette.primary(scheme),
+                rail: RecordingContextPalette.line(scheme),
+                tickColor: RecordingContextPalette.metadata(scheme),
+                onChange: { intensityPercent.wrappedValue = $0 }
+            )
         }
-        .background(RecordingContextPalette.nested(scheme))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Intensity \(intensityPercent.wrappedValue) percent")
     }
 
     // MARK: Movement setup guide (#711 copy kept with the armed state)
@@ -870,30 +780,26 @@ struct ForceRecordingContextCard: View {
     private var readinessRow: some View {
         let waiting = readiness.claim == .waitingForProgressor
         let tint = waiting ? RecordingContextPalette.metadata(scheme) : RecordingContextPalette.primaryMixed(scheme)
-        return HStack(spacing: 9) {
-            Image(systemName: readiness.systemImage)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(readiness.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(waiting ? Color.primary : tint)
-                Text(readiness.detail)
-                    .font(.caption)
-                    .foregroundStyle(RecordingContextPalette.metadata(scheme))
+        return VStack(alignment: .leading, spacing: 0) {
+            hairline
+            HStack(spacing: 9) {
+                Image(systemName: readiness.systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(readiness.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(waiting ? Color.primary : tint)
+                    Text(readiness.detail)
+                        .font(.caption)
+                        .foregroundStyle(RecordingContextPalette.metadata(scheme))
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .frame(minHeight: 44)
+            .padding(.top, 8)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .frame(minHeight: 44)
-        .background(
-            waiting
-                ? RecordingContextPalette.nestedRaised(scheme)
-                : RecordingContextPalette.primary(scheme).opacity(0.11),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
-        .padding(.top, 8)
+        .padding(.top, 10)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("force-context-readiness")
     }
@@ -1159,343 +1065,229 @@ private enum RecordingContextFormat {
     }
 }
 
-// MARK: - Combined movement + side picker (S2 / S6)
+// MARK: - Movement & side picker (#1038 G5 + amendment H)
 
-/// The full-screen combined picker the collapsed "Movement & side" decision
-/// row opens (locked #903 decision 2 / punch 1): ALL movements in one list,
-/// each with its #543 side-policy badge; the side panel sits in document flow
-/// 8px below the movement list and offers only the sides the selected
-/// movement's policy allows. Own 44px Close control, no app tab bar.
+/// #1038 G5: the movement & side picker is a regular bottom sheet. A tap
+/// APPLIES and CLOSES — there is no X and no "Updates instantly" label. The
+/// grabber is the cancel affordance: swiping down dismisses with no change,
+/// because every tap edits a local draft and only `onCommit` reaches the
+/// recording context.
+///
+/// Layout (H proposals): the side control sits FIRST, directly under the
+/// title, so the 1–2 tap flow stays in one thumb zone; then recently used
+/// movements, then the rest. Each row is the movement name + a small area
+/// hint + a single-selection mark — no row numbers, no checkboxes, no
+/// column headers. A side-policy badge appears only where a movement
+/// DIFFERS from the default "either side or both" (H2).
 struct ForceMovementSidePicker: View {
     @Environment(\.colorScheme) private var scheme
-    @Binding var tag: String
-    @Binding var side: TindeqSide
+    /// The context the sheet opened on — the draft starts here.
+    let initialMovement: String
+    let initialSide: TindeqSide
     let knownTags: [String]
+    /// Recently used movements first (computed by
+    /// `MovementSidePickerPolicy.recentFirst` from the saved pulls).
+    let recentMovements: [String]
     /// #720: the side-applicability policy per movement (single source of
     /// truth `ExerciseSidePolicy`).
     let modeProvider: (String) -> ExerciseSideMode
-    let onClose: () -> Void
+    /// The last side recorded per movement (G5 default).
+    let lastSideProvider: (String) -> TindeqSide?
+    /// Applies the completed pair and closes the sheet.
+    let onCommit: (MovementSideDraft) -> Void
 
+    @State private var draft: MovementSideDraft
+    /// A side tapped before any movement in this sheet (side-first flow).
+    @State private var sidePickedFirst = false
     @State private var addingMovement = false
     @State private var draftName = ""
     @FocusState private var nameFieldFocused: Bool
+    /// The sheet sizes to its content (no dead half-sheet under a short
+    /// list); a long list still opens to `.large` and scrolls.
+    @State private var contentHeight: CGFloat = 560
+
+    init(
+        initialMovement: String,
+        initialSide: TindeqSide,
+        knownTags: [String],
+        recentMovements: [String],
+        modeProvider: @escaping (String) -> ExerciseSideMode,
+        lastSideProvider: @escaping (String) -> TindeqSide?,
+        onCommit: @escaping (MovementSideDraft) -> Void
+    ) {
+        self.initialMovement = initialMovement
+        self.initialSide = initialSide
+        self.knownTags = knownTags
+        self.recentMovements = recentMovements
+        self.modeProvider = modeProvider
+        self.lastSideProvider = lastSideProvider
+        self.onCommit = onCommit
+        var start = MovementSideDraft(
+            movement: initialMovement.trimmingCharacters(in: .whitespacesAndNewlines),
+            side: initialSide
+        )
+        #if DEBUG
+        // #1038 design harness only: open on a movement that is still
+        // waiting for its side (the G5 "closes once both are set" state).
+        if let pending = DesignFixture1038.pickerPendingMovement {
+            start = MovementSideDraft(movement: pending, side: .unspecified)
+        }
+        #endif
+        _draft = State(initialValue: start)
+    }
 
     private var movements: [String] {
         knownTags.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
     }
 
-    private var activeExercise: String {
-        tag.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var recent: [String] {
+        recentMovements.filter { movements.contains($0) }
     }
 
-    private var activeMode: ExerciseSideMode {
-        modeProvider(activeExercise)
+    private var others: [String] {
+        movements.filter { !recent.contains($0) }
+    }
+
+    private var draftMode: ExerciseSideMode {
+        modeProvider(draft.movement)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             sheetHeader
-            pickerLabelRow
             ScrollView(showsIndicators: false) {
-                VStack(spacing: 0) {
-                    movementRows
-                    addMovementRow
-                    if !activeExercise.isEmpty {
-                        sidePanel
-                            .padding(.top, 8)
+                VStack(alignment: .leading, spacing: 0) {
+                    sideControl
+                        .padding(.bottom, 18)
+                    if !recent.isEmpty {
+                        groupLabel("Recent")
+                        movementGroup(recent)
+                            .padding(.bottom, 16)
                     }
+                    if !others.isEmpty {
+                        // Recent rows are not repeated below, so the second
+                        // group is "Other", never a mislabelled "All".
+                        groupLabel(recent.isEmpty ? "Movements" : "Other movements")
+                        movementGroup(others)
+                    }
+                    addMovementRow
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 24)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 28)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    contentHeight = height
+                }
             }
         }
         .background(Color(uiColor: .systemBackground))
         .accessibilityElement(children: .contain)
+        // An oversized height detent is clamped by the system to its own
+        // maximum, so a long list opens as tall as allowed and scrolls; a
+        // short one hugs its rows. (A fixed 720 cap left "Add movement"
+        // jammed against the sheet edge on a 17 Pro.)
+        .presentationDetents([.height(contentHeight + Self.headerHeight), .large])
     }
 
+    /// Grabber + title + instruction line + the home-indicator inset, for
+    /// the content-sized detent.
+    private static let headerHeight: CGFloat = 140
+
+    /// G5: a movement is picked and only the side is owed — the sheet stays
+    /// open and the caption under the pills asks for it (ink, semibold).
+    /// The pills stay neutral: ringing both read as "both selected".
+    private var awaitingSide: Bool {
+        !draft.movement.isEmpty
+            && draft.side == .unspecified
+            && MovementSidePickerPolicy.needsSideChoice(draftMode)
+    }
+
+    /// Title + the one-line instruction that replaces both the X and the
+    /// "Updates instantly" label: what a tap does, and how to back out.
     private var sheetHeader: some View {
-        HStack(alignment: .bottom, spacing: 9) {
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                    .frame(width: 44, height: 44)
-                    .background(
-                        RecordingContextPalette.nested(scheme),
-                        in: Circle()
-                    )
-                    .overlay(
-                        Circle().strokeBorder(RecordingContextPalette.line(scheme), lineWidth: 1)
-                    )
-                    .contentShape(Circle())
-            }
-            .hapticButtonStyle(.plain)
-            .accessibilityLabel("Close")
-            .accessibilityHint("Closes the movement and side picker")
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("RECORDING CONTEXT")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                Text("Movement & side")
-                    .font(.title3.bold())
-                    .foregroundStyle(.primary)
-            }
-            Spacer(minLength: 8)
-            Text("Updates instantly")
-                .font(.caption2)
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Movement & side")
+                .font(.title3.bold())
+                .foregroundStyle(.primary)
+            Text("Tap to apply · swipe down to keep \(currentSummary)")
+                .font(.footnote)
                 .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                .padding(.bottom, 6)
+                .lineLimit(2)
         }
-        .padding(.horizontal, 17)
-        .padding(.top, 8)
-        .padding(.bottom, 11)
-        .frame(minHeight: 92)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(RecordingContextPalette.line(scheme))
-                .frame(height: 1)
-        }
-    }
-
-    private var pickerLabelRow: some View {
-        HStack {
-            Text("MOVEMENT")
-            Spacer()
-            Text("SIDE POLICY")
-        }
-        .font(.caption2.weight(.semibold))
-        .foregroundStyle(RecordingContextPalette.metadata(scheme))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
-        .padding(.vertical, 7)
-        .frame(minHeight: 26)
+        .padding(.top, 22)
+        .padding(.bottom, 14)
+        .accessibilityElement(children: .combine)
     }
 
-    private var movementRows: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(movements.enumerated()), id: \.element) { index, name in
-                movementRow(name: name, number: index + 1)
-                Rectangle()
-                    .fill(RecordingContextPalette.line(scheme))
-                    .frame(height: 1)
-            }
+    /// What swiping down keeps — the context the sheet opened on.
+    private var currentSummary: String {
+        let movement = initialMovement.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !movement.isEmpty else { return "no movement" }
+        let mode = modeProvider(movement)
+        guard MovementSidePickerPolicy.needsSideChoice(mode), initialSide != .unspecified else {
+            return movement
         }
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(RecordingContextPalette.line(scheme))
-                .frame(height: 1)
-        }
-        .background(
-            Color.clear,
-            in: RoundedRectangle(cornerRadius: 0, style: .continuous)
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Movements")
+        return "\(movement) · \(initialSide.label)"
     }
 
-    private func movementRow(name: String, number: Int) -> some View {
-        let isSelected = name == activeExercise
-        let mode = modeProvider(name)
-        return Button {
-            Haptics.shared.tap()
-            if isSelected {
-                tag = ""
-            } else {
-                tag = name
-            }
-            addingMovement = false
-        } label: {
-            HStack(spacing: 9) {
-                Text(String(format: "%02d", number))
-                    .font(.system(.caption2, design: .monospaced).weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(
-                        isSelected ? Color.primary : RecordingContextPalette.metadata(scheme)
-                    )
-                    .frame(width: 22, alignment: .leading)
-                selectionMark(isSelected: isSelected)
-                Text(name)
-                    .font(.subheadline)
-                    .fontWeight(isSelected ? .semibold : .regular)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Text(SidePolicyBadge.label(for: mode))
-                    .font(.caption)
-                    .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 6)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .hapticButtonStyle(.plain)
-        .background(
-            isSelected
-                ? LinearGradient(
-                    colors: [
-                        RecordingContextPalette.primary(scheme).opacity(0.17),
-                        Color.clear
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                : LinearGradient(colors: [Color.clear, Color.clear], startPoint: .leading, endPoint: .trailing)
-        )
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-        .accessibilityValue(isSelected ? "Selected" : "Available")
-    }
+    // MARK: Side control (first — H proposal)
 
-    private func selectionMark(isSelected: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 9, style: .continuous)
-            .fill(isSelected ? RecordingContextPalette.primary(scheme) : Color.clear)
-            .frame(width: 34, height: 32)
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(
-                        isSelected ? RecordingContextPalette.primary(scheme) : RecordingContextPalette.line(scheme),
-                        lineWidth: 1
-                    )
-            )
-            .overlay(
-                Image(systemName: "checkmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(isSelected ? Color.white : Color.clear)
-            )
-            .accessibilityHidden(true)
-    }
-
-    private var addMovementRow: some View {
-        VStack(spacing: 0) {
-            if addingMovement {
-                HStack(spacing: 9) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
-                        .frame(width: 34, height: 32)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .strokeBorder(RecordingContextPalette.primaryBorder(scheme), lineWidth: 1)
-                        )
-                    TextField("New movement name", text: $draftName)
-                        .font(.subheadline)
-                        .focused($nameFieldFocused)
-                        .textInputAutocapitalization(.sentences)
-                        .submitLabel(.done)
-                        .onSubmit(commitDraft)
-                        .onAppear { nameFieldFocused = true }
-                    Button("Add", action: commitDraft)
-                        .hapticButtonStyle(.borderedProminent)
-                        .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                .padding(.vertical, 6)
-                .frame(minHeight: 52)
-            } else {
-                Button {
-                    Haptics.shared.tap()
-                    addingMovement = true
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
-                            .frame(width: 34, height: 32)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .strokeBorder(RecordingContextPalette.line(scheme), lineWidth: 1)
-                            )
-                        Text("Add movement")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Spacer(minLength: 8)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 6)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                }
-                .hapticButtonStyle(.plain)
-                .accessibilityLabel("Add movement")
-                .accessibilityHint("Names a new movement to record against")
-            }
-            Rectangle()
-                .fill(RecordingContextPalette.line(scheme))
-                .frame(height: 1)
-        }
-        .padding(.bottom, 8)
-    }
-
-    private func commitDraft() {
-        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            tag = trimmed
-        }
-        draftName = ""
-        addingMovement = false
-        nameFieldFocused = false
-    }
-
-    /// The side panel — in document flow 8px below the movement list
-    /// (locked punch 1). Only the sides the active exercise's policy allows
-    /// are enabled; disabled choices stay legible but are never tappable.
-    private var sidePanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("SIDE")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                    Text(SidePolicyBadge.sentence(for: activeMode, movement: activeExercise))
-                        .font(.caption)
-                        .foregroundStyle(RecordingContextPalette.metadata(scheme))
-                }
-                Spacer(minLength: 8)
-                if SidePolicyBadge.showsFilteredBadge(activeMode) {
-                    Text("Filtered")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RecordingContextPalette.nestedRaised(scheme),
-                            in: Capsule()
-                        )
-                        .overlay(
-                            Capsule().strokeBorder(RecordingContextPalette.line(scheme), lineWidth: 1)
-                        )
-                }
-            }
-            .padding(.horizontal, 3)
-            .padding(.bottom, 8)
-
-            HStack(spacing: 7) {
+    private var sideControl: some View {
+        let mode = draft.movement.isEmpty ? ExerciseSideMode.unilateralOrBilateral : draftMode
+        let choosable = MovementSidePickerPolicy.needsSideChoice(mode)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
                 ForEach([TindeqSide.left, .right, .both]) { option in
-                    sideOption(option)
+                    sideChip(option, mode: mode, choosable: choosable)
                 }
             }
+            Text(sideCaption(mode: mode))
+                .font(awaitingSide ? .caption.weight(.semibold) : .caption)
+                // Ink, not the accent: accent text in this sheet means "tap"
+                // (Add movement); the prompt is an instruction.
+                .foregroundStyle(
+                    awaitingSide
+                        ? AnyShapeStyle(.primary)
+                        : AnyShapeStyle(RecordingContextPalette.metadata(scheme))
+                )
+                .padding(.horizontal, 2)
         }
-        .padding(11)
-        .background(
-            RecordingContextPalette.nested(scheme),
-            in: RoundedRectangle(cornerRadius: 15, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .strokeBorder(RecordingContextPalette.line(scheme), lineWidth: 1)
-        )
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Side options for \(activeExercise)")
+        .accessibilityLabel("Side")
     }
 
-    private func sideOption(_ option: TindeqSide) -> some View {
-        let allowed = ExerciseSidePolicy.isSideAllowed(activeMode, option)
-        let selected = side == option
+    private func sideCaption(mode: ExerciseSideMode) -> String {
+        if draft.movement.isEmpty { return "Pick a movement — the side applies with it" }
+        if awaitingSide {
+            return mode == .unilateralOnly
+                ? "Pick a side for \(draft.movement) — it records one side at a time"
+                : "Pick a side for \(draft.movement)"
+        }
+        switch mode {
+        case .unilateralOrBilateral, .unilateralOnly:
+            if let last = lastSideProvider(draft.movement),
+               ExerciseSidePolicy.isSideAllowed(mode, last), last != .unspecified {
+                return "Last time on \(draft.movement): \(last.label)"
+            }
+            return mode == .unilateralOnly
+                ? "\(draft.movement) records one side at a time"
+                : "Pick the side for \(draft.movement)"
+        case .bilateralOnly:
+            return "\(draft.movement) records both sides together"
+        case .notApplicable:
+            return "\(draft.movement) has no side to record"
+        }
+    }
+
+    private func sideChip(_ option: TindeqSide, mode: ExerciseSideMode, choosable: Bool) -> some View {
+        let allowed = ExerciseSidePolicy.isSideAllowed(mode, option) && (choosable || draft.movement.isEmpty)
+        let selected = draft.side == option && (choosable || mode == .bilateralOnly)
         return Button {
-            Haptics.shared.tap()
             guard allowed else { return }
-            side = option
+            Haptics.shared.tap()
+            apply(MovementSidePickerPolicy.tapSide(option, draft: draft, mode: mode))
         } label: {
             Text(option.label)
                 .font(.subheadline.weight(.semibold))
@@ -1506,52 +1298,261 @@ struct ForceMovementSidePicker: View {
                 )
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 44)
-                .contentShape(Rectangle())
+                .contentShape(Capsule())
         }
         .hapticButtonStyle(.plain)
         .disabled(!allowed)
         .background(
             selected
                 ? RecordingContextPalette.primary(scheme)
-                : (allowed ? Color.clear : RecordingContextPalette.disabledBackground(scheme)),
-            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                : (allowed ? RecordingContextPalette.nested(scheme) : Color.clear),
+            in: Capsule()
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .strokeBorder(
-                    selected || allowed ? RecordingContextPalette.line(scheme) : RecordingContextPalette.line(scheme),
-                    lineWidth: 1
-                )
+            Capsule().strokeBorder(
+                selected ? RecordingContextPalette.primary(scheme) : RecordingContextPalette.line(scheme),
+                lineWidth: 1
+            )
         )
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .accessibilityValue(selected ? "Selected" : (allowed ? "Available" : "Not available for this movement"))
     }
+
+    // MARK: Movement list
+
+    private func groupLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(RecordingContextPalette.metadata(scheme))
+            .padding(.horizontal, 4)
+            .padding(.bottom, 6)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func movementGroup(_ names: [String]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(names.enumerated()), id: \.element) { index, name in
+                if index > 0 {
+                    Rectangle()
+                        .fill(RecordingContextPalette.line(scheme))
+                        .frame(height: 1)
+                        .padding(.leading, 14)
+                }
+                movementRow(name)
+            }
+        }
+        .background(
+            RecordingContextPalette.nested(scheme),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(RecordingContextPalette.line(scheme), lineWidth: 1)
+        )
+    }
+
+    private func movementRow(_ name: String) -> some View {
+        let isSelected = name == draft.movement
+        let mode = modeProvider(name)
+        let hint = MovementAreaHint.hint(for: name)
+        let badge = MovementSideBadge.badge(for: mode)
+        return Button {
+            Haptics.shared.tap()
+            addingMovement = false
+            apply(
+                MovementSidePickerPolicy.tapMovement(
+                    name,
+                    mode: mode,
+                    lastSide: lastSideProvider(name),
+                    pendingSide: sidePickedFirst ? draft.side : nil
+                )
+            )
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name)
+                        .font(.body)
+                        .fontWeight(isSelected ? .semibold : .regular)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if hint != nil || badge != nil {
+                        Text([hint, badge].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(RecordingContextPalette.metadata(scheme))
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isSelected ? RecordingContextPalette.primaryMixed(scheme) : Color.clear)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .hapticButtonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityValue(isSelected ? "Selected" : "Available")
+    }
+
+    private var addMovementRow: some View {
+        Group {
+            if addingMovement {
+                HStack(spacing: 9) {
+                    TextField("New movement name", text: $draftName)
+                        .font(.body)
+                        .focused($nameFieldFocused)
+                        .textInputAutocapitalization(.sentences)
+                        .submitLabel(.done)
+                        .onSubmit(commitNewMovement)
+                        .onAppear { nameFieldFocused = true }
+                    Button("Add", action: commitNewMovement)
+                        .hapticButtonStyle(.borderedProminent)
+                        .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(.horizontal, 14)
+                .frame(minHeight: 52)
+            } else {
+                Button {
+                    Haptics.shared.tap()
+                    addingMovement = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("Add movement")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 8)
+                    }
+                    .foregroundStyle(RecordingContextPalette.primaryMixed(scheme))
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .hapticButtonStyle(.plain)
+                .accessibilityLabel("Add movement")
+                .accessibilityHint("Names a new movement to record against")
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private func commitNewMovement() {
+        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        draftName = ""
+        addingMovement = false
+        nameFieldFocused = false
+        guard !trimmed.isEmpty else { return }
+        apply(
+            MovementSidePickerPolicy.tapMovement(
+                trimmed,
+                mode: modeProvider(trimmed),
+                lastSide: lastSideProvider(trimmed),
+                pendingSide: sidePickedFirst ? draft.side : nil
+            )
+        )
+    }
+
+    /// The single exit: a complete pair commits (and the host closes the
+    /// sheet); an incomplete one stays in the draft for the next tap.
+    private func apply(_ outcome: MovementSidePickerPolicy.Outcome) {
+        switch outcome {
+        case .commit(let pair):
+            draft = pair
+            onCommit(pair)
+        case .needsSide(let pending):
+            sidePickedFirst = pending.movement.isEmpty && pending.side != .unspecified
+            draft = pending
+        }
+    }
 }
 
-/// The picker's side-policy presentation (#543) — badges, panel sentences,
-/// and the Filtered marker. Copy for the one-side / both-only policies is
-/// the locked design wording (S2 "FDP supports one side at a time", S6
-/// "Edge Block records both sides together").
-private enum SidePolicyBadge {
-    static func label(for mode: ExerciseSideMode) -> String {
-        switch mode {
-        case .unilateralOrBilateral: return "Either"
-        case .unilateralOnly: return "One side"
-        case .bilateralOnly: return "Both only"
-        case .notApplicable: return "Not applicable"
-        }
-    }
+/// #1038 H1 (defect): the intensity control draws its OWN thumb and ticks
+/// through one mapping, `IntensityScale.center`, so the 100% tick sits under
+/// the thumb at 100 by construction. The system Slider's thumb inset changes
+/// with the OS (iOS 26's capsule thumb is wider than the 28 pt circle), so
+/// ticks computed beside it drifted ~3 pt — the exact defect H1 names.
+struct IntensityTrack: View {
+    let value: Int
+    let locked: Bool
+    let tint: Color
+    let rail: Color
+    let tickColor: Color
+    let onChange: (Int) -> Void
 
-    static func sentence(for mode: ExerciseSideMode, movement: String) -> String {
-        switch mode {
-        case .unilateralOrBilateral: return "\(movement) works on one side or both"
-        case .unilateralOnly: return "\(movement) supports one side at a time"
-        case .bilateralOnly: return "\(movement) records both sides together"
-        case .notApplicable: return "\(movement) has no side to record"
-        }
-    }
+    private let thumbDiameter = CGFloat(IntensityScale.thumbRadius * 2)
+    private let railHeight: CGFloat = 4
 
-    static func showsFilteredBadge(_ mode: ExerciseSideMode) -> Bool {
-        mode != .unilateralOrBilateral
+    var body: some View {
+        VStack(spacing: 2) {
+            GeometryReader { proxy in
+                let width = Double(proxy.size.width)
+                let thumbX = CGFloat(IntensityScale.center(value: Double(value), trackWidth: width))
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(rail)
+                        .frame(height: railHeight)
+                    Capsule()
+                        .fill(locked ? rail : tint)
+                        .frame(width: max(railHeight, thumbX), height: railHeight)
+                    Circle()
+                        .fill(.white)
+                        .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
+                        .overlay(Circle().strokeBorder(.black.opacity(0.06), lineWidth: 0.5))
+                        .frame(width: thumbDiameter, height: thumbDiameter)
+                        .position(x: thumbX, y: proxy.size.height / 2)
+                }
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { drag in
+                            guard !locked else { return }
+                            let next = IntensityScale.value(atX: Double(drag.location.x), trackWidth: width)
+                            if next != value {
+                                Haptics.shared.tap()
+                                onChange(next)
+                            }
+                        }
+                )
+            }
+            .frame(height: 44)
+
+            GeometryReader { proxy in
+                let width = Double(proxy.size.width)
+                ForEach(IntensityScale.tickValues, id: \.self) { tick in
+                    VStack(spacing: 1) {
+                        Rectangle()
+                            .fill(tickColor.opacity(0.6))
+                            .frame(width: 1, height: 4)
+                        Text("\(tick)%")
+                            .font(.caption2)
+                            .monospacedDigit()
+                            .foregroundStyle(tickColor)
+                            .fixedSize()
+                    }
+                    .position(
+                        x: CGFloat(IntensityScale.center(value: Double(tick), trackWidth: width)),
+                        y: 9
+                    )
+                }
+            }
+            .frame(height: 18)
+            .accessibilityHidden(true)
+        }
+        .opacity(locked ? 0.55 : 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Intensity")
+        .accessibilityValue("\(value) percent")
+        .accessibilityAdjustableAction { direction in
+            guard !locked else { return }
+            switch direction {
+            case .increment: onChange(IntensityScale.stepped(value, by: 1))
+            case .decrement: onChange(IntensityScale.stepped(value, by: -1))
+            @unknown default: break
+            }
+        }
     }
 }

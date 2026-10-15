@@ -1218,7 +1218,7 @@ final class TindeqManager: NSObject {
         armTimeoutTimer = Timer.scheduledTimer(withTimeInterval: armTimeoutSeconds, repeats: false) { [weak self] _ in
             guard let self, self.handsFreeRequested, self.isWaitingForHandsFreePull else { return }
             self.cancelHandsFree()
-            self.savedMsg = "Hands-free disarmed after 10 min idle"
+            self.savedMsg = "Free hold disarmed after 10 min idle"
             self.scheduleSavedMsgDismiss()
         }
     }
@@ -1559,7 +1559,7 @@ final class TindeqManager: NSObject {
             armedStreamIdleBudget = idleStep.budget
             if idleStep.idleExceeded {
                 cancelHandsFree()
-                savedMsg = "Hands-free disarmed after 10 min idle"
+                savedMsg = "Free hold disarmed after 10 min idle"
                 scheduleSavedMsgDismiss()
                 return
             }
