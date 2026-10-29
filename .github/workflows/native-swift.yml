@@ -382,8 +382,10 @@ jobs:
     needs: [docs-check]
     if: ${{ !cancelled() && needs.docs-check.outputs.native != 'false' }}
     runs-on: macos-26
-    # #1037: provisional; set from this job's measured standalone runs.
-    timeout-minutes: 30
+    # #1037: ~2x the slowest observed watch leg. Standalone it ran 6.4-6.8
+    # min; inside `ios-build` its boot + test steps peaked at 8.7 min, which
+    # plus this job's own setup (~2.5 min) is ~11 min (see the #1037 PR).
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Select Xcode
