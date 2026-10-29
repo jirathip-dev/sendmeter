@@ -10,7 +10,7 @@ name: Native Swift
 # `scripts/check-docs-stale-commands.sh` scans) is in the path filters so the
 # stale-command check runs on a docs PR instead of only when someone
 # remembers. The `docs-check` job is the only job those paths need: it
-# classifies the change and the two heavy jobs below skip a docs-only diff, so
+# classifies the change and the three heavy jobs below skip a docs-only diff, so
 # no PR pays for a native build it cannot affect.
 on:
   workflow_dispatch:
@@ -103,7 +103,7 @@ concurrency:
 
 jobs:
   # #944: the doc surface added to the path filters above needs this job and
-  # nothing else. It is ALSO the classifier the two heavy jobs below depend on:
+  # nothing else. It is ALSO the classifier the three heavy jobs below depend on:
   # a diff that lies entirely on the docs surface publishes `native=false` and
   # they skip, so a docs-only PR never pays for a native build, while every
   # other diff (a native path, a workflow change, anything unclassifiable) runs
@@ -233,7 +233,10 @@ jobs:
     needs: [docs-check]
     if: ${{ !cancelled() && needs.docs-check.outputs.native != 'false' }}
     runs-on: macos-26
-    timeout-minutes: 40
+    # #1037: 2x the slowest observed successful app leg (~34 min, measured
+    # with the watch steps subtracted; see the #1037 PR), now that the watch
+    # leg runs in its own job and no longer shares this budget.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1.324.0
@@ -368,6 +371,49 @@ jobs:
             ${{ runner.temp }}/native-ui-smoke-summary.json
           if-no-files-found: warn
           retention-days: 14
+
+  # #1037: the watch leg runs in its own job so neither leg's timeout depends
+  # on how fast the other leg's runner is. It repeats only the setup the watch
+  # scheme needs (checkout, Xcode, pinned XcodeGen, generate, resolve); the
+  # generated-graph assertion stays in `ios-build`.
+  watch-tests:
+    name: watchOS Simulator tests
+    # Same docs-only skip as `core-tests` above.
+    needs: [docs-check]
+    if: ${{ !cancelled() && needs.docs-check.outputs.native != 'false' }}
+    runs-on: macos-26
+    # #1037: provisional; set from this job's measured standalone runs.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Install XcodeGen
+        env:
+          XCODEGEN_VERSION: "2.46.0"
+          XCODEGEN_SHA256: "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806"
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen.zip"
+          curl --fail --location --silent --show-error \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" \
+            --output "$archive"
+          echo "${XCODEGEN_SHA256}  ${archive}" | shasum --algorithm 256 --check --strict
+          unzip -q "$archive" -d "$RUNNER_TEMP/xcodegen"
+          xcodegen_bin="$RUNNER_TEMP/xcodegen/xcodegen/bin"
+          echo "$xcodegen_bin" >> "$GITHUB_PATH"
+          export PATH="$xcodegen_bin:$PATH"
+          xcodegen --version
+      - name: Generate Xcode project
+        working-directory: native/SendmeterNative
+        run: xcodegen generate
+      - name: Resolve Swift packages
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -resolvePackageDependencies
 
       # #946: `ios/App/SendLogWatchTests/` existed with no target and no step
       # after #857 deleted the committed Capacitor project, so nothing compiled

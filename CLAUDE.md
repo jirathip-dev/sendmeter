@@ -189,7 +189,7 @@ intend it. Commit only intentional files.
 
 | Workflow | Covers |
 |---|---|
-| `native-swift.yml` | `Core tests` — anti-slop structural + cold checks, advisory Swift lint, coverage helper self-test, then `scripts/swift-coverage.sh` over the three pure packages. `iOS Simulator build` — XcodeGen, generated watch-graph assertions, package resolve, boot a simulator, unsigned app build, then `-only-testing:SendmeterNativeTests`. Path-filtered to native/watch/health-core/anti-slop paths. |
+| `native-swift.yml` | `Core tests` — anti-slop structural + cold checks, advisory Swift lint, coverage helper self-test, then `scripts/swift-coverage.sh` over the three pure packages. `iOS Simulator build` — XcodeGen, generated watch-graph assertions, package resolve, boot a simulator, unsigned app build, then `-only-testing:SendmeterNativeTests` and the UI smoke suite. `watchOS Simulator tests` — its own job (#1037): XcodeGen, package resolve, boot a watchOS simulator, then `-only-testing:SendLogWatchTests`. Path-filtered to native/watch/health-core/anti-slop paths. |
 | `ios-ci.yml` | `package-tests` — `SendLogWatchCore`'s SwiftPM suite in a Linux `swift:6.3` container (no simulator). `native` — macOS: XcodeGen, unsigned native iOS app build, unsigned watch app build. |
 | `supabase-tests.yml` | `purge-sql` — disposable local stack (`supabase start`, `db reset --local --no-seed`), then `supabase test db` on `supabase/tests/purge_sync_generation.sql` and `supabase/tests/health_metrics_precedence.sql`, then `bash scripts/test-health-precedence-race.sh`. Never touches a hosted project. |
 | `mcp.yml` | `quality` — `cd mcp`-scoped `npm ci`, `npm audit --audit-level=high`, typecheck, tests, build. |
