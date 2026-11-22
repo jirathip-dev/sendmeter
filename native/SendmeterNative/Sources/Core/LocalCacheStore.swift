@@ -2,11 +2,12 @@ import CryptoKit
 import Foundation
 // Keep GRDB out of SendmeterCore's public module interface. A direct exposure
 // to the app target previously made the app-wide type checker time out in
-// ActivityMixBar.swift; the internal import keeps it out.
-internal import GRDB
+// ActivityMixBar.swift; `@_implementationOnly` is intentional, and Package.swift's
+// CheckImplementationOnly feature makes it safe without library evolution.
+@_implementationOnly import GRDB
 
 /// The raw rows of one coherent read, kept opaque outside the store.
-private struct RawCoherentRead {
+@_implementationOnly private struct RawCoherentRead {
     let rows: [Row]
     let cursors: [Row]
     let boundaries: [Row]
