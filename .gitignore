@@ -71,3 +71,6 @@ fastlane/screenshots.html
 HANDOFF.md
 BRIEF.md
 REVIEW.md
+
+# Build output
+target*/
