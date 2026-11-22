@@ -3,70 +3,80 @@ const SKY = {
   golden: { sky: ["#6D8DB0", "#B9B3A0", "#E8B670", "#F3D29A"], ridge: ["#8C7D6E", "#6F6458"], rock: ["#8E7E6C", "#BCA488", "#625548", "#4E4339"], ground: "#6B5A47", canopy: ["#5C6A3C", "#7A7D3F"], light: "#FFE6A8", glow: "rgba(255,214,140,.6)", lightest: "#F3D29A" },
   night: { sky: ["#070B16", "#0E1628", "#1A2742", "#263552"], ridge: ["#141C2C", "#0F1522"], rock: ["#2A2E3B", "#3E4456", "#1C1F29", "#15171F"], ground: "#16181F", canopy: ["#121C1F", "#1A2729"], light: "#EEEBDD", glow: "rgba(220,226,240,.35)", lightest: "#EEEBDD" },
   rain: { sky: ["#3D4652", "#56616D", "#6E7A86", "#7F8A94"], ridge: ["#4E5761", "#434B55"], rock: ["#4C5257", "#646C72", "#373C41", "#2C3034"], ground: "#353A3D", canopy: ["#2F3D38", "#3D4D46"], light: null, glow: null, lightest: "#9AA4AE" },
+  day: { sky: ["#4F8FCF", "#7FB2DE", "#B6D6EC", "#DDEBF1"], ridge: ["#7E97AB", "#6A8297"], rock: ["#8F8E96", "#B6B5BB", "#6E6D76", "#55545D"], ground: "#7D7A62", canopy: ["#4A6B47", "#628452"], light: "#FFF3C4", glow: "rgba(255,243,196,.65)", lightest: "#DDEBF1" },
   fog: { sky: ["#8E979C", "#A7AFB1", "#BEC4C3", "#CDD1CE"], ridge: ["#A3AAAC", "#959DA0"], rock: ["#6C7275", "#878D8F", "#575D60", "#4A4F52"], ground: "#5E6366", canopy: ["#58665F", "#66756D"], light: null, glow: null, lightest: "#DDE1DE" },
 };
 
-const FUR = { fur: "#8A6142", furDark: "#6E4B33", light: "#EBDCC2", inner: "#F1DDC6", cheek: "#E7A3A0", eye: "#1B1410" };
-
 const ARM = {
-  sit: ["M78 128 Q 84 146 94 152", "M122 128 Q 116 146 106 152"],
-  rest: ["M78 128 Q 84 146 94 152", "M122 128 Q 116 146 106 152"],
-  chalk: ["M76 126 Q 58 156 46 176", "M122 128 Q 116 146 106 152"],
-  shelter: ["M74 132 Q 92 176 126 156", "M126 132 Q 112 170 80 160"],
-  look: ["M78 128 Q 84 146 94 152", "M122 128 Q 116 146 106 152"],
-  flash: ["M76 124 Q 50 96 34 58", "M124 124 Q 150 96 166 58"],
-  send: ["M78 128 Q 84 146 94 152", "M124 124 Q 152 100 158 60"],
-  pr: ["M76 126 Q 46 124 50 92", "M124 126 Q 154 124 150 92"],
-  crimp: ["M78 128 Q 84 146 94 152", "M124 120 Q 140 80 146 34"],
-  hang: ["M74 122 Q 56 70 52 10", "M126 122 Q 144 70 148 10"],
-  dyno: ["M76 120 Q 62 70 58 6", "M124 120 Q 138 70 142 6"],
-  fall: ["M78 120 Q 50 104 34 112", "M122 120 Q 150 104 166 112"],
+  sit: ["M80 152 Q 84 168 94 172", "M120 152 Q 116 168 106 172"],
+  rest: ["M80 152 Q 84 168 94 172", "M120 152 Q 116 168 106 172"],
+  look: ["M80 152 Q 84 168 94 172", "M120 152 Q 116 168 106 172"],
+  chalk: ["M78 152 Q 60 176 50 194", "M120 152 Q 116 168 106 172"],
+  shelter: ["M76 154 Q 96 190 124 178", "M124 154 Q 104 188 78 180"],
+  flash: ["M78 150 Q 48 126 36 88", "M122 150 Q 152 126 164 88"],
+  send: ["M80 152 Q 84 168 94 172", "M122 150 Q 154 128 158 90"],
+  pr: ["M78 152 Q 44 152 46 120", "M122 152 Q 156 152 154 120"],
+  crimp: ["M80 152 Q 84 168 94 172", "M122 148 Q 156 104 150 44"],
+  hang: ["M78 150 Q 42 110 48 34", "M122 150 Q 158 110 152 34"],
+  dyno: ["M78 150 Q 38 104 42 22", "M122 150 Q 162 104 158 22"],
+  fall: ["M80 154 Q 48 144 30 156", "M120 154 Q 152 144 170 156"],
 };
-const STRETCH = new Set(["hang", "dyno", "fall", "flash"]);
-const HAPPY = new Set(["flash", "send", "pr", "dyno"]);
+const STRETCH = new Set(["hang", "dyno", "fall", "flash", "crimp"]);
+const PROPS = {
+  chalk: `<path class="bag" d="M30 206 l4 -26 h28 l4 26Z"/><rect class="rim" x="31" y="176" width="34" height="7" rx="3"/>`,
+  crimp: `<rect class="hold" x="132" y="30" width="36" height="14" rx="7"/>`,
+  hang: `<rect class="bar" x="20" y="22" width="160" height="12" rx="6"/>`,
+  flash: `<path class="zap" d="M176 30 l-16 30 h12 l-8 26 l22 -34 h-12 l8 -22Z"/>`,
+  pr: `<path class="zap" d="M100 -6 l7 14 15 2 -11 10 3 15 -14 -7 -14 7 3 -15 -11 -10 15 -2Z"/>`,
+  send: `<path class="ln2" d="M150 70 v-56 M150 16 h26 l-6 9 6 9 h-26"/>`,
+  rest: `<text class="zz" x="140" y="44">z</text><text class="zz" x="158" y="24" style="font-size:22px">z</text>`,
+  fall: `<path class="ln2" d="M24 118 h-16 M28 132 h-20 M176 118 h16 M172 132 h20"/>`,
+};
 
-function roo(pose = "sit", hand = "headlamp") {
+function roo(pose = "sit", hand = "headlamp", props = false) {
   const [a1, a2] = ARM[pose];
-  const tilt = { look: -14, shelter: 8, fall: 18, rest: 6 }[pose] || 0;
-  const ears = pose === "shelter" ? "rotate(-28 100 60)" : pose === "fall" ? "rotate(-12 100 60)" : "";
-  const earsR = pose === "shelter" ? "rotate(28 100 60)" : pose === "fall" ? "rotate(16 100 60)" : "";
-  const legs = STRETCH.has(pose)
-    ? `<path class="f" d="M80 214 Q 74 232 70 246 L 92 246 Q 94 230 96 218Z"/><path class="f" d="M120 214 Q 126 232 130 246 L 108 246 Q 106 230 104 218Z"/>`
-    : `<ellipse class="f" cx="78" cy="233" rx="28" ry="8"/><ellipse class="f" cx="124" cy="233" rx="28" ry="8"/>`;
-  const body = { shelter: "translate(0 14) scale(1 .94)", dyno: "rotate(-8 100 140)", fall: "rotate(24 100 140)" }[pose] || "";
-  const eyes = pose === "rest"
-    ? `<path class="ln" d="M81 69 q5 4 10 0 M109 69 q5 4 10 0"/>`
-    : `<circle class="e" cx="86" cy="68" r="3.6"/><circle class="e" cx="114" cy="68" r="3.6"/>`;
-  const mouth = HAPPY.has(pose) ? `<path class="ln" d="M93 92 Q100 99 107 92"/>` : pose === "fall" ? `<ellipse class="e" cx="100" cy="94" rx="3" ry="4"/>` : "";
-  const lamp = hand === "headlamp" ? `<path class="band" d="M67 62 Q100 50 133 62"/><circle class="glow" cx="100" cy="53" r="14"/><circle class="lamp" cx="100" cy="54" r="6"/>` : "";
-  return `<g class="roo hand-${hand}">
-    <g transform="${body}">
-    <path class="f" d="M118 196 C 160 206 192 216 198 236 L 168 238 C 158 226 138 220 116 218Z"/>
-    ${legs}
-    <path class="f" d="M100 98 C 138 98 150 150 146 190 C 143 222 124 234 100 234 C 76 234 57 222 54 190 C 50 150 62 98 100 98Z"/>
-    <ellipse class="l" cx="100" cy="182" rx="27" ry="38"/>
-    <g transform="rotate(${tilt} 100 90)">
-      <g transform="${ears}"><path class="f" d="M84 56 L 68 0 L 98 46Z"/><path class="i" d="M84 48 L 72 12 L 92 44Z"/></g>
-      <g transform="${earsR}"><path class="f" d="M116 56 L 132 0 L 102 46Z"/><path class="i" d="M116 48 L 128 12 L 108 44Z"/></g>
-      <ellipse class="f" cx="100" cy="72" rx="34" ry="30"/>
-      <ellipse class="l" cx="100" cy="87" rx="16" ry="11"/>
-      <ellipse class="e" cx="100" cy="80" rx="5" ry="3.5"/>
-      ${eyes}${mouth}
-      <ellipse class="c" cx="77" cy="84" rx="6" ry="4"/><ellipse class="c" cx="123" cy="84" rx="6" ry="4"/>
-      ${lamp}
+  const tilt = { look: -12, shelter: 6, fall: 16, rest: 8 }[pose] || 0;
+  const eL = pose === "shelter" ? "rotate(-30 80 70)" : pose === "fall" ? "rotate(-18 86 62)" : pose === "rest" ? "rotate(-10 86 62)" : "";
+  const eR = pose === "shelter" ? "rotate(30 120 70)" : pose === "fall" ? "rotate(22 114 62)" : pose === "rest" ? "rotate(10 114 62)" : "";
+  const feet = STRETCH.has(pose)
+    ? `<ellipse class="f" cx="84" cy="236" rx="10" ry="16" transform="rotate(12 84 236)"/><ellipse class="f" cx="116" cy="236" rx="10" ry="16" transform="rotate(-12 116 236)"/>`
+    : `<ellipse class="f" cx="78" cy="236" rx="24" ry="10"/><ellipse class="f" cx="122" cy="236" rx="24" ry="10"/>`;
+  const body = { shelter: "translate(0 12) scale(1 .95)", dyno: "rotate(-8 100 160)", fall: "rotate(22 100 160)" }[pose] || "";
+  const happy = ["flash", "send", "pr", "dyno"].includes(pose);
+  const eyes = pose === "rest" ? `<path class="ln" d="M77 98 q6 5 12 0 M111 98 q6 5 12 0"/>`
+    : happy ? `<path class="ln" d="M77 100 q6 -7 12 0 M111 100 q6 -7 12 0"/>`
+    : `<circle class="e" cx="83" cy="98" r="5"/><circle class="e" cx="117" cy="98" r="5"/><circle class="hi" cx="85" cy="96" r="1.6"/><circle class="hi" cx="119" cy="96" r="1.6"/>`;
+  const brow = pose === "shelter" ? `<path class="ln" d="M76 86 l10 3 M124 86 l-10 3"/>` : "";
+  const mouth = pose === "fall" ? `<ellipse class="e" cx="100" cy="128" rx="4" ry="5"/>` : happy ? `<path class="m" d="M92 123 Q100 134 108 123Z"/>` : `<path class="ln" d="M93 125 q3.5 4 7 0 q3.5 4 7 0"/>`;
+  const lamp = hand === "headlamp" ? `<path class="band" d="M58 84 Q100 62 142 84"/><circle class="glow" cx="100" cy="72" r="11"/><circle class="lamp" cx="100" cy="72" r="6"/>` : "";
+  const shape = (art) => `<g transform="${body}">
+    <path class="f" d="M122 198 C 174 198 202 220 198 246 C 176 248 146 240 116 228Z"/>
+    ${feet}
+    <ellipse class="f" cx="100" cy="186" rx="42" ry="48"/>
+    ${art ? `<ellipse class="l" cx="100" cy="194" rx="26" ry="32"/>` : ""}
+    <path class="ao" d="${a1}"/><path class="ao" d="${a2}"/>
+    <g transform="rotate(${tilt} 100 110)">
+      <g transform="${eL}"><path class="f" d="M70 76 C 54 62 52 34 62 14 C 80 26 92 50 90 70Z"/>${art ? `<path class="i" d="M71 66 C 61 56 60 40 65 28 C 75 38 82 52 82 64Z"/>` : ""}</g>
+      <g transform="${eR}"><path class="f" d="M130 76 C 146 62 148 34 138 14 C 120 26 108 50 110 70Z"/>${art ? `<path class="i" d="M129 66 C 139 56 140 40 135 28 C 125 38 118 52 118 64Z"/>` : ""}</g>
+      <ellipse class="f" cx="100" cy="98" rx="46" ry="42"/>
+      ${art ? `<ellipse class="f" cx="100" cy="124" rx="24" ry="18"/><ellipse class="l" cx="100" cy="124" rx="20" ry="14"/><ellipse class="e" cx="100" cy="113" rx="7" ry="4.6"/>${eyes}${brow}${mouth}
+      <ellipse class="c" cx="70" cy="114" rx="8" ry="5"/><ellipse class="c" cx="130" cy="114" rx="8" ry="5"/>${lamp}` : ""}
     </g>
-    <path class="ao" d="${a1}"/><path class="ao" d="${a2}"/><path class="a" d="${a1}"/><path class="a" d="${a2}"/>
-    </g>
+    ${art ? `<path class="a" d="${a1}"/><path class="a" d="${a2}"/>` : ""}
   </g>`;
+  const prop = props && PROPS[pose] ? PROPS[pose] : "";
+  return `<g class="roo">${prop ? `<g class="die">${prop}</g>` : ""}<g class="die">${shape(false)}</g>${prop}${shape(true)}</g>`;
 }
 
 const ROO_CSS = `
-.roo .f{fill:${FUR.fur}}.roo .l{fill:${FUR.light}}.roo .i{fill:${FUR.inner}}.roo .c{fill:${FUR.cheek}}.roo .e{fill:${FUR.eye}}
-.roo .ln{fill:none;stroke:${FUR.eye};stroke-width:2.6;stroke-linecap:round}
-.roo .a{fill:none;stroke:${FUR.fur};stroke-width:13;stroke-linecap:round}.roo .ao{fill:none;stroke:${FUR.furDark};stroke-width:17;stroke-linecap:round}
-.hand-headlamp .f{fill:#6E4C34;stroke:#FFB85C;stroke-width:2.4;stroke-linejoin:round}.hand-headlamp .l,.hand-headlamp .i{fill:#E6CFAE}
-.hand-headlamp .a{stroke:#6E4C34}.hand-headlamp .ao{stroke:#FFB85C;stroke-width:17.5}.hand-headlamp .c{fill:#D98C82}
-.roo .band{fill:none;stroke:#23262F;stroke-width:6;stroke-linecap:round}.roo .lamp{fill:#FFE2A3}.roo .glow{fill:#FFB547;opacity:.35}`;
+.roo .f{fill:#3A3447}.roo .l{fill:#F6EADF}.roo .i{fill:#F4C3C6}.roo .c{fill:#F59AAE;opacity:.9}.roo .e{fill:#17141D}.roo .hi{fill:#fff}
+.roo .ln{fill:none;stroke:#17141D;stroke-width:3;stroke-linecap:round}.roo .m{fill:#17141D}
+.roo .a{fill:none;stroke:#3A3447;stroke-width:15;stroke-linecap:round}.roo .ao{fill:none;stroke:#3A3447;stroke-width:15;stroke-linecap:round}
+.roo .die *{fill:url(#iri)!important;stroke:url(#iri)!important;stroke-width:11px;stroke-linejoin:round;stroke-linecap:round}.roo .die .ao,.roo .die .bar,.roo .die .ln2{stroke-width:26px}
+.roo .band{fill:none;stroke:#26222F;stroke-width:6;stroke-linecap:round}.roo .lamp{fill:#FFF1CC}.roo .glow{fill:#FFC46B;opacity:.7}
+.roo .bag{fill:#E0634E}.roo .rim{fill:#F6EADF}.roo .hold{fill:#FFA94D}.roo .bar{fill:#8A6A4A}.roo .zap{fill:#FFC46B}
+.roo .ln2{fill:none;stroke:#FFC46B;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}.roo .zz{font:800 28px 'Barlow Condensed',sans-serif;fill:#F6EADF}`;
+const IRI = `<linearGradient id="iri" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset=".3" stop-color="#F3E8FF"/><stop offset=".5" stop-color="#E4F7F1"/><stop offset=".72" stop-color="#FFEBDD"/><stop offset="1" stop-color="#FFFFFF"/></linearGradient>`;
 
 function rnd(seed) {
   let s = seed;
@@ -85,7 +95,7 @@ function scene(state, w, h, opts = {}) {
   const by = G - 600 * s;
   const r = rnd(7);
   const out = [];
-  out.push(`<defs>
+  out.push(`<defs>${IRI}
     <linearGradient id="sky-${state}" x1="0" y1="0" x2="0" y2="1">${p.sky.map((c, i) => `<stop offset="${[0, 0.45, 0.8, 1][i]}" stop-color="${c}"/>`).join("")}</linearGradient>
     <radialGradient id="glow-${state}"><stop offset="0" stop-color="${p.glow || "transparent"}"/><stop offset="1" stop-color="transparent"/></radialGradient>
     <linearGradient id="fog-${state}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="rgba(232,235,232,0)"/><stop offset=".5" stop-color="rgba(232,235,232,.75)"/><stop offset="1" stop-color="rgba(232,235,232,0)"/></linearGradient>
@@ -93,8 +103,8 @@ function scene(state, w, h, opts = {}) {
   </defs>`);
   out.push(`<rect width="${w}" height="${G + 2}" fill="url(#sky-${state})"/>`);
   if (state === "night") for (let i = 0; i < (wide ? 90 : 40); i++) out.push(`<circle cx="${(r() * w).toFixed(0)}" cy="${(r() * G * 0.7).toFixed(0)}" r="${(r() * 1.1 + 0.4).toFixed(1)}" fill="#E8ECF5" opacity="${(r() * 0.6 + 0.3).toFixed(2)}"/>`);
-  const lx = wide ? w * (state === "golden" ? 0.37 : 0.62) : w * 0.84;
-  const ly = { dawn: G - 30, golden: wide ? G * 0.3 : G * 0.42, night: wide ? h * 0.13 : h * 0.17 }[state];
+  const lx = wide ? w * (state === "golden" ? 0.37 : state === "day" ? 0.8 : 0.62) : w * 0.84;
+  const ly = { day: G * 0.22, dawn: G - 30, golden: wide ? G * 0.3 : G * 0.42, night: wide ? h * 0.13 : h * 0.17 }[state];
   if (p.light) {
     out.push(`<circle cx="${lx}" cy="${ly}" r="${wide ? 150 : 90}" fill="url(#glow-${state})"/>`);
     out.push(`<circle cx="${lx}" cy="${ly}" r="${wide ? 30 : 19}" fill="${p.light}"/>`);
@@ -173,15 +183,15 @@ function scene(state, w, h, opts = {}) {
     out.push(`<rect y="${G - (wide ? 90 : 60)}" width="${w}" height="${wide ? 170 : 110}" fill="url(#fog-${state})"/>`);
     out.push(`<rect y="${G * 0.35}" width="${w}" height="${wide ? 150 : 90}" fill="url(#fog-${state})" opacity=".7"/>`);
   }
-  const pose = opts.pose || { dawn: "chalk", golden: "sit", night: "look", rain: "shelter", fog: "sit" }[state];
+  const pose = opts.pose || { day: "chalk", dawn: "look", golden: "sit", night: "look", rain: "shelter", fog: "sit" }[state];
   const rs = opts.rooScale || (wide ? 0.42 : 0.3);
   const rx = { chalk: cbx + 44 * cbs, shelter: bx + 60 * s, look: tx + 30 * ts, sit: tx + 26 * ts }[pose] ?? tx + 26 * ts;
-  out.push(`<g transform="translate(${rx - 100 * rs} ${G + 6 - 246 * rs}) scale(${rs})">${roo(pose, opts.hand || "headlamp")}</g>`);
+  out.push(`<g transform="translate(${rx - 100 * rs} ${G + 6 - 246 * rs}) scale(${rs})">${roo(pose, opts.hand ?? (state === "night" || state === "rain" ? "headlamp" : ""))}</g>`);
   if (pose === "chalk") out.push(`<g fill="#F4F1EA" opacity=".7">${[[-6, -16, 5], [-14, -26, 7], [-2, -32, 4], [-20, -12, 4]].map(([dx, dy, rr]) => `<circle cx="${rx - 100 * rs + 46 * rs + dx * rs * 2}" cy="${G + 6 - 246 * rs + 176 * rs + dy * rs * 2}" r="${rr * rs * 2}"/>`).join("")}</g>`);
 
   return `<svg class="scene" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg"><style>${ROO_CSS}</style>${out.join("")}</svg>`;
 }
 
-function rooSvg(pose, hand, size, extra = "") {
-  return `<svg class="roo-svg" viewBox="-10 -10 220 260" width="${size}" height="${size * 1.18}" xmlns="http://www.w3.org/2000/svg"><style>${ROO_CSS}</style>${extra}${roo(pose, hand)}</svg>`;
+function rooSvg(pose, size, opts = {}) {
+  return `<svg class="roo-svg" viewBox="-16 -16 232 276" width="${size}" height="${size * 1.19}" xmlns="http://www.w3.org/2000/svg"><defs>${IRI}</defs><style>${ROO_CSS}</style>${opts.extra || ""}${roo(pose, opts.hand ?? "", opts.props ?? true)}</svg>`;
 }
