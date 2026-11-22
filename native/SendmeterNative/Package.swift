@@ -47,7 +47,7 @@ let package = Package(
             // app gets exactly one definition, via this module.
             path: "Sources",
             sources: ["Core", "App/ChartTheme.swift"],
-            swiftSettings: strict + [.enableExperimentalFeature("CheckImplementationOnly")]
+            swiftSettings: strict
         ),
         .target(
             name: "SendmeterWeather",

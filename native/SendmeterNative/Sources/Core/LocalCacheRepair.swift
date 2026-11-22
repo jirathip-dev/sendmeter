@@ -1,5 +1,5 @@
 import Foundation
-@_implementationOnly import GRDB
+internal import GRDB
 
 /// #1004: one row whose raw payload was set aside because this build could not
 /// decode it. `payload` is the stored bytes verbatim — the quarantine's whole

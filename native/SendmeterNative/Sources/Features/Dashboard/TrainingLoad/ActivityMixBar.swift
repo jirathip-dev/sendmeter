@@ -58,19 +58,19 @@ struct ActivityMixBar: View {
                             } label: {
                                 Color.clear
                                     .frame(
-                                        width: total * CGFloat(activity.percentage) / 100,
+                                        width: segmentWidth(of: activity, in: total),
                                         height: hitTargetHeight
                                     )
                             }
                             .hapticButtonStyle(.plain)
                             .frame(
-                                width: total * CGFloat(activity.percentage) / 100,
+                                width: segmentWidth(of: activity, in: total),
                                 height: hitTargetHeight
                             )
                             .accessibilityLabel(activity.label)
                             .accessibilityValue(
-                                "\(TrainingLoad.formatAU(activity.load)) AU, \(TrainingLoad.formatSharePercent(activity.percentage))"
-                                    + (selectedIndex == index ? ", selected" : "")
+                                segmentValue(of: activity,
+                                             selected: selectedIndex == index)
                             )
                             .accessibilityHint(selectedIndex == index ? "Double-tap to hide details." : "Double-tap to show details.")
                             .accessibilityAddTraits(selectedIndex == index ? .isSelected : [])
@@ -176,5 +176,15 @@ struct ActivityMixBar: View {
             Haptics.shared.playGesture(.selection)
         }
         selectedIndex = index
+    }
+
+    private func segmentWidth(of activity: ActivityLoad, in total: CGFloat) -> CGFloat {
+        let scaled: CGFloat = total * CGFloat(activity.percentage)
+        return scaled / 100
+    }
+
+    private func segmentValue(of activity: ActivityLoad, selected: Bool) -> String {
+        let value = "\(TrainingLoad.formatAU(activity.load)) AU, \(TrainingLoad.formatSharePercent(activity.percentage))"
+        return selected ? value + ", selected" : value
     }
 }
