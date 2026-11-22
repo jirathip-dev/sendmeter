@@ -1,0 +1,3 @@
+[fleet.sendmeter]
+line_cap = 120000
+count = ["native/SendmeterNative/Sources/**/*.swift", "ios/App/SendLogWatchCore/Sources/**/*.swift", "ios/App/SendLogWatch Watch App/**/*.swift", "ios/App/SendLogWatchWidgets/**/*.swift", "native-plugins/sendlog-health-core/Sources/**/*.swift", "mcp/src/**/*.ts"]
