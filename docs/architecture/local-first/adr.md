@@ -96,10 +96,10 @@ then merges without duplicates.
   magic-link-only user first sets a password by the reset mail.
 - Progress is kept per table family, so a failed import resumes. The app is usable before and without it.
 - Sync stays off afterwards.
-- It only reads the hosted project. There is no "Delete my old cloud account" button (owner, q2990): the hosted
+- It only reads the hosted project. There is no "Delete my old cloud account" button: the hosted
   data goes when the owner deletes the project.
 
-The import window is 90 days from the first local-first TestFlight build (owner, q2989). The importer is the only
+The import window is 90 days from the first local-first TestFlight build, as the owner decided. The importer is the only
 Supabase code left; the dated issue L1 deletes it (and the Sign in with Apple entitlement) when the window
 closes, and the owner then deletes the hosted project. A user who has not imported by then keeps no old data.
 
@@ -131,7 +131,7 @@ swag) and handles its actions. Charts Blocks has no kind for (force curve, heat 
 app kinds drawn by the existing SwiftUI views. Recording, the live gauge and the routine runner stay live SwiftUI.
 
 Blocks can draw a screen built on the device with no server: confirmed by a run. It cannot yet do so on an iPhone,
-and not from typed values: `blocks.md` names three gaps as Blocks issues B1, B2 and B3 (owner, q2987). The
+and not from typed values: `blocks.md` names three gaps as Blocks issues B1, B2 and B3, as the owner decided. The
 screens slices wait for B1 and B2; the watch stays plain SwiftUI until B3; nothing else in this ADR depends on
 Blocks.
 
@@ -146,7 +146,7 @@ Blocks.
   main applies DDL to production" trap goes with them.
 - Debug builds no longer write production data: Xcode builds use CloudKit's development environment.
 - The 8 RPCs become store transactions on the device. Their SQL regressions become host tests.
-- Minimum iOS rises to 26 in slice U1 (owner, q2980): devices on iOS 17 to 25 stop getting updates and keep the
+- Minimum iOS rises to 26 in slice U1, as the owner decided: devices on iOS 17 to 25 stop getting updates and keep the
   last build shipped before U1. If that is still a Supabase build, it stops working when the hosted project is
   deleted; a TestFlight build cut after C7 and before U1 leaves them a working local-first app with the importer.
   The watch stays on watchOS 10 and does not link Blocks.
@@ -171,12 +171,12 @@ Blocks.
 
 ## Decided by the owner (2026-11-22)
 
-| Ask | Decision | Where it lands |
-|---|---|---|
-| q2980 | Minimum iOS 26; devices on iOS 17 to 25 stop getting updates | Slice U1 raises the floor; consequences above |
-| q2987 | File B1, B2 and B3 in Blocks; the screens wait for B1 and B2; the watch stays plain SwiftUI until B3 | `blocks.md`; group U and U9 in `migration.md` |
-| q2989 | The hosted project stays readable for 90 days after the first local-first TestFlight build; then the owner deletes it and the importer is removed | Decision 4; L1 in `migration.md` |
-| q2990 | No "Delete my old cloud account" button | Decision 4: the importer only reads |
+| Decision | Where it lands |
+|---|---|
+| Minimum iOS 26; devices on iOS 17 to 25 stop getting updates | Slice U1 raises the floor; consequences above |
+| File B1, B2 and B3 in Blocks; the screens wait for B1 and B2; the watch stays plain SwiftUI until B3 | `blocks.md`; group U and U9 in `migration.md` |
+| The hosted project stays readable for 90 days after the first local-first TestFlight build; then the owner deletes it and the importer is removed | Decision 4; L1 in `migration.md` |
+| No "Delete my old cloud account" button | Decision 4: the importer only reads |
 
 There are no open questions.
 

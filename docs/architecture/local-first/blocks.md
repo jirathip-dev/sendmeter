@@ -21,7 +21,7 @@ has no kind for is drawn by the app through `AppBlocks`. In XcodeGen the pin is 
 
 ## Gaps: three Blocks issues (B1, B2, B3)
 
-The owner decided (q2987): all three are filed in Blocks, Sendmeter's screens slices wait for B1 and B2, and the
+The owner decided that all three are filed in Blocks, Sendmeter's screens slices wait for B1 and B2, and the
 watch stays plain SwiftUI until B3.
 
 ### B1 (blocks the phone): BlocksUI does not compile for iOS
@@ -73,7 +73,7 @@ Decision here: until it lands the watch app stays plain SwiftUI on `WatchDesign`
 - **The floor.** BlocksUI needs iOS 26: the manifest says so and the glass surface (`glassEffect`) is an
   iOS 26 API. An iOS 17 target cannot link it (`compiling for iOS 17.0, but module 'Blocks' has a minimum
   deployment target of iOS 26.0`). So the phone app, its widget and `Package.swift` move to iOS 26 / macOS 26
-  and swift-tools 6.2, keeping the Swift 5 language mode. The owner approved the iOS 26 minimum (q2980).
+  and swift-tools 6.2, keeping the Swift 5 language mode. The owner approved the iOS 26 minimum.
 - **Charts.** The `chart` kind has bar, stacked, line, combo and donut over named categories, and its formats are
   count, baht and percent. Load by week fits. Force curves at 80 Hz, heat maps, box plots and heart-rate traces do
   not, and are app kinds.

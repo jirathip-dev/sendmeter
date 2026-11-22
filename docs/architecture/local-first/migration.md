@@ -4,7 +4,7 @@ One PR each. "Proof" is what the PR must run. "Device" marks what only a device 
 does not claim it. Groups A, W, S1, E1 and the Blocks issues can run side by side; group C is queued `--serial`
 because every slice edits `AppModel.swift`, and staging is not promoted to `main` between C1 and C6.
 
-## Blocks repo, first (see `blocks.md`; owner decision q2987)
+## Blocks repo, first (see `blocks.md`; decided by the owner)
 
 | # | Issue | Unblocks |
 |---|---|---|
