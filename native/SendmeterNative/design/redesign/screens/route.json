@@ -1,0 +1,18 @@
+{"type": "screen", "id": "route", "title": "Cobra Crack", "back": "Board",
+ "actions": [{"label": "Save", "icon": "bookmark", "action": "save"}],
+ "blocks": [
+  {"type": "board", "id": "wall", "label": "KILTER 40°", "lit": true, "columns": 11, "rows": 12, "height": 270,
+   "holds": [
+     {"at": [3, 10], "role": "start"}, {"at": [5, 10], "role": "start"},
+     {"at": [4, 8], "role": "hand"}, {"at": [6, 7], "role": "hand"}, {"at": [3, 5], "role": "hand"},
+     {"at": [6, 4], "role": "hand"}, {"at": [5, 1], "role": "finish"},
+     {"at": [2, 11], "role": "foot"}, {"at": [7, 11], "role": "foot"}, {"at": [8, 9], "role": "foot"}]},
+  {"type": "stat", "id": "facts", "items": [
+    {"label": "Grade", "value": "V6"}, {"label": "Stars", "value": "★★★"}, {"label": "Your tries", "value": 3}]},
+  {"type": "button", "id": "light", "label": "Light it", "style": "primary", "action": "light"},
+  {"type": "button", "id": "tick", "label": "Log send", "style": "plain", "tap": {"sheet": "send"}},
+  {"type": "section", "id": "yours", "header": "Your ticks", "blocks": [
+    {"type": "list", "id": "mine", "rows": [
+      {"type": "row", "id": "m1", "title": "Sat 21 Nov", "subtitle": "1 try · soft", "badge": {"text": "⚡ Flash", "tone": "ok"}},
+      {"type": "row", "id": "m2", "title": "Tue 10 Nov", "subtitle": "4 tries", "badge": {"text": "Go", "tone": "mute"}}]}]}
+ ]}

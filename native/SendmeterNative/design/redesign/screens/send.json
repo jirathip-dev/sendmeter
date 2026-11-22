@@ -1,0 +1,19 @@
+{"type": "sheet", "id": "send", "title": "Cobra Crack · V6", "cancel": "Cancel",
+ "done": {"action": "tick", "label": "Tick it"},
+ "blocks": [
+  {"type": "chips", "id": "result", "name": "result", "selected": ["flash"], "options": [
+    {"label": "⚡ Flash", "value": "flash"}, {"label": "✓ Send", "value": "send"},
+    {"label": "↻ Repeat", "value": "repeat"}, {"label": "Go", "value": "go"}]},
+  {"type": "section", "id": "tries-s", "header": "Tries", "blocks": [
+    {"type": "chips", "id": "tries", "name": "tries", "selected": ["1"], "options": [
+      {"label": "1", "value": "1"}, {"label": "2", "value": "2"}, {"label": "3", "value": "3"},
+      {"label": "4", "value": "4"}, {"label": "5+", "value": "5"}]}]},
+  {"type": "section", "id": "feel-s", "header": "Grade feel", "blocks": [
+    {"type": "chips", "id": "feel", "name": "feel", "selected": ["soft"], "options": [
+      {"label": "Soft", "value": "soft"}, {"label": "Solid", "value": "solid"}, {"label": "Sandbag", "value": "sandbag"}]}]},
+  {"type": "section", "id": "stars-s", "header": "Stars", "blocks": [
+    {"type": "chips", "id": "stars", "name": "stars", "selected": ["3"], "options": [
+      {"label": "★", "value": "1"}, {"label": "★★", "value": "2"}, {"label": "★★★", "value": "3"}]}]},
+  {"type": "form", "id": "note", "fields": [
+    {"type": "text", "name": "beta", "label": "Beta", "placeholder": "Heel left, then cut"}]}
+ ]}

@@ -1,0 +1,28 @@
+{"type": "screen", "id": "board", "title": "Board", "large": true,
+ "actions": [{"label": "Add route", "icon": "plus", "menu": [
+   {"label": "New route", "action": "new"}, {"label": "Import", "action": "import"}]},
+  {"label": "Kilter 40°", "icon": "slider.horizontal.3", "menu": [
+   {"label": "Angle", "action": "angle"}, {"label": "Pair board", "action": "pair"}]}],
+ "blocks": [
+  {"type": "chips", "id": "boards", "name": "board", "action": "board", "selected": ["kilter"], "options": [
+    {"label": "Kilter", "value": "kilter"}, {"label": "Tension", "value": "tension"},
+    {"label": "MoonBoard", "value": "moon"}]},
+  {"type": "form", "id": "find", "action": "search", "fields": [
+    {"type": "text", "name": "q", "label": "Search", "placeholder": "Route"}]},
+  {"type": "chips", "id": "grades", "name": "grade", "action": "grade", "multi": true, "selected": ["v5", "v6"], "options": [
+    {"label": "V3", "value": "v3"}, {"label": "V4", "value": "v4"}, {"label": "V5", "value": "v5"},
+    {"label": "V6", "value": "v6"}, {"label": "V7", "value": "v7"}, {"label": "V8+", "value": "v8"}]},
+  {"type": "list", "id": "routes", "rows": [
+    {"type": "row", "id": "r1", "title": "Cobra Crack", "subtitle": "40° · 1 try", "value": "V6",
+     "badge": {"text": "⚡ Flash", "tone": "ok"}, "accessory": "chevron", "tap": {"open": "route"}},
+    {"type": "row", "id": "r2", "title": "Pinch Me Gently", "subtitle": "40° · 9 tries", "value": "V5",
+     "badge": {"text": "Project", "tone": "warn"}, "accessory": "chevron", "tap": {"open": "route-r2"}},
+    {"type": "row", "id": "r3", "title": "Slopey Joe", "subtitle": "40° · imported", "value": "V5",
+     "accessory": "chevron", "tap": {"open": "route-r3"}},
+    {"type": "row", "id": "r4", "title": "The Crimp Shrimp", "subtitle": "35° · 3 tries", "value": "V6",
+     "badge": {"text": "✓ Send"}, "accessory": "chevron", "tap": {"open": "route-r4"}},
+    {"type": "row", "id": "r5", "title": "Heel of Fortune", "subtitle": "40° · new", "value": "V6",
+     "accessory": "chevron", "tap": {"open": "route-r5"}},
+    {"type": "row", "id": "r6", "title": "Dyno Mite", "subtitle": "40° · imported", "value": "V5",
+     "accessory": "chevron", "tap": {"open": "route-r6"}}]}
+ ]}
