@@ -50,5 +50,5 @@ paths = [
 ]
 regexTarget = "line"
 regexes = [
-  '''^let apiKey = "sk-live-abc123"$''',
+  '''^\s*let apiKey = "sk-live-abc123"\s*$''',
 ]
