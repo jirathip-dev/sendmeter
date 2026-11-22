@@ -156,6 +156,18 @@ details shown only in Settings → technical details were excluded (see
 
 ---
 
+## 9. Addendum (second sweep)
+
+| # | Current string | Location | Action | New copy |
+|---|---|---|---|---|
+| 9.1 | "Your presets · selecting one arms it immediately" | P `Features/Force/ForceRecordingContextCard.swift:231` | rewrite | "Your presets" |
+| 9.2 | "Gauge session stays live — end it from the Force tab" | P `Features/Force/ForceView.swift:1095` | rewrite | "End the session from the Force tab" |
+| 9.3 | "Predicted from W′ depletion — adjust the slider to confirm" | P `Features/History/HistoryView.swift:901` | rewrite | "Estimated — adjust to confirm" |
+| 9.4 | "Legacy watch items" (row label) | P `Features/Settings/SettingsView.swift:341` | rewrite | "Older watch items" |
+| 9.5 | "Stops now and saves any active partial set honestly" (a11y hint) | W `Views/GuidedForceRunnerView.swift:484` | rewrite | "Stops now and saves the current set" |
+
+---
+
 ## Exempt (not user copy — the stage-2 gate must skip these)
 
 - Settings → **technical details** (`SettingsView.swift:773-880`: "User ID",
