@@ -1,0 +1,23 @@
+{"type": "screen", "id": "today", "title": "Today", "large": true,
+ "actions": [{"label": "Settings", "icon": "gearshape", "tap": {"open": "settings"}}],
+ "blocks": [
+  {"type": "stat", "id": "readiness", "items": [
+    {"label": "Ready", "value": 82, "tone": "ok", "spark": [64, 70, 61, 75, 79, 72, 82]},
+    {"label": "HRV", "value": 68, "unit": "ms", "spark": [58, 61, 55, 63, 66, 64, 68]},
+    {"label": "Sleep", "value": "7:40", "spark": [6.5, 7.2, 6.8, 7.9, 7.1, 6.9, 7.7]}]},
+  {"type": "chips", "id": "kind", "name": "kind", "action": "kind", "selected": ["board"], "options": [
+    {"label": "Board", "value": "board"}, {"label": "Gym", "value": "gym"},
+    {"label": "Hangs", "value": "hangs"}, {"label": "Crag", "value": "crag"}]},
+  {"type": "button", "id": "start", "label": "Start session", "style": "primary", "action": "start"},
+  {"type": "section", "id": "week", "header": "This week", "blocks": [
+    {"type": "stat", "id": "acwr", "items": [
+      {"label": "ACWR", "value": "1.12", "tone": "ok"},
+      {"label": "Sends", "value": 9},
+      {"label": "Peak", "value": "41.6", "unit": "kg"}]}]},
+  {"type": "section", "id": "last", "header": "Last ticks", "blocks": [
+    {"type": "list", "id": "ticks", "rows": [
+      {"type": "row", "id": "t1", "title": "Cobra Crack", "subtitle": "Kilter 40° · Sat",
+       "value": "V6", "badge": {"text": "⚡ Flash", "tone": "ok"}, "accessory": "chevron", "tap": {"open": "route"}},
+      {"type": "row", "id": "t2", "title": "Mantle Madness", "subtitle": "Gym · Thu",
+       "value": "V5", "badge": {"text": "✓ Send"}, "accessory": "chevron", "tap": {"open": "tick-t2"}}]}]}
+ ]}
