@@ -5,8 +5,8 @@
 // Comparison is by NAME, never by version: dev records the *file* timestamp
 // while prod's MCP apply_migration era recorded an *apply-time* one, so the
 // same migration legitimately has different versions on the two projects. A
-// version-based diff reports false drift. (Ported from synergy-costing, which
-// hit this first.)
+// version-based diff reports false drift. (Ported from a client-built app,
+// which hit this first.)
 //
 // The ledger only records what was REPORTED applied — it is not proof the
 // objects exist. A green table means "nothing pending", not "schemas match".
