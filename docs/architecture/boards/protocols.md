@@ -1,27 +1,28 @@
-# Lighting protocols (#1047)
+# Lighting protocols and LED order (#1047)
 
-The facts the two encoders in `BoardCore` implement, restated from public documents. Nothing here was
-tested on hardware by this ADR: **every line is device-only until an issue reports a real board.**
+The facts the two encoders and the wiring rules in `BoardCore` implement. Nothing here was tested on
+hardware by this ADR: **every line is device-only until an issue reports a real board.**
 
-Sources: Boardsesh's
-[Aurora spec](https://github.com/boardsesh/boardsesh/blob/main/docs/boards/AURORA_BLUETOOTH_PROTOCOL_SPEC.md)
-and
-[MoonBoard spec](https://github.com/boardsesh/boardsesh/blob/main/docs/boards/MOONBOARD_BLUETOOTH_PROTOCOL_SPEC.md)
-(Apache-2.0). Implement from this page. Do not copy code from the GPL MoonBoard LED projects.
+Provenance: the two wire formats are facts others worked out and published; revision 1 of this page
+restated them from public write-ups, Boardsesh's protocol notes among them. The LED orders come from
+the makers' own installation guides. **Implement from this page only.** Copy no code, table or file
+from any other project, and take none of their data.
+
+Identifiers on this page are written in groups separated by spaces; in code they take the usual dashes.
 
 Both boards are a Nordic UART link the phone only writes to:
 
-| | UUID |
+| | Identifier |
 |---|---|
-| Service | `6E400001-B5A3-F393-E0A9-E50E24DCCA9E` |
-| Write characteristic | `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` |
+| Service | `6E400001 B5A3 F393 E0A9 E50E24DCCA9E` |
+| Write characteristic | `6E400002 B5A3 F393 E0A9 E50E24DCCA9E` |
 
 Common transport rules for v1: no pairing or bonding; chunks of at most 20 bytes, written in order, each
 after the last was accepted; write with response when the characteristic offers it.
 
 ## Aurora wire (Kilter and Tension)
 
-**Finding the board.** It advertises service `4488B571-7806-4DF6-BCFF-A2897E4953FF`. Its name is
+**Finding the board.** It advertises service `4488B571 7806 4DF6 BCFF A2897E4953FF`. Its name is
 `<display name>#<serial>@<API level>`, for example `Kilter Board#751737@3`. No `@n` means level 2. A bare
 name with no `#serial@level` is a 2025 Kilter-built box: level 2, write with response only.
 
@@ -54,11 +55,11 @@ checksum = bitwise NOT of (sum of body bytes mod 256)
   are each LED's two-bit values `floor(value × scale) / 64`. Level 3 does no scaling. If no scale fits,
   or the fitting scale turns every LED off, the encoder returns `tooManyLamps` instead of sending a
   dark frame.
-- **From route to LEDs.** A route's `frames` string is `p<placement>r<role>` repeated. A placement is a
-  hold; the hold's LED position depends on the wall's size; the role's colour comes from the hardware
-  map. On a mirrored wall the hold is swapped for its mirror before the LED lookup.
+- **From route to LEDs.** Each marked hold is a grid cell; the wall's `LEDMap` gives the LED or LEDs
+  behind it; the role's colour comes from the board descriptor. The encoder sees only positions and
+  colours.
 
-Vectors (computed from the rules above; issue 3 also checks them against the spec's worked examples):
+Vectors (computed by hand from the rules above; issue 3's tests recompute them):
 
 | Input | Bytes |
 |---|---|
@@ -69,9 +70,9 @@ Vectors (computed from the rules above; issue 3 also checks them against the spe
 ## MoonBoard
 
 **Finding the board.** It advertises the UART service; the name starts `MoonBoard` or `Moonboard`.
-Older boxes use service `713D0000-503E-4C75-BA94-3148F18D941E` with write characteristic
-`713D0003-…`; the link accepts both. A "Pro" control box (service
-`7A112233-4455-6677-8899-AABBCCDDEE01`, binary protocol with a PIN) is reported as unsupported.
+Older boxes use service `713D0000 503E 4C75 BA94 3148F18D941E` with write characteristic
+`713D0003 …`; the link accepts both. A "Pro" control box (service
+`7A112233 4455 6677 8899 AABBCCDDEE01`, binary protocol with a PIN) is reported as unsupported.
 
 **The message** is ASCII, no checksum:
 
@@ -110,7 +111,30 @@ Vectors:
 | The same with LEDs above holds | `~D*l#S0,P35,E197#` |
 | Clear | `l##` |
 
+## LED order per board
+
+The LED position in a frame is the LED's place on the string, counted from the controller. Which hole
+that is depends on how the string was threaded, which each maker prints for installers. A layout file
+in `Boards/` restates that order as a `WiringRule`; the wiring check proves it on the user's wall.
+
+| Board | Document (the maker's own) | Order it shows | Status |
+|---|---|---|---|
+| MoonBoard, 18 and 12 rows | LED System installation guide, V4 (2024) and V5 (2026) | First LED at A1, zig-zag by column: the formula above | from the guide; widely confirmed in public |
+| Tension Board 2: 8x10, 8x12, 12x10, 12x12, 12x16 | LED Kit Installation Instructions, page "LED Sequence", one document per size | Front view; start at the bottom-left hole; up one column of holes, down the next, to the far side | from the guide |
+| Kilter Homewall 7x10 Mainline | Installation handbook, "LED Layout Map" | Front view; columns 1 to 21, rows 7 to 35; Start at column 1 row 7, End at column 21 row 35; two strands, each threaded column by column; two LED holes beside each bolt hole | from the guide; which strand and hole each index lights is unproven |
+| Other Kilter layouts (Homewall 7x10 Auxiliary and Fullride, 8x12, 10x10, 10x12; Original 7x10, 8x12, 12x12, 16x12) | The same handbook set, one map per layout | not yet read | issue 6 |
+| Original Tension Board | — | none found | no rule: taught by the user |
+
+Rules for issue 5 and 6:
+
+- Write the rule from the diagram: start corner, direction, strands, LEDs per hold, first index. Ship
+  no image and no table.
+- Every layout file states its document's title and date in its test, and `wiringStatus = .fromGuide`.
+- A layout becomes `.checkedOnWall` only in a PR that names the real wall it was confirmed on.
+
 ## Unverified, to settle on a real board
+
+- LED order: every rule above, on a real wall of that layout; whether the first LED is index 0.
 
 - Aurora wire: whether chunks larger than 20 bytes are safe (v1 does not try); the behaviour of a level
   2 box under the power budget.

@@ -1,12 +1,13 @@
 # Data shapes (#1047)
 
-Three kinds of data, kept apart:
+Two kinds of data, kept apart:
 
-| Kind | Examples | Lives in | Syncs to iCloud |
+| Kind | Examples | Lives in | Syncs to private iCloud |
 |---|---|---|---|
-| Domain values | `Route`, `Hold`, `LightFrame` | memory; defined in `BoardCore` | — |
-| User records | `BoardSetup`, the user's routes, `Send` | the local-first store (#1045), through `BoardLogbook` | yes, when the user turns sync on |
-| Reference data | catalogue, hardware map | their own SQLite files in Application Support | never; excluded from backup |
+| Domain values | `Layout`, `Hold`, `LightFrame`, `ImportPreview` | memory; defined in `BoardCore` | — |
+| User records | `BoardSetup`, `Route`, `Send` | the local-first store (#1045), through `BoardLogbook` | yes, when the user turns sync on |
+
+There is no reference database: no catalogue and no downloaded hardware map. A layout is code.
 
 All `BoardCore` types are `public`, so each declares `Sendable` explicitly. Dates that become day keys
 go through the repo's Gregorian `DateSupport`.
@@ -23,59 +24,45 @@ public struct Angle: Hashable, Comparable, Codable, Sendable {
     public init?(degrees: Int)
 }
 
-public struct LayoutID: Hashable, Codable, Sendable {
-    public let kind: BoardKind
-    public let value: Int
-}
+public struct LayoutID: Hashable, Codable, Sendable { public let rawValue: String }
 
 public struct Layout: Identifiable, Equatable, Sendable {
     public let id: LayoutID
+    public let kind: BoardKind
     public let name: String
-    public let sizes: [BoardSize]
-    public let holdSets: [HoldSet]
-    public let canMirror: Bool
+    public let holds: [Hold]
+    public let wiring: WiringRule?
+    public let wiringStatus: WiringStatus
+    public static func of(_ id: LayoutID) -> Layout?
+    public static func all(_ kind: BoardKind) -> [Layout]
 }
 
-public struct BoardSize: Identifiable, Equatable, Sendable {
-    public let id: Int
-    public let name: String
-    public let edges: Edges
-}
-
-public struct HoldSet: Identifiable, Equatable, Sendable {
-    public let id: Int
-    public let name: String
-}
-
-public struct Edges: Equatable, Codable, Sendable {
-    public let left, right, bottom, top: Int
-}
-
-public struct HoldID: Hashable, Codable, Sendable {
-    public let rawValue: Int
+public struct GridCell: Hashable, Comparable, Codable, Sendable {
+    public let column: Int
+    public let row: Int
 }
 
 public struct Hold: Identifiable, Equatable, Sendable {
-    public let id: HoldID
+    public var id: GridCell { cell }
+    public let cell: GridCell
     public let point: BoardPoint
-    public let led: LEDPosition
-    public let holdSet: HoldSet.ID?
-    public let label: String?
+    public let label: String
 }
 
 public struct BoardPoint: Equatable, Sendable { public let x, y: Double }
-public struct LEDPosition: Hashable, Sendable { public let index: Int }
+public struct LEDPosition: Hashable, Codable, Sendable { public let index: Int }
 ```
 
 - `Angle.init?` accepts 0 to 90 only.
-- A `HoldID` means something only inside its layout. On Kilter and Tension it is the placement id from
-  the hardware map. On MoonBoard it is the LED index of the cell on that grid.
-- MoonBoard needs no hardware data: `MoonBoardGrid(rows: .standard18 | .mini12)` computes its 198 or
-  132 holds, each labelled `A1` to `K18`. Its layouts are constants in the MoonBoard descriptor (2016,
-  Masters 2017, Masters 2019, 2024, Mini 2020, Mini 2025); the year scopes routes and names the wall,
-  and only the row count affects lighting. Every cell is selectable in v1.
+- A **layout** is one hole pattern at one size: `kilter.homewall.7x10.mainline`, `tension.tb2.12x12`,
+  `moonboard.2019`. One file per layout in `Boards/`; `Layout.all` collects them.
+- A **hold** is a hole, named by its grid cell. Columns and rows use the numbers printed in that
+  maker's installation guide, so what the user reads on screen matches the wall. `label` is `A1` to
+  `K18` on a MoonBoard and `column-row` elsewhere. `point` is where to draw the dot.
+- MoonBoard layouts differ only by year (2016, Masters 2017, Masters 2019, 2024, Mini 2020, Mini 2025)
+  and row count (18 or 12). The year names the wall and scopes its routes.
 
-`BoardDescriptor` is the one place that says what a board is. One file per board in `Boards/`:
+`BoardDescriptor` says what a board *kind* is; one per kind:
 
 ```swift
 public struct BoardDescriptor: Sendable {
@@ -84,17 +71,55 @@ public struct BoardDescriptor: Sendable {
     public let wire: WireProtocol
     public let scan: ScanFilter
     public let defaultAngles: [Angle]
-    public let ledsPerHold: Int
-    public let catalogue: CatalogueAvailability
+    public let roles: [HoldRole]
+    public let roleColors: [HoldRole: RGB]
+    public let imports: [ImportFormat]
     public static func of(_ kind: BoardKind) -> BoardDescriptor
 }
 
 public enum WireProtocol: Sendable { case aurora, moonBoardASCII }
-public enum CatalogueAvailability: Sendable { case off, snapshot }
 ```
 
-`catalogue` is the compile-time allow-list from the ADR: `.snapshot` for Kilter and Tension, `.off` for
-MoonBoard, unless the owner answers otherwise.
+`roleColors` are Sendmeter's own choice, sent as RGB. The defaults follow the colours climbers already
+know on that board and are confirmed on a real one.
+
+## The LED map
+
+```swift
+public enum WiringStatus: String, Sendable { case fromGuide, checkedOnWall }
+
+public struct WiringRule: Equatable, Codable, Sendable {
+    public let start: Corner
+    public let runsAlong: Axis
+    public let strands: Int
+    public let ledsPerHold: Int
+    public let firstIndex: Int
+}
+
+public enum LEDMapSource: Equatable, Codable, Sendable {
+    case unconfirmed
+    case rule(WiringRule, confirmedAt: Date)
+    case taught([TaughtLED])
+}
+
+public struct TaughtLED: Hashable, Codable, Sendable {
+    public let cell: GridCell
+    public let led: LEDPosition
+}
+
+public struct LEDMap: Equatable, Sendable {
+    public init?(layout: Layout, source: LEDMapSource)
+    public func leds(behind cell: GridCell) -> [LEDPosition]
+    public func cell(lit led: LEDPosition) -> GridCell?
+}
+```
+
+- A `WiringRule` is the threading order as data: where the string starts, which way it runs, how many
+  strands and LEDs per hold. `Layout.wiring` is the rule written from the maker's guide, or `nil`.
+- `Layout.wiringStatus` is a property of the shipped rule: `fromGuide` until a real wall of that layout
+  has confirmed it, then `checkedOnWall` (changed in a PR that names the wall).
+- `LEDMapSource` is a property of the *user's* wall. `LEDMap.init?` returns `nil` for `.unconfirmed`,
+  so no frame can be built from an unconfirmed map.
 
 ## Route
 
@@ -102,51 +127,54 @@ MoonBoard, unless the owner answers otherwise.
 public enum HoldRole: String, Codable, Sendable, CaseIterable { case start, hand, finish, foot }
 
 public struct RouteHold: Hashable, Codable, Sendable {
-    public let hold: HoldID
+    public let cell: GridCell
     public let role: HoldRole
 }
 
-public enum RouteSource: String, Codable, Sendable { case catalogue, user }
-
-public struct RouteRef: Hashable, Codable, Sendable {
-    public let source: RouteSource
-    public let layout: LayoutID
-    public let key: String
+public enum RouteHolds: Equatable, Codable, Sendable {
+    case unknown
+    case marked([RouteHold])
 }
 
-public struct Route: Identifiable, Equatable, Sendable {
+public enum RecordOrigin: Equatable, Codable, Sendable {
+    case sendmeter
+    case imported(ImportFormat.Kind)
+}
+
+public struct RouteRef: Hashable, Codable, Sendable { public let id: UUID }
+
+public struct Route: Identifiable, Equatable, Codable, Sendable {
     public var id: RouteRef { ref }
     public let ref: RouteRef
-    public let name: String
-    public let setter: String?
-    public let note: String
-    public let holds: [RouteHold]
-    public let setAngle: Angle?
-    public let createdAt: Date?
-}
-
-public struct RouteStats: Equatable, Sendable {
-    public let angle: Angle
-    public let grade: Grade?
-    public let isBenchmark: Bool
-    public let ascents: Int
-    public let quality: Double?
+    public let board: BoardKind
+    public var layout: LayoutID?
+    public var name: String
+    public var setter: String?
+    public var grade: Grade?
+    public var angle: Angle?
+    public var holds: RouteHolds
+    public var note: String
+    public let origin: RecordOrigin
+    public let createdAt: Date
+    public var updatedAt: Date
 }
 
 public struct Grade: Hashable, Comparable, Codable, Sendable {
     public let rank: Int
     public let label: String
+    public init?(label: String)
 }
 ```
 
-- `RouteRef.key` is the catalogue's climb id for a catalogue route and a local UUID string for a user
-  route. `RouteRef` is what #1048 attaches to an attempt.
-- A catalogue route has stats per angle; a user route has the one grade its author gave it.
+- `RouteHolds.unknown` is a name-only route: what an imported logbook row creates. It is listed and
+  logged against, never lit. Marking its holds turns it into `.marked`.
+- `.marked` can only be built with at least one start and one finish hold. `RouteDraft` is the editor's
+  value; `draft.named(_:grade:)` refuses an unlightable draft.
+- `layout` is `nil` only on a name-only route whose wall is not known.
 - `Grade.rank` is one ladder for every board (the Font and V scales side by side), so the logbook can
-  compare a MoonBoard send with a Kilter one. Catalogue difficulty numbers map onto it at import.
-- MoonBoard routes use `start`, `hand` and `finish` only; the encoder refuses `foot` there.
-- `RouteDraft` is the editor's value: it toggles holds and can only be saved through `named(_:grade:)`,
-  which refuses a draft with no start or no finish hold, so an unlightable route cannot be stored.
+  compare a MoonBoard send with a Kilter one.
+- MoonBoard routes use `start`, `hand` and `finish` only; its descriptor's `roles` leaves out `foot`.
+- `RouteRef` is what #1048 attaches to an attempt.
 
 ## Setup
 
@@ -154,26 +182,17 @@ public struct Grade: Hashable, Comparable, Codable, Sendable {
 public struct BoardSetup: Identifiable, Equatable, Codable, Sendable {
     public let id: UUID
     public var name: String
-    public var geometry: BoardGeometry
+    public var layout: LayoutID
     public var angle: Angle
     public var angleIsAdjustable: Bool
+    public var ledsAboveHolds: Bool
+    public var ledMap: LEDMapSource
     public var updatedAt: Date
-    public var kind: BoardKind { geometry.kind }
-    public var layout: LayoutID { geometry.layout }
-}
-
-public enum BoardGeometry: Equatable, Codable, Sendable {
-    case aurora(kind: BoardKind, layout: Int, size: Int, holdSets: [Int], mirrored: Bool)
-    case moonBoard(setup: MoonBoardSetup, ledsAboveHolds: Bool)
-}
-
-public enum MoonBoardSetup: String, Codable, Sendable, CaseIterable {
-    case original2016, masters2017, masters2019, standard2024, mini2020, mini2025
-    public var rows: MoonBoardRows { get }
 }
 ```
 
-`BoardGeometry.aurora` accepts only `.kilter` or `.tension`; its initialiser refuses `.moonBoard`.
+`ledsAboveHolds` applies to MoonBoard only. The LED map is part of the synced setup, so a wall taught
+on one phone is ready on the user's next one.
 
 Device-local, in the same place `KnownProgressorStore` keeps the Tindeq (not synced):
 
@@ -196,16 +215,18 @@ public struct LinkTraits: Equatable, Codable, Sendable {
 public struct Send: Identifiable, Equatable, Codable, Sendable {
     public let id: UUID
     public let route: RouteSnapshot
-    public let setup: BoardSetup.ID
-    public let angle: Angle
+    public let board: BoardKind
+    public let setup: BoardSetup.ID?
+    public let angle: Angle?
     public let climbedAt: Date
     public let day: String
     public var outcome: SendOutcome
-    public var gradeAtSend: Grade?
-    public var proposedGrade: Grade?
+    public var grade: Grade?
     public var quality: Int?
+    public var mirrored: Bool
     public var note: String
     public var sessionID: UUID?
+    public let origin: RecordOrigin
     public var updatedAt: Date
 }
 
@@ -218,15 +239,17 @@ public struct RouteSnapshot: Equatable, Codable, Sendable {
     public let ref: RouteRef
     public let name: String
     public let setter: String?
-    public let holds: [RouteHold]
+    public let holds: RouteHolds
 }
 ```
 
 - **The logbook link.** `sessionID` is the id of the logbook `Session` the send belongs to. A send
   logged while a workout is live takes that workout's `sessionID`; otherwise it is `nil` and the
-  logbook files it under `day`. #1048 later adds the attempts in between.
+  logbook files it under `day`. Imported sends have no session. #1048 later adds the attempts in between.
 - A flash is `.sent(tries: 1)`. `quality` is 1 to 5. `tries` is at least 1; the initialiser refuses less.
-- `RouteSnapshot` is why a send still reads correctly after the catalogue is refreshed or deleted.
+- `setup` and `angle` are optional because an imported row may name no wall or angle; a send logged in
+  Sendmeter always has both.
+- `RouteSnapshot` is why a send still reads correctly after its route is edited or deleted.
 - `updatedAt` is for the last-writer-wins rule #1045 will set.
 
 What the local-first store (#1045) must provide, and nothing more:
@@ -236,21 +259,65 @@ public protocol BoardLogbook: Sendable {
     func setups() async throws -> [BoardSetup]
     func save(_ setup: BoardSetup) async throws
     func delete(setup: BoardSetup.ID) async throws
-    func userRoutes(on layout: LayoutID) async throws -> [Route]
-    func save(_ route: NamedRouteDraft) async throws -> Route
+    func routes(matching: RouteFilter) async throws -> [Route]
+    func save(_ route: Route) async throws
     func delete(route: RouteRef) async throws
     func sends(matching: SendFilter) async throws -> [Send]
     func save(_ send: Send) async throws
     func delete(send: Send.ID) async throws
+    func apply(_ plan: ImportPlan) async throws -> ImportResult
 }
 ```
 
-Three record types join its sync schema: board setup, user route, send. Every `save` is an upsert by id.
+Three record types join its sync schema: board setup, route, send. Every `save` is an upsert by id;
+`apply` inserts only the plan's records whose id is absent, in one transaction.
+
+## Import
+
+```swift
+public enum ImportFormat: Equatable, Sendable {
+    case auroraExport(board: BoardKind)
+    case moonLogbookCSV
+    public enum Kind: String, Codable, Sendable { case auroraExport, moonLogbookCSV }
+}
+
+public enum BoardImport {
+    public static func recognise(_ bytes: Data) -> ImportFormat.Kind?
+    public static func read(_ bytes: Data, as format: ImportFormat, onto setup: BoardSetup?) throws -> ImportPreview
+}
+
+public struct ImportPreview: Equatable, Sendable {
+    public let routes: [Route]
+    public let sends: [Send]
+    public let skipped: [SkippedEntry]
+    public let notImported: [String: Int]
+    public func plan(excluding existing: Set<UUID>) -> ImportPlan
+}
+
+public struct SkippedEntry: Equatable, Sendable {
+    public let what: String
+    public let reason: SkipReason
+}
+
+public enum SkipReason: Equatable, Sendable {
+    case missingField(String), unreadableDate, unknownRole(String)
+    case holdOffGrid, layoutNotSupported(String), coordinatesNotProven
+}
+
+public enum ImportError: Error, Equatable, Sendable { case notThisFormat, empty, tooLarge }
+
+public struct ImportPlan: Equatable, Sendable { public let routes: [Route]; public let sends: [Send] }
+public struct ImportResult: Equatable, Sendable { public let routesAdded, sendsAdded: Int }
+```
+
+`read` validates at the edge and returns only typed values; a bad entry becomes a `SkippedEntry`, a
+file of the wrong kind throws. Ids are derived from content (`imports.md`), so the same file always
+yields the same preview.
 
 ## Lighting
 
 ```swift
-public struct RGB: Hashable, Sendable { public let red, green, blue: UInt8 }
+public struct RGB: Hashable, Codable, Sendable { public let red, green, blue: UInt8 }
 
 public struct Lamp: Hashable, Sendable {
     public let led: LEDPosition
@@ -261,6 +328,23 @@ public struct Lamp: Hashable, Sendable {
 public struct LightFrame: Equatable, Sendable {
     public let lamps: [Lamp]
     public static let clear: LightFrame
+}
+
+public enum LightPlan: Equatable, Sendable {
+    case ready(LightFrame)
+    case blocked(LightBlock)
+}
+
+public enum LightBlock: Equatable, Sendable {
+    case holdsUnknown
+    case wiringUnconfirmed
+    case otherLayout(LayoutID?)
+    case offThisWall([GridCell])
+}
+
+public enum Lighting {
+    public static func plan(_ route: Route, on setup: BoardSetup) -> LightPlan
+    public static func encoder(for setup: BoardSetup, link: LinkTraits) -> any LightingEncoder
 }
 
 public protocol LightingEncoder: Sendable {
@@ -274,75 +358,7 @@ public enum LightingError: Error, Equatable, Sendable {
 }
 ```
 
-`AuroraEncoder(apiLevel:ledsPerHold:)` and `MoonBoardEncoder(rows:ledsAboveHolds:)` are the two
-conformers. `writes(for:)` returns the chunks in order, each at most 20 bytes.
-
-## Reference data: the two databases
-
-Sendmeter's own schema, written by the importers. Nothing above the stores sees a snapshot's schema.
-
-`Boards/hardware.sqlite` (Kilter and Tension only; a few megabytes):
-
-```sql
-CREATE TABLE layout   (kind TEXT, id INTEGER, product_id INTEGER, name TEXT, can_mirror INTEGER,
-                       PRIMARY KEY (kind, id));
-CREATE TABLE size     (kind TEXT, id INTEGER, product_id INTEGER, name TEXT,
-                       edge_left INTEGER, edge_right INTEGER, edge_bottom INTEGER, edge_top INTEGER,
-                       PRIMARY KEY (kind, id));
-CREATE TABLE hold_set (kind TEXT, id INTEGER, name TEXT, PRIMARY KEY (kind, id));
-CREATE TABLE layout_size_set (kind TEXT, layout_id INTEGER, size_id INTEGER, set_id INTEGER,
-                       PRIMARY KEY (kind, layout_id, size_id, set_id));
-CREATE TABLE hold     (kind TEXT, id INTEGER, layout_id INTEGER, set_id INTEGER, x REAL, y REAL,
-                       mirrored_id INTEGER, PRIMARY KEY (kind, id));
-CREATE TABLE led      (kind TEXT, size_id INTEGER, hold_id INTEGER, position INTEGER,
-                       PRIMARY KEY (kind, size_id, hold_id));
-CREATE TABLE role     (kind TEXT, product_id INTEGER, id INTEGER, role TEXT,
-                       led_color TEXT, screen_color TEXT, PRIMARY KEY (kind, id));
-CREATE TABLE grade    (kind TEXT, difficulty INTEGER, label TEXT, rank INTEGER,
-                       PRIMARY KEY (kind, difficulty));
-CREATE TABLE meta     (key TEXT PRIMARY KEY, value TEXT);
-```
-
-`Boards/catalogue-<kind>-<layout>.sqlite` (one per layout a setup uses):
-
-```sql
-CREATE TABLE route (
-    key TEXT PRIMARY KEY, name TEXT NOT NULL, setter TEXT, note TEXT NOT NULL,
-    frames TEXT NOT NULL, set_angle INTEGER, created_at TEXT,
-    edge_left INTEGER, edge_right INTEGER, edge_bottom INTEGER, edge_top INTEGER,
-    required_sets TEXT NOT NULL
-);
-CREATE TABLE route_stats (
-    key TEXT NOT NULL, angle INTEGER NOT NULL, rank INTEGER, grade_label TEXT,
-    is_benchmark INTEGER NOT NULL, ascents INTEGER NOT NULL, quality REAL,
-    PRIMARY KEY (key, angle)
-) WITHOUT ROWID;
-CREATE INDEX route_stats_popular ON route_stats (angle, ascents DESC);
-CREATE INDEX route_stats_grade   ON route_stats (angle, rank);
-CREATE VIRTUAL TABLE route_search USING fts5 (name, setter, content='route', content_rowid='rowid');
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
-```
-
-- `frames` stays the source string (`p<hold>r<role>` repeated); `BoardCore` parses it into
-  `[RouteHold]` when a route is opened, with the role table from the hardware map.
-- The importer keeps only listed, published, non-hidden, single-frame climbs. That filter is the knob
-  for disk size.
-- A route fits a setup when its edges lie inside the setup's size and its `required_sets` are all
-  installed. That check is a pure function in `BoardCore`.
-- `meta` records the source, the snapshot's build time, the import time and the importer version.
-- Setter names are public usernames; they are shown on each route, as the snapshot's publisher asks.
-
-The query the tab uses:
-
-```swift
-public struct RouteQuery: Equatable, Sendable {
-    public var angle: Angle
-    public var grades: ClosedRange<Grade>?
-    public var text: String
-    public var minimumAscents: Int
-    public var benchmarksOnly: Bool
-    public var sort: RouteSort
-}
-
-public enum RouteSort: Sendable { case mostClimbed, newest, easiest, hardest, bestRated }
-```
+`Lighting.plan` is the one gate between a route and the wall: every reason a route cannot be lit is a
+`LightBlock` the screen can show. `AuroraEncoder(apiLevel:ledsPerHold:)` and
+`MoonBoardEncoder(rows:ledsAboveHolds:)` are the two encoders; `writes(for:)` returns the chunks in
+order, each at most 20 bytes.
