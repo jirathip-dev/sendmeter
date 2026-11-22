@@ -1,0 +1,7 @@
+about = "swift test of SendmeterCore, SendLogWatchCore and SendLogHealthCore under the line and function coverage floors in docs/testing.md"
+fix = "fix the failing test the log names, or cover the new code; a floor is never lowered to pass"
+budget_secs = 900
+platform = "macos"
+leg = "watch"
+run = "bash scripts/test-coverage-threshold.sh && bash scripts/swift-coverage.sh"
+paths = ["native/SendmeterNative/Sources/**", "native/SendmeterNative/Tests/**", "native/SendmeterNative/Package.*", "ios/App/SendLogWatchCore/**", "native-plugins/sendlog-health-core/**", "scripts/swift-coverage.sh", "scripts/check-coverage-threshold.sh", "scripts/test-coverage-threshold.sh"]

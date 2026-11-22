@@ -1,0 +1,5 @@
+about = "the current docs name no retired command, and every recipe, workflow, script and doc they name exists"
+fix = "fix the reference the log names; a historical file goes in the script's allowlist with its reason"
+budget_secs = 30
+platform = "linux"
+run = "bash scripts/check-docs-stale-commands.sh"

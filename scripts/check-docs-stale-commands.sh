@@ -8,10 +8,8 @@ set -euo pipefail
 # tree. It never executes a documented command, never installs anything, and
 # never talks to a network or a service.
 #
-# Wired (#944): `just docs-check` and the "Docs stale-command check" job in
-# `.github/workflows/native-swift.yml`, whose path filter carries the doc
-# surface (CLAUDE.md/AGENTS.md, README.md, docs/** and the other current
-# entrypoints). The historical allowlist below stays the single place a
+# Wired (#1049): gatekeeper's `local/docs` gate (.gatekeeper/gates/docs.toml)
+# runs it on every change. The historical allowlist below stays the single place a
 # retired name is tolerated, one (path, reason) pair per file.
 #
 # Checks:
@@ -56,7 +54,6 @@ CURRENT_FILES = [
     # (re-verified and corrected at the #945 head; scanned so they cannot
     # silently regress).
     "native/SendmeterNative/README.md",
-    ".agent/config.yaml",
     ".claude/launch.json",
     "ios/debug.xcconfig",
 ]

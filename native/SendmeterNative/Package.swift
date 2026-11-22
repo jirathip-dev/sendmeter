@@ -1,5 +1,10 @@
 // swift-tools-version: 5.9
+import Foundation
 import PackageDescription
+
+let strict: [SwiftSetting] = ProcessInfo.processInfo.environment["GATEKEEPER_STRICT"] == "1"
+    ? [.unsafeFlags(["-warnings-as-errors"])]
+    : []
 
 let package = Package(
     name: "SendmeterNative",
@@ -41,24 +46,28 @@ let package = Package(
             // XcodeGen app target EXCLUDES the same file (project.yml) so the
             // app gets exactly one definition, via this module.
             path: "Sources",
-            sources: ["Core", "App/ChartTheme.swift"]
+            sources: ["Core", "App/ChartTheme.swift"],
+            swiftSettings: strict
         ),
         .target(
             name: "SendmeterWeather",
             dependencies: ["SendmeterCore"],
             path: "Sources",
-            sources: ["Platform/WeatherService.swift"]
+            sources: ["Platform/WeatherService.swift"],
+            swiftSettings: strict
         ),
         .testTarget(
             name: "SendmeterCoreTests",
             dependencies: ["SendmeterCore", "SendLogWatchCore", .product(name: "GRDB", package: "GRDB.swift")],
             path: "Tests/SendmeterCoreTests",
-            resources: [.copy("Fixtures")]
+            resources: [.copy("Fixtures")],
+            swiftSettings: strict
         ),
         .testTarget(
             name: "SendmeterWeatherTests",
             dependencies: ["SendmeterWeather", "SendmeterCore"],
-            path: "Tests/SendmeterWeatherTests"
+            path: "Tests/SendmeterWeatherTests",
+            swiftSettings: strict
         )
     ]
 )

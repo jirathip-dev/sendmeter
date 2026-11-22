@@ -1,0 +1,2 @@
+file native/SendmeterNative/Sources/App/DesignSystem.swift the design system: where the phone's colour and size tokens are defined
+file native/SendmeterNative/Sources/App/ChartTheme.swift the chart theme: where the charts' colour and size tokens are defined

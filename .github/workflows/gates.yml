@@ -1,0 +1,17 @@
+name: gates
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    uses: jirathip-dev/gatekeeper/.github/workflows/gates.yml@c76c64fa790a1a5e5e608c25139960e74db8b44d # v1.1.0
+    with:
+      runners: '{"linux": "ubuntu-latest", "macos": "macos-26"}'
+    secrets:
+      private-names: ${{ secrets.PRIVATE_NAMES }}

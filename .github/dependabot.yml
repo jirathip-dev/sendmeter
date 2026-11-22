@@ -127,27 +127,6 @@ updates:
         patterns: ["*"]
         update-types: ["major"]
 
-  - package-ecosystem: "swift"
-    directory: "/tools/anti-slop-swift"
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "03:35"
-      timezone: "Asia/Bangkok"
-    open-pull-requests-limit: 1
-    groups:
-      swift-tool-security:
-        applies-to: "security-updates"
-        patterns: ["*"]
-      swift-tool-updates:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["patch", "minor"]
-      swift-tool-major:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["major"]
-
   - package-ecosystem: "bundler"
     directory: "/"
     schedule:
