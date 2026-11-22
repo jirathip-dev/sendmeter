@@ -4,20 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="base.css">
-<link rel="stylesheet" href="chalk.css">
-<link rel="stylesheet" href="zine.css">
-<link rel="stylesheet" href="graffiti.css">
+<link rel="stylesheet" href="golden.css">
+<link rel="stylesheet" href="blue.css">
+<link rel="stylesheet" href="faded.css">
 <script src="crag.js" defer></script>
 </head>
 <body>
-<svg width="0" height="0" style="position:absolute">
-  <filter id="chalky"><feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="2.5"/><feComponentTransfer><feFuncA type="table" tableValues="0 .7 1 1"/></feComponentTransfer></filter>
-  <filter id="rough"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="3"/></filter>
-  <filter id="spray"><feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="1" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="3"/></filter>
-</svg>
 <div class="app">
 <nav class="side">
   <div class="brand">Sendmeter</div>
+  <div class="knit"></div>
   <span class="tab on"><i class="ico today"></i>Today</span>
   <span class="tab"><i class="ico session"></i>Session</span>
   <span class="tab"><i class="ico board"></i>Board</span>
@@ -25,7 +21,7 @@
   <span class="tab"><i class="ico log"></i>Log</span>
 </nav>
 <main class="col">
-  <header class="top"><h1 class="title">Today</h1><span class="menu">•••</span></header>
+  <header class="top"><h1 class="title">Today <span data-art="sun"></span></h1><span class="menu">•••</span></header>
 
   <section class="b-stat">
     <div class="tile"><span class="lbl">Ready</span><span class="val good">82</span><svg class="spark" data-v="64,70,61,75,79,72,82"></svg></div>
@@ -34,22 +30,18 @@
   </section>
 
   <section class="hero">
-    <div class="mascot workout"><i></i></div>
-    <div class="go">
-      <div class="b-chips">
-        <span class="chip on">Board</span><span class="chip">Gym</span><span class="chip">Hangs</span><span class="chip">Crag</span>
-      </div>
-      <div class="btn-wrap">
-        <span class="btn" aria-label="Start session">Send it</span>
-        <svg class="drips only graffiti" viewBox="0 0 300 22" preserveAspectRatio="none"><path d="M40 0h10v12a5 5 0 0 1-10 0zM118 0h7v18a3.5 3.5 0 0 1-7 0zM205 0h9v9a4.5 4.5 0 0 1-9 0zM262 0h6v15a3 3 0 0 1-6 0z"/></svg>
-      </div>
+    <div class="film"><span class="edge l">SM 400 ▸ 12A</span><div class="shot" data-art="hero"></div></div>
+    <div class="action">
+      <div class="b-chips"><span class="chip on">Board</span><span class="chip">Gym</span><span class="chip">Hangs</span><span class="chip">Crag</span></div>
+      <span class="btn" aria-label="Start session">Send it <span class="eyes"><i></i><i></i></span></span>
     </div>
-    <span class="sticker only zine" style="right:-14px;top:-18px;background:#FFD23F;transform:rotate(12deg)">V6</span>
   </section>
+
+  <div class="knit"></div>
 
   <div class="wide-2">
     <div>
-      <h2 class="hdr">This week</h2>
+      <h2 class="hdr">This week <span data-art="flower"></span></h2>
       <section class="b-stat">
         <div class="tile"><span class="lbl">ACWR</span><span class="val good">1.12</span></div>
         <div class="tile"><span class="lbl">Sends</span><span class="val">9</span></div>
@@ -57,10 +49,10 @@
       </section>
     </div>
     <div>
-      <h2 class="hdr">Last ticks</h2>
+      <h2 class="hdr">Last ticks <span data-art="cloud"></span></h2>
       <section class="b-list">
-        <div class="row"><div><div class="t">Cobra Crack</div><div class="s">Kilter 40° · Sat</div></div><span class="badge flash">⚡ Flashed!</span><span class="grade">V6</span><span class="chev">›</span></div>
-        <div class="row"><div><div class="t">Mantle Madness</div><div class="s">Gym · Thu</div></div><span class="badge send">✓ Sent</span><span class="grade">V5</span><span class="chev">›</span></div>
+        <div class="row"><div><div class="t">Cobra Crack</div><div class="s">Kilter 40° · Sat</div></div><span class="badge flash">Flashed!</span><span class="grade">V6</span><span class="chev">›</span></div>
+        <div class="row"><div><div class="t">Mantle Madness</div><div class="s">Gym · Thu</div></div><span class="badge send">Sent</span><span class="grade">V5</span><span class="chev">›</span></div>
       </section>
     </div>
   </div>
