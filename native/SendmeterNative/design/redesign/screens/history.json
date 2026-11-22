@@ -1,0 +1,22 @@
+{"type": "screen", "id": "history", "title": "Log", "large": true,
+ "blocks": [
+  {"type": "chips", "id": "view", "name": "view", "action": "view", "selected": ["sessions"], "options": [
+    {"label": "Sessions", "value": "sessions"}, {"label": "Logbook", "value": "logbook"}]},
+  {"type": "chart", "id": "load", "chart": "bar", "title": "Weekly load", "selected": "W47",
+   "x": ["W40", "W41", "W42", "W43", "W44", "W45", "W46", "W47"],
+   "series": [{"name": "Load", "values": [980, 1120, 1240, 860, 1310, 1420, 1180, 1530]}]},
+  {"type": "section", "id": "w47", "header": "This week", "blocks": [
+    {"type": "list", "id": "s47", "rows": [
+      {"type": "row", "id": "s1", "title": "Board · Kilter 40°", "subtitle": "Sat · 1:12",
+       "value": "4 sends", "badge": {"text": "Power", "tone": "bad"}, "accessory": "chevron", "tap": {"open": "session-s1"}},
+      {"type": "row", "id": "s2", "title": "Hangs · 7/3 repeaters", "subtitle": "Thu · 0:34 · 41.6 kg peak",
+       "value": "6 sets", "badge": {"text": "Strength", "tone": "warn"}, "accessory": "chevron", "tap": {"open": "session-s2"}},
+      {"type": "row", "id": "s3", "title": "Gym · Bouldering", "subtitle": "Tue · 1:40",
+       "value": "5 sends", "badge": {"text": "Capacity", "tone": "ok"}, "accessory": "chevron", "tap": {"open": "session-s3"}}]}]},
+  {"type": "section", "id": "w46", "header": "Last week", "blocks": [
+    {"type": "list", "id": "s46", "rows": [
+      {"type": "row", "id": "s4", "title": "Board · Tension 35°", "subtitle": "Sun · 0:58",
+       "value": "3 sends", "badge": {"text": "Power", "tone": "bad"}, "accessory": "chevron", "tap": {"open": "session-s4"}},
+      {"type": "row", "id": "s5", "title": "Crag · Ao Nang", "subtitle": "Fri · 3:20",
+       "value": "7 sends", "badge": {"text": "Capacity", "tone": "ok"}, "accessory": "chevron", "tap": {"open": "session-s5"}}]}]}
+ ]}

@@ -1,0 +1,20 @@
+{"type": "screen", "id": "logbook", "title": "Log", "large": true,
+ "blocks": [
+  {"type": "chips", "id": "view", "name": "view", "action": "view", "selected": ["logbook"], "options": [
+    {"label": "Sessions", "value": "sessions"}, {"label": "Logbook", "value": "logbook"}]},
+  {"type": "stat", "id": "totals", "items": [
+    {"label": "Ticks", "value": 142}, {"label": "Flashes", "value": 31, "tone": "ok"}, {"label": "Top", "value": "V7"}]},
+  {"type": "chart", "id": "pyramid", "chart": "stacked", "title": "Pyramid", "selected": "V6",
+   "x": ["V3", "V4", "V5", "V6", "V7"],
+   "series": [{"name": "Flash", "tone": "ok", "values": [14, 9, 6, 2, 0]},
+              {"name": "Send", "values": [22, 28, 24, 14, 3]}]},
+  {"type": "list", "id": "ticks", "rows": [
+    {"type": "row", "id": "k1", "title": "Cobra Crack", "subtitle": "Kilter 40° · 21 Nov", "value": "V6",
+     "badge": {"text": "⚡ Flash", "tone": "ok"}, "accessory": "chevron", "tap": {"open": "route"}},
+    {"type": "row", "id": "k2", "title": "Mantle Madness", "subtitle": "Gym · 19 Nov", "value": "V5",
+     "badge": {"text": "✓ Send"}, "accessory": "chevron", "tap": {"open": "tick-k2"}},
+    {"type": "row", "id": "k3", "title": "Big Bertha", "subtitle": "Tension 35° · 15 Nov", "value": "V7",
+     "badge": {"text": "✓ Send"}, "accessory": "chevron", "tap": {"open": "tick-k3"}},
+    {"type": "row", "id": "k4", "title": "Tonsai Roof", "subtitle": "Crag · 13 Nov", "value": "6c",
+     "badge": {"text": "↻ Repeat", "tone": "mute"}, "accessory": "chevron", "tap": {"open": "tick-k4"}}]}
+ ]}

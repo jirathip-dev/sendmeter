@@ -1,0 +1,23 @@
+{"type": "screen", "id": "settings", "title": "Settings", "back": "Today",
+ "blocks": [
+  {"type": "section", "id": "sync", "header": "Sync", "blocks": [
+    {"type": "form", "id": "sync-form", "action": "sync", "fields": [
+      {"type": "toggle", "name": "icloud", "label": "iCloud sync", "value": false}]}]},
+  {"type": "section", "id": "climb", "header": "Climbing", "blocks": [
+    {"type": "form", "id": "climb-form", "action": "units", "fields": [
+      {"type": "picker", "name": "grades", "label": "Grades", "options": ["V-scale", "Font"], "value": "V-scale"},
+      {"type": "picker", "name": "units", "label": "Units", "options": ["kg", "lb"], "value": "kg"},
+      {"type": "toggle", "name": "health", "label": "Apple Health", "value": true}]}]},
+  {"type": "section", "id": "gear", "header": "Gear", "blocks": [
+    {"type": "list", "id": "devices", "rows": [
+      {"type": "row", "id": "tindeq", "title": "Tindeq Progressor", "value": "Paired", "accessory": "chevron", "tap": {"open": "tindeq"}},
+      {"type": "row", "id": "watch", "title": "Apple Watch", "value": "On", "accessory": "chevron", "tap": {"open": "watch"}},
+      {"type": "row", "id": "kilter", "title": "Kilter board", "value": "40°", "accessory": "chevron", "tap": {"open": "kilter"}},
+      {"type": "row", "id": "tension", "title": "Tension board", "value": "Add", "accessory": "chevron", "tap": {"open": "tension"}},
+      {"type": "row", "id": "moon", "title": "MoonBoard", "value": "Add", "accessory": "chevron", "tap": {"open": "moon"}}]}]},
+  {"type": "section", "id": "data", "header": "Data", "blocks": [
+    {"type": "list", "id": "data-rows", "rows": [
+      {"type": "row", "id": "export", "title": "Export", "accessory": "chevron", "tap": {"open": "export"}},
+      {"type": "row", "id": "erase", "title": "Erase all data", "style": "destructive",
+       "button": {"label": "Erase", "action": "erase", "confirm": {"title": "Erase every session and tick?", "destructive": true, "ok": "Erase"}}}]}]}
+ ]}
