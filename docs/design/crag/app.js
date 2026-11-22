@@ -165,7 +165,8 @@ const SCREENS = {
       ${tiles([["14", "Tries"], ["5", "Sends"], ["V5", "Top"], ["128", "Heart"]], 4)}`);
     const now = card(`${hd("On now")}<div class="row"><span class="grade" style="font-size:28px">V6</span><span class="n" style="font:700 18px var(--f-body)">Night Shift<small class="mute" style="display:block;font:400 13px var(--f-body)">Try 4 · last one a whipper</small></span></div>
       <div class="btns" style="margin-top:14px"><button class="btn">${ICON.check}Sent</button><button class="btn ghost">Fell</button></div>`);
-    const tries = card(`${hd("This session", "14 tries")}${list([["V5", "Moon Arete", "1 try", "Flash", "on"], ["V4", "Slab Crack", "2 tries", "Send", "good"], ["V6", "Night Shift", "3 tries", "Project", ""], ["V3", "Warm-up Wall", "1 try", "Flash", "on"]].map(tickRow))}`);
+    const ticks = [["V5", "Moon Arete", "1 try", "Flash", "on"], ["V4", "Slab Crack", "2 tries", "Send", "good"], ["V6", "Night Shift", "3 tries", "Project", ""], ["V3", "Warm-up Wall", "1 try", "Flash", "on"]];
+    const tries = card(`${hd("This session", WIDE ? "14 tries" : "All 14 ›")}${list(ticks.slice(0, WIDE ? 4 : 2).map(tickRow))}`);
     const end = `<button class="btn ghost">End session</button>`;
     return { tab: "session", html: layout("Session", [[live, now, WIDE ? end : null], [tries, WIDE ? null : end]], { tpl: "1fr 1fr" }) };
   },

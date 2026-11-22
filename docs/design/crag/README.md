@@ -20,6 +20,7 @@ Open questions: (1) Do the weather icons work as re-lit copies of the original a
   - Original: today's icon, unchanged and still the default.
   - Weather: six copies of the original, re-lit for day, night, dawn, golden hour, rain and fog.
   - Sticker: eight poses on solid backgrounds: dyno, crimp, chalk-up, flash, send, fall, rest and PR.
+- **No scrolling during a session.** Session and Force each fit on one screen, on the phone (390 × 844) and on the watch. On the phone, Session shows only the last two ticks and links to the rest.
 - **Layouts follow #1046, #1056, #1047 and #1045.** Changes are listed below.
 
 ## Images
@@ -33,7 +34,7 @@ Open questions: (1) Do the weather icons work as re-lit copies of the original a
 | `today-golden-1440`, `today-rain-390` | Golden hour (warm light cards). Rain (slate glass, the roo sheltering under the boulder with its headlamp on). |
 | `states-390`, `states-1440` | Today in all six looks side by side, each with what changes. |
 | `conditions` | The chip opens the detail sheet: friction 78 with a plain grade, how today ranks, temperature, humidity, dew point and wind, a 30-day bar chart with the average line, the best window today, and the source (Open-Meteo). |
-| `session` | A live session: a big timer, tries, sends, top grade and heart rate from the watch. **On now** has **Sent** and **Fell**, and a "whipper" note on the last fall. Below: this session's ticks, and **End session**. |
+| `session` | A live session: a big timer, tries, sends, top grade and heart rate from the watch. **On now** has **Sent** and **Fell**, and a "whipper" note on the last fall. Below: the last two ticks with **All 14 ›**, then **End session**. It fits on one phone screen with no scrolling; at 1440 the full list sits in the right column. |
 | `board` | Board home: the wall card (connected), search, filter chips and the route list with stars and Sent, Flash or Project tags. **New route** and **From screenshot** are the two ways to add a route. At 1440 the wall's lights, angle, wiring check and import are in a side card. |
 | `route` | Route detail: the lit board in the four hold roles (green start, blue hand, pink finish, orange foot), plus **Light it** and **Log send**. At 1440 your ticks sit beside it. |
 | `send` | The **Flashed!** moment as a sheet over the route: the flash roo, the route, tries, sends today and top grade, with **Undo** and **Done**. |
