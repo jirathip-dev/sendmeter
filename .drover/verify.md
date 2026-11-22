@@ -160,6 +160,8 @@ pre-existing on the named screen:
 - `[com.apple.app_launch_measurement:General] Failed to send CA Event` — launch metrics.
 - `[com.apple.activitykit:api] Updating content for activity` — Live Activities need a signed device build.
 - `Charts: Falling back to a fixed dimension size for a mark` — `recovery` screen.
+- `(libCoreFSCache.dylib) fopen failed for data file` — first launch on a freshly created simulator.
+- `[com.apple.UIKit:TrackingElementWindowController] The tracking window controller is unable to get the keyboard scene` — iPad simulator, every screen.
 - `Modifying state during view update` — `training-load` screen, pre-existing at staging.
 
 ## Feature map
