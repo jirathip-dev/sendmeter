@@ -2,9 +2,9 @@
 
 ## Summary
 
-Decision: all data lives in one SQLite file on the iPhone (GRDB, already in the app), with today's table and column names. iCloud sync is an opt-in switch on Apple's CKSyncEngine and the user's private database; the watch hands finished records to the phone; the MCP server reads a JSON export folder. Supabase is read once, for the import, then gone.
-Slices: 31 issues in 6 groups: store (5), watch handoff (3), cut-over and Supabase removal (7), sync (3), export and MCP (2), screens on Blocks (10), plus one dated clean-up. Three Blocks issues come first.
-Open questions: (1) Blocks needs iOS 26, so the app's minimum rises from iOS 17: approve? (2) Blocks v2.0 does not compile for iOS and has no typed Swift builders or watchOS build: file the three Blocks issues, and keep the watch on plain SwiftUI until then? (3) How long does the hosted Supabase project stay up for the import, and may the app offer "delete my old cloud account" after it?
+Decision: all data lives in one SQLite file on the iPhone (GRDB, already in the app), with today's table and column names. iCloud sync is an opt-in switch on Apple's CKSyncEngine and the user's private database; the watch hands finished records to the phone; the MCP server reads a JSON export folder. Supabase is only read, once, for the import; the app's minimum iOS rises to 26.
+Slices: 31 issues in 6 groups: store (5), watch handoff (3), cut-over and Supabase removal (7), sync (3), export and MCP (2), screens on Blocks (10), plus one dated clean-up 90 days after the first local-first TestFlight build. The screens wait for two Blocks fixes (B1, B2); the watch stays plain SwiftUI until a third (B3).
+Open questions: none. The owner's four answers (iOS 26 minimum, the three Blocks issues, the 90-day import window, no delete button) are written in.
 
 ## Question
 
@@ -92,11 +92,16 @@ then merges without duplicates.
 - It signs in with the session the old build left in the Keychain (one refresh); with none, it asks once for
   email and password or Sign in with Apple.
 - Writes still waiting in the old offline queue are applied to the store first: they are newer than the server.
+- With no saved session the sign-ins offered are email and password, and Sign in with Apple. A passkey-only or
+  magic-link-only user first sets a password by the reset mail.
 - Progress is kept per table family, so a failed import resumes. The app is usable before and without it.
 - Sync stays off afterwards.
+- It only reads the hosted project. There is no "Delete my old cloud account" button (owner, q2990): the hosted
+  data goes when the owner deletes the project.
 
-The importer is the only Supabase code left. A dated follow-up issue deletes it (and the Sign in with Apple
-entitlement) when the import window closes: open question 3.
+The import window is 90 days from the first local-first TestFlight build (owner, q2989). The importer is the only
+Supabase code left; the dated issue L1 deletes it (and the Sign in with Apple entitlement) when the window
+closes, and the owner then deletes the hosted project. A user who has not imported by then keeps no old data.
 
 ### 5. The export for the MCP server: a folder of JSON, written by the app
 
@@ -126,8 +131,9 @@ swag) and handles its actions. Charts Blocks has no kind for (force curve, heat 
 app kinds drawn by the existing SwiftUI views. Recording, the live gauge and the routine runner stay live SwiftUI.
 
 Blocks can draw a screen built on the device with no server: confirmed by a run. It cannot yet do so on an iPhone,
-and not from typed values: `blocks.md` names three gaps as Blocks issues. Screens slices wait for the first two;
-nothing else in this ADR depends on Blocks.
+and not from typed values: `blocks.md` names three gaps as Blocks issues B1, B2 and B3 (owner, q2987). The
+screens slices wait for B1 and B2; the watch stays plain SwiftUI until B3; nothing else in this ADR depends on
+Blocks.
 
 ## Consequences
 
@@ -140,7 +146,10 @@ nothing else in this ADR depends on Blocks.
   main applies DDL to production" trap goes with them.
 - Debug builds no longer write production data: Xcode builds use CloudKit's development environment.
 - The 8 RPCs become store transactions on the device. Their SQL regressions become host tests.
-- Minimum iOS rises to 26 if the owner approves question 1. The watch stays on watchOS 10 and does not link Blocks.
+- Minimum iOS rises to 26 in slice U1 (owner, q2980): devices on iOS 17 to 25 stop getting updates and keep the
+  last build shipped before U1. If that is still a Supabase build, it stops working when the hosted project is
+  deleted; a TestFlight build cut after C7 and before U1 leaves them a working local-first app with the importer.
+  The watch stays on watchOS 10 and does not link Blocks.
 - A synced column is a CloudKit schema change: it must be deployed to CloudKit's production environment before the
   build that writes it ships. That is a manual step (below).
 - Clock skew can make the wrong edit win a conflict. Accepted: one user, edits minutes apart at worst.
@@ -154,22 +163,22 @@ nothing else in this ADR depends on Blocks.
   Documents) and Push Notifications on both phone App IDs; the lane's profiles are then regenerated.
 - CloudKit Console: deploy the schema from development to production before the first TestFlight build with sync,
   and after every slice that adds a synced column.
-- Hosted Supabase: keep the production project readable until the import window closes, then delete it.
+- Hosted Supabase: keep the production project readable for 90 days after the first local-first TestFlight
+  build, then delete it. Until then it still holds every existing user's data; the app has no button to delete
+  it sooner, so a user who wants that asks the owner.
 - Device checks with a throwaway Apple ID: sync between two devices, quota full, sign-out, watch handoff,
   iCloud Drive export.
 
-## Open questions for the owner
+## Decided by the owner (2026-11-22)
 
-1. **Minimum iOS 26.** BlocksUI needs it (`blocks.md`), so choosing Blocks drops iOS 17 to 25 devices. Recommended:
-   approve; the other way is a Blocks issue to lower its floor, which means a second surface style beside glass.
-2. **The Blocks gaps.** File B1, B2 and B3 (`migration.md`), make the screens slices wait for B1 and B2, and keep
-   the watch on plain SwiftUI until B3. Recommended: yes. Everything but group U can start now.
-3. **The import window.** The hosted production project must stay readable until existing users have imported.
-   Recommended: 90 days after the first local-first TestFlight build, then the owner deletes the project and L1
-   deletes the importer. Sign-ins the importer offers when no saved session is found: email and password, and
-   Sign in with Apple; a passkey-only or magic-link-only user first sets a password by the reset mail. And: may the
-   import's last screen offer "Delete my old cloud account" (the existing `delete_account` RPC)? Recommended: yes,
-   as a button the user must press, never by itself.
+| Ask | Decision | Where it lands |
+|---|---|---|
+| q2980 | Minimum iOS 26; devices on iOS 17 to 25 stop getting updates | Slice U1 raises the floor; consequences above |
+| q2987 | File B1, B2 and B3 in Blocks; the screens wait for B1 and B2; the watch stays plain SwiftUI until B3 | `blocks.md`; group U and U9 in `migration.md` |
+| q2989 | The hosted project stays readable for 90 days after the first local-first TestFlight build; then the owner deletes it and the importer is removed | Decision 4; L1 in `migration.md` |
+| q2990 | No "Delete my old cloud account" button | Decision 4: the importer only reads |
+
+There are no open questions.
 
 ## Hot files
 

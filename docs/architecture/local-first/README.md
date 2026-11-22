@@ -2,9 +2,9 @@
 
 ## Summary
 
-Decision: all data lives in one SQLite file on the iPhone (GRDB, already in the app), with today's table and column names. iCloud sync is an opt-in switch on Apple's CKSyncEngine and the user's private database; the watch hands finished records to the phone; the MCP server reads a JSON export folder. Supabase is read once, for the import, then gone.
-Slices: 31 issues in 6 groups: store (5), watch handoff (3), cut-over and Supabase removal (7), sync (3), export and MCP (2), screens on Blocks (10), plus one dated clean-up. Three Blocks issues come first.
-Open questions: (1) Blocks needs iOS 26, so the app's minimum rises from iOS 17: approve? (2) Blocks v2.0 does not compile for iOS and has no typed Swift builders or watchOS build: file the three Blocks issues, and keep the watch on plain SwiftUI until then? (3) How long does the hosted Supabase project stay up for the import, and may the app offer "delete my old cloud account" after it?
+Decision: all data lives in one SQLite file on the iPhone (GRDB, already in the app), with today's table and column names. iCloud sync is an opt-in switch on Apple's CKSyncEngine and the user's private database; the watch hands finished records to the phone; the MCP server reads a JSON export folder. Supabase is only read, once, for the import; the app's minimum iOS rises to 26.
+Slices: 31 issues in 6 groups: store (5), watch handoff (3), cut-over and Supabase removal (7), sync (3), export and MCP (2), screens on Blocks (10), plus one dated clean-up 90 days after the first local-first TestFlight build. The screens wait for two Blocks fixes (B1, B2); the watch stays plain SwiftUI until a third (B3).
+Open questions: none. The owner's four answers (iOS 26 minimum, the three Blocks issues, the 90-day import window, no delete button) are written in.
 
 ## Read in this order
 
@@ -15,7 +15,7 @@ Open questions: (1) Blocks needs iOS 26, so the app's minimum rises from iOS 17:
 | `shapes.md` | Every table and synced record, the watch envelope, the export format |
 | `sync.md` | The sync statechart and the conflict rules |
 | `boundaries.md` | Which module may import which, and what is deleted |
-| `blocks.md` | What was run against Blocks v2.0, what works, the three gaps |
+| `blocks.md` | What was run against Blocks v2.0, what works, the three gaps (B1 to B3) |
 | `migration.md` | The issues to file, in order |
 
 ## What was run

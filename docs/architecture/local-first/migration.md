@@ -4,7 +4,7 @@ One PR each. "Proof" is what the PR must run. "Device" marks what only a device 
 does not claim it. Groups A, W, S1, E1 and the Blocks issues can run side by side; group C is queued `--serial`
 because every slice edits `AppModel.swift`, and staging is not promoted to `main` between C1 and C6.
 
-## Blocks repo, first (see `blocks.md`)
+## Blocks repo, first (see `blocks.md`; owner decision q2987)
 
 | # | Issue | Unblocks |
 |---|---|---|
@@ -41,7 +41,7 @@ realtime and queue paths.
 | C2 | cut-over: presets, routines, tags | | same |
 | C3 | cut-over: health metrics | HealthKit reconcile writes the store | same. Device: HealthKit |
 | C4 | cut-over: sessions, workouts, attempts, recordings | Watch ingest writes the store; the live mirror is WatchConnectivity only; the four direct repository calls in `Features` go | same. Device: a watch workout end to end |
-| C5 | boot without an account | No login gate; the import screen when an old session is found; "Import from my old account" and "Erase all data" in Settings | App-target tests, UI smoke |
+| C5 | boot without an account | No login gate; the import screen when an old session is found; "Import from my old account" and "Erase all data" in Settings. The import screens only read the old account: no button deletes it | App-target tests, UI smoke |
 | C6 | remove Supabase from the app | Delete the files in `boundaries.md`; the package; associated domains; the account threading; the 55 machinery test files | `just ci` |
 | C7 | remove Supabase from the repo | `supabase/`, two workflows, the scripts, gitleaks entries; rewrite `CLAUDE.md`, the README, the App Store and review notes; release note | `just ci`, the docs stale-command check |
 
@@ -79,7 +79,7 @@ realtime and queue paths.
 
 | # | Issue | When |
 |---|---|---|
-| L1 | Delete the importer and the Sign in with Apple entitlement | When the import window closes (open question 3) |
+| L1 | Delete the importer, its Settings entry and the Sign in with Apple entitlement | 90 days after the first local-first TestFlight build. Filed with that date when the build ships; the owner deletes the hosted project once it merges |
 
 ## Order at a glance
 

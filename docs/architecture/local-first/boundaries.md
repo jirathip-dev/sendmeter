@@ -33,7 +33,7 @@ mcp/      ──▶ the export folder                               (no network,
 | `SendmeterCore` (the rest) | Models, metrics, force and workout engines: unchanged | `SendLogWatchCore`, `SendLogHealthCore` | GRDB |
 | `SendmeterScreens` | One file per screen: read model → `Block` | `SendmeterCore`, `Blocks` | SwiftUI, BlocksUI, GRDB |
 | `Data/CloudKit` | `CloudKitTransport`: engine events → `SyncEvent`, effects → engine calls | CloudKit, `SendmeterCore` | GRDB, SwiftUI |
-| `Data/LegacyImport` | The PostgREST reader and the three sign-ins. Deleted when the window closes | Foundation, AuthenticationServices | any Supabase package |
+| `Data/LegacyImport` | The PostgREST reader (GET only) and the three sign-ins. Deleted by L1, 90 days after the first local-first TestFlight build | Foundation, AuthenticationServices | any Supabase package |
 | `Data/Export` | Writes the folder; picks iCloud Drive or Documents | Foundation | CloudKit |
 | `Platform` | HealthKit, Bluetooth, `WatchLink`, weather | `SendmeterCore`, `SendLogWatchCore` | GRDB, CloudKit, BlocksUI |
 | `Features` | `ScreenHost`, app kinds, live views, action handlers | BlocksUI, `SendmeterScreens`, `SendmeterCore` | GRDB, CloudKit |
@@ -59,4 +59,4 @@ watch targets do not link what they must not import.
 | `SendLogWatchCore` | `BackendFailureReason`, `UploadErrorPolicy`, `SessionRelay`, `QueueRetrySchedule`, `TagFetchPolicy`, `Quarantine*`, `WatchHealthReconcile`, `SyncFreshness` |
 | Repo | `supabase/`, `scripts/apply-migrations.mjs`, `scripts/migration-status.mjs`, `scripts/migration-safety.mjs`, `scripts/test-health-precedence-race.sh`, `supabase-tests.yml`, `deploy-migrations.yml`, the Supabase entries in `.gitleaks.toml`, `docs/mcp-e2e-verification.md` |
 | `mcp/` | `auth.ts`, the Supabase half of `transport.ts`, `config.ts`'s URL and key, the `@supabase/supabase-js` dependency |
-| Entitlements | Associated domains now; Sign in with Apple when the import window closes. Added: iCloud (CloudKit, iCloud Documents), push |
+| Entitlements | Associated domains now; Sign in with Apple when the import window closes (L1). Added: iCloud (CloudKit, iCloud Documents), push |

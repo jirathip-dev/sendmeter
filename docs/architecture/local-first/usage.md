@@ -86,7 +86,7 @@ BlocksView(screen.build(input), source: nil, act: handle)
     .screenTitle(false)                 // the app keeps its own navigation title
 ```
 
-`Screen(id:title:blocks:)` needs Blocks gap 2 (`blocks.md`); it does not compile against v2.0.
+`Screen(id:title:blocks:)` needs Blocks issue B2 (`blocks.md`); it does not compile against v2.0.
 
 ## An app kind (a chart Blocks has no kind for)
 
