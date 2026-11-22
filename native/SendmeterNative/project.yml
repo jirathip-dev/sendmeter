@@ -22,6 +22,10 @@ settings:
   base:
     MARKETING_VERSION: 1.0.0
     CURRENT_PROJECT_VERSION: 1
+  configs:
+    Debug:
+      SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+      GCC_TREAT_WARNINGS_AS_ERRORS: YES
 packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift

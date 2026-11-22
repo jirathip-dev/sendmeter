@@ -7,4 +7,4 @@ xcodebuild -project SendmeterNative.xcodeproj -scheme SendmeterNative -resolvePa
 udid=$(bash "$root/scripts/simulator.sh" watchOS)
 xcodebuild test -project SendmeterNative.xcodeproj -scheme 'SendLogWatch Watch App' -configuration Debug \
   -destination "id=$udid" -only-testing:SendLogWatchTests \
-  CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES GCC_TREAT_WARNINGS_AS_ERRORS=YES
+  CODE_SIGNING_ALLOWED=NO
