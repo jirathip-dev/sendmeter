@@ -6,7 +6,7 @@ html[data-dir="faded"] {
   --film: #24324C;
   --board: #E6D3AE;
   --ink: #24324C;
-  --mute: #545F74;
+  --mute: #3E4859;
   --good: #2F5A3E;
   --grade-ink: #B82F1A;
   --title-ink: #24324C;
@@ -23,8 +23,8 @@ html[data-dir="faded"] {
   --side-on: #24324C;
   --side-on-ink: #F7F1E4;
   --brand-ink: #24324C;
-  --tab-ink: #545F74;
-  --tab-on-ink: #B82F1A;
+  --tab-ink: #3E4859;
+  --tab-on-ink: #962514;
   --edge-ink: #E9B65A;
   --spark: #24324C;
   --edge: #24324C;

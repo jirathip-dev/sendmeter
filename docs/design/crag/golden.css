@@ -6,11 +6,11 @@ html[data-dir="golden"] {
   --film: #2A1D14;
   --board: #DCC394;
   --ink: #3A2618;
-  --mute: #6B5140;
+  --mute: #4F3829;
   --good: #2F5A3E;
   --grade-ink: #2B3A55;
   --title-ink: #3A2618;
-  --hdr-ink: #B82B18;
+  --hdr-ink: #962312;
   --lead: #C9311C;
   --on-lead: #FFF6E8;
   --plain-ink: #3A2618;
@@ -22,9 +22,9 @@ html[data-dir="golden"] {
   --chip-on-ink: #F4EEE2;
   --side-on: #3A2618;
   --side-on-ink: #F4EEE2;
-  --brand-ink: #B82B18;
-  --tab-ink: #6B5140;
-  --tab-on-ink: #B82B18;
+  --brand-ink: #962312;
+  --tab-ink: #4F3829;
+  --tab-on-ink: #962312;
   --edge-ink: #F0A33A;
   --spark: #9A5B17;
   --edge: rgba(58, 38, 24, .3);

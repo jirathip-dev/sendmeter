@@ -103,8 +103,8 @@ function loadScene() {
 }
 
 function iconArt() {
-  return `<svg viewBox="0 0 100 100">${at(30, 22, .2, roo("dyno"))}
-    <circle class="icon-hold" cx="42" cy="17" r="3.2"/><circle class="icon-hold" cx="58" cy="17" r="3.2"/></svg>`;
+  return `<svg viewBox="0 0 100 100">${at(22, 9, .28, roo("dyno"))}
+    <circle class="icon-hold" cx="39" cy="15" r="3.6"/><circle class="icon-hold" cx="61" cy="15" r="3.6"/></svg>`;
 }
 
 const petals = [0, 72, 144, 216, 288].map((a) => `<ellipse class="doodle petal" cx="20" cy="9" rx="6" ry="8.5" transform="rotate(${a} 20 20)"/>`).join("");
