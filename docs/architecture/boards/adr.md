@@ -15,12 +15,11 @@ and log sends, using no maker server, no Boardsesh file and no sharing between u
 
 ## Owner decisions this revision applies
 
-- No Boardsesh files and no maker servers (amendment 1, q2982, q2983).
+- No Boardsesh files and no maker servers (amendment 1).
 - No route sharing. Import the user's own routes and logbook from a file; light; log. Device and private
-  iCloud only (amendment 2, q2985).
+  iCloud only (amendment 2).
 - Say how a user gets their data out of each maker, the format, and how the phone reads it; import the
-  logbook in v1; say where each hold-to-LED map comes from and what lights without one (amendment 3,
-  q3007).
+  logbook in v1; say where each hold-to-LED map comes from and what lights without one (amendment 3).
 
 Revision 1's catalogue download, hardware-map download and their owner gate are removed.
 
