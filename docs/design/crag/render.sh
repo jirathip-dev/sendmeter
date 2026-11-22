@@ -17,7 +17,8 @@ done
 if [ -z "${KEEP:-}" ]; then
   shot today-day-390 390,844 "s=today&m=day"
   shot today-day-1440 1440,900 "s=today&m=day"
-  shot session-rain-390 390,844 "s=session&m=rain"
+  shot today-rain-390 390,844 "s=today&m=rain"
+  shot today-golden-1440 1440,900 "s=today&m=golden"
   shot board-golden-1440 1440,900 "s=board&m=golden"
   shot states-390 390,1700 "s=states"
   shot states-1440 1440,640 "s=states"

@@ -1,93 +1,143 @@
 ## Summary
 
-Decision: four whole-app themes, all built on today's loading-screen crag (granite, moon, pine, crash pad and chalk bucket), polished and drawn in five clock and weather states. A small roo lives in the scene and reacts to the weather. Each theme draws Today (full-screen scene, Send Conditions chip, Send-o-meter), one other screen and its app icon. You pick one, and round 2 redraws every screen in it.
-Screens: Night Topo (Today, Log), Chalk & Granite (Today, Session), Field Journal (Today, Force), Headlamp Session (Today, Board route), each at 390 and 1440, plus the scene states and the four app icons (20 images).
-Open questions: (1) Which theme? (2) Should a second theme ship as the dark or light alternative (for example, Field Journal by day and Night Topo by night)? (3) Does "Send it" stay on the start button? VoiceOver still reads "Start session".
+Decision: every screen is redrawn in a softer Headlamp Session (rounder cards and dials, a warmer amber). The crag scene and the cards follow the clock and the weather: a light day look, the dark night look, and dawn, golden hour, rain and fog looks. Settings can pin one look instead of Automatic. The roo is now one cute sticker in every place, and the app icon picker offers the original, six weather versions of it and eight sticker poses.
+Screens: Today, Send conditions, Session, Board, route, Flashed!, Force, Log, Logbook, Settings, App icon, loading, the three screenshot steps, board setup, wiring check, board import, old data, iCloud sync, empty, error, first run, the watch, the mascot sheet, at 390 and 1440 (57 images).
+Open questions: (1) Do the weather icons work as re-lit copies of the original art, or should they be redrawn by hand? (2) Does 100 sends feel right to unlock the original iridescent loading screen? (3) Ears: the new sticker roo has pointed, splayed ears so it doesn't read as a bunny. Keep them, or go back to the original's rounder ears?
 
-## What all four share
+## What this round decides
 
-- **The scene.** Today's loading crag, redrawn clean and illustrated (never photo-real): a faceted granite boulder with a crack and chalked pockets, a smaller boulder, a broad tree, ridges, ground slabs, grass tufts, the salmon-and-navy crash pad and the red chalk bucket. It has five states, driven by the clock and Open-Meteo: dawn, golden hour, night with moon and stars, rain, and fog. Weather comes from the phone's approximate location, or from the crag a session is logged at.
-- **The roo in the scene.** It uses the plush's shape: tall pointed ears with cream insides, bead eyes, a pink cheek, a lighter muzzle and belly, short arms, big flat feet and a thick tail. It chalks up at dawn, rests under the tree at golden hour, watches the moon at night, shelters under the overhang in rain (ears back, arms hugged), and sits it out in fog. Each theme draws it in its own hand (see below).
-- **Where the scene shows.** Today shows it full-screen. Session, Board, Force and Log show the same scene blurred and dimmed behind their cards, so the whole app shares the weather.
-- **Send Conditions** is a glass chip at the top of Today with the crag name, temperature, humidity and the friction score (0–100). Tapping it opens the 30-day detail sheet (round 2).
-- **The Send-o-meter.** One big needle gauge for Ready, from REST through TRAIN to SEND, with HRV and Sleep as two small dials beside it. No rings.
-- **Words.** Slang only at key moments: **Send it** (start), **Flashed!**, **PR!**. Every other label is short and plain.
-- **Fonts.** Barlow (body), Barlow Condensed (numbers and display) and Shantell Sans (Field Journal's handwritten notes only). All are SIL Open Font License 1.1, and the files and licences are in `fonts/`.
-- **Tab bar.** Today, Session (sitting roo), Board, Force (hanging roo) and Log. The two roo tabs are simple silhouettes at the same weight as the others (`icons/`).
-
-## The four themes
-
-| | Night Topo | Chalk & Granite | Field Journal | Headlamp Session |
-|---|---|---|---|---|
-| Scene shown | Night, moon | Golden hour | Rain | Night, lit by a headlamp beam |
-| Cards | Frosted granite glass, faint speckle | Smooth granite slabs, chalk dust, a slab shadow | Notebook pages: graph-paper grid and a red margin line | Dark glass with a warm amber edge glow |
-| Text | Moonlight white `#F3F5F7` | Chalk white `#F7F4EE` | Ink navy `#1D2B47` | Warm white `#F5EDDF` |
-| Accent | Headlamp amber `#F2B65A` | Chalk-bucket red `#B83A27` | Pine `#2D5A3D` | Amber glow `#FFB547` |
-| Type | Clean sans, condensed uppercase headers | Condensed chalk-white numbers | Plain sans, handwritten notes on PRs | Condensed, glowing numbers |
-| Send-o-meter | Thin arc, contour-line rings and fine ticks | Thick chalk-stroke arc with chalk ticks | Ink arc on graph paper, a pine SEND wedge, a note ("best in 3 weeks") | **The moon is the gauge:** it fills from crescent (REST) to full (SEND) |
-| Charts | Guidebook topos: progress is a dashed route line up a boulder, with sessions as ticks on it | Tally strokes for sends | Ink lines on graph paper with handwritten callouts | Glowing dots and holds lit in the beam |
-| Roo's hand | Topo ink: moonlight contour line | Chalk outline | Journal sketch: ink line over a light wash | Headlamp-lit: amber rim light |
+- **Headlamp, softened.** Cards are rounder (24 pt), buttons and fields are pills, and the dials have round caps. The amber is warmer, #FFA94D (it was #FFB547). Text is Barlow and the numbers are Barlow Condensed. Shantell Sans is gone.
+- **One scene drives the look.** The crag (granite, tree, pad, chalk bucket) has six states: day, dawn, golden hour, night, rain and fog. Open-Meteo picks the weather, from the phone's rough location or the crag of the session. Each state brings its own card look:
+  - Day, golden hour and fog get light cards with dark text.
+  - Night, dawn and rain get dark glass.
+  - The headlamp beam shows only when it is dark.
+- **Today** shows the scene full-screen. Every other screen shows it blurred and dimmed behind its cards. Settings › Scene has Automatic on, or you can pin one look.
+- **The Send-o-meter** is the moon gauge: it fills from crescent (REST) to full (SEND). In the light looks it turns into a warm amber disc. HRV and Sleep are the two small dials beside it.
+- **Words.** The button reads plain **Start session**, and VoiceOver reads the same. Slang shows only at the moments: **Flashed!**, **PR!**, a "whipper" note on a fall, and **Project** tags. Everything else stays short and plain.
+- **The roo.** One cute sticker built from today's icon: a soft dark body, a die-cut iridescent edge, cream belly and muzzle, pink cheeks and inner ears, a big tail and big feet. The same drawing is used in the scene, in the moments, on the empty and error states, on loading, on the watch and in the sticker icons. At night and in rain it wears a headlamp.
+- **Loading** keeps the kangaroo dyno: the roo launches off the boulder toward the moon, with a faint crimp pose before it on a dotted arc. The original iridescent loading screen is an unlockable at 100 logged sends. Settings shows it as locked, with a count.
+- **App icons.**
+  - Original: today's icon, unchanged and still the default.
+  - Weather: six copies of the original, re-lit for day, night, dawn, golden hour, rain and fog.
+  - Sticker: eight poses on solid backgrounds: dyno, crimp, chalk-up, flash, send, fall, rest and PR.
+- **Layouts follow #1046, #1056, #1047 and #1045.** Changes are listed below.
 
 ## Images
 
-`png/<theme>-<screen>-<width>.png`
+`png/<screen>-390.png` (phone) and `png/<screen>-1440.png` (web and iPad: the tab bar becomes the sidebar). All are in the night look unless the name says otherwise.
 
 | Image | Decision it shows |
 |---|---|
-| `topo-today-390`, `topo-today-1440` | Night Topo Today: the night crag full-screen, the roo by the tree watching the moon, the chip at the top, the Send-o-meter on frosted granite glass, **Send it**, and This week as a topo route line with ticks for session days. At 1440, a glass sidebar, the chip and gauge on the left, and start, week and last ticks on the right, with the scene open in the middle. |
-| `topo-log-390`, `topo-log-1440` | Night Topo's other screen, Log: "Top grade · 8 weeks" drawn as a topo. The route line climbs the boulder from V3 to V5, with a tick for each session, and the roo cheers at the top. Below are totals and sessions. At 1440, sends by grade are added. |
-| `chalk-today-390`, `chalk-today-1440` | Chalk & Granite Today: the golden-hour crag, the roo resting under the tree, slab cards, a chalk-stroke gauge, a red **Send it**, and This week as 12 in chalk tally strokes. |
-| `chalk-session-390`, `chalk-session-1440` | Chalk & Granite's other screen, a live Session: a **Flashed!** moment with the chalk-drawn roo, the current problem with **Log send** and **Fell**, and sends today as tallies by grade. At 1440, the problems list is added. |
-| `journal-today-390`, `journal-today-1440` | Field Journal Today: the rain scene, with the roo sheltering under the overhang. Notebook-page cards, an ink gauge with a handwritten note, a pine **Send it**, and This week as ink bars. |
-| `journal-force-390`, `journal-force-1440` | Field Journal's other screen, Force: a max-hang curve on graph paper with a handwritten "new PR! 52.4 kg" callout and the old-best line, a **PR!** moment with the sketched roo hanging from the bar, and peak, avg and RFD. At 1440, the 8-week peak trend and recent hangs are added. |
-| `headlamp-today-390`, `headlamp-today-1440` | Headlamp Session Today: the night crag dimmed, with a warm beam over the cards. The moon gauge reads 82 as a near-full moon, and the phases below mark REST, TRAIN and SEND. Session days glow in This week. |
-| `headlamp-route-390`, `headlamp-route-1440` | Headlamp Session's other screen, a Board route: the lit board in the four hold roles (green start, blue hand, pink finish, orange foot), with each hold glowing, plus **Light it** and **Log send**. At 1440, it adds the grade, stars and your tries, the role legend, and last ticks. |
-| `scenes-390`, `scenes-1440` | The shared scene in all five states, with the roo's reaction in each. A later scene pack (#1061) swaps the art and keeps these states. |
-| `icons-390`, `icons-1440` | One app icon per theme, in cooee's flat style: a front-facing geometric roo bust with a close crop, the moon, one solid background, four flat colours, and no outline or texture. Night Topo's is today's logo polished (night navy, moon, the roo) and is the default. Each icon is shown on a light and a dark wallpaper. |
+| `today` | The full-screen night scene. The roo watches the moon by the tree. Under it: the conditions chip, the moon Send-o-meter with the HRV and Sleep dials, **Start session**, and This week. At 1440 the cards sit in a column on the right so the scene stays open, with Last ticks added. |
+| `today-day-390`, `today-day-1440` | Day look: light cards with dark text, the amber kept, the gauge as an amber disc, and the roo chalking up by the bucket. |
+| `today-golden-1440`, `today-rain-390` | Golden hour (warm light cards). Rain (slate glass, the roo sheltering under the boulder with its headlamp on). |
+| `states-390`, `states-1440` | Today in all six looks side by side, each with what changes. |
+| `conditions` | The chip opens the detail sheet: friction 78 with a plain grade, how today ranks, temperature, humidity, dew point and wind, a 30-day bar chart with the average line, the best window today, and the source (Open-Meteo). |
+| `session` | A live session: a big timer, tries, sends, top grade and heart rate from the watch. **On now** has **Sent** and **Fell**, and a "whipper" note on the last fall. Below: this session's ticks, and **End session**. |
+| `board` | Board home: the wall card (connected), search, filter chips and the route list with stars and Sent, Flash or Project tags. **New route** and **From screenshot** are the two ways to add a route. At 1440 the wall's lights, angle, wiring check and import are in a side card. |
+| `route` | Route detail: the lit board in the four hold roles (green start, blue hand, pink finish, orange foot), plus **Light it** and **Log send**. At 1440 your ticks sit beside it. |
+| `send` | The **Flashed!** moment as a sheet over the route: the flash roo, the route, tries, sends today and top grade, with **Undo** and **Done**. |
+| `force` | Max hang, live: peak kg, the curve against your old best, peak, average and time. A new best shows the **PR!** roo. At 1440 the gauge status, the last 6 weeks and **Start hang** are in a side column. |
+| `log` | November: sessions, sends and top grade, a grade chart (sends over tries), days climbed and the session list. **Logbook ›** opens the list. |
+| `logbook` | Every tick by day, with All, Sends and Projects. |
+| `settings` | Scene: Automatic, or pin one look, plus the loading screen choice and the locked Iridescent one. Look: app icon and units. Data: Apple Health, iCloud sync, old data and boards. Account. |
+| `appicon` | Settings › App icon: Original (default), Weather (6) and Sticker (8). |
+| `loading` | Night crag, the roo's dyno toward the moon, the wordmark and a small progress bar. |
+| `pick`, `check`, `cantread` | #1056's three steps, unchanged in content. Pick a wall and a screenshot. Check the holds read (one marked "to check"), with Start, Hand, Finish and Erase, then Save. Can't read: one reason, **Choose another**, **Mark holds by hand**, and "Nothing saved". |
+| `boardsetup`, `wiring`, `boardimport` | #1047: pick your board, layout and angle. The 3-step wiring check ("Do the lit holds on your wall match?"). Importing a file the maker sent you: found, skipped, into which wall, **Import 449**. |
+| `dataimport`, `sync` | #1045: bringing over data from the old account, with progress per kind. iCloud sync (off by default; drawn on) with per-device status. |
+| `empty`, `error`, `firstrun` | Empty Log: the resting roo, "No sessions yet" and **Start session**. Error: the falling roo and "Gauge not found", with **Try again**. First run: the scene, the wordmark, one line, and Health, Location and old-account steps, then **Get started**. |
+| `watch-390`, `watch-1440` | Apple Watch: Start (chalking roo, plain **Start session**), the moon Send-o-meter, a session with big **Sent** and **Fell** targets, live force, and the **Flashed!** moment. |
+| `mascots-390`, `mascots-1440` | The sticker roo in 12 poses, with where each one appears: sit, chalk-up, moon-watch, shelter, dyno, crimp, hang, flash, send, fall, rest and PR. Also the five tab icons at 25 pt; Session and Force are roo silhouettes at the same weight as the others. |
 
 ## Changes from #1046, named
 
-- Today's background is the live crag scene instead of a plain canvas, and the cards are glass, slab, page or lit glass by theme.
-- Readiness is the Send-o-meter instead of rings, and Send Conditions moves to the chip at the top.
-- **Send it** replaces the visible "Start session". **Flashed!** and **PR!** are shown as moments.
-- At 1440, Today's cards float around the open scene instead of filling a grid.
+- The background is the live crag scene, not a plain canvas. The cards are glass and change with the look.
+- Readiness is the moon Send-o-meter, not rings. Send Conditions is a chip at the top of Today with its own sheet.
+- At 1440, Today's cards sit in one column on the right so the scene stays open.
+- Pushed flows on the phone (screenshot, setup, wiring, imports) hide the tab bar so their buttons stay in view.
 
-## Swag pack "crag" (first look; the final list comes with round 2)
+## Swag pack "crag"
 
-- **Tokens:** each theme's text, secondary, accent, on-accent and accent-text colours, glass tint and opacity, radius, and texture opacity (`themes.css`). The scene palettes for the five states (`scene.js`).
-- **Fonts:** Barlow, Barlow Condensed and Shantell Sans, with their OFL licences.
-- **Textures and shapes:** granite speckle, chalk dust, graph-paper grid with margin line, headlamp beam; the scene art per state; the roo poses (sit, chalk, shelter, look, cheer, hang, fall) in each theme's hand; the app icons.
-- **Possible new Blocks kinds** (to file in blocks once a theme is picked): a scene background layer with a dimmed and blurred mode; a glass card material with a texture slot; a needle gauge (and the moon-phase gauge for Headlamp); small dials; a tally mark; a topo route chart; and a chart annotation in the note font.
+- **Tokens** (`headlamp.css`):
+  - Colours per look: ink, mute, title, accent, on-accent, accent-ink, good, warn, bad, on-bad, glass, glass-line, line, fill, fill-on, glow, the gauge's three colours, track, and the scene filters.
+  - Shapes: the card radius is 24, buttons and fields are pills, tags are 12, the tab bar is 34.
+  - Type: Barlow 400, 600 and 700 for text, and Barlow Condensed 600 and 800 for numbers and headers.
+- **Fonts:** Barlow and Barlow Condensed (SIL Open Font License 1.1). The files and licences are in `fonts/`.
+- **Scene art:** the crag in six states (`scene.js`: sky, ridge, rock, ground, canopy and light per state, plus rain and fog layers). A later scene pack (#1061) swaps the art and keeps these states.
+- **Shapes:** the sticker roo (12 poses, with or without the headlamp), its die-cut iridescent edge, its props (chalk bag, hold, bar, flash bolt, PR star, flag, zz, motion lines), the headlamp beam, and the moon phase marks.
+- **App icons:** the original, 6 weather versions and 8 sticker poses.
+- **New Blocks kinds** (to file in blocks): a scene background layer with full and dimmed-blur modes driven by a look; a glass card material that follows the look; the moon gauge; a small round dial; a hold board (a grid with lit hold roles and an "unsure" ring); a bar chart with an average line; and a moment sheet (a mascot, a big word and stats).
 
 ## Contrast (WCAG AA)
 
-Card colours are checked at their worst case. That is the glass tint over the lightest thing in its scene (the moon, or the golden sky) and over the darkest night, with the card texture added. Screen titles are checked on the dimmed scene. Normal text needs 4.5:1, and large text 3:1. All 20 pairs pass. Run `node contrast.mjs` to check again; it exits non-zero on a failure.
+Every text colour is checked on its card in all six looks. The card is the glass over the lightest part of that scene (the moon, sun or sky) and over its darkest part. Titles are checked on the dimmed scene. Body text needs 4.5:1 and large text 3:1. All 60 pairs pass. `node contrast.mjs` checks them again and exits non-zero on a failure.
 
-| Theme | Text | On | Plain | Worst | Needs | Result |
+| Mode | Text | On | Light scene | Dark scene | Needs | Result |
 |---|---|---|---|---|---|---|
-| topo | `ink` #F3F5F7 | `card` #3c4147 | 9.42 | 7.56 | 4.5 | pass |
-| topo | `mute` #CDD5DD | `card` #3c4147 | 6.94 | 5.57 | 4.5 | pass |
-| topo | `accent-ink` #F9D392 | `card` #3c4147 | 7.24 | 5.81 | 4.5 | pass |
-| topo | `on-accent` #1B1407 | `accent` #F2B65A | 10.10 | 10.10 | 4.5 | pass |
-| topo | `title` #FFFFFF | `dim` #949289 | 3.12 | 3.12 | 3 | pass |
-| chalk | `ink` #F7F4EE | `card` #4e4c4a | 7.79 | 7.79 | 4.5 | pass |
-| chalk | `mute` #D3CEC5 | `card` #4e4c4a | 5.46 | 5.46 | 4.5 | pass |
-| chalk | `accent-ink` #F8B3A3 | `card` #4e4c4a | 4.87 | 4.87 | 4.5 | pass |
-| chalk | `on-accent` #FFF8F0 | `accent` #B83A27 | 5.43 | 5.43 | 4.5 | pass |
-| chalk | `title` #FFFFFF | `dim` #97825f | 3.70 | 3.70 | 3 | pass |
-| journal | `ink` #1D2B47 | `card` #ebe6d9 | 11.32 | 9.97 | 4.5 | pass |
-| journal | `mute` #46536B | `card` #ebe6d9 | 6.22 | 5.47 | 4.5 | pass |
-| journal | `accent-ink` #2D5A3D | `card` #ebe6d9 | 6.38 | 5.62 | 4.5 | pass |
-| journal | `on-accent` #F7F1E3 | `accent` #2D5A3D | 7.06 | 6.89 | 4.5 | pass |
-| journal | `title` #FFFFFF | `dim` #7b838b | 3.85 | 3.85 | 3 | pass |
-| headlamp | `ink` #F5EDDF | `card` #393d44 | 9.38 | 9.38 | 4.5 | pass |
-| headlamp | `mute` #D2C8B8 | `card` #393d44 | 6.59 | 6.59 | 4.5 | pass |
-| headlamp | `accent-ink` #FFC46B | `card` #393d44 | 6.94 | 6.94 | 4.5 | pass |
-| headlamp | `on-accent` #1C1306 | `accent` #FFB547 | 10.44 | 10.44 | 4.5 | pass |
-| headlamp | `title` #FFFFFF | `dim` #6b6a63 | 5.43 | 5.43 | 3 | pass |
+| night | `ink` #F7EEE2 | `card` | 9.41 | 16.38 | 4.5 | pass |
+| night | `mute` #D6CBBB | `card` | 6.76 | 11.76 | 4.5 | pass |
+| night | `accent-ink` #FFBE78 | `card` | 6.64 | 11.55 | 4.5 | pass |
+| night | `good` #93D9A8 | `card` | 6.56 | 11.41 | 4.5 | pass |
+| night | `warn` #FFC98A | `card` | 7.20 | 12.52 | 4.5 | pass |
+| night | `bad` #FF9077 | `card` | 4.90 | 8.52 | 4.5 | pass |
+| night | `on-accent` #2A1606 | `accent` | 9.08 | 9.08 | 4.5 | pass |
+| night | `on-bad` #2A0D06 | `bad` | 8.21 | 8.21 | 4.5 | pass |
+| night | `moon-num` #2A1F12 | `moon-lit` | 13.18 | 13.18 | 3 | pass |
+| night | `title` #FFFFFF | `dim` | 5.43 | 20.39 | 3 | pass |
+| dawn | `ink` #FBEFEA | `card` | 8.61 | 13.86 | 4.5 | pass |
+| dawn | `mute` #E0CCCB | `card` | 6.32 | 10.17 | 4.5 | pass |
+| dawn | `accent-ink` #FFBE78 | `card` | 5.96 | 9.59 | 4.5 | pass |
+| dawn | `good` #93D9A8 | `card` | 5.88 | 9.47 | 4.5 | pass |
+| dawn | `warn` #FFC98A | `card` | 6.46 | 10.39 | 4.5 | pass |
+| dawn | `bad` #FFA28D | `card` | 4.99 | 8.04 | 4.5 | pass |
+| dawn | `on-accent` #2A1606 | `accent` | 9.08 | 9.08 | 4.5 | pass |
+| dawn | `on-bad` #2A0D06 | `bad` | 9.33 | 9.33 | 4.5 | pass |
+| dawn | `moon-num` #2A1F12 | `moon-lit` | 13.18 | 13.18 | 3 | pass |
+| dawn | `title` #FFFFFF | `dim` | 6.32 | 18.01 | 3 | pass |
+| rain | `ink` #EFF2F5 | `card` | 11.22 | 14.78 | 4.5 | pass |
+| rain | `mute` #CBD3DB | `card` | 8.33 | 10.98 | 4.5 | pass |
+| rain | `accent-ink` #FFBE78 | `card` | 7.74 | 10.20 | 4.5 | pass |
+| rain | `good` #93D9A8 | `card` | 7.64 | 10.07 | 4.5 | pass |
+| rain | `warn` #FFC98A | `card` | 8.39 | 11.05 | 4.5 | pass |
+| rain | `bad` #FF9077 | `card` | 5.71 | 7.52 | 4.5 | pass |
+| rain | `on-accent` #2A1606 | `accent` | 9.08 | 9.08 | 4.5 | pass |
+| rain | `on-bad` #2A0D06 | `bad` | 8.21 | 8.21 | 4.5 | pass |
+| rain | `moon-num` #2A1F12 | `moon-lit` | 13.18 | 13.18 | 3 | pass |
+| rain | `title` #FFFFFF | `dim` | 8.96 | 18.15 | 3 | pass |
+| day | `ink` #2A2118 | `card` | 14.99 | 12.46 | 4.5 | pass |
+| day | `mute` #5D4F3F | `card` | 7.50 | 6.24 | 4.5 | pass |
+| day | `accent-ink` #8A4706 | `card` | 6.67 | 5.55 | 4.5 | pass |
+| day | `good` #22693F | `card` | 6.30 | 5.24 | 4.5 | pass |
+| day | `warn` #845300 | `card` | 6.19 | 5.15 | 4.5 | pass |
+| day | `bad` #A3341E | `card` | 6.49 | 5.40 | 4.5 | pass |
+| day | `on-accent` #2A1606 | `accent` | 9.08 | 9.08 | 4.5 | pass |
+| day | `on-bad` #FFFFFF | `bad` | 6.85 | 6.85 | 4.5 | pass |
+| day | `moon-num` #2A1606 | `moon-lit` | 11.33 | 11.33 | 3 | pass |
+| day | `title` #2A2118 | `dim` | 13.69 | 4.88 | 3 | pass |
+| golden | `ink` #2A2118 | `card` | 14.04 | 11.66 | 4.5 | pass |
+| golden | `mute` #5D4F3F | `card` | 7.03 | 5.83 | 4.5 | pass |
+| golden | `accent-ink` #8A4706 | `card` | 6.25 | 5.19 | 4.5 | pass |
+| golden | `good` #22693F | `card` | 5.91 | 4.90 | 4.5 | pass |
+| golden | `warn` #845300 | `card` | 5.80 | 4.81 | 4.5 | pass |
+| golden | `bad` #A3341E | `card` | 6.08 | 5.05 | 4.5 | pass |
+| golden | `on-accent` #2A1606 | `accent` | 9.08 | 9.08 | 4.5 | pass |
+| golden | `on-bad` #FFFFFF | `bad` | 6.85 | 6.85 | 4.5 | pass |
+| golden | `moon-num` #2A1606 | `moon-lit` | 11.33 | 11.33 | 3 | pass |
+| golden | `title` #2A2118 | `dim` | 12.28 | 4.25 | 3 | pass |
+| fog | `ink` #1F2328 | `card` | 14.32 | 11.85 | 4.5 | pass |
+| fog | `mute` #4D545C | `card` | 6.95 | 5.75 | 4.5 | pass |
+| fog | `accent-ink` #8A4706 | `card` | 6.38 | 5.28 | 4.5 | pass |
+| fog | `good` #22693F | `card` | 6.02 | 4.98 | 4.5 | pass |
+| fog | `warn` #845300 | `card` | 5.91 | 4.89 | 4.5 | pass |
+| fog | `bad` #A3341E | `card` | 6.21 | 5.13 | 4.5 | pass |
+| fog | `on-accent` #2A1606 | `accent` | 9.08 | 9.08 | 4.5 | pass |
+| fog | `on-bad` #FFFFFF | `bad` | 6.85 | 6.85 | 4.5 | pass |
+| fog | `moon-num` #2A1606 | `moon-lit` | 11.33 | 11.33 | 3 | pass |
+| fog | `title` #1F2328 | `dim` | 13.06 | 4.61 | 3 | pass |
 
-## Files
+## Render
 
-`index.html?t=<theme>&s=<screen>` draws any screen (`s=scenes` and `s=icons` draw the two sheets). `scene.js` is the scene and the roo, `app.js` the screens, `themes.css` the four themes. `render.sh` writes every PNG with headless Chromium. `ref/kangaroo-painting.jpeg` is the owner's painting, which sets the roo's shape and colouring.
+`./render.sh` writes every image in `png/` with the headless Chromium already in the host's Playwright cache (set `CHROME` to override). `SCREENS="today route" KEEP=1 ./render.sh` redraws only those screens. Open `index.html?s=<screen>&m=<look>` to view one; the looks are day, dawn, golden, night, rain and fog.
 
-Earlier round-1 drafts (three street-style directions, then the film-crag variations) are in this branch's history and are superseded by the amendments above.
+Round 1, with the four themes, is at commit `4b656d29`.

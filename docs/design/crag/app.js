@@ -155,7 +155,7 @@ const SCREENS = {
     const sheet = `<div class="sheet glass">
       <div class="row"><div><div class="h">Send conditions</div><div style="font:700 22px var(--f-body)">Pine Gully</div></div><span class="sp"></span><span class="num" style="font-size:54px">78</span></div>
       <div class="row"><span class="tag good">Good friction</span><span class="sp"></span><span class="mute small">Better than 24 of the last 30 days</span></div>
-      ${tiles([["14°", "Temp"], ["52%", "Humidity"], ["4°", "Dew point"], ["9 km/h", "Wind"]], 4)}
+      ${tiles([["14°", "Temp"], ["52%", "Humidity"], ["4°", "Dew point"], ["9 km/h", "Wind"]], WIDE ? 4 : 2)}
       <div class="h">Last 30 days</div>${chart}
       <div class="row mute small"><span>Best window today 17:00–20:00</span><span class="sp"></span><span>Open-Meteo</span></div></div>`;
     return { tab: "today", dim: true, html: SCREENS.today().html.replace('class="content"', 'class="content" style="opacity:.35"').replace('class="main"', 'class="main" style="opacity:.35;left:auto;width:440px"') + `<div class="scrim"></div>` + sheet };
@@ -163,7 +163,7 @@ const SCREENS = {
   session() {
     const live = card(`<div class="row"><div><div class="h">Session · Pine Gully</div><div class="num" style="font-size:52px;margin-top:4px">0:42:10</div></div><span class="sp"></span>${mascot("chalk", WIDE ? 96 : 74, { hand: "headlamp" })}</div>
       ${tiles([["14", "Tries"], ["5", "Sends"], ["V5", "Top"], ["128", "Heart"]], 4)}`);
-    const now = card(`${hd("On now")}<div class="row"><span class="grade" style="font-size:28px">V6</span><span class="n" style="font:700 18px var(--f-body)">Night Shift<small class="mute" style="display:block;font:400 13px var(--f-body)">Try 4 · project</small></span></div>
+    const now = card(`${hd("On now")}<div class="row"><span class="grade" style="font-size:28px">V6</span><span class="n" style="font:700 18px var(--f-body)">Night Shift<small class="mute" style="display:block;font:400 13px var(--f-body)">Try 4 · last one a whipper</small></span></div>
       <div class="btns" style="margin-top:14px"><button class="btn">${ICON.check}Sent</button><button class="btn ghost">Fell</button></div>`);
     const tries = card(`${hd("This session", "14 tries")}${list([["V5", "Moon Arete", "1 try", "Flash", "on"], ["V4", "Slab Crack", "2 tries", "Send", "good"], ["V6", "Night Shift", "3 tries", "Project", ""], ["V3", "Warm-up Wall", "1 try", "Flash", "on"]].map(tickRow))}`);
     const end = `<button class="btn ghost">End session</button>`;
@@ -179,7 +179,7 @@ const SCREENS = {
   },
   route() {
     const info = card(`<div class="row"><span class="grade" style="font-size:30px">V5</span><div class="n" style="font:700 20px var(--f-body)">Moon Arete<small class="mute" style="display:block;font:400 13px var(--f-body)">Home wall · 40° · ★★★</small></div><span class="sp"></span><span class="tag on">Flash</span></div>`);
-    const bd = card(board(WIDE ? 380 : 330) + `<div style="margin-top:12px">${legend()}</div>`);
+    const bd = card(`<div style="width:${WIDE ? 100 : 74}%;margin:0 auto">${board(WIDE ? 380 : 240)}</div><div style="margin-top:12px">${legend()}</div>`);
     const btns = `<div class="btns"><button class="btn ghost">${ICON.bulb}Light it</button><button class="btn">${ICON.check}Log send</button></div>`;
     const tries = card(`${hd("Your ticks")}${list([["Flash", "Fri 20 Nov · 1 try"], ["Send", "Tue 10 Nov · 3 tries"]].map(([a, b]) => `<span class="n">${a}<small>${b}</small></span>`))}`);
     return { tab: "board", html: layout(WIDE ? "Moon Arete" : "", [[WIDE ? null : topBar("Route", { back: "Board", act: "Edit" }), WIDE ? null : info, bd], WIDE ? [info, btns, tries] : [btns]], { tpl: "minmax(0,440px) 1fr" }) };
@@ -207,7 +207,7 @@ const SCREENS = {
     const st = card(`${hd("November", "‹ ›")}${tiles([["14", "Sessions"], ["63", "Sends"], ["V6", "Top"]], 3)}`);
     const grades = [["V6", 2, 6], ["V5", 9, 14], ["V4", 18, 21], ["V3", 22, 24], ["V2", 12, 12]];
     const pyr = card(`${hd("Grades", "sends / tries")}${grades.map(([g, s, t]) => `<div class="row" style="margin:7px 0"><span class="grade" style="font-size:16px;min-width:30px">${g}</span><div style="flex:1;height:14px;border-radius:7px;background:var(--fill);position:relative"><div style="position:absolute;inset:0 auto 0 0;width:${(t / 24) * 100}%;border-radius:7px;background:var(--track)"></div><div style="position:absolute;inset:0 auto 0 0;width:${(s / 24) * 100}%;border-radius:7px;background:var(--accent);box-shadow:0 0 10px var(--glow)"></div></div><span class="mute small" style="min-width:44px;text-align:right">${s}/${t}</span></div>`).join("")}`);
-    const cal = card(`${hd("Days")}<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">${[...Array(30)].map((_, i) => { const v = [0, 2, 0, 3, 0, 1, 0][i % 7] * ((i * 7) % 5 ? 1 : 0); return `<div style="aspect-ratio:1;border-radius:50%;background:${v ? "var(--accent)" : "var(--fill)"};opacity:${v ? 0.35 + v * 0.22 : 1}"></div>`; }).join("")}</div>`);
+    const cal = card(`${hd("Days")}<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">${[...Array(30)].map((_, i) => { const v = [0, 2, 0, 3, 0, 1, 0][i % 7] * ((i * 7) % 5 ? 1 : 0); return `<div style="width:26px;height:26px;margin:0 auto;border-radius:50%;background:${v ? "var(--accent)" : "var(--fill)"};opacity:${v ? 0.35 + v * 0.22 : 1}"></div>`; }).join("")}</div>`);
     const sess = card(`${hd("Sessions")}${list([["Sun 22", "Pine Gully · 0:42", "5 sends"], ["Fri 20", "Home wall · 1:10", "8 sends"], ["Wed 18", "Pine Gully · 2:05", "11 sends"]].map(([a, b, c]) => `<span class="n">${a}<small>${b}</small></span><span class="sp"></span><span class="val">${c}</span><span class="chev">›</span>`))}`);
     return { tab: "log", html: layout("Log", [[st, pyr], [cal, sess]], { right: `<span class="act acc">Logbook ›</span>` }) };
   },
@@ -223,7 +223,7 @@ const SCREENS = {
     const look = card(`${hd("Look")}${list([`<img src="icons/current.png" width="40" height="40" style="border-radius:10px"><span class="n">App icon<small>Original</small></span><span class="sp"></span><span class="chev">›</span>`, row("Units", "kg · °C")])}`);
     const data = card(`${hd("Data")}${list([row("Apple Health", "On"), row("iCloud sync", "Off"), row("Bring over old data", ""), row("Boards", "1")])}`);
     const acct = card(`${hd("Account")}${list([row("Signed in", "Apple"), row("Help", "")])}`);
-    return { tab: "settings", html: layout("Settings", [[scene, look], [data, acct]]) };
+    return { tab: WIDE ? "settings" : "", html: layout("Settings", [[scene, look], [data, acct]]) };
   },
   appicon() {
     const sets = iconSets();
@@ -235,44 +235,44 @@ const SCREENS = {
     const walls = `<div class="chips"><span class="on">Home wall · 2016</span><span>Gym · Mini 2020</span></div>`;
     const guide = card(`${hd("A good screenshot")}<div class="row" style="gap:14px"><div style="width:${WIDE ? 120 : 90}px">${board(WIDE ? 120 : 90, { cols: 11, rows: 18, holds: { "2,16": "#43D17A", "4,12": "#4DA8FF", "6,8": "#4DA8FF", "5,4": "#4DA8FF", "7,0": "#FF5FB4" } })}</div><div class="mute small" style="display:flex;flex-direction:column;gap:6px"><span>${ICON.check.replace("<svg", '<svg width="14" height="14"')} Whole board in view</span><span>${ICON.check.replace("<svg", '<svg width="14" height="14"')} A–K and 1–18 showing</span><span>${ICON.check.replace("<svg", '<svg width="14" height="14"')} Holds circled</span></div></div>`);
     const btns = `<button class="btn">${ICON.photo}Choose screenshot</button><button class="btn ghost">Paste</button><div class="mute small" style="text-align:center">Read on this phone</div>`;
-    return { tab: "board", html: layout(WIDE ? "Route from screenshot" : "", [[WIDE ? null : topBar("From screenshot", { back: "Board" }), card(`${hd("Wall")}${walls}`), guide], [btns]].map((c, i) => (WIDE ? c : c)), { tpl: "1.2fr 1fr" }) };
+    return { nav: WIDE, tab: "board", html: layout(WIDE ? "Route from screenshot" : "", [[WIDE ? null : topBar("From screenshot", { back: "Board" }), card(`${hd("Wall")}${walls}`), guide], [btns]].map((c, i) => (WIDE ? c : c)), { tpl: "1.2fr 1fr" }) };
   },
   check() {
     const holds = { "2,16": "#43D17A", "3,15": "#43D17A", "4,12": "#4DA8FF", "6,10": "#4DA8FF", "5,7": "#4DA8FF", "7,4": "#4DA8FF", "6,0": "#FF5FB4" };
-    const bd = card(`<div class="row" style="margin-bottom:10px"><span class="h">Holds read</span><span class="sp"></span><span class="tag warn">1 to check</span></div>${board(WIDE ? 360 : 330, { cols: 11, rows: 18, holds, unsure: "7,4", labels: true })}`);
+    const bd = card(`<div class="row" style="margin-bottom:10px"><span class="h">Holds read</span><span class="sp"></span><span class="tag warn">1 to check</span></div><div style="width:${WIDE ? 100 : 72}%;margin:0 auto">${board(WIDE ? 360 : 240, { cols: 11, rows: 18, holds, unsure: "7,4", labels: true })}</div>`);
     const roles = `<div class="seg"><span class="on">Start</span><span>Hand</span><span>Finish</span><span>Erase</span></div>`;
     const meta = card(`${list([`<span class="n">Name</span><span class="sp"></span><span class="val">Route 22 Nov</span>`, `<span class="n">Grade</span><span class="sp"></span><span class="val">Optional</span>`])}`);
-    const shot = WIDE ? card(`${hd("Your screenshot")}<div style="border-radius:16px;overflow:hidden;opacity:.9">${board(300, { cols: 11, rows: 18, holds })}</div>`) : null;
-    return { tab: "board", html: layout(WIDE ? "Check holds" : "", [[WIDE ? null : topBar("Check holds", { back: "Back", act: "Save" }), bd], [roles, meta, shot, `<button class="btn">Save</button>`]], { tpl: "minmax(0,420px) 1fr" }) };
+    const shot = WIDE ? card(`${hd("Your screenshot")}<div style="width:46%;opacity:.9">${board(300, { cols: 11, rows: 18, holds })}</div>`) : null;
+    return { nav: WIDE, tab: "board", html: layout(WIDE ? "Check holds" : "", [[WIDE ? null : topBar("Check holds", { back: "Back", act: "Save" }), bd], [roles, meta, shot, `<button class="btn">Save</button>`]], { tpl: "minmax(0,420px) 1fr" }) };
   },
   cantread() {
     const box = card(`<div class="empty">${mascot("fall", WIDE ? 120 : 100)}<div class="big">Can't read this one</div><div class="mute">Not a MoonBoard. No A–K, 1–18 grid found.</div><div class="mute small">Nothing saved</div></div>`);
-    return { tab: "board", html: layout(WIDE ? "" : "", [[WIDE ? null : topBar("From screenshot", { back: "Board" }), box, `<button class="btn">${ICON.photo}Choose another</button>`, `<button class="btn plain">Mark holds by hand</button>`]], { contentStyle: "justify-content:center" }), flow: true };
+    return { tab: "board", nav: WIDE, html: layout(WIDE ? "From screenshot" : "", [[WIDE ? null : topBar("From screenshot", { back: "Board" }), box, `<button class="btn">${ICON.photo}Choose another</button>`, `<button class="btn plain">Mark holds by hand</button>`]], { tpl: "minmax(0,520px)" }) };
   },
   boardsetup() {
     const kinds = card(`${hd("Board")}${list([["MoonBoard", "2016 · 2019 · 2024 · Mini"], ["Tension", "TB2 · Spray · Mirror"], ["Kilter", "Original · Homewall"], ["My own wall", "Draw the grid"]].map(([a, b], i) => `<span class="n">${a}<small>${b}</small></span><span class="sp"></span>${i === 0 ? `<span class="acc">${ICON.check.replace("<svg", '<svg width="20" height="20"')}</span>` : ""}`))}`);
     const opts = card(`${hd("Layout")}<div class="chips" style="margin-bottom:12px"><span>2016</span><span class="on">2019</span><span>2024</span><span>Mini 2020</span></div>${hd("Angle")}<div class="chips"><span>25°</span><span class="on">40°</span></div>`);
     const name = `<div class="field" style="color:var(--ink)">Home wall</div>`;
-    return { tab: "board", html: layout(WIDE ? "Set up your board" : "", [[WIDE ? null : topBar("Set up board", { back: "Board" }), kinds], [name, opts, `<button class="btn">Next: wiring check</button>`]], { tpl: "1fr 1fr" }) };
+    return { nav: WIDE, tab: "board", html: layout(WIDE ? "Set up your board" : "", [[WIDE ? null : topBar("Set up board", { back: "Board" }), kinds], [name, opts, `<button class="btn">Next: wiring check</button>`]], { tpl: "1fr 1fr" }) };
   },
   wiring() {
     const holds = {};
     for (let y = 0; y < 18; y++) for (let x = 0; x < 11; x++) if ((x + y) % 2 === 0 && !(x === 7 && y === 5)) holds[`${x},${y}`] = y < 6 ? "#FF5FB4" : y < 12 ? "#4DA8FF" : "#43D17A";
-    const bd = card(`<div class="row" style="margin-bottom:10px"><span class="h">Step 2 of 3 · Rows lit</span><span class="sp"></span><span class="tag good">Connected</span></div>${board(WIDE ? 340 : 300, { cols: 11, rows: 18, holds, labels: true })}`);
+    const bd = card(`<div class="row" style="margin-bottom:10px"><span class="h">Step 2 of 3 · Rows lit</span><span class="sp"></span><span class="tag good">Connected</span></div><div style="width:${WIDE ? 100 : 64}%;margin:0 auto">${board(WIDE ? 340 : 220, { cols: 11, rows: 18, holds, labels: true })}</div>`);
     const ask = card(`<div style="font:700 19px var(--f-body);margin-bottom:6px">Do the lit holds on your wall match?</div><div class="mute small" style="margin-bottom:12px">Top pink, middle blue, bottom green.</div><div class="btns"><button class="btn">${ICON.check}They match</button><button class="btn ghost">Some don't</button></div>`);
-    return { tab: "board", html: layout(WIDE ? "Wiring check" : "", [[WIDE ? null : topBar("Wiring check", { back: "Back" }), bd], [ask, card(list([["1", "Light one corner", "Passed"], ["2", "Rows lit", "Now"], ["3", "Every hold", ""]].map(([n, a, b]) => `<span class="grade" style="font-size:18px;min-width:22px">${n}</span><span class="n">${a}</span><span class="sp"></span>${b ? `<span class="tag ${b === "Passed" ? "good" : "on"}">${b}</span>` : ""}`)))]], { tpl: "minmax(0,400px) 1fr" }) };
+    return { nav: WIDE, tab: "board", html: layout(WIDE ? "Wiring check" : "", [[WIDE ? null : topBar("Wiring check", { back: "Back" }), bd], [ask, card(list([["1", "Light one corner", "Passed"], ["2", "Rows lit", "Now"], ["3", "Every hold", ""]].map(([n, a, b]) => `<span class="grade" style="font-size:18px;min-width:22px">${n}</span><span class="n">${a}</span><span class="sp"></span>${b ? `<span class="tag ${b === "Passed" ? "good" : "on"}">${b}</span>` : ""}`)))]], { tpl: "minmax(0,400px) 1fr" }) };
   },
   boardimport() {
     const f = card(`<div class="row"><span class="acc">${ICON.file.replace("<svg", '<svg width="26" height="26"')}</span><span class="n">export.json<small>From your board maker · 2.1 MB</small></span></div>`);
     const prev = card(`${hd("Found")}${tiles([["412", "Sends"], ["37", "Your routes"], ["9", "Skipped"]], 3)}<div class="mute small" style="margin-top:10px">Skipped: holds not on your layout.</div>`);
     const into = card(`${hd("Into")}${list([`<span class="n">Home wall<small>MoonBoard 2019 · 40°</small></span><span class="sp"></span><span class="acc">${ICON.check.replace("<svg", '<svg width="20" height="20"')}</span>`])}`);
-    return { tab: "board", html: layout(WIDE ? "Import routes" : "", [[WIDE ? null : topBar("Import", { back: "Board" }), f, prev], [into, `<button class="btn">Import 449</button>`, `<div class="mute small" style="text-align:center">Stays on this phone and your iCloud</div>`]], { tpl: "1fr 1fr" }) };
+    return { nav: WIDE, tab: "board", html: layout(WIDE ? "Import routes" : "", [[WIDE ? null : topBar("Import", { back: "Board" }), f, prev], [into, `<button class="btn">Import 449</button>`, `<div class="mute small" style="text-align:center">Stays on this phone and your iCloud</div>`]], { tpl: "1fr 1fr" }) };
   },
   dataimport() {
     const bar = (p) => `<div style="height:12px;border-radius:6px;background:var(--fill);overflow:hidden"><div style="width:${p}%;height:100%;border-radius:6px;background:var(--accent);box-shadow:0 0 12px var(--glow)"></div></div>`;
     const prog = card(`<div class="empty" style="padding:10px 6px">${mascot("send", WIDE ? 120 : 96)}<div class="big">Bringing over your data</div><div class="mute small">From your old Sendmeter account</div></div>${bar(64)}<div class="row small" style="margin-top:8px"><span class="mute">Sessions</span><span class="sp"></span><span>412 of 640</span></div>`);
     const parts = card(list([["Sessions", "412 / 640", "on"], ["Ticks", "1,284", "good"], ["Force tests", "96", "good"], ["Health days", "Waiting", ""]].map(([a, b, c]) => `<span class="n">${a}</span><span class="sp"></span><span class="tag ${c}">${b}</span>`)));
-    return { tab: "settings", html: layout(WIDE ? "Bring over old data" : "", [[WIDE ? null : topBar("Old data", { back: "Settings" }), prog], [parts, `<div class="mute small" style="text-align:center">Keep the app open. It picks up where it stopped.</div>`]], { tpl: "1fr 1fr" }) };
+    return { nav: WIDE, tab: "settings", html: layout(WIDE ? "Bring over old data" : "", [[WIDE ? null : topBar("Old data", { back: "Settings" }), prog], [parts, `<div class="mute small" style="text-align:center">Keep the app open. It picks up where it stopped.</div>`]], { tpl: "1fr 1fr" }) };
   },
   sync() {
     const t = card(list([`<span class="acc">${ICON.cloud.replace("<svg", '<svg width="24" height="24"')}</span><span class="n">Sync with iCloud<small>Your private iCloud only</small></span><span class="sp"></span><span class="toggle on"></span>`]));
@@ -284,7 +284,7 @@ const SCREENS = {
     return { tab: "log", html: layout("Log", [[box, startBtn()]], { tpl: "minmax(0,520px)" }) };
   },
   error() {
-    const box = card(`<div class="empty">${mascot("fall", WIDE ? 140 : 110)}<div class="big">Whipper</div><div class="mute">Couldn't reach the force gauge.</div><div class="mute small">Check it's on and nearby.</div></div>`);
+    const box = card(`<div class="empty">${mascot("fall", WIDE ? 140 : 110)}<div class="big">Gauge not found</div><div class="mute">Couldn't reach the force gauge.</div><div class="mute small">Check it's on and nearby.</div></div>`);
     return { tab: "force", html: layout("Force", [[box, `<button class="btn">Try again</button>`]], { tpl: "minmax(0,520px)" }) };
   },
   firstrun() {
@@ -293,7 +293,7 @@ const SCREENS = {
     return { nav: false, dim: false, flow: true, html: WIDE ? `<div class="main">${hero}${steps}<button class="btn">Get started</button></div>` : `<div class="content" style="bottom:24px">${hero}<div style="flex:1"></div>${steps}<button class="btn">Get started</button></div>` };
   },
   loading() {
-    return { nav: false, dim: false, loading: true, html: `<div style="position:absolute;left:0;right:0;top:${WIDE ? 70 : 96}px;text-align:center;z-index:3"><div style="font:800 ${WIDE ? 56 : 40}px/1 var(--f-display);letter-spacing:.1em;text-transform:uppercase;color:#FFF;text-shadow:0 0 24px rgba(255,169,77,.5)">Sendmeter</div></div>` };
+    return { nav: false, dim: false, loading: true, html: `<div style="position:absolute;left:0;right:0;bottom:${WIDE ? 90 : 120}px;text-align:center;z-index:3"><div style="font:800 ${WIDE ? 56 : 40}px/1 var(--f-display);letter-spacing:.1em;text-transform:uppercase;color:#FFF;text-shadow:0 0 24px rgba(255,169,77,.5)">Sendmeter</div><div style="width:120px;height:6px;border-radius:3px;margin:18px auto 0;background:rgba(255,255,255,.15);overflow:hidden"><div style="width:60%;height:100%;background:var(--accent);box-shadow:0 0 10px var(--glow)"></div></div></div>` };
   },
 };
 
@@ -354,14 +354,12 @@ function render() {
 }
 
 function loadingDyno() {
-  const G = Math.round(H * (WIDE ? 0.56 : 0.47));
-  let svg = scene("night", W, H, { pose: "sit", rooScale: 0.001 });
-  const rs = WIDE ? 0.55 : 0.4;
-  const x = W * (WIDE ? 0.5 : 0.52), y = G - (WIDE ? 380 : 300);
-  const ghost = [[-150, 120, 0.18], [-80, 50, 0.3]].map(([dx, dy, o]) => `<g opacity="${o}" transform="translate(${x + dx * rs * 2 - 100 * rs} ${y + dy * rs * 2}) scale(${rs})">${roo("dyno", "headlamp", false)}</g>`).join("");
-  const arcPath = `<path d="M${x - 330 * rs} ${y + 330 * rs} Q ${x - 80 * rs} ${y - 120 * rs} ${x + 60 * rs} ${y + 40 * rs}" fill="none" stroke="#FFC98A" stroke-width="3" stroke-dasharray="2 10" stroke-linecap="round" opacity=".7"/>`;
-  const hero = `<g transform="translate(${x - 100 * rs} ${y}) scale(${rs})">${roo("dyno", "headlamp", false)}</g>`;
-  return svg.replace("</svg>", `${arcPath}${ghost}${hero}</svg>`);
+  const svg = scene("night", W, H, { pose: "sit", rooScale: 0.001 });
+  const rs = WIDE ? 0.6 : 0.44;
+  const [hx, hy, gx, gy] = WIDE ? [800, 40, 690, 250] : [236, 104, 170, 250];
+  const at = (x, y, pose, o) => `<g opacity="${o}" transform="translate(${x - 100 * rs} ${y}) scale(${rs})">${roo(pose, "headlamp", false)}</g>`;
+  const path = `<path d="M${gx} ${gy + 40 * rs} Q ${gx + 10} ${hy + 20} ${hx} ${hy + 100 * rs}" fill="none" stroke="#FFC98A" stroke-width="3" stroke-dasharray="2 10" stroke-linecap="round" opacity=".75"/>`;
+  return svg.replace("</svg>", `${path}${at(gx, gy, "crimp", 0.3)}${at(hx, hy, "dyno", 1)}</svg>`);
 }
 
 function statesSheet() {
