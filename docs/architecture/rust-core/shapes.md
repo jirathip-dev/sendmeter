@@ -84,8 +84,8 @@ pub enum BleEvent {
 pub enum Gear { Tindeq, Board(BoardKind) }
 ```
 
-`ScanFilter` carries the services and name prefixes of #1047's `protocols.md` and the Tindeq's service
-`7e4e1701-1ea6-40c9-9dcc-13d34ffead57`. #1047's link statechart is kept; its commands are these.
+`ScanFilter` carries the services and name prefixes of #1047's `protocols.md` and the Tindeq service UUID
+(`ForceEngine.swift`). #1047's link statechart is kept; its commands are these.
 
 ## Synced records
 
