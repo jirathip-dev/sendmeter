@@ -38,3 +38,17 @@ regexTarget = "line"
 regexes = [
   '''^\s*private static let localDevPublishableKey\s*=\s*"\x73\x62\x5f\x70\x75\x62\x6c\x69\x73\x68\x61\x62\x6c\x65\x5f\x41\x43\x4a\x57\x6c\x7a\x51\x48\x6c\x5a\x6a\x42\x72\x45\x67\x75\x48\x76\x66\x4f\x78\x67\x5f\x33\x42\x4a\x67\x78\x41\x61\x48"\s*$''',
 ]
+
+# #1049: the generated gatekeeper skill documents its no-hardcoded-secrets
+# rule with a fake key; exact file, exact example line.
+[[allowlists]]
+description = "Fake example key in the generated gatekeeper skill docs"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''^\.claude/skills/gatekeeper/examples/swift-anti-slop\.md$''',
+]
+regexTarget = "line"
+regexes = [
+  '''^let apiKey = "sk-live-abc123"$''',
+]
