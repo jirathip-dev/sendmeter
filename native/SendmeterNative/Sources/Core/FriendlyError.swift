@@ -1,5 +1,5 @@
 import Foundation
-@_implementationOnly import GRDB
+internal import GRDB
 import SendLogWatchCore
 
 /// The fixed classes of user-facing failure the native app is allowed to

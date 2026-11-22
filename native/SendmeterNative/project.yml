@@ -22,6 +22,10 @@ settings:
   base:
     MARKETING_VERSION: 1.0.0
     CURRENT_PROJECT_VERSION: 1
+  configs:
+    Debug:
+      SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+      GCC_TREAT_WARNINGS_AS_ERRORS: YES
 packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
@@ -274,7 +278,7 @@ targets:
   # 17 files in `ios/App/SendLogWatchTests/` became an orphan: nothing
   # compiled or ran them until this target re-owned them. The settings mirror
   # that deleted pbxproj target (watchOS unit-test bundle hosted by the Watch
-  # app, unsigned), and `native-swift.yml` runs it on a booted watchOS
+  # app, unsigned), and gatekeeper's `local/watch` runs it on a booted watchOS
   # simulator. Keep it out of the phone/doc claims: this is Watch app-target
   # coverage, not device coverage.
   SendLogWatchTests:
@@ -397,7 +401,7 @@ schemes:
         SendLogWatch Watch App: all
         SendLogWatchWidgets: all
     # #946: the Watch app-target suite runs on a booted watchOS simulator via
-    # this test action (`-only-testing:SendLogWatchTests` in native-swift.yml).
+    # this test action (`-only-testing:SendLogWatchTests` in scripts/watch-gate.sh).
     test:
       config: Debug
       targets:

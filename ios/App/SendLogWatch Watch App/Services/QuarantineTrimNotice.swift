@@ -10,7 +10,7 @@ import Foundation
 /// phrase a non-persisted recording as queued" ⇄ never phrase a persisted one
 /// as lost). Same mechanism as the other notices: recorded wherever it
 /// happens, consumed and presented by Home on next appearance.
-enum QuarantineTrimNotice {
+nonisolated enum QuarantineTrimNotice {
     private static let key = "quarantinePayloadTrimmed"
     /// `record()` runs on the queue actor while `consume()` runs on Home's
     /// main-actor lifecycle. UserDefaults makes each operation thread-safe,

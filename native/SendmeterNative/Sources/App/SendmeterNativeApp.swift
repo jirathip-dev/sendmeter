@@ -62,7 +62,7 @@ struct SendmeterNativeApp: App {
                 .task {
                     model.reconcileStrandedActivitiesAtLaunch()
                 }
-                .onChange(of: scenePhase) { phase in
+                .onChange(of: scenePhase) { _, phase in
                     // #628: backgrounding clears the keep-awake hold (the
                     // screen must not be pinned while the app can't show
                     // anything); foreground re-derives it from the transport.

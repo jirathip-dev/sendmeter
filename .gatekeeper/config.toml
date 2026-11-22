@@ -1,0 +1,19 @@
+packs = ["core", "swift"]
+integration = "staging"
+
+[swift]
+packages = ["native/SendmeterNative", "ios/App/SendLogWatchCore", "native-plugins/sendlog-health-core"]
+sources = ["native/SendmeterNative/Sources", "native/SendmeterNative/Tests", "ios/App/SendLogWatchCore/Sources", "ios/App/SendLogWatchCore/Tests", "ios/App/SendLogWatch Watch App", "ios/App/SendLogWatchWidgets", "ios/App/SendLogWatchTests", "native-plugins/sendlog-health-core/Sources", "native-plugins/sendlog-health-core/Tests"]
+tokens = ["native/SendmeterNative/Sources/Features", "native/SendmeterNative/Sources/App", "native/SendmeterNative/Sources/Widgets", "ios/App/SendLogWatch Watch App", "ios/App/SendLogWatchWidgets"]
+extra = ["no-comments", "sorted-imports", "no-any", "explicit-access"]
+
+[legs.app]
+platform = "macos"
+
+[legs.watch]
+platform = "macos"
+
+[pin]
+version = "1.1.2"
+aarch64-apple-darwin = "6952b2a2440e0bdf0ae511fa9333ce9205267afe130eaa33cf38478bffcf31ff"
+x86_64-unknown-linux-gnu = "b7064a09130cdd9f510f1632fce4c6e80998a6bc31af6b9114729dcb681f6118"

@@ -262,7 +262,7 @@ nonisolated struct TindeqRecordingInsert: Codable {
 /// workout or gauge session there was NO on-disk fallback at all, so the rep
 /// was gone. Mirrors `WorkoutSaveBundle`: the row to insert plus the account
 /// stamp `shouldDrain` checks (#158).
-nonisolated struct PendingTindeqRecording: Codable {
+nonisolated struct PendingTindeqRecording: Codable, Sendable {
     var row: TindeqRecordingInsert
     /// Which account was signed in when this recording was persisted to disk
     /// (issue #158) — stamped by `PendingRecordingQueue.persist`, checked by
@@ -466,7 +466,7 @@ nonisolated struct LiveWorkoutUpsert: Codable {
 }
 
 /// One confirmed workout = three idempotent upserts, bundled for the offline queue.
-nonisolated struct WorkoutSaveBundle: Codable {
+nonisolated struct WorkoutSaveBundle: Codable, Sendable {
     var session: SessionInsert
     var workout: ClimbWorkoutInsert
     var attempts: [ClimbAttemptInsert]

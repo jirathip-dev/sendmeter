@@ -52,7 +52,7 @@ struct TrainingLoadSheet: View {
             }
         }
         .onAppear { rebuild() }
-        .onChange(of: model.sessions) { _ in rebuild() }
+        .onChange(of: model.sessions) { _, _ in rebuild() }
         #if DEBUG
         // #895 evidence harness: the launch-argument fixture can swap its
         // session set (empty -> populated) the way a real sync populates
@@ -265,7 +265,7 @@ struct WeeklyBarsView: View {
     /// and the height the chart held before #929 — the chart's height contract
     /// (#929). The app-target legibility lane rebuilds a column from these and
     /// checks that `chartHeight(bandHeight:)` makes room for it.
-    static let maximumBarHeight: CGFloat = 64
+    nonisolated static let maximumBarHeight: CGFloat = 64
     static let columnSpacing: CGFloat = 4
     static let minimumChartHeight: CGFloat = 108
 
@@ -388,7 +388,7 @@ struct WeeklyBarsView: View {
                     GeometryReader { proxy in
                         Color.clear
                             .onAppear { containerWidth = proxy.size.width }
-                            .onChange(of: proxy.size.width) { containerWidth = $0 }
+                            .onChange(of: proxy.size.width) { containerWidth = $1 }
                     }
                 )
             }
@@ -398,7 +398,7 @@ struct WeeklyBarsView: View {
                 valuesReadout
             }
         }
-        .onChange(of: weeks) { _ in
+        .onChange(of: weeks) { _, _ in
             // Data replacement is passive; never buzz merely because the
             // sheet rebuilt while a sync was in flight.
             selectedIndex = nil

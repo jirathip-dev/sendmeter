@@ -40,7 +40,7 @@ import XCTest
 /// realtime, and the app's join stays best-effort either way.
 @MainActor
 enum AppModelLaunchSettle {
-    static let deadline: Duration = .seconds(90)
+    nonisolated static let deadline: Duration = .seconds(90)
 
     /// The harness client's realtime options: one join attempt, short timeout.
     nonisolated static var realtimeOptions: RealtimeClientOptions {

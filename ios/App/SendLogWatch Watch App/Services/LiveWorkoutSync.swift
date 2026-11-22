@@ -5,11 +5,11 @@ import Supabase
 /// The seam through which `LiveWorkoutSync` sends one row — `RepoLiveWorkoutUpserter`
 /// is the production path; tests inject a scripted double. Matches
 /// `WorkoutBundleUploading`/`RepoBundleUploader`'s pattern (OfflineQueueSeams.swift).
-protocol LiveWorkoutUpserting: Sendable {
+nonisolated protocol LiveWorkoutUpserting: Sendable {
     func upsert(_ row: LiveWorkoutUpsert) async throws
 }
 
-struct RepoLiveWorkoutUpserter: LiveWorkoutUpserting {
+nonisolated struct RepoLiveWorkoutUpserter: LiveWorkoutUpserting {
     func upsert(_ row: LiveWorkoutUpsert) async throws {
         try await SupabaseService
             .from("live_workouts")

@@ -545,7 +545,7 @@ private struct NativeForceCurvePlot: View {
         }
         .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .onChange(of: model.points) { _ in
+        .onChange(of: model.points) { _, _ in
             selectedPointIndex = nil
             tickedPointIndex = nil
         }
@@ -630,7 +630,7 @@ private struct NativeForceCurvePlot: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { tooltipSize = geo.size }
-                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                        .onChange(of: geo.size) { _, newSize in tooltipSize = newSize }
                 }
             )
             .position(

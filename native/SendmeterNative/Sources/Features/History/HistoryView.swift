@@ -201,20 +201,20 @@ struct HistoryView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 selectionBar
             }
-            .onChange(of: mode) { _ in
+            .onChange(of: mode) { _, _ in
                 visibleCount = HistoryPaging.pageSize
                 selectedIDs = []
                 createError = nil
             }
-            .onChange(of: filterOptions.activeType) { value in
+            .onChange(of: filterOptions.activeType) { _, value in
                 if value == nil { selectedType = nil }
                 pruneSelectionToVisible()
             }
-            .onChange(of: filterOptions.activeTag) { value in
+            .onChange(of: filterOptions.activeTag) { _, value in
                 if value == nil { selectedTag = nil }
                 pruneSelectionToVisible()
             }
-            .onChange(of: query) { _ in
+            .onChange(of: query) { _, _ in
                 pruneSelectionToVisible()
             }
         }
@@ -880,7 +880,7 @@ private struct SessionEditorSheet: View {
                             Text(type.label).tag(type.id)
                         }
                     }
-                    .onChange(of: draft.type) { value in
+                    .onChange(of: draft.type) { _, value in
                         draft.typeLabel = SessionTypeCatalog.definition(for: value).label
                     }
                     Stepper("Duration: \(draft.durationMinutes) min", value: $draft.durationMinutes, in: 1...600)

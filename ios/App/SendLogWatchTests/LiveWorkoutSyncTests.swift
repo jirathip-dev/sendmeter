@@ -46,7 +46,6 @@ final class LiveWorkoutSyncTests: XCTestCase {
         )
     }
 
-    @discardableResult
     private func beat(
         _ sync: LiveWorkoutSync,
         sequence: Int,

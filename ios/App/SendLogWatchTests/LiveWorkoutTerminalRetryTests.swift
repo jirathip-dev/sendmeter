@@ -58,7 +58,7 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
     /// `currentUserId:` argument, same as before.
     private func makeRetry(
         upload: @escaping @Sendable (LiveWorkoutUpsert) async throws -> Void,
-        sessionRelay: SessionRelayRequesting = RecordingTerminalSessionRelay(),
+        sessionRelay: SessionRelayRequesting? = nil,
         scheduler: DrainScheduling = RecordingTerminalScheduler(),
         fileIO: TerminalRetryFileIO = RealQueueFileIO(),
         lossReporter: TerminalLossReporting = RecordingTerminalLossReporter(),
@@ -67,7 +67,7 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
         LiveWorkoutTerminalRetry(
             upload: upload,
             baseDir: tempDir,
-            sessionRelay: sessionRelay,
+            sessionRelay: sessionRelay ?? RecordingTerminalSessionRelay(),
             scheduler: scheduler,
             fileIO: fileIO,
             lossReporter: lossReporter,

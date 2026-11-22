@@ -161,7 +161,7 @@ struct ReadinessTrendCard: View {
                 }
             }
         }
-        .onChange(of: model.healthMetrics) { _ in rebuildSnapshot() }
+        .onChange(of: model.healthMetrics) { _, _ in rebuildSnapshot() }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             rebuildSnapshot()
         }
@@ -183,7 +183,7 @@ struct ReadinessTrendCard: View {
                 .frame(height: 170)
                 .chartXSelection(value: $selectedDate)
                 .hapticTapMuted()
-                .onChange(of: selectedDate) { _ in
+                .onChange(of: selectedDate) { _, _ in
                     // #656: scrub tick — once per value change (the day under
                     // the finger), never per drag frame. A second pass over
                     // the same day is silent; the ref (not a captured value)
@@ -204,7 +204,7 @@ struct ReadinessTrendCard: View {
                 .chartOverlay { proxy in
                     GeometryReader { geo in
                         if selectedDate != nil, let selected {
-                            let plotFrame = geo[proxy.plotAreaFrame]
+                            let plotFrame = proxy.plotFrame.map { geo[$0] } ?? .zero
                             // proxy.position is relative to the plot area;
                             // add the plot frame's origin to place the
                             // tooltip in the chart's (overlay) coordinates
@@ -345,7 +345,7 @@ struct ReadinessTrendCard: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { tooltipSize = geo.size }
-                        .onChange(of: geo.size) { newSize in
+                        .onChange(of: geo.size) { _, newSize in
                             tooltipSize = newSize
                         }
                 }

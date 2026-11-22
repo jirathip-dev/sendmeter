@@ -1,0 +1,7 @@
+about = "the watch app: XcodeGen from project.yml and its SendLogWatchTests on a booted watchOS simulator, warnings as errors"
+fix = "fix the build error, warning or test the log names; project.yml is the source of the Xcode project, never the generated one"
+budget_secs = 900
+platform = "macos"
+leg = "watch"
+run = "bash scripts/watch-gate.sh"
+paths = ["native/**", "ios/**", "native-plugins/**", "scripts/xcodegen.sh", "scripts/simulator.sh", "scripts/watch-gate.sh", "scripts/assert-native-watch-project.rb"]

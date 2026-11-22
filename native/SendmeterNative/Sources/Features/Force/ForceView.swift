@@ -2220,39 +2220,39 @@ struct ForceView: View {
             }
             // #628: the hands-free save path snapshots the recording context
             // (tag/side/zone/preset/target) at arm time.
-            .onChange(of: tag) { _ in
+            .onChange(of: tag) { _, _ in
                 // #720: a remembered side may be invalid under the newly
                 // selected exercise's mode — fall back deterministically.
                 normalizeSideForMode()
                 publishFreePullContext()
             }
-            .onChange(of: sideMode) { _ in normalizeSideForMode() }
+            .onChange(of: sideMode) { _, _ in normalizeSideForMode() }
             // #720 review (blocker): the free-pull context stamps `recordedSide`,
             // which can change when the exercise's side MODE changes without the
             // raw `side` changing (e.g. bilateral_only→not_applicable with an
             // unspecified side). Re-publish on the EFFECTIVE side so the armed
             // hands-free loop can never persist a stale/forbidden side.
-            .onChange(of: recordedSide) { _ in publishFreePullContext() }
-            .onChange(of: side) { _ in publishFreePullContext() }
-            .onChange(of: selectedPresetID) { _ in publishFreePullContext() }
-            .onChange(of: zoneArmedPreset) { _ in publishFreePullContext() }
-            .onChange(of: movementArmedPreset) { _ in publishFreePullContext() }
+            .onChange(of: recordedSide) { _, _ in publishFreePullContext() }
+            .onChange(of: side) { _, _ in publishFreePullContext() }
+            .onChange(of: selectedPresetID) { _, _ in publishFreePullContext() }
+            .onChange(of: zoneArmedPreset) { _, _ in publishFreePullContext() }
+            .onChange(of: movementArmedPreset) { _, _ in publishFreePullContext() }
             // #902: moving the intensity dial rebuilds the armed zone preset
             // so the executed schedule (hold / sets) follows the dose math;
             // the target-plan task key re-resolves the scaled band.
-            .onChange(of: zoneIntensityPercent) { _ in
+            .onChange(of: zoneIntensityPercent) { _, _ in
                 guard armedZoneQuality != nil else { return }
                 rebuildArmedZonePreset()
             }
-            .onChange(of: selectedTargetPlan) { _ in publishFreePullContext() }
-            .onChange(of: handsFreeEnabled) { enabled in
+            .onChange(of: selectedTargetPlan) { _, _ in publishFreePullContext() }
+            .onChange(of: handsFreeEnabled) { _, enabled in
                 if !enabled, !guidedControlsLocked { model.handsFree.disarm() }
                 model.updateKeepAwake()
             }
-            .onChange(of: model.currentUserID) { _ in
+            .onChange(of: model.currentUserID) { _, _ in
                 teardownGuidedSessionIfNeeded()
             }
-            .onChange(of: model.accountEpoch) { _ in
+            .onChange(of: model.accountEpoch) { _, _ in
                 teardownGuidedSessionIfNeeded()
             }
             .onDisappear {
@@ -2766,7 +2766,7 @@ struct ForceView: View {
     /// Generous enough for a cold cache plus the reference fetch, short enough
     /// that a resolution which never settles cannot keep the primary action
     /// disabled for the life of the process.
-    static let guidedLaunchTimeout: TimeInterval = 12
+    nonisolated static let guidedLaunchTimeout: TimeInterval = 12
 
     /// The bounded launch-resolution seam.
     enum GuidedLaunchResolution {
@@ -3506,7 +3506,7 @@ struct ForceTraceChart: View {
         // the shared buffer, which the content count catches even before
         // the next flush publishes an empty range). Array sources render a
         // complete, static window and never need the hold.
-        .onChange(of: domainFeedStamp) { _ in
+        .onChange(of: domainFeedStamp) { _, _ in
             feedDomainTracker()
         }
     }
@@ -3914,10 +3914,10 @@ private struct ForcePresetEditor: View {
                     .disabled(!isValid || isSaving)
                 }
             }
-            .onChange(of: draft.sets) { _ in
+            .onChange(of: draft.sets) { _, _ in
                 normalizeHoldOverrides()
             }
-            .onChange(of: varyHolds) { enabled in
+            .onChange(of: varyHolds) { _, enabled in
                 if enabled { normalizeHoldOverrides() }
             }
         }

@@ -1,0 +1,7 @@
+about = "the iOS app: XcodeGen from project.yml, the generated watch graph, an unsigned build and its app-target and UI smoke tests, warnings as errors"
+fix = "fix the build error, warning or test the log names; project.yml is the source of the Xcode project, never the generated one"
+budget_secs = 2400
+platform = "macos"
+leg = "app"
+run = "bash scripts/app-gate.sh"
+paths = ["native/**", "ios/**", "native-plugins/**", "scripts/xcodegen.sh", "scripts/simulator.sh", "scripts/app-gate.sh", "scripts/assert-native-watch-project.rb"]

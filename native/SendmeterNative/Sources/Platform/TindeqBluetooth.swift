@@ -591,7 +591,7 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
 extension TindeqBluetooth: CBPeripheralDelegate {
     nonisolated public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         Task { @MainActor in
-            if let error {
+            if error != nil {
                 resetConnection(
                     status: .interrupted(UserFacingError.message(for: .progressorConnectFailed))
                 )
@@ -621,7 +621,7 @@ extension TindeqBluetooth: CBPeripheralDelegate {
         error: Error?
     ) {
         Task { @MainActor in
-            if let error {
+            if error != nil {
                 resetConnection(
                     status: .interrupted(UserFacingError.message(for: .progressorConnectFailed))
                 )

@@ -10,7 +10,7 @@ import Foundation
 /// watching the screen), mirroring `GaugeSessionLossNotice`, so Home consumes
 /// and presents the notice on the next appearance rather than relying on a
 /// toast nobody was looking at.
-enum RecordingLossNotice {
+nonisolated enum RecordingLossNotice {
     private static let key = "tindeqRecordingSaveLost"
 
     static func record() {

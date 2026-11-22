@@ -6,7 +6,8 @@ tests with `swift test --enable-code-coverage`, merges the fresh profiles with
 packages. Each package is scoped to its own source tree; tests, build output,
 generated resource accessors, and the native app's platform/weather adapter
 are excluded. Coverage artifacts are written under the ignored `coverage/`
-directory and uploaded by the `Core tests` job in `native-swift.yml`.
+directory. Gatekeeper runs the script as its `local/coverage` gate
+(`.gatekeeper/gates/coverage.toml`).
 
 The retired root web coverage gate was removed with the web surface (#857 —
 `docs/architecture/857-removal-inventory.md`), and there is no root npm package

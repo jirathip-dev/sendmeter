@@ -25,8 +25,8 @@ gitleaks detect --source . --no-git --config .gitleaks.toml \
 
 The committed `.gitleaks.toml` contains only narrow, documented exceptions for
 the two native files' three current Supabase publishable anon-key assignments,
-matched byte-for-byte with hex-escaped regular expressions, and one byte-exact
-upstream anti-slop-swift README example. The workflow mutates every allowlisted
+matched byte-for-byte with hex-escaped regular expressions, and the #1007
+parity test's local-development key. The workflow mutates every allowlisted
 assignment with an `sb_secret_*` value, a generic high-entropy value, and a
 changed publishable value; each must fail as `generic-api-key`. Supabase anon
 keys are client-side publishable values; row-level security, not key secrecy,

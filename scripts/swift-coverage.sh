@@ -101,20 +101,25 @@ run_package() {
   fi
   tail -12 "$test_log"
 
+  local -a binaries=()
   while IFS= read -r -d '' raw; do
     if [[ -x "$raw" && "$raw" != *'.dSYM/'* ]]; then
-      binary=$raw
-      break
+      binaries+=("$raw")
     fi
   done < <(
     find "$bin_dir" -type f \
-      \( -name "$test_product" -o -name "$test_product.xctest" \) \
+      \( -name "$test_product" -o -path '*.xctest/Contents/MacOS/*' \) \
       -print0
   )
-  if [[ -z "$binary" ]]; then
-    echo "could not find Swift test executable $test_product in $bin_dir" >&2
+  if ((${#binaries[@]} == 0)); then
+    echo "could not find Swift test executables in $bin_dir" >&2
     exit 2
   fi
+  binary=${binaries[0]}
+  local -a objects=()
+  for raw in "${binaries[@]:1}"; do
+    objects+=(-object "$raw")
+  done
 
   while IFS= read -r -d '' raw; do
     raw_files+=("$raw")
@@ -125,12 +130,12 @@ run_package() {
   fi
 
   "$llvm_profdata" merge -sparse "${raw_files[@]}" -o "$profdata"
-  "$llvm_cov" report "$binary" \
+  "$llvm_cov" report "$binary" ${objects[@]+"${objects[@]}"} \
     --instr-profile="$profdata" \
     --ignore-filename-regex="$ignore_regex" \
     --show-branch-summary \
     | tee "$report"
-  "$llvm_cov" export "$binary" \
+  "$llvm_cov" export "$binary" ${objects[@]+"${objects[@]}"} \
     --instr-profile="$profdata" \
     --ignore-filename-regex="$ignore_regex" \
     --format=lcov > "$lcov"

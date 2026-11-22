@@ -95,7 +95,7 @@ extension OfflineQueue: QueueDepthReporting {
     func refreshReportedCounts() async { await engine.refreshReportedCounts() }
 }
 
-extension WorkoutSaveBundle: QueueUploadItem {
+nonisolated extension WorkoutSaveBundle: QueueUploadItem {
     var queueFileId: UUID { workout.id }
 
     /// The 1Hz raw trace is debug telemetry, not training data — the upload

@@ -131,7 +131,6 @@ final class ZoneMixTests: XCTestCase {
 
     func testIsRecoveredRecordingRequiresConjunction() {
         // Salvage blob: zone nil + protocolRunID nil + matching note.
-        let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
         let blobWithNote = TindeqRecording(
             id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
             recordedAt: Date(timeIntervalSince1970: 0),

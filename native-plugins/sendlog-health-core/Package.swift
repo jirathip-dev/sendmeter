@@ -1,5 +1,10 @@
 // swift-tools-version: 5.9
+import Foundation
 import PackageDescription
+
+let strict: [SwiftSetting] = ProcessInfo.processInfo.environment["GATEKEEPER_STRICT"] == "1"
+    ? [.unsafeFlags(["-warnings-as-errors"])]
+    : []
 
 // Pure-Swift (Foundation only) readiness math shared by the iOS health
 // plugin. Deliberately free of HealthKit / Supabase / Capacitor so its unit
@@ -15,12 +20,13 @@ let package = Package(
         .library(name: "SendLogHealthCore", targets: ["SendLogHealthCore"])
     ],
     targets: [
-        .target(name: "SendLogHealthCore", path: "Sources/SendLogHealthCore"),
+        .target(name: "SendLogHealthCore", path: "Sources/SendLogHealthCore", swiftSettings: strict),
         .testTarget(
             name: "SendLogHealthCoreTests",
             dependencies: ["SendLogHealthCore"],
             path: "Tests/SendLogHealthCoreTests",
-            resources: [.copy("Fixtures/readiness-acwr-parity.json")]
+            resources: [.copy("Fixtures/readiness-acwr-parity.json")],
+            swiftSettings: strict
         )
     ]
 )
