@@ -131,13 +131,13 @@ public struct CacheLoadOneResult<T> {
         self.invalid = invalid
     }
 }
-
+private protocol LocalCacheQueueHolder: Sendable { var queue: DatabaseQueue { get } }
 /// GRDB deliberately does not declare `DatabaseQueue` as `Sendable`, but its
 /// documented contract is that every access is serialized by the queue. Keep
 /// that non-Sendable implementation detail behind one immutable holder so the
 /// public cache handle can safely cross actors without exposing GRDB or
 /// requiring every caller to carry an unchecked conformance.
-private final class LocalCacheDatabase: @unchecked Sendable {
+@_implementationOnly private final class LocalCacheDatabase: LocalCacheQueueHolder, @unchecked Sendable {
     let queue: DatabaseQueue
 
     init(queue: DatabaseQueue) {
@@ -191,7 +191,7 @@ private final class LocalCacheDatabase: @unchecked Sendable {
 /// unchecked boundary is `LocalCacheDatabase`, whose sole stored reference is
 /// to that queue; no raw GRDB connection or mutable cache state escapes it.
 public final class LocalCacheStore: Sendable {
-    private let database: LocalCacheDatabase
+    private let database: any LocalCacheQueueHolder
     /// #922 instrumentation for the coherent read path.
     private let snapshotReadCounter = LocalCacheSnapshotReadCounter()
 
