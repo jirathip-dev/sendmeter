@@ -13,11 +13,11 @@ import Supabase
 // `OfflineQueue` gained for the same reason (issue #475): the real path is
 // the default, a test supplies a stub.
 
-protocol TindeqRecordingUploading: Sendable {
+nonisolated protocol TindeqRecordingUploading: Sendable {
     func upload(_ row: TindeqRecordingInsert) async throws
 }
 
-struct RepoRecordingUploader: TindeqRecordingUploading {
+nonisolated struct RepoRecordingUploader: TindeqRecordingUploading {
     func upload(_ row: TindeqRecordingInsert) async throws {
         try await Repo.insertTindeqRecording(row)
     }
@@ -29,7 +29,7 @@ struct RepoRecordingUploader: TindeqRecordingUploading {
 /// A payload reclaim is a DIFFERENT, non-loss fact and gets its own notice
 /// (#491 review R1) — see `QuarantineTrimNotice` for why the two must never
 /// share copy.
-struct RecordingLossEvictionReporter: EvictionReporting {
+nonisolated struct RecordingLossEvictionReporter: EvictionReporting {
     func recordEviction() { RecordingLossNotice.record() }
     func recordPayloadReclaim() { QuarantineTrimNotice.record() }
 }
@@ -114,7 +114,7 @@ extension PendingRecordingQueue: QueueDepthReporting {
     func refreshReportedCounts() async { await engine.refreshReportedCounts() }
 }
 
-extension PendingTindeqRecording: QueueUploadItem {
+nonisolated extension PendingTindeqRecording: QueueUploadItem {
     var queueFileId: UUID { row.id }
 
     /// The sample array IS the recording, so this queue does NOT strip at

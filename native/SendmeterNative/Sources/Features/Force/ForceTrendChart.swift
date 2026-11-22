@@ -62,7 +62,7 @@ struct ForceTrendChart: View {
                     .frame(height: 190)
                     .chartXSelection(value: $selectedDate)
                     .hapticTapMuted()
-                    .onChange(of: selectedDate) { _ in
+                    .onChange(of: selectedDate) { _, _ in
                         if let selected {
                             if SelectionHaptics.valueChanged(tickedRecording, selected) {
                                 tickedRecording = selected
@@ -76,7 +76,7 @@ struct ForceTrendChart: View {
                     .chartOverlay { proxy in
                         GeometryReader { geo in
                             if selectedDate != nil, let selected {
-                                let plotFrame = geo[proxy.plotAreaFrame]
+                                let plotFrame = proxy.plotFrame.map { geo[$0] } ?? .zero
                                 let x = (proxy.position(forX: selected.recordedAt) ?? 0) + plotFrame.minX
                                 tooltip(for: selected, x: x, plotFrame: plotFrame)
                             }
@@ -219,7 +219,7 @@ struct ForceTrendChart: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { tooltipSize = geo.size }
-                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                        .onChange(of: geo.size) { _, newSize in tooltipSize = newSize }
                 }
             )
             .position(

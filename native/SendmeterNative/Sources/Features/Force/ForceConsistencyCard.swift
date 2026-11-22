@@ -68,7 +68,7 @@ struct ForceConsistencyCard: View {
                 }
             }
         }
-        .onChange(of: data.tags) { tags in
+        .onChange(of: data.tags) { _, tags in
             // A realtime refresh can hide a selected tag or age it out of the
             // window. Clear the state as well as deriving the visual fallback,
             // so a later refresh cannot unexpectedly reactivate the old tag.
@@ -79,7 +79,7 @@ struct ForceConsistencyCard: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             now = Date()
         }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             now = Date()
         }
@@ -297,7 +297,7 @@ struct ForceConsistencyCard: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { tooltipSize = geo.size }
-                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                        .onChange(of: geo.size) { _, newSize in tooltipSize = newSize }
                 }
             )
             .position(

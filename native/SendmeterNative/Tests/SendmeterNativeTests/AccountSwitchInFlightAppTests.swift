@@ -1,3 +1,4 @@
+import os
 import SwiftUI
 import UIKit
 import XCTest
@@ -1219,18 +1220,18 @@ private final class AccountSwitchProtocol: URLProtocol {
 // MARK: - Auth storage double
 
 private final class SwitchAuthStorage: AuthLocalStorage {
-    private var store: [String: Data] = [:]
+    private let store = OSAllocatedUnfairLock(initialState: [String: Data]())
 
     func store(key: String, value: Data) throws {
-        store[key] = value
+        store.withLock { $0[key] = value }
     }
 
     func retrieve(key: String) throws -> Data? {
-        store[key]
+        store.withLock { $0[key] }
     }
 
     func remove(key: String) throws {
-        store.removeValue(forKey: key)
+        _ = store.withLock { $0.removeValue(forKey: key) }
     }
 }
 

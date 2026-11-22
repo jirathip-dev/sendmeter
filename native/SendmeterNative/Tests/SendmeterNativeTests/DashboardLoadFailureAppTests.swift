@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SendmeterCore
 import SendmeterWeather
 import SwiftUI
@@ -615,17 +616,17 @@ private final class FakeDashboardProtocol: URLProtocol {
 /// In-memory auth storage (duplicated from the other app-target suites; those
 /// copies are file-private).
 private final class InMemoryAuthStorage: AuthLocalStorage {
-    private var store: [String: Data] = [:]
+    private let store = OSAllocatedUnfairLock(initialState: [String: Data]())
 
     func store(key: String, value: Data) throws {
-        store[key] = value
+        store.withLock { $0[key] = value }
     }
 
     func retrieve(key: String) throws -> Data? {
-        store[key]
+        store.withLock { $0[key] }
     }
 
     func remove(key: String) throws {
-        store.removeValue(forKey: key)
+        _ = store.withLock { $0.removeValue(forKey: key) }
     }
 }

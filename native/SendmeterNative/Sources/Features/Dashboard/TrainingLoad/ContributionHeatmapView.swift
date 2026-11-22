@@ -100,7 +100,7 @@ struct ContributionHeatmapView: View {
             GeometryReader { proxy in
                 Color.clear
                     .onAppear { containerWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { newValue in containerWidth = newValue }
+                    .onChange(of: proxy.size.width) { _, newValue in containerWidth = newValue }
             }
         )
         .onAppear { resetSelection() }

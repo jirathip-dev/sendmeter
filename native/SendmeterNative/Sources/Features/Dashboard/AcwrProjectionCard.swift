@@ -130,7 +130,7 @@ struct AcwrProjectionCard: View {
                     .frame(height: 150)
                     .chartXSelection(value: $selectedScrubX)
                     .hapticTapMuted()
-                    .onChange(of: selectedScrubX) { _ in
+                    .onChange(of: selectedScrubX) { _, _ in
                         if let day = selectedProjectionDay(projection) {
                             if SelectionHaptics.valueChanged(tickedDayOffset, day.dayOffset) {
                                 tickedDayOffset = day.dayOffset
@@ -144,7 +144,7 @@ struct AcwrProjectionCard: View {
                     .chartOverlay { proxy in
                         GeometryReader { geo in
                             if selectedScrubX != nil, let day = selectedProjectionDay(projection) {
-                                let plotFrame = geo[proxy.plotAreaFrame]
+                                let plotFrame = proxy.plotFrame.map { geo[$0] } ?? .zero
                                 let x = (proxy.position(forX: Double(day.dayOffset)) ?? 0) + plotFrame.minX
                                 tooltip(for: day, projection: projection, x: x, plotFrame: plotFrame)
                             }
@@ -297,7 +297,7 @@ struct AcwrProjectionCard: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { tooltipSize = geo.size }
-                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                        .onChange(of: geo.size) { _, newSize in tooltipSize = newSize }
                 }
             )
             .position(

@@ -10,11 +10,11 @@ import Supabase
 /// item" was only checkable by hand, on a real device. This protocol is the
 /// production/test seam: `RepoBundleUploader` is the real path,
 /// `OfflineQueueTests` (SendLogWatchTests target) supplies a scripted stub.
-protocol WorkoutBundleUploading: Sendable {
+nonisolated protocol WorkoutBundleUploading: Sendable {
     func upload(_ bundle: WorkoutSaveBundle) async throws
 }
 
-struct RepoBundleUploader: WorkoutBundleUploading {
+nonisolated struct RepoBundleUploader: WorkoutBundleUploading {
     func upload(_ bundle: WorkoutSaveBundle) async throws {
         try await Repo.uploadBundle(bundle)
     }
@@ -22,7 +22,7 @@ struct RepoBundleUploader: WorkoutBundleUploading {
 
 /// Quarantine records stamp `quarantinedAt`; tests need a deterministic time
 /// instead of the wall clock to assert on it.
-protocol QueueClock: Sendable {
+nonisolated protocol QueueClock: Sendable {
     nonisolated func now() -> Date
 }
 
@@ -44,7 +44,7 @@ nonisolated struct SystemQueueClock: QueueClock {
 /// in `SendLogWatchCore` and has no reason to know `ClimbAttemptInsert`'s
 /// shape, and computing it here keeps the classifier itself Foundation/
 /// Supabase-free and testable on Linux.
-enum UploadFailureMapping {
+nonisolated enum UploadFailureMapping {
     static func classify(_ error: Error, bundle: WorkoutSaveBundle) -> UploadClassification {
         classify(error, hasNonPositiveDurationAttempt: bundle.attempts.contains { $0.durationS <= 0 })
     }
@@ -96,7 +96,7 @@ enum UploadFailureMapping {
 /// `AuthManagerRelayRequester` is the production path, `OfflineQueueTests`
 /// supplies a recording stub so "a 401 actually asks the phone" is
 /// observable rather than inferred from the classifier alone.
-protocol SessionRelayRequesting: Sendable {
+nonisolated protocol SessionRelayRequesting: Sendable {
     func requestSessionRelay() async
 }
 
@@ -107,7 +107,7 @@ protocol SessionRelayRequesting: Sendable {
 /// second throttle here would only add a place for the two to disagree.
 /// `AuthManager.current` being nil (no app instance in this process, e.g. a
 /// unit test) makes this a no-op, not a crash.
-struct AuthManagerRelayRequester: SessionRelayRequesting {
+nonisolated struct AuthManagerRelayRequester: SessionRelayRequesting {
     func requestSessionRelay() async {
         await AuthManager.current?.requestSessionFromPhone()
     }
@@ -134,16 +134,16 @@ struct AuthManagerRelayRequester: SessionRelayRequesting {
 /// the closure inside a nominal type fixes its isolation once, at THIS
 /// declaration site, so every conformance — regardless of which target
 /// compiles it — refers to the same already-resolved type.
-struct RetryAction: Sendable {
+nonisolated struct RetryAction: Sendable {
     let run: @Sendable () async -> Void
     init(_ run: @escaping @Sendable () async -> Void) { self.run = run }
 }
 
-protocol DrainScheduling: Sendable {
+nonisolated protocol DrainScheduling: Sendable {
     nonisolated func scheduleRetry(after delay: TimeInterval, _ action: RetryAction)
 }
 
-struct TaskDrainScheduler: DrainScheduling {
+nonisolated struct TaskDrainScheduler: DrainScheduling {
     /// Review F21: an earlier version returned early when the sleep's own
     /// `Task` had been cancelled, without ever running `action`. Nothing
     /// currently cancels this unstructured `Task`, but `OfflineQueue` only

@@ -8,7 +8,7 @@ import SendLogWatchCore
 /// idempotent upsert on a client-minted id — makes replays safe; the user
 /// stamp is issue #158's account guard, written by `enqueue` and checked by
 /// every drain via `shouldDrain`.
-protocol QueueUploadItem: Codable, Sendable {
+nonisolated protocol QueueUploadItem: Codable, Sendable {
     var queueFileId: UUID { get }
     var enqueuedUserId: UUID? { get set }
 
@@ -37,12 +37,12 @@ typealias UploadClassification = (stage: UploadStage?, outcome: UploadErrorOutco
 /// `FileManager` directly: only mutations need scripting, and the rule
 /// "every write/remove goes through `fileIO`" is simpler to audit than a
 /// per-call-site choice.
-protocol QueueFileIO: Sendable {
+nonisolated protocol QueueFileIO: Sendable {
     func write(_ data: Data, to url: URL) throws
     func removeItem(at url: URL) throws
 }
 
-struct RealQueueFileIO: QueueFileIO {
+nonisolated struct RealQueueFileIO: QueueFileIO {
     func write(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: .atomic)
     }
@@ -58,7 +58,7 @@ struct RealQueueFileIO: QueueFileIO {
 /// cross-target isolation reason as `RetryAction` (see
 /// OfflineQueueSeams.swift): tests in `SendLogWatchTests` supply a recording
 /// stub.
-protocol EvictionReporting: Sendable {
+nonisolated protocol EvictionReporting: Sendable {
     /// A whole pending (never-rejected, unsynced) entry was destroyed to
     /// make room — a real loss (`RecordingLossNotice` in production), never
     /// housekeeping.

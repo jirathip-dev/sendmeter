@@ -47,7 +47,7 @@ public final class KeepAwakeCoordinator {
     /// idle timer disabled for the rest of the process. Applies `holds > 0`,
     /// so it can never release a hold another consumer still has.
     public func reassert() async {
-        await apply()
+        apply()
     }
 
     /// Settles after every transition scheduled so far has run (or been

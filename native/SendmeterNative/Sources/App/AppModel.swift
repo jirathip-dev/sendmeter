@@ -3193,425 +3193,385 @@ public final class AppModel {
             accountUserID: userID,
             capturedBy: accountFetch
         )
-        // #922: the most recent coherent revision this pass read. A failure
-        // republishes THIS instead of loading the workspace a third time.
-        var latestCacheRead: LocalCacheSnapshotRead? = hydrated
-        do {
-            // #934: the optional generation endpoint and its "a missing
-            // generation makes both purge-sensitive entities authoritative"
-            // fallback are one rule, owned by the coordinator. The endpoint may
-            // lag a staged/older project schema: keep the ordinary refresh
-            // alive, report the rollout error through the existing
-            // foreground-only policy, and let the plan below force both
-            // affected entities through a full reconcile until it recovers.
-            let purgeResolution = await workspaceSync.resolvePurgeGeneration {
-                try await self.repository.fetchPurgeSyncGeneration()
-            }
-            if let endpointFailure = purgeResolution.endpointFailure {
-                reportPurgeGenerationFailure(
-                    endpointFailure,
-                    context: purgeGenerationContext,
-                    capturedBy: accountFetch
-                )
-            } else {
-                markPurgeGenerationAvailable(capturedBy: accountFetch)
-            }
-            let remotePurgeGeneration: Int64? = purgeResolution.generation
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-            // #922: the purge decision stays a targeted post-fetch check (the
-            // generation arrives after the hydration read), but the cursors
-            // come from the hydrated revision itself, so the delta this pass
-            // fetches is planned against exactly the rows it hydrated.
-            let forcePurgeReconcile = await cacheNeedsPurgeReconcile(
-                accountUserID: userID,
-                remoteGeneration: remotePurgeGeneration
+        // #934: the optional generation endpoint and its "a missing
+        // generation makes both purge-sensitive entities authoritative"
+        // fallback are one rule, owned by the coordinator. The endpoint may
+        // lag a staged/older project schema: keep the ordinary refresh
+        // alive, report the rollout error through the existing
+        // foreground-only policy, and let the plan below force both
+        // affected entities through a full reconcile until it recovers.
+        let purgeResolution = await workspaceSync.resolvePurgeGeneration {
+            try await self.repository.fetchPurgeSyncGeneration()
+        }
+        if let endpointFailure = purgeResolution.endpointFailure {
+            reportPurgeGenerationFailure(
+                endpointFailure,
+                context: purgeGenerationContext,
+                capturedBy: accountFetch
             )
-            // #934: the plan — which cursor each entity is fetched with, and
-            // which two entities the purge mismatch forces through a full
-            // authoritative reconcile — is the coordinator's rule. This call
-            // site only reads it.
-            let plan = workspaceSync.plan(
-                hydrated: hydrated,
-                forceFullReconcile: forcePurgeReconcile
+        } else {
+            markPurgeGenerationAvailable(capturedBy: accountFetch)
+        }
+        let remotePurgeGeneration: Int64? = purgeResolution.generation
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+        // #922: the purge decision stays a targeted post-fetch check (the
+        // generation arrives after the hydration read), but the cursors
+        // come from the hydrated revision itself, so the delta this pass
+        // fetches is planned against exactly the rows it hydrated.
+        let forcePurgeReconcile = await cacheNeedsPurgeReconcile(
+            accountUserID: userID,
+            remoteGeneration: remotePurgeGeneration
+        )
+        // #934: the plan — which cursor each entity is fetched with, and
+        // which two entities the purge mismatch forces through a full
+        // authoritative reconcile — is the coordinator's rule. This call
+        // site only reads it.
+        let plan = workspaceSync.plan(
+            hydrated: hydrated,
+            forceFullReconcile: forcePurgeReconcile
+        )
+        let sessionCursor = plan.cursor(for: .sessions)
+        let settingsCursor = plan.cursor(for: .settings)
+        let phaseCursor = plan.cursor(for: .phasePeriods)
+        let healthCursor = plan.cursor(for: .healthMetrics)
+        let recordingCursor = plan.cursor(for: .recordings)
+        let presetCursor = plan.cursor(for: .presets)
+        let routineCursor = plan.cursor(for: .routinePresets)
+        let workoutCursor = plan.cursor(for: .workoutsAndAttempts)
+        let tagCursor = plan.cursor(for: .tagMetadata)
+        let today = LocalDateSupport.string(from: Date())
+        // #923: each slice captures its own outcome instead of throwing
+        // into the shared pass. `try await`-ing them in sequence is
+        // exactly how an unrelated entity's failure used to cancel a
+        // sibling page that had already come back.
+        async let sessionsFetch = fetchSlice {
+            try await repository.fetchSessionDelta(
+                since: sessionCursor,
+                accountUserID: userID
             )
-            let sessionCursor = plan.cursor(for: .sessions)
-            let settingsCursor = plan.cursor(for: .settings)
-            let phaseCursor = plan.cursor(for: .phasePeriods)
-            let healthCursor = plan.cursor(for: .healthMetrics)
-            let recordingCursor = plan.cursor(for: .recordings)
-            let presetCursor = plan.cursor(for: .presets)
-            let routineCursor = plan.cursor(for: .routinePresets)
-            let workoutCursor = plan.cursor(for: .workoutsAndAttempts)
-            let tagCursor = plan.cursor(for: .tagMetadata)
-            let today = LocalDateSupport.string(from: Date())
-            // #923: each slice captures its own outcome instead of throwing
-            // into the shared pass. `try await`-ing them in sequence is
-            // exactly how an unrelated entity's failure used to cancel a
-            // sibling page that had already come back.
-            async let sessionsFetch = fetchSlice {
-                try await repository.fetchSessionDelta(
-                    since: sessionCursor,
-                    accountUserID: userID
-                )
-            }
-            async let settingsFetch = fetchSlice {
-                try await fetchSettingsSlice(
-                    userID: userID,
-                    cursor: settingsCursor,
-                    today: today
-                )
-            }
-            async let periodsFetch = fetchSlice {
-                try await repository.fetchPhasePeriodDelta(since: phaseCursor)
-            }
-            async let healthFetch = fetchSlice {
-                try await repository.fetchHealthMetricDelta(since: healthCursor)
-            }
-            async let recordingsFetch = fetchSlice {
-                try await repository.fetchRecordingDelta(since: recordingCursor)
-            }
-            async let presetsFetch = fetchSlice {
-                try await repository.fetchPresetDelta(since: presetCursor)
-            }
-            async let routinesFetch = fetchSlice {
-                try await repository.fetchRoutineDelta(since: routineCursor)
-            }
-            async let workoutsFetch = fetchSlice {
-                try await repository.fetchWorkoutDelta(since: workoutCursor)
-            }
-            async let tagsFetch = fetchSlice {
-                try await repository.fetchTagMetadataDelta(since: tagCursor)
-            }
-
-            let sessionsSlice = await sessionsFetch
-            let settingsSlice = await settingsFetch
-            let periodsSlice = await periodsFetch
-            let healthSlice = await healthFetch
-            let recordingsSlice = await recordingsFetch
-            let presetsSlice = await presetsFetch
-            let routinesSlice = await routinesFetch
-            let workoutsSlice = await workoutsFetch
-            let tagsSlice = await tagsFetch
-
-            let sliceResults: [(slice: RefreshSlice, error: Error?)] = [
-                (slice: .sessions, error: sessionsSlice.error),
-                (slice: .recordings, error: recordingsSlice.error),
-                (slice: .settings, error: settingsSlice.error),
-                (slice: .phasePeriods, error: periodsSlice.error),
-                (slice: .healthMetrics, error: healthSlice.error),
-                (slice: .presets, error: presetsSlice.error),
-                (slice: .routinePresets, error: routinesSlice.error),
-                (slice: .workoutsAndAttempts, error: workoutsSlice.error),
-                (slice: .tagMetadata, error: tagsSlice.error),
-            ]
-            // #934: the collection rule — a cancelled pass is not a verdict: it
-            // publishes nothing, advances no cursor and reports no failure — is
-            // the coordinator's. The caller's own cancellation state is an
-            // explicit input here, never something the coordinator infers from
-            // a swallowed error.
-            let collected = workspaceSync.collectOutcomes(
-                sliceResults,
-                isCancelled: Task.isCancelled
-            )
-            let outcomes = collected.outcomes
-            let sliceFailures = collected.failures
-            if outcomes.wasCancelled { return }
-            guard accountFetch.canApply(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) else { return }
-
-            // #923 AC1/AC2: apply only the groups whose every slice fetched
-            // successfully. A failed slice keeps its last-good cache rows
-            // (its reconcile never runs, so nothing is overwritten), and a
-            // broken pair is not applied at all — a partially authoritative
-            // group is never exposed.
-            if outcomes.publishes(.sessionsAndRecordings),
-               let fetchedSessions = sessionsSlice.value,
-               let fetchedRecordings = recordingsSlice.value {
-                await reconcileEntityRefresh(
-                    fetchedSessions,
-                    accountUserID: userID,
-                    entityType: .sessions,
-                    fullSnapshot: sessionCursor == nil
-                        ? CachedWorkspaceSnapshot(sessions: fetchedSessions.activeValues)
-                        : nil,
-                    purgeGeneration: remotePurgeGeneration
-                )
-                await reconcileEntityRefresh(
-                    fetchedRecordings,
-                    accountUserID: userID,
-                    entityType: .recordings,
-                    fullSnapshot: recordingCursor == nil
-                        ? CachedWorkspaceSnapshot(recordings: fetchedRecordings.activeValues)
-                        : nil,
-                    purgeGeneration: remotePurgeGeneration
-                )
-            }
-            if outcomes.publishes(.settingsAndPhase),
-               let fetchedSettings = settingsSlice.value,
-               let fetchedPeriods = periodsSlice.value {
-                await reconcileEntityRefresh(
-                    fetchedSettings,
-                    accountUserID: userID,
-                    entityType: .settings,
-                    fullSnapshot: settingsCursor == nil
-                        ? CachedWorkspaceSnapshot(settings: fetchedSettings.activeValues.first)
-                        : nil
-                )
-                await reconcileEntityRefresh(
-                    fetchedPeriods,
-                    accountUserID: userID,
-                    entityType: .phasePeriods,
-                    fullSnapshot: phaseCursor == nil
-                        ? CachedWorkspaceSnapshot(phasePeriods: fetchedPeriods.activeValues)
-                        : nil
-                )
-            }
-            if outcomes.publishes(.healthMetrics),
-               let fetchedHealth = healthSlice.value {
-                await reconcileEntityRefresh(
-                    fetchedHealth,
-                    accountUserID: userID,
-                    entityType: .healthMetrics,
-                    fullSnapshot: healthCursor == nil
-                        ? CachedWorkspaceSnapshot(healthMetrics: fetchedHealth.activeValues)
-                        : nil
-                )
-            }
-            if outcomes.publishes(.presets),
-               let fetchedPresets = presetsSlice.value {
-                await reconcileEntityRefresh(
-                    fetchedPresets,
-                    accountUserID: userID,
-                    entityType: .presets,
-                    fullSnapshot: presetCursor == nil
-                        ? CachedWorkspaceSnapshot(presets: fetchedPresets.activeValues)
-                        : nil
-                )
-            }
-            if outcomes.publishes(.routinePresets),
-               let fetchedRoutines = routinesSlice.value {
-                await reconcileEntityRefresh(
-                    fetchedRoutines,
-                    accountUserID: userID,
-                    entityType: .routinePresets,
-                    fullSnapshot: routineCursor == nil
-                        ? CachedWorkspaceSnapshot(routines: fetchedRoutines.activeValues)
-                        : nil
-                )
-            }
-            if outcomes.publishes(.workoutsAndAttempts),
-               let fetchedWorkouts = workoutsSlice.value {
-                await reconcileEntityRefresh(
-                    fetchedWorkouts,
-                    accountUserID: userID,
-                    entityType: .workoutsAndAttempts,
-                    fullSnapshot: workoutCursor == nil
-                        ? CachedWorkspaceSnapshot(workouts: fetchedWorkouts.activeValues)
-                        : nil
-                )
-            }
-            if outcomes.publishes(.tagMetadata),
-               let fetchedTags = tagsSlice.value {
-                await reconcileEntityRefresh(
-                    fetchedTags,
-                    accountUserID: userID,
-                    entityType: .tagMetadata,
-                    fullSnapshot: tagCursor == nil
-                        ? CachedWorkspaceSnapshot(tagMetadata: fetchedTags.activeValues)
-                        : nil
-                )
-            }
-
-            // #922: the restore's "already on the server" identity is the
-            // POST-reconcile active set, derived from this pass's own reads —
-            // no third full-workspace load. A row the reconcile tombstoned must
-            // NOT be in it: its durable queue overlay is exactly what has to be
-            // restored, and suppressing that restore is how a locally saved row
-            // that the server's authoritative snapshot does not carry would
-            // disappear from the published list.
-            let hydratedSessions = hydrated?.snapshot.sessions ?? []
-            let hydratedRecordings = hydrated?.snapshot.recordings ?? []
-            let fetchedSessions = sessionsSlice.value?.activeValues ?? []
-            let fetchedRecordings = recordingsSlice.value?.activeValues ?? []
-            let pendingSessionIDs = Set(
-                (hydrated?.pendingRows ?? [])
-                    .filter { $0.entityType == .sessions }
-                    .compactMap { UUID(uuidString: $0.entityID) }
-            )
-            let pendingRecordingIDs = Set(
-                (hydrated?.pendingRows ?? [])
-                    .filter { $0.entityType == .recordings }
-                    .compactMap { UUID(uuidString: $0.entityID) }
-            )
-            let fetchedSessionIDs = Set(fetchedSessions.map(\.id))
-            let fetchedRecordingIDs = Set(fetchedRecordings.map(\.id))
-            // A cache row the server snapshot did not carry and that is not a
-            // pending local write is tombstoned by the reconcile — the same
-            // rule `CachedWorkspace.reconcile` applies.
-            let tombstonedSessionIDs = Set(
-                hydratedSessions.map(\.id).filter {
-                    !fetchedSessionIDs.contains($0) && !pendingSessionIDs.contains($0)
-                }
-            )
-            let tombstonedRecordingIDs = Set(
-                hydratedRecordings.map(\.id).filter {
-                    !fetchedRecordingIDs.contains($0) && !pendingRecordingIDs.contains($0)
-                }
-            )
-            let publishedSessionIDs = Set(hydratedSessions.map(\.id))
-                .subtracting(tombstonedSessionIDs)
-                .union(fetchedSessionIDs)
-            let publishedRecordingIDs = Set(hydratedRecordings.map(\.id))
-                .subtracting(tombstonedRecordingIDs)
-                .union(fetchedRecordingIDs)
-            await restorePendingWrites(
-                accountFetch: accountFetch,
+        }
+        async let settingsFetch = fetchSlice {
+            try await fetchSettingsSlice(
                 userID: userID,
-                remoteSessionIDs: publishedSessionIDs,
-                remoteRecordingIDs: publishedRecordingIDs
+                cursor: settingsCursor,
+                today: today
             )
-            // #922: the publication reads the workspace ONCE, immediately
-            // before the synchronous publication closure. That ordering is
-            // load-bearing: an optimistic local write that landed while this
-            // pass was suspended in `restorePendingWrites` must be part of the
-            // revision that publishes, and must never be overwritten by an
-            // older one. Together with the hydration read, one refresh is
-            // exactly TWO full-workspace loads.
-            let publicationRead = await readCoherentCache(accountUserID: userID)
-            latestCacheRead = publicationRead
-            let publishedSnapshot = publicationRead?.snapshot
-            // #923: a failed slice's published list is its last-good value —
-            // the untouched cache row, or the in-memory list with its pending
-            // local overlays still on top.
-            let sessionsGroupPublished = outcomes.publishes(.sessionsAndRecordings)
-            let publishedSessions = publishedSnapshot?.sessions
-                ?? sessionsSlice.value?.activeValues
-                ?? sessions.filter { !$0.pending }
-            let publishedRecordings = publishedSnapshot?.recordings
-                ?? recordingsSlice.value?.activeValues
-                ?? recordings
-            let publishedLists = accountFetch.publishIfCurrent(
-                to: currentUserID,
-                accountEpoch: accountEpoch
-            ) {
-                // The cache is the reconciled source after either a full or a
-                // delta refresh: re-adopt it so a pending local
-                // preset/routine/settings/tag row is not hidden by the remote
-                // snapshot in the published collections (sessions/recordings
-                // keep their richer overlays below). A group whose slices
-                // failed was never reconciled, so its cache rows are still the
-                // last-good ones.
-                //
-                // #922: re-adopted from the ONE post-reconcile read above.
-                applyCachedNonOverlayLists(accountUserID: userID, read: publicationRead)
-                // #923: the successful slices publish ONCE, in this one
-                // MainActor publication. A failed group publishes nothing, so
-                // its sessions/recordings keep last-good data and their
-                // pending local overlays instead of being replaced by a
-                // half-authoritative pair.
-                if sessionsGroupPublished {
-                    mergeSessions(remote: publishedSessions)
-                    // This is the explicit authoritative refresh boundary. A
-                    // server sample blob can change without metadata changing,
-                    // so refreshAll is allowed to invalidate every fit;
-                    // realtime rep reconciliation below stays key-scoped.
-                    invalidateTagCurveCache()
-                    mergeRecordings(remote: publishedRecordings)
-                    // The sample rows are fetched later by the curve request
-                    // and may have changed without any recording metadata
-                    // change. Publish this authoritative refresh boundary so a
-                    // scoped progress task restarts even when the metadata
-                    // snapshot is equal.
-                    publishForceProgressInputMutation(.recordings)
-                    markRecordingsLoaded()
-                }
+        }
+        async let periodsFetch = fetchSlice {
+            try await repository.fetchPhasePeriodDelta(since: phaseCursor)
+        }
+        async let healthFetch = fetchSlice {
+            try await repository.fetchHealthMetricDelta(since: healthCursor)
+        }
+        async let recordingsFetch = fetchSlice {
+            try await repository.fetchRecordingDelta(since: recordingCursor)
+        }
+        async let presetsFetch = fetchSlice {
+            try await repository.fetchPresetDelta(since: presetCursor)
+        }
+        async let routinesFetch = fetchSlice {
+            try await repository.fetchRoutineDelta(since: routineCursor)
+        }
+        async let workoutsFetch = fetchSlice {
+            try await repository.fetchWorkoutDelta(since: workoutCursor)
+        }
+        async let tagsFetch = fetchSlice {
+            try await repository.fetchTagMetadataDelta(since: tagCursor)
+        }
+
+        let sessionsSlice = await sessionsFetch
+        let settingsSlice = await settingsFetch
+        let periodsSlice = await periodsFetch
+        let healthSlice = await healthFetch
+        let recordingsSlice = await recordingsFetch
+        let presetsSlice = await presetsFetch
+        let routinesSlice = await routinesFetch
+        let workoutsSlice = await workoutsFetch
+        let tagsSlice = await tagsFetch
+
+        let sliceResults: [(slice: RefreshSlice, error: Error?)] = [
+            (slice: .sessions, error: sessionsSlice.error),
+            (slice: .recordings, error: recordingsSlice.error),
+            (slice: .settings, error: settingsSlice.error),
+            (slice: .phasePeriods, error: periodsSlice.error),
+            (slice: .healthMetrics, error: healthSlice.error),
+            (slice: .presets, error: presetsSlice.error),
+            (slice: .routinePresets, error: routinesSlice.error),
+            (slice: .workoutsAndAttempts, error: workoutsSlice.error),
+            (slice: .tagMetadata, error: tagsSlice.error),
+        ]
+        // #934: the collection rule — a cancelled pass is not a verdict: it
+        // publishes nothing, advances no cursor and reports no failure — is
+        // the coordinator's. The caller's own cancellation state is an
+        // explicit input here, never something the coordinator infers from
+        // a swallowed error.
+        let collected = workspaceSync.collectOutcomes(
+            sliceResults,
+            isCancelled: Task.isCancelled
+        )
+        let outcomes = collected.outcomes
+        let sliceFailures = collected.failures
+        if outcomes.wasCancelled { return }
+        guard accountFetch.canApply(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) else { return }
+
+        // #923 AC1/AC2: apply only the groups whose every slice fetched
+        // successfully. A failed slice keeps its last-good cache rows
+        // (its reconcile never runs, so nothing is overwritten), and a
+        // broken pair is not applied at all — a partially authoritative
+        // group is never exposed.
+        if outcomes.publishes(.sessionsAndRecordings),
+           let fetchedSessions = sessionsSlice.value,
+           let fetchedRecordings = recordingsSlice.value {
+            await reconcileEntityRefresh(
+                fetchedSessions,
+                accountUserID: userID,
+                entityType: .sessions,
+                fullSnapshot: sessionCursor == nil
+                    ? CachedWorkspaceSnapshot(sessions: fetchedSessions.activeValues)
+                    : nil,
+                purgeGeneration: remotePurgeGeneration
+            )
+            await reconcileEntityRefresh(
+                fetchedRecordings,
+                accountUserID: userID,
+                entityType: .recordings,
+                fullSnapshot: recordingCursor == nil
+                    ? CachedWorkspaceSnapshot(recordings: fetchedRecordings.activeValues)
+                    : nil,
+                purgeGeneration: remotePurgeGeneration
+            )
+        }
+        if outcomes.publishes(.settingsAndPhase),
+           let fetchedSettings = settingsSlice.value,
+           let fetchedPeriods = periodsSlice.value {
+            await reconcileEntityRefresh(
+                fetchedSettings,
+                accountUserID: userID,
+                entityType: .settings,
+                fullSnapshot: settingsCursor == nil
+                    ? CachedWorkspaceSnapshot(settings: fetchedSettings.activeValues.first)
+                    : nil
+            )
+            await reconcileEntityRefresh(
+                fetchedPeriods,
+                accountUserID: userID,
+                entityType: .phasePeriods,
+                fullSnapshot: phaseCursor == nil
+                    ? CachedWorkspaceSnapshot(phasePeriods: fetchedPeriods.activeValues)
+                    : nil
+            )
+        }
+        if outcomes.publishes(.healthMetrics),
+           let fetchedHealth = healthSlice.value {
+            await reconcileEntityRefresh(
+                fetchedHealth,
+                accountUserID: userID,
+                entityType: .healthMetrics,
+                fullSnapshot: healthCursor == nil
+                    ? CachedWorkspaceSnapshot(healthMetrics: fetchedHealth.activeValues)
+                    : nil
+            )
+        }
+        if outcomes.publishes(.presets),
+           let fetchedPresets = presetsSlice.value {
+            await reconcileEntityRefresh(
+                fetchedPresets,
+                accountUserID: userID,
+                entityType: .presets,
+                fullSnapshot: presetCursor == nil
+                    ? CachedWorkspaceSnapshot(presets: fetchedPresets.activeValues)
+                    : nil
+            )
+        }
+        if outcomes.publishes(.routinePresets),
+           let fetchedRoutines = routinesSlice.value {
+            await reconcileEntityRefresh(
+                fetchedRoutines,
+                accountUserID: userID,
+                entityType: .routinePresets,
+                fullSnapshot: routineCursor == nil
+                    ? CachedWorkspaceSnapshot(routines: fetchedRoutines.activeValues)
+                    : nil
+            )
+        }
+        if outcomes.publishes(.workoutsAndAttempts),
+           let fetchedWorkouts = workoutsSlice.value {
+            await reconcileEntityRefresh(
+                fetchedWorkouts,
+                accountUserID: userID,
+                entityType: .workoutsAndAttempts,
+                fullSnapshot: workoutCursor == nil
+                    ? CachedWorkspaceSnapshot(workouts: fetchedWorkouts.activeValues)
+                    : nil
+            )
+        }
+        if outcomes.publishes(.tagMetadata),
+           let fetchedTags = tagsSlice.value {
+            await reconcileEntityRefresh(
+                fetchedTags,
+                accountUserID: userID,
+                entityType: .tagMetadata,
+                fullSnapshot: tagCursor == nil
+                    ? CachedWorkspaceSnapshot(tagMetadata: fetchedTags.activeValues)
+                    : nil
+            )
+        }
+
+        // #922: the restore's "already on the server" identity is the
+        // POST-reconcile active set, derived from this pass's own reads —
+        // no third full-workspace load. A row the reconcile tombstoned must
+        // NOT be in it: its durable queue overlay is exactly what has to be
+        // restored, and suppressing that restore is how a locally saved row
+        // that the server's authoritative snapshot does not carry would
+        // disappear from the published list.
+        let hydratedSessions = hydrated?.snapshot.sessions ?? []
+        let hydratedRecordings = hydrated?.snapshot.recordings ?? []
+        let fetchedSessions = sessionsSlice.value?.activeValues ?? []
+        let fetchedRecordings = recordingsSlice.value?.activeValues ?? []
+        let pendingSessionIDs = Set(
+            (hydrated?.pendingRows ?? [])
+                .filter { $0.entityType == .sessions }
+                .compactMap { UUID(uuidString: $0.entityID) }
+        )
+        let pendingRecordingIDs = Set(
+            (hydrated?.pendingRows ?? [])
+                .filter { $0.entityType == .recordings }
+                .compactMap { UUID(uuidString: $0.entityID) }
+        )
+        let fetchedSessionIDs = Set(fetchedSessions.map(\.id))
+        let fetchedRecordingIDs = Set(fetchedRecordings.map(\.id))
+        // A cache row the server snapshot did not carry and that is not a
+        // pending local write is tombstoned by the reconcile — the same
+        // rule `CachedWorkspace.reconcile` applies.
+        let tombstonedSessionIDs = Set(
+            hydratedSessions.map(\.id).filter {
+                !fetchedSessionIDs.contains($0) && !pendingSessionIDs.contains($0)
             }
-            guard publishedLists else { return }
-            await refreshQueueCount(for: accountFetch)
-            guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
-                return
+        )
+        let tombstonedRecordingIDs = Set(
+            hydratedRecordings.map(\.id).filter {
+                !fetchedRecordingIDs.contains($0) && !pendingRecordingIDs.contains($0)
             }
-            if outcomes.didFullyRefresh {
-                // #673: the authoritative sweep succeeded AND is still for the
-                // current account — this is the freshness timestamp the
-                // foreground gate reasons over. Bumped only here (not by the
-                // realtime slice reconciler, which is a targeted refresh that
-                // intentionally leaves the non-watched tables untouched).
-                //
-                // #923 AC3: it is also bumped only for a pass where EVERY
-                // slice reconciled. A partial pass leaves the account-wide
-                // stamp stale (so the next foreground retries the sweep)
-                // while the slices that did reconcile keep their own cursor,
-                // and no surface can read this stamp as "everything is fresh".
-                lastListRefreshAt = ProcessInfo.processInfo.systemUptime
-                // #964: a refresh that actually succeeded retires the
-                // Dashboard's load-failure state — the screen has
-                // authoritative data again.
-                dashboardLoadFailureClass = nil
-                lastPartialRefreshFailure = nil
-            } else {
-                recordPartialRefresh(
-                    outcomes: outcomes,
-                    failures: sliceFailures,
-                    source: errorSurfaceSource,
-                    capturedBy: accountFetch
-                )
-            }
-            // #990: warm the tag curves whenever a recordings list was
-            // published, not only on a fully-successful sweep. The publication
-            // above clears every published curve (`invalidateTagCurveCache()`),
-            // so a partial pass used to leave a user with existing history
-            // curveless — all four zone protocols dimmed with "No reference
-            // curve" — until some other path (background sync, realtime
-            // reconcile, a save) happened to warm them again. The freshness
-            // stamp and the partial-refresh failure handling above stay gated
-            // on `didFullyRefresh`; the curve cache does not.
-            warmTagCurvesIfMissing(capturedBy: accountFetch)
-            // This is deliberately inside the private refresh path so cold
-            // bootstrap, foreground refresh, and mutation follow-ups all
-            // have one guaranteed publication point after authoritative data
-            // has successfully crossed the account/epoch guard.
-            publishReadinessWidgetSnapshot()
-        } catch {
-            if accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) {
-                // Some slices may have already been published before the
-                // failure. Put the last-known cache snapshot back so a partial
-                // fetch cannot hide a pending local write. #922: the last read
-                // of this pass is that snapshot.
-                applyCachedNonOverlayLists(accountUserID: userID, read: latestCacheRead)
-                // #964: record the failure for the Dashboard before deciding
-                // whether it also deserves the dismissible banner. The banner
-                // is transient; this state lasts until a refresh succeeds, so
-                // dismissing the banner cannot leave a blank Dashboard with no
-                // explanation or retry. Round 2: the load funnel's classifier
-                // keeps the named class here — a first-launch data-load
-                // failure must never render the empty `.unknown` copy.
-                dashboardLoadFailureClass = UserFacingError.classification(forLoadFailure: error)
-                // #842: a background/partial refresh failure must not claim
-                // total offline while the last-good dataset is already on
-                // screen (History rendered, banner claiming a blackout). The
-                // suppressed failure still heals a rejected bearer — auth
-                // account state is not banner copy.
-                // #992: the surface decision is computed before the line so
-                // the persisted line records whether this failure reached the
-                // user (banner) or was suppressed behind last-good data.
-                let willSurface = errorSurfacePolicy.shouldSurface(
-                    source: errorSurfaceSource,
-                    hasLastGoodData: hasLoadedSessions && forceModel.hasLoadedRecordings
-                )
-                recordLaunchFailure("refresh", error, surfaced: willSurface)
-                if willSurface {
-                    surfaceLoadFailure(error)
-                } else if let postgRESTError = error as? PostgRESTError {
-                    recoverAuthFrom(postgRESTError)
-                }
+        )
+        let publishedSessionIDs = Set(hydratedSessions.map(\.id))
+            .subtracting(tombstonedSessionIDs)
+            .union(fetchedSessionIDs)
+        let publishedRecordingIDs = Set(hydratedRecordings.map(\.id))
+            .subtracting(tombstonedRecordingIDs)
+            .union(fetchedRecordingIDs)
+        await restorePendingWrites(
+            accountFetch: accountFetch,
+            userID: userID,
+            remoteSessionIDs: publishedSessionIDs,
+            remoteRecordingIDs: publishedRecordingIDs
+        )
+        // #922: the publication reads the workspace ONCE, immediately
+        // before the synchronous publication closure. That ordering is
+        // load-bearing: an optimistic local write that landed while this
+        // pass was suspended in `restorePendingWrites` must be part of the
+        // revision that publishes, and must never be overwritten by an
+        // older one. Together with the hydration read, one refresh is
+        // exactly TWO full-workspace loads.
+        let publicationRead = await readCoherentCache(accountUserID: userID)
+        let publishedSnapshot = publicationRead?.snapshot
+        // #923: a failed slice's published list is its last-good value —
+        // the untouched cache row, or the in-memory list with its pending
+        // local overlays still on top.
+        let sessionsGroupPublished = outcomes.publishes(.sessionsAndRecordings)
+        let publishedSessions = publishedSnapshot?.sessions
+            ?? sessionsSlice.value?.activeValues
+            ?? sessions.filter { !$0.pending }
+        let publishedRecordings = publishedSnapshot?.recordings
+            ?? recordingsSlice.value?.activeValues
+            ?? recordings
+        let publishedLists = accountFetch.publishIfCurrent(
+            to: currentUserID,
+            accountEpoch: accountEpoch
+        ) {
+            // The cache is the reconciled source after either a full or a
+            // delta refresh: re-adopt it so a pending local
+            // preset/routine/settings/tag row is not hidden by the remote
+            // snapshot in the published collections (sessions/recordings
+            // keep their richer overlays below). A group whose slices
+            // failed was never reconciled, so its cache rows are still the
+            // last-good ones.
+            //
+            // #922: re-adopted from the ONE post-reconcile read above.
+            applyCachedNonOverlayLists(accountUserID: userID, read: publicationRead)
+            // #923: the successful slices publish ONCE, in this one
+            // MainActor publication. A failed group publishes nothing, so
+            // its sessions/recordings keep last-good data and their
+            // pending local overlays instead of being replaced by a
+            // half-authoritative pair.
+            if sessionsGroupPublished {
+                mergeSessions(remote: publishedSessions)
+                // This is the explicit authoritative refresh boundary. A
+                // server sample blob can change without metadata changing,
+                // so refreshAll is allowed to invalidate every fit;
+                // realtime rep reconciliation below stays key-scoped.
+                invalidateTagCurveCache()
+                mergeRecordings(remote: publishedRecordings)
+                // The sample rows are fetched later by the curve request
+                // and may have changed without any recording metadata
+                // change. Publish this authoritative refresh boundary so a
+                // scoped progress task restarts even when the metadata
+                // snapshot is equal.
+                publishForceProgressInputMutation(.recordings)
+                markRecordingsLoaded()
             }
         }
+        guard publishedLists else { return }
+        await refreshQueueCount(for: accountFetch)
+        guard accountFetch.canApply(to: currentUserID, accountEpoch: accountEpoch) else {
+            return
+        }
+        if outcomes.didFullyRefresh {
+            // #673: the authoritative sweep succeeded AND is still for the
+            // current account — this is the freshness timestamp the
+            // foreground gate reasons over. Bumped only here (not by the
+            // realtime slice reconciler, which is a targeted refresh that
+            // intentionally leaves the non-watched tables untouched).
+            //
+            // #923 AC3: it is also bumped only for a pass where EVERY
+            // slice reconciled. A partial pass leaves the account-wide
+            // stamp stale (so the next foreground retries the sweep)
+            // while the slices that did reconcile keep their own cursor,
+            // and no surface can read this stamp as "everything is fresh".
+            lastListRefreshAt = ProcessInfo.processInfo.systemUptime
+            // #964: a refresh that actually succeeded retires the
+            // Dashboard's load-failure state — the screen has
+            // authoritative data again.
+            dashboardLoadFailureClass = nil
+            lastPartialRefreshFailure = nil
+        } else {
+            recordPartialRefresh(
+                outcomes: outcomes,
+                failures: sliceFailures,
+                source: errorSurfaceSource,
+                capturedBy: accountFetch
+            )
+        }
+        // #990: warm the tag curves whenever a recordings list was
+        // published, not only on a fully-successful sweep. The publication
+        // above clears every published curve (`invalidateTagCurveCache()`),
+        // so a partial pass used to leave a user with existing history
+        // curveless — all four zone protocols dimmed with "No reference
+        // curve" — until some other path (background sync, realtime
+        // reconcile, a save) happened to warm them again. The freshness
+        // stamp and the partial-refresh failure handling above stay gated
+        // on `didFullyRefresh`; the curve cache does not.
+        warmTagCurvesIfMissing(capturedBy: accountFetch)
+        // This is deliberately inside the private refresh path so cold
+        // bootstrap, foreground refresh, and mutation follow-ups all
+        // have one guaranteed publication point after authoritative data
+        // has successfully crossed the account/epoch guard.
+        publishReadinessWidgetSnapshot()
     }
 
     /// Internal refreshes (foreground lifecycle, mutation follow-ups, and
@@ -5675,7 +5635,6 @@ public final class AppModel {
         var previousSession = initialSessionID.flatMap { sessionID in
             sessions.first { $0.id == sessionID && !$0.pending }
         }
-        var deleteIntentPersisted = false
         defer {
             if let barrierToken {
                 _ = recordingEditCoordinator.endSessionRPEBarrier(barrierToken)
@@ -5868,7 +5827,6 @@ public final class AppModel {
                 to: currentUserID,
                 accountEpoch: accountEpoch
             ) else { return }
-            deleteIntentPersisted = true
             let result = await upload(deleteItem, capturedBy: accountFetch)
             guard accountFetch.canApply(
                 to: currentUserID,
@@ -5893,10 +5851,6 @@ public final class AppModel {
             // Once the terminal intent is durable, keep the tombstone and the
             // optimistic removal. The queue owns retrying the backend delete;
             // re-enqueuing edits here would reopen the race this path closes.
-            guard !deleteIntentPersisted else {
-                surface(error)
-                return
-            }
             guard recordingEditCoordinator.clearDelete(
                 deleteToken,
                 currentUserID: currentUserID,

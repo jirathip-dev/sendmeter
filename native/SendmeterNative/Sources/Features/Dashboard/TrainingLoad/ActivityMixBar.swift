@@ -110,7 +110,7 @@ struct ActivityMixBar: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Activity mix: \(description)")
-        .onChange(of: activities) { _ in
+        .onChange(of: activities) { _, _ in
             // A changed data snapshot must not produce a selection tick.
             selectedIndex = nil
             tickedIndex = nil

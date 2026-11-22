@@ -359,7 +359,7 @@ final class OfflineQueueTests: XCTestCase {
 
         var now = Date(timeIntervalSince1970: 1_000)
         let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
-        for attempt in 1...many {
+        for _ in 1...many {
             try await queue.markFailure(
                 id: item.id,
                 accountUserID: user,
@@ -1011,7 +1011,7 @@ final class OfflineQueueTests: XCTestCase {
         let drainTask = Task {
             var now = Date(timeIntervalSince1970: 10_000)
             for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
-                try? await queue.markFailure(
+                _ = try? await queue.markFailure(
                     id: delete.id,
                     accountUserID: user,
                     error: "constraint",

@@ -31,7 +31,7 @@ private struct SendmeterSheetPresentationModifier: ViewModifier {
             .onAppear {
                 emit(lifecycle.appeared(id: presentationID))
             }
-            .onChange(of: presentationID) { _ in
+            .onChange(of: presentationID) { _, _ in
                 emit(lifecycle.appeared(id: presentationID))
             }
             .onDisappear {

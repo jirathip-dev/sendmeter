@@ -57,7 +57,7 @@ struct WorkoutEffortChartView: View {
                 .chartOverlay { proxy in
                     GeometryReader { geo in
                         if selectedTime != nil, let attempt = selectedAttempt {
-                            let plotFrame = geo[proxy.plotAreaFrame]
+                            let plotFrame = proxy.plotFrame.map { geo[$0] } ?? .zero
                             let x = (proxy.position(forX: selectedTime ?? 0) ?? 0) + plotFrame.minX
                             tooltip(for: attempt, x: x, plotFrame: plotFrame)
                         }
@@ -181,7 +181,7 @@ struct WorkoutEffortChartView: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { tooltipSize = geo.size }
-                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                        .onChange(of: geo.size) { _, newSize in tooltipSize = newSize }
                 }
             )
             .position(

@@ -156,7 +156,7 @@ struct WorkoutView: View {
                 armManualWorkoutFixtureIfNeeded()
                 #endif
             }
-            .onChange(of: storedRestTarget) { _ in
+            .onChange(of: storedRestTarget) { _, _ in
                 model.setManualWorkoutRestTarget(restTarget)
             }
             .task {
@@ -1489,7 +1489,7 @@ private struct LogSessionSheet: View {
                     }
                 }
             }
-            .onChange(of: typeID) { newValue in
+            .onChange(of: typeID) { _, newValue in
                 let definition = SessionTypeCatalog.definition(for: newValue)
                 duration = definition.defaultDurationMinutes
                 rpe = definition.defaultRPE
