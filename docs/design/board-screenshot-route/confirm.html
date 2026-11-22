@@ -1,0 +1,47 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>From screenshot — confirm</title><link rel="stylesheet" href="look.css">
+<style>
+.thumb{position:absolute;right:10px;top:10px;width:58px;border-radius:8px;overflow:hidden;border:2px solid rgba(255,255,255,.5)}
+.thumb svg{display:block;width:100%}
+.sum{display:flex;align-items:center;justify-content:space-between;margin:14px 2px 0}
+.sum b{font-size:17px}
+.cgrid{display:block}
+.srcwide{display:none}
+@media (min-width:900px){
+ .cgrid{display:grid;grid-template-columns:300px 420px 1fr;gap:28px;align-items:start}
+ .thumb{display:none}
+ .srcwide{display:block}
+ .sum{margin-top:0}
+}
+</style></head><body><div class="app"><nav class="side"></nav><main class="main"><div class="col">
+<div class="status"></div>
+<div class="nav"><button class="l">Back</button><div class="t">Check holds</div><button class="r">Save</button></div>
+<h1 class="only-wide">Check holds</h1>
+<div class="cgrid">
+<section class="srcwide"><div class="label" style="margin-top:0">Screenshot</div><div class="shot" id="src"></div></section>
+<section>
+ <div class="label only-wide" style="margin-top:0">Read on MoonBoard 2016 · 40°</div>
+ <div class="boardpanel"><span class="tag">MOONBOARD 2016 · 40°</span><div class="thumb" id="thumb"></div><div id="board" style="margin-top:22px"></div></div>
+ <div class="seg"><button class="on" style="color:#2E96F0"><span class="dot" style="color:#3CCB6B"></span><span style="color:var(--text)">Start</span></button><button><span class="dot" style="color:#2E96F0"></span>Hand</button><button><span class="dot" style="color:#D64FD0"></span>Finish</button><button>Erase</button></div>
+</section>
+<section>
+ <div class="sum"><b>7 holds</b><span class="badge caution">1 to check</span></div>
+ <div class="tile" style="margin-top:10px">
+  <div class="holds" style="border-bottom:1px solid var(--grid)"><span class="h"><span class="dot" style="color:#3CCB6B"></span>F5</span></div>
+  <div class="holds" style="border-bottom:1px solid var(--grid)"><span class="h"><span class="dot" style="color:#2E96F0"></span>D8</span><span class="h unsure"><span class="dot" style="color:#2E96F0"></span>G10 ?</span><span class="h"><span class="dot" style="color:#2E96F0"></span>C12</span><span class="h"><span class="dot" style="color:#2E96F0"></span>H13</span><span class="h"><span class="dot" style="color:#2E96F0"></span>E15</span></div>
+  <div class="holds"><span class="h"><span class="dot" style="color:#D64FD0"></span>F18</span></div>
+ </div>
+ <div class="label">Route</div>
+ <div class="tile">
+  <div class="row"><span>Name</span><span class="v">Route 22 Nov</span></div>
+  <div class="row"><span>Grade</span><span class="v ph">Choose ›</span></div>
+ </div>
+ <div style="margin-top:20px"><button class="btn primary">Save route</button></div>
+ <div class="local"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Read on this phone</div>
+</section>
+</div>
+</div></main></div>
+<script src="board.js"></script><script>
+drawBoard(document.getElementById("board"),ROUTE);
+drawShot(document.getElementById("thumb"),"full",ROUTE);
+drawShot(document.getElementById("src"),"full",ROUTE);
+</script></body></html>

@@ -1,0 +1,34 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>From screenshot — pick</title><link rel="stylesheet" href="look.css">
+<style>
+.pickgrid{display:block}
+.guide{display:grid;grid-template-columns:118px 1fr;gap:16px;align-items:center;padding:14px}
+.checks{display:flex;flex-direction:column;gap:12px;font-size:15px;font-weight:600}
+.checks div{display:flex;align-items:center;gap:10px}
+.ok{width:22px;height:22px;border-radius:11px;background:#DDEBF8;color:var(--optimalText);display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:800}
+.lock{width:12px;height:12px}
+@media (min-width:900px){
+ .pickgrid{display:grid;grid-template-columns:1fr 1fr;gap:32px;align-items:start}
+ .guide{grid-template-columns:200px 1fr;padding:22px;gap:28px}
+ .checks{font-size:17px;gap:16px}
+}
+</style></head><body><div class="app"><nav class="side"></nav><main class="main"><div class="col">
+<div class="status"></div>
+<div class="nav"><button class="l">Cancel</button><div class="t">From screenshot</div><div></div></div>
+<h1 class="only-wide">New route from a screenshot</h1>
+<div class="pickgrid">
+<section>
+ <div class="label">Wall</div>
+ <div class="chips"><span class="chip on">MoonBoard 2016 · 40°</span><span class="chip">MoonBoard Mini 2020 · 40°</span></div>
+ <div class="label">Screenshot</div>
+ <div class="tile guide"><div class="shot" id="ex"></div>
+  <div class="checks"><div><span class="ok">✓</span>Whole board</div><div><span class="ok">✓</span>A–K · 1–18</div><div><span class="ok">✓</span>Holds circled</div></div></div>
+</section>
+<section>
+ <div class="label only-wide">&nbsp;</div>
+ <div style="margin-top:22px"><button class="btn primary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>Choose screenshot</button>
+ <button class="btn soft"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="3" width="10" height="4" rx="1"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/></svg>Paste</button></div>
+ <div class="local"><svg class="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Read on this phone</div>
+</section>
+</div>
+</div></main></div>
+<script src="board.js"></script><script>drawShot(document.getElementById("ex"),"full",ROUTE)</script></body></html>

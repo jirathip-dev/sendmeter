@@ -1,0 +1,36 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>From screenshot — cannot read</title><link rel="stylesheet" href="look.css">
+<style>
+.cases{display:block}
+.case{display:none}
+.case.first{display:block}
+.mini{width:150px;margin:0 auto 18px}
+@media (min-width:900px){
+ .cases{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+ .case{display:block}
+ .vt{font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin:0 2px 8px}
+}
+@media (max-width:899px){.vt{display:none}}
+</style></head><body><div class="app"><nav class="side"></nav><main class="main"><div class="col">
+<div class="status"></div>
+<div class="nav"><button class="l">Cancel</button><div class="t">From screenshot</div><div></div></div>
+<h1 class="only-wide">Can't read this screenshot</h1>
+<div class="cases">
+ <div class="case first"><div class="vt">Not a MoonBoard</div>
+  <div class="tile err"><div class="shot mini" id="s1"></div><div class="ic">!</div><h2>Not a MoonBoard</h2><p>No A–K, 1–18 grid found.</p></div>
+  <div style="margin-top:20px"><button class="btn primary">Choose another</button><button class="btn soft">Mark holds by hand</button></div>
+  <div class="local">Nothing saved</div></div>
+ <div class="case"><div class="vt">Board cut off</div>
+  <div class="tile err"><div class="shot mini" id="s2"></div><div class="ic">!</div><h2>Board cut off</h2><p>Rows 12–18 are out of the picture.</p></div>
+  <div style="margin-top:20px"><button class="btn primary">Choose another</button><button class="btn soft">Mark holds by hand</button></div>
+  <div class="local">Nothing saved</div></div>
+ <div class="case"><div class="vt">Other layout</div>
+  <div class="tile err"><div class="shot mini" id="s3"></div><div class="ic">!</div><h2>12 rows: a Mini</h2><p>MoonBoard 2016 has 18 rows.</p></div>
+  <div style="margin-top:20px"><button class="btn primary">Choose another</button><button class="btn soft">Read on Mini 2020</button></div>
+  <div class="local">Nothing saved</div></div>
+</div>
+</div></main></div>
+<script src="board.js"></script><script>
+drawShot(document.getElementById("s1"),"photo");
+drawShot(document.getElementById("s2"),"cropped",ROUTE);
+drawShot(document.getElementById("s3"),"mini",[{at:"E3",role:"start"},{at:"C6",role:"hand"},{at:"G9",role:"hand"},{at:"F12",role:"finish"}]);
+</script></body></html>
