@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="chalk.css">
+<link rel="stylesheet" href="zine.css">
+<link rel="stylesheet" href="graffiti.css">
+<script src="crag.js" defer></script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <filter id="chalky"><feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="2.5"/><feComponentTransfer><feFuncA type="table" tableValues="0 .7 1 1"/></feComponentTransfer></filter>
+  <filter id="rough"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="3"/></filter>
+  <filter id="spray"><feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="1" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="3"/></filter>
+</svg>
+<div class="app">
+<nav class="side">
+  <div class="brand">Sendmeter</div>
+  <span class="tab"><i class="ico today"></i>Today</span>
+  <span class="tab"><i class="ico session"></i>Session</span>
+  <span class="tab on"><i class="ico board"></i>Board</span>
+  <span class="tab"><i class="ico force"></i>Force</span>
+  <span class="tab"><i class="ico log"></i>Log</span>
+</nav>
+<main class="col">
+  <span class="back">‹ Board</span>
+  <header class="top"><h1 class="title">Cobra Crack</h1><span class="menu">•••</span></header>
+
+  <div class="wide-2 route">
+  <div>
+  <section class="b-board">
+    <span class="tag">KILTER 40°</span>
+    <svg class="wall" data-holds='[[3,10,"start"],[5,10,"start"],[4,8,"hand"],[6,7,"hand"],[3,5,"hand"],[6,4,"hand"],[5,1,"finish"],[2,11,"foot"],[7,11,"foot"],[8,9,"foot"]]'></svg>
+    <span class="sticker only zine mascot-sticker" style="right:12px;bottom:12px;background:#FFD23F;transform:rotate(-10deg)"><span class="mascot workout"><i></i></span></span>
+  </section>
+  </div>
+  <div>
+  <section class="b-stat">
+    <div class="tile"><span class="lbl">Grade</span><span class="val grade">V6</span></div>
+    <div class="tile"><span class="lbl">Stars</span><span class="val">★★★</span></div>
+    <div class="tile"><span class="lbl">Your tries</span><span class="val">3</span></div>
+  </section>
+
+  <div class="btn-wrap">
+    <span class="btn">Light it</span>
+    <svg class="drips only graffiti" viewBox="0 0 300 22" preserveAspectRatio="none"><path d="M30 0h9v14a4.5 4.5 0 0 1-9 0zM150 0h7v19a3.5 3.5 0 0 1-7 0zM240 0h9v8a4.5 4.5 0 0 1-9 0z"/></svg>
+  </div>
+  <span class="btn plain">Log send</span>
+
+  <h2 class="hdr">Your ticks</h2>
+  <section class="b-list">
+    <div class="row"><div><div class="t">Sat 21 Nov</div><div class="s">1 try · soft</div></div><span class="badge flash">⚡ Flashed!</span><span></span><span></span></div>
+    <div class="row"><div><div class="t">Tue 10 Nov</div><div class="s">4 tries</div></div><span class="badge go">Go</span><span></span><span></span></div>
+  </section>
+  </div>
+  </div>
+</main>
+<nav class="tabbar">
+  <span class="tab"><i class="ico today"></i>Today</span>
+  <span class="tab"><i class="ico session"></i>Session</span>
+  <span class="tab on"><i class="ico board"></i>Board</span>
+  <span class="tab"><i class="ico force"></i>Force</span>
+  <span class="tab"><i class="ico log"></i>Log</span>
+</nav>
+</div>
+</body>
+</html>
