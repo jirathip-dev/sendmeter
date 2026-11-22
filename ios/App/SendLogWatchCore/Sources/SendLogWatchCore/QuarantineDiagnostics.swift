@@ -72,18 +72,18 @@ public enum QuarantineCopy {
     public static func title(for reason: QuarantineReason) -> String {
         switch reason {
         case .schemaRejection:
-            return "Could not be uploaded — will not retry"
+            return "Can’t be saved"
         case .stuckRetrying:
-            return "Having trouble uploading — retrying automatically"
+            return "Trying to save…"
         }
     }
 
     public static func detail(for reason: QuarantineReason) -> String {
         switch reason {
         case .schemaRejection:
-            return "The server permanently rejected this upload. It stays saved on your watch; retrying it won't help."
+            return "Sendmeter can’t save this. It stays on your watch."
         case .stuckRetrying:
-            return "It gets one automatic retry in a few days. You can also retry it now."
+            return "Sendmeter will try again later, or retry it now."
         }
     }
 
@@ -91,7 +91,7 @@ public enum QuarantineCopy {
     /// (`payloadDropped == true`) — the honest companion to a retry of that
     /// item: it uploads summary numbers, not the original buffer (#600 ask 5).
     public static let payloadDroppedNote =
-        "Some detail was dropped at quarantine — a retry uploads its summary, not the original buffer."
+        "Only the summary of this one can be saved; its force curve is gone."
 }
 
 /// Pure display helpers for the quarantine diagnostics surface (#599).
@@ -125,10 +125,7 @@ public enum QuarantineRetryPolicy {
         }
     }
 
-    public static let retryActionTitle = "Retry stuck uploads"
-
-    public static let retryActionDetail =
-        "Moves retryable uploads back to the upload queue and tries them now."
+    public static let retryActionTitle = "Retry"
 
     /// Result copy after a manual retry: `restored` items were moved back to
     /// the pending queue (and usually uploaded right away), `kept` stayed
@@ -139,10 +136,10 @@ public enum QuarantineRetryPolicy {
         guard restored > 0 || kept > 0 else { return nil }
         var parts: [String] = []
         if restored > 0 {
-            parts.append("\(restored) upload\(restored == 1 ? "" : "s") moved back to the queue")
+            parts.append("\(restored) retrying")
         }
         if kept > 0 {
-            parts.append("\(kept) left in quarantine")
+            parts.append("\(kept) still not saved")
         }
         return parts.joined(separator: " · ")
     }

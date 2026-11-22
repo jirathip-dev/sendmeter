@@ -110,7 +110,7 @@ struct HistoryView: View {
         } else {
             HistoryEmptyState(
                 title: "Your history is catching its breath",
-                message: "Sync once to bring your training story back into view.",
+                message: "Pull to refresh to load your history.",
                 actionTitle: "Try again",
                 action: retryHistoryLoad
             )
@@ -588,12 +588,12 @@ struct HistoryView: View {
         let hasWaiting = phone > 0 || watch > 0
         let hasQuarantined = quarantined > 0
         if hasWaiting {
-            return "Uploads waiting"
+            return "Not saved to your account yet"
         }
         if hasQuarantined {
-            return "Rejected uploads"
+            return "Couldn’t save"
         }
-        return "Uploads waiting"
+        return "Not saved to your account yet"
     }
 
     private func uploadMessage(
@@ -603,23 +603,20 @@ struct HistoryView: View {
         failure: QueuedWriteDiagnostic?
     ) -> String {
         var parts: [String] = []
-        if phone > 0 { parts.append("\(phone) queued on this iPhone") }
+        if phone > 0 { parts.append("\(phone) on this iPhone") }
         if watch > 0 { parts.append("\(watch) on your watch") }
         if quarantined > 0 {
             parts.append("\(quarantined) rejected, not retrying")
         }
         if parts.isEmpty {
-            return "The server rejected these; they are kept on this device and never retried on their own — manage them in Settings."
+            return "Sendmeter couldn’t save these. They’re still on this iPhone — open Settings to retry or discard them."
         }
-        var message = parts.joined(separator: " · ") + ". Queued data is durable on device and retries automatically; rejected items never retry on their own — manage them in Settings."
+        var message = parts.joined(separator: " · ") + ". They’ll save automatically when you’re back online."
         if let failure {
-            let classLabel = failure.rejectionClass.map {
-                UserFacingError.label(for: $0)
-            } ?? "previous attempt"
             let reason = failure.rejectionClass.map {
                 UserFacingError.message(for: $0)
-            } ?? "The last upload attempt failed."
-            message += " Last attempt (\(classLabel)): \(reason) The app will retry automatically; use Retry Now in Settings if needed."
+            } ?? "Couldn’t save."
+            message += " \(reason)"
         }
         return message
     }
@@ -830,9 +827,6 @@ private struct HistoryRecordingRow: View {
             VStack(alignment: .trailing, spacing: 3) {
                 Text((recording.peakKilograms ?? 0).formatted(.number.precision(.fractionLength(1))) + " kg")
                     .font(.headline.monospacedDigit())
-                Text("\(recording.sampleCount) samples")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .contentShape(Rectangle())
@@ -898,7 +892,7 @@ private struct SessionEditorSheet: View {
                     // the web).
                     if !draft.rpeConfirmed {
                         Label(
-                            "Predicted from W′ depletion — adjust the slider to confirm",
+                            "Estimated — adjust to confirm",
                             systemImage: "wand.and.stars"
                         )
                         .font(.caption)
@@ -909,9 +903,6 @@ private struct SessionEditorSheet: View {
                 Section("Training Block") {
                     Label(PhaseCatalog.definition(for: draft.phase).name, systemImage: "square.stack.3d.up.fill")
                         .foregroundStyle(SendmeterStyle.phaseColor(draft.phase))
-                    Text("Historical sessions keep the block they were logged under.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Edit Session")
@@ -969,7 +960,6 @@ struct ForceRecordingDetailView: View {
                             VStack(alignment: .trailing, spacing: 4) {
                                 Text("Avg \((recording.averageKilograms ?? 0).formatted(.number.precision(.fractionLength(1)))) kg")
                                 Text((Double(recording.durationMilliseconds) / 1_000).formatted(.number.precision(.fractionLength(1))) + " s")
-                                Text("\(recording.sampleCount) samples")
                             }
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
@@ -978,7 +968,7 @@ struct ForceRecordingDetailView: View {
                             ProgressView("Loading trace…")
                                 .frame(maxWidth: .infinity, minHeight: 160)
                         } else if samples.isEmpty {
-                            Text("No trace samples are available for this recording.")
+                            Text("No force curve for this pull.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, minHeight: 120)
@@ -995,7 +985,7 @@ struct ForceRecordingDetailView: View {
 
                 SurfaceCard {
                     VStack(alignment: .leading, spacing: 12) {
-                        SectionLabel("Metadata", systemImage: "tag")
+                        SectionLabel("Details", systemImage: "tag")
                         TextField("Exercise or grip", text: $recording.tag)
                             .padding(10)
                             .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
@@ -1023,12 +1013,9 @@ struct ForceRecordingDetailView: View {
                                     .monospacedDigit()
                                     .frame(width: 34)
                             }
-                            Text("RPE is stored on the linked session and changing it confirms the effort review.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                         Label(
-                            "Raw force samples are immutable; this editor changes metadata only.",
+                            "The pull itself can’t be edited.",
                             systemImage: "lock"
                         )
                         .font(.caption)

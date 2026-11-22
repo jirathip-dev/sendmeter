@@ -90,9 +90,6 @@ struct TrainingBalanceDetailView: View {
             scopeRow("Recorded vs inferred zones") {
                 recordedVsInferred(scopeCounts)
             }
-            scopeRow("Why History reads differently") {
-                Text("History lists every session for every exercise over all time, and badges each one with the zone that session alone was mostly in. It's a different measurement over a different scope — the two are expected to disagree, and neither is wrong.")
-            }
         }
     }
 
@@ -101,9 +98,9 @@ struct TrainingBalanceDetailView: View {
         let recorded = scopeCounts.recordedCount
         let inferred = scopeCounts.effortCount - recorded
         if recorded == 0 {
-            Text("None of these holds store the zone they were performed under, so every one is bucketed by how long it lasted. Only holds recorded under an armed zone or preset carry the real thing.")
+            Text("These holds are sorted into zones by how long they lasted.")
         } else {
-            Text("\(recorded) of \(scopeCounts.effortCount) hold\(scopeCounts.effortCount == 1 ? "" : "s") store the zone they were performed under and are counted as that; \(inferred == 0 ? "none are inferred" : "the other \(inferred) have it inferred from hold length").")
+            Text("\(recorded) of \(scopeCounts.effortCount) hold\(scopeCounts.effortCount == 1 ? "" : "s") \(recorded == 1 ? "was" : "were") recorded with a zone\(inferred == 0 ? "." : "; the rest are sorted by how long they lasted.")")
         }
     }
 
@@ -141,7 +138,7 @@ struct TrainingBalanceDetailView: View {
                     let percent = Int((ratio * 100).rounded())
                     Text("Your critical force is \(percent)% of your predicted 5s peak — \(detail.curveBias == .endurance ? "under \(Int((ZoneMix.curveBiasRatio * 100).rounded()))%, which reads as endurance-limited" : "at or over \(Int((ZoneMix.curveBiasRatio * 100).rounded()))%, which reads as strength-limited"). \(tiedOthers.isEmpty ? "With no tie to break, it changed nothing here." : (detail.biasChangedPick ? "That broke the tie toward the \(detail.curveBias?.rawValue ?? "") side, over \(detail.unbiasedZone.label)." : "That points at the same zone the set counts already did (\(detail.unbiasedZone.label)), so it changed nothing."))")
                 } else {
-                    Text("No critical-force fit yet, so the force curve had no say — the least-trained zone stands on its own.")
+                    Text("Showing your least-trained zone.")
                 }
 
                 Text("Tapping the recommendation on the card arms this zone's guided protocol for \(exercise).")

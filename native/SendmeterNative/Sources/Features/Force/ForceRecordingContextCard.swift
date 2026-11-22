@@ -133,7 +133,6 @@ struct ForceRecordingContextCard: View {
 
     private var recordingHead: some View {
         HStack(spacing: 8) {
-            RecordingContextEyebrow(title: "Recording context", systemImage: "tag")
             Spacer(minLength: 8)
             // #1028 F2: in Hands-free the free pull IS the plan — "Nothing
             // armed" next to the bar's "Armed · pull to start" contradicted it.
@@ -228,7 +227,7 @@ struct ForceRecordingContextCard: View {
             case .saved:
                 savedList
                     .padding(.horizontal, 12)
-                Text("Your presets · selecting one arms it immediately")
+                Text("Your presets")
                     .font(.caption)
                     .foregroundStyle(RecordingContextPalette.metadata(scheme))
                     .frame(maxWidth: .infinity, alignment: .leading)

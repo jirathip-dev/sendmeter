@@ -76,8 +76,8 @@ public enum ForceLockOrphanPolicy {
     /// The release affordance's copy, in one place so the card, its hint and
     /// the device-row lock label cannot drift apart.
     public static let releaseTitle = "Clear Finished Session"
-    public static let releaseHeading = "A finished guided protocol is holding this screen"
-    public static let releaseNotice = "The protocol has already ended, so there is nothing left to resume or end \u{2014} but its session still holds the screen. Clearing it releases this screen; nothing you recorded, queued, or left unsaved is deleted."
+    public static let releaseHeading = "This protocol has ended"
+    public static let releaseNotice = "This protocol has ended. Clearing it frees the screen \u{2014} nothing you recorded is deleted."
     public static let releaseHint = "Releases this screen; nothing you recorded is deleted"
     /// The device-row lock label while a LIVE session holds the surface.
     public static let activeLockLabel = "Guided protocol active \u{2014} resume or end it above"

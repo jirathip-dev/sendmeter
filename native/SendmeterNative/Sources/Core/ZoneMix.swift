@@ -549,7 +549,7 @@ extension ZoneMix {
     /// The caveat that belongs next to those bands (web `ZONE_BAND_CAVEAT`):
     /// a hold recorded under an armed zone/preset stores its zone as a fact;
     /// everything else has it inferred from hold length.
-    public static let zoneBandCaveat = "A hold recorded under an armed zone or preset stores the zone it was performed under — those are marked \"recorded\" and use it as-is. Every other hold — anything saved before this app stored it, and any freehand pull with no protocol armed — has its zone inferred from how long the hold lasted. The power (5s), pow end (7s) and strength (10s) anchors sit close together, so short holds are inherently fuzzy: an inferred hold that lands on the wrong side of the 6s or 8.5s boundary shows up as fractional credit in the neighbouring zone rather than being smoothed away. Inferred holds under 1s are treated as stray blips and counted nowhere."
+    public static let zoneBandCaveat = "Holds recorded with a zone or preset count toward that zone. Other holds are sorted by length, so short holds near a boundary may count partly toward the next zone."
 
     /// Builds the guided-protocol preset a recommended zone arms — the native
     /// sibling of the web's `buildZoneSelection(...).protocol`, derived from

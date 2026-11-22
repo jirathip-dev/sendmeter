@@ -481,7 +481,7 @@ struct GuidedForceRunnerView: View {
         .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
         .disabled(!display.canStop)
         .accessibilityLabel("Stop protocol")
-        .accessibilityHint("Stops now and saves any active partial set honestly")
+        .accessibilityHint("Stops now and saves the current set")
         .accessibilityIdentifier("force-guided-stop")
     }
 

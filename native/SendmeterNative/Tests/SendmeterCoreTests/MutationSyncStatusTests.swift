@@ -13,7 +13,7 @@ final class MutationSyncStatusTests: XCTestCase {
         // count before either had been read rendered as "Synced".
         let status = MutationSyncStatus.resolve(MutationSyncStatusInputs())
         XCTAssertEqual(status.state, .notLoaded)
-        XCTAssertNotEqual(status.statusLabel, "Synced")
+        XCTAssertNotEqual(status.statusLabel, "All saved")
         XCTAssertEqual(status.retry, .hidden)
         XCTAssertNil(status.quarantinedCount)
     }
@@ -23,7 +23,7 @@ final class MutationSyncStatusTests: XCTestCase {
             MutationSyncStatusInputs(hasLoadedPendingWrites: true, quarantinedCount: nil)
         )
         XCTAssertEqual(status.state, .notLoaded)
-        XCTAssertNotEqual(status.statusLabel, "Synced")
+        XCTAssertNotEqual(status.statusLabel, "All saved")
     }
 
     func testReadAndEmptyIsTheOnlySynced() {
@@ -31,10 +31,10 @@ final class MutationSyncStatusTests: XCTestCase {
             MutationSyncStatusInputs(hasLoadedPendingWrites: true, quarantinedCount: 0)
         )
         XCTAssertEqual(status.state, .synced)
-        XCTAssertEqual(status.statusLabel, "Synced")
+        XCTAssertEqual(status.statusLabel, "All saved")
         XCTAssertEqual(status.retry, .unavailable(.nothingPending))
         XCTAssertFalse(
-            (status.retryUnavailableExplanation ?? "").contains("Synced"),
+            (status.retryUnavailableExplanation ?? "").contains("All saved"),
             "the disabled-retry note explains the absence of work, not a sync claim"
         )
         XCTAssertNotNil(status.retryUnavailableExplanation)
@@ -49,10 +49,9 @@ final class MutationSyncStatusTests: XCTestCase {
             )
         )
         XCTAssertEqual(status.state, .awaitingUpload)
-        XCTAssertEqual(status.statusLabel, "2 waiting to upload")
+        XCTAssertEqual(status.statusLabel, "2 not saved yet")
         XCTAssertEqual(status.retry, .ready)
-        XCTAssertTrue(status.explanation.contains("queued upload"))
-        XCTAssertFalse(status.explanation.lowercased().contains("synced"))
+        XCTAssertEqual(status.explanation, "2 changes on this iPhone will save automatically.")
     }
 
     func testCacheOnlyWorkIsAwaitingUploadAndSaysItIsNotUploadedYet() {
@@ -64,10 +63,9 @@ final class MutationSyncStatusTests: XCTestCase {
             )
         )
         XCTAssertEqual(status.state, .awaitingUpload)
-        XCTAssertEqual(status.statusLabel, "1 waiting to upload")
+        XCTAssertEqual(status.statusLabel, "1 not saved yet")
         XCTAssertEqual(status.retry, .ready)
-        XCTAssertTrue(status.explanation.contains("saved on this iPhone"))
-        XCTAssertTrue(status.explanation.contains("not uploaded yet"))
+        XCTAssertEqual(status.explanation, "1 change on this iPhone. Tap Retry Now to save it.")
     }
 
     func testMixedWorkNamesBothChannels() {
@@ -81,9 +79,8 @@ final class MutationSyncStatusTests: XCTestCase {
         )
         XCTAssertEqual(status.state, .awaitingUpload)
         XCTAssertEqual(status.pendingCount, 5)
-        XCTAssertEqual(status.statusLabel, "5 waiting to upload")
-        XCTAssertTrue(status.explanation.contains("3 queued uploads"))
-        XCTAssertTrue(status.explanation.contains("2 local changes"))
+        XCTAssertEqual(status.statusLabel, "5 not saved yet")
+        XCTAssertEqual(status.explanation, "5 changes on this iPhone. Tap Retry Now to save them.")
     }
 
     func testQuarantinedWorkIsNeedsAttentionNotAwaitingUpload() {
@@ -99,7 +96,7 @@ final class MutationSyncStatusTests: XCTestCase {
         // The quarantine keeps its own row-level Retry/Discard: the queue
         // retry never claims to cover it.
         XCTAssertEqual(status.retry, .ready)
-        XCTAssertTrue(status.explanation.contains("server rejected"))
+        XCTAssertEqual(status.explanation, "Sendmeter couldn’t save 2 changes. Retry or discard them below.")
     }
 
     func testQuarantineWithNothingQueuedHidesTheQueueRetry() {
@@ -140,7 +137,7 @@ final class MutationSyncStatusTests: XCTestCase {
         XCTAssertEqual(status.statusLabel, "1 stayed on this iPhone")
         let explanation = status.retryUnavailableExplanation
         XCTAssertNotNil(explanation)
-        XCTAssertTrue(explanation?.contains("Retrying cannot move") ?? false)
+        XCTAssertEqual(explanation, "Update Sendmeter to save these changes.")
     }
 
     func testTransientQueueFailureKeepsTheRetryReady() {

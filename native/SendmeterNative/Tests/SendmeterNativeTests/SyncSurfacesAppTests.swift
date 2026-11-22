@@ -64,7 +64,7 @@ final class SyncSurfacesAppTests: XCTestCase {
         XCTAssertEqual(model.pendingCacheWriteCount, 1)
         let before = model.mutationSyncStatus
         XCTAssertEqual(before.state, .awaitingUpload)
-        XCTAssertEqual(before.statusLabel, "1 waiting to upload")
+        XCTAssertEqual(before.statusLabel, "1 not saved yet")
         XCTAssertEqual(
             before.retry,
             .ready,
@@ -134,7 +134,7 @@ final class SyncSurfacesAppTests: XCTestCase {
             "the visible retry is disabled for work it cannot retry"
         )
         let explanation = try XCTUnwrap(status.retryUnavailableExplanation)
-        XCTAssertTrue(explanation.contains("Retrying cannot move"))
+        XCTAssertEqual(explanation, "Update Sendmeter to save these changes.")
 
         // A second tap does not quietly re-run the once-per-account sweep and
         // pretend something happened.
@@ -200,7 +200,7 @@ final class SyncSurfacesAppTests: XCTestCase {
         let ownerStatus = owner.mutationSyncStatus
         XCTAssertEqual(ownerStatus.state, .awaitingUpload)
         XCTAssertGreaterThanOrEqual(ownerStatus.pendingCount, 1)
-        XCTAssertNotEqual(ownerStatus.statusLabel, "Synced")
+        XCTAssertNotEqual(ownerStatus.statusLabel, "All saved")
 
         // A different account signs in on the same device: its retry pass must
         // not touch the first account's queue, and the outcome it publishes is

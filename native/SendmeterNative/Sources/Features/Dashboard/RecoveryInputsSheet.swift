@@ -43,9 +43,6 @@ struct RecoveryInputsSheet: View {
                     if snapshot.hasData {
                         SurfaceCard {
                             VStack(alignment: .leading, spacing: 10) {
-                                Text("The raw HealthKit metrics your daily readiness score is computed from.")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
                                 legend
                             }
                         }
@@ -175,9 +172,6 @@ struct RecoveryInputsSheet: View {
     private var emptyState: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 6) {
-                Text("The raw HealthKit metrics your daily readiness score is computed from.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
                 Text("HRV, resting heart rate, sleep, and weight will show here once your watch starts syncing overnight data.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

@@ -56,7 +56,7 @@ struct MovementDetailView: View {
 
     private var policyCard: some View {
         SurfaceCard {
-            Text("Movement is tracked as execution quality. It never changes your Static PR, Hill/CF model or asymmetry.")
+            Text("Movement sets don't change your Static PR, force curve or asymmetry.")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineSpacing(2)

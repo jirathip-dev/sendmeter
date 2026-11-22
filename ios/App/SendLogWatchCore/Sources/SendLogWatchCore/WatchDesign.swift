@@ -186,7 +186,7 @@ public enum WatchVisualState: String, CaseIterable, Sendable {
         case .ready: "Ready"
         case .syncing: "Syncing"
         case .offline: "Offline"
-        case .cached: "Cached"
+        case .cached: "Last update"
         case .stale: "Needs attention"
         case .success: "Saved"
         case .warning: "Caution"

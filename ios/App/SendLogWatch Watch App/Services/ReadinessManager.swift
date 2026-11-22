@@ -79,7 +79,7 @@ final class ReadinessManager {
             result = ReadinessDisplay(
                 score: cached.readiness,
                 zone: cached.readinessZone.flatMap(ReadinessZone.init(rawValue:)),
-                driver: cached.readiness == nil ? "Cached" : "Cached (\(cached.updatedAtDateString))"
+                driver: cached.readiness == nil ? "Last update" : "From \(cached.updatedAtDateString)"
             )
         }
         acceptsResults = hasPersistedSession
@@ -162,7 +162,7 @@ final class ReadinessManager {
                 zone: incoming.zone.flatMap(ReadinessZone.init(rawValue:)),
                 driver: result.freshness == .fresh
                     ? "Fresh (\(incoming.date))"
-                    : "Cached (\(incoming.date))"
+                    : "From \(incoming.date)"
             )
             WidgetStore.save(snapshot)
             Task {
@@ -262,19 +262,19 @@ final class ReadinessManager {
     var syncLabel: String {
         switch syncState {
         case .idle:
-            return snapshot.readiness == nil ? "Waiting for iPhone" : "Cached"
+            return snapshot.readiness == nil ? "Waiting for iPhone" : "Last update"
         case .syncing:
             return "Syncing from iPhone…"
         case .fresh:
             return "Fresh from iPhone"
         case .cached:
-            return "Cached · afternoon freeze"
+            return "Today’s score"
         case .offline:
-            return snapshot.readiness == nil ? "Offline · no score yet" : "Offline · showing cached"
+            return snapshot.readiness == nil ? "Offline · no score yet" : "Offline · last score"
         case .authRequired:
             return "Open Sendmeter on iPhone to refresh"
         case .failed:
-            return snapshot.readiness == nil ? "Refresh failed" : "Refresh failed · showing cached"
+            return snapshot.readiness == nil ? "Couldn’t refresh" : "Couldn’t refresh · last score"
         case .unsupported:
             return "iPhone readiness unavailable"
         }

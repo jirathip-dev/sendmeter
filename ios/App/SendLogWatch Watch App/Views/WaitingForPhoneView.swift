@@ -61,7 +61,7 @@ struct WaitingForPhoneView: View {
                     WatchStateBanner(
                         state: .offline,
                         title: "\(pendingUploads) save\(pendingUploads == 1 ? "" : "s") waiting",
-                        message: "They upload when your iPhone signs this watch in."
+                        message: "They’ll save once you sign in on your iPhone."
                     )
                 }
 
@@ -79,7 +79,7 @@ struct WaitingForPhoneView: View {
                             .font(.system(.footnote, design: .rounded).weight(.semibold))
                             .foregroundStyle(WatchPalette.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Open Sendmeter on your iPhone. This watch uses its session — there is no separate watch login.")
+                        Text("Open Sendmeter on your iPhone to sign in.")
                             .font(.system(.caption2, design: .rounded))
                             .foregroundStyle(WatchPalette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -97,7 +97,7 @@ struct WaitingForPhoneView: View {
                 if let rejectionMessage {
                     WatchStateBanner(
                         state: .danger,
-                        title: "Could not use that relay",
+                        title: "Couldn’t sign in",
                         message: rejectionMessage
                     )
                 }

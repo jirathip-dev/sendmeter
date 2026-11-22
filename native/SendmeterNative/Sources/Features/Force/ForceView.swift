@@ -1090,9 +1090,9 @@ private struct GuidedForceProtocolView: View {
             .controlSize(.large)
             .tint(accent)
             .disabled(session.isAdvancing || session.isPausing)
-            .accessibilityHint("Saves this protocol into the live gauge session and returns to the Force tab")
+            .accessibilityHint("Saves this protocol and returns to the Force tab")
 
-        Text("Gauge session stays live — end it from the Force tab")
+        Text("End the session from the Force tab")
             .font(.caption)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
@@ -2468,7 +2468,7 @@ struct ForceView: View {
             return
         }
         guard let summary = model.tindeq.stopMeasuring() else {
-            refuseAction("No force samples were received.")
+            refuseAction("No pull was detected.")
             return
         }
         save(summary, recovered: false)
@@ -3173,7 +3173,7 @@ private struct ForceDeviceCard: View {
                 if resolvingTarget {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text("Resolving the protocol target from this exercise's force history…")
+                        Text("Setting your target…")
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -3871,7 +3871,7 @@ private struct ForcePresetEditor: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     case .curve:
-                        Text("Each set resolves against the exercise's Hill force-duration curve at that set's prescribed work duration.")
+                        Text("Each set's target comes from your force curve.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

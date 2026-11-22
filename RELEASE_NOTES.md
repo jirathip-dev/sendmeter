@@ -78,6 +78,10 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Plainer wording across the iPhone and Watch apps: text about how the app
+  stores or uploads data ("metadata", "immutable", "quarantined uploads",
+  "cached", "server") is gone or rewritten as "saved / not saved yet".
+
 - Native Training Load charts are easier to read: the weekly load bars' AU
   totals and week labels now follow your text size instead of a tiny fixed
   size, they thin out on narrow screens or at large text sizes instead of

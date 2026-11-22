@@ -36,7 +36,7 @@ struct StatusView: View {
             case .statusOffline:
                 return (.offline, "Offline")
             case .statusCached:
-                return (.cached, "Cached")
+                return (.cached, "Last update")
             case .statusEmpty:
                 return (.warning, "No data")
             case .statusAuthRequired:
@@ -57,7 +57,7 @@ struct StatusView: View {
         case .fresh:
             return (.ready, "Synced")
         case .cached, .idle:
-            return snap.updatedAt == 0 ? (.warning, "No data") : (.cached, "Cached")
+            return snap.updatedAt == 0 ? (.warning, "No data") : (.cached, "Last update")
         case .offline:
             return (.offline, "Offline")
         case .syncing:

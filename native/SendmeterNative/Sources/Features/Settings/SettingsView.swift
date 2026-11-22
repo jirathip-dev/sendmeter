@@ -86,7 +86,7 @@ struct SettingsView: View {
                 Text(signOutRemainderMessage)
             }
             .confirmationDialog(
-                "Discard quarantined \(discardConfirmation?.kind.lowercased() ?? "item")?",
+                "Discard unsaved \(discardConfirmation?.kind.lowercased() ?? "item")?",
                 isPresented: discardConfirmationBinding,
                 titleVisibility: .visible
             ) {
@@ -98,7 +98,7 @@ struct SettingsView: View {
                 }
                 Button("Keep", role: .cancel) { discardConfirmation = nil }
             } message: {
-                Text("This permanently deletes the unsynced \(discardConfirmation?.kind.lowercased() ?? "item") from this device. The server never received it, so it cannot be recovered after this.")
+                Text("This permanently deletes this \(discardConfirmation?.kind.lowercased() ?? "item"). It was never saved to your account, so it can’t be recovered.")
             }
             .confirmationDialog(
                 "Remove passkey?",
@@ -160,14 +160,14 @@ struct SettingsView: View {
 
     private var signOutRemainderTitle: String {
         let count = model.signOutRemainderCount ?? 0
-        return "\(count) recording\(count == 1 ? "" : "s") not uploaded"
+        return "\(count) recording\(count == 1 ? "" : "s") not saved yet"
     }
 
     private var signOutRemainderMessage: String {
         let count = model.signOutRemainderCount ?? 0
         return count == 1
-            ? "It's still waiting to reach the server — usually that means no connection. Signing out keeps it on this device; it uploads the next time this account signs in."
-            : "They're still waiting to reach the server — usually that means no connection. Signing out keeps them on this device; they upload the next time this account signs in."
+            ? "Signing out keeps it on this iPhone; it’ll save next time you sign in."
+            : "Signing out keeps them on this iPhone; they’ll save next time you sign in."
     }
 
     // MARK: General
@@ -180,7 +180,7 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-            Text("Metric (kg) or Imperial (lb). Applies to body weight; Force and load units come later.")
+            Text("Applies to body weight.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -193,9 +193,6 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-            Text("System follows the device appearance. The choice is applied on launch.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -294,7 +291,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             if model.lastHealthSyncObservation == .failed {
-                Text("The last Apple Health refresh failed; the previous reading is kept.")
+                Text("Couldn’t refresh Apple Health. Showing your last reading.")
                     .font(.caption)
                     .foregroundStyle(SendmeterStyle.caution)
             } else if model.lastHealthSyncObservation == .noSourceData {
@@ -334,11 +331,11 @@ struct SettingsView: View {
                 )
             }
             if let pending = model.watch.pendingSyncCount {
-                LabeledContent("Waiting to upload", value: "\(pending)")
+                LabeledContent("Waiting on watch", value: "\(pending)")
             }
             if let unscoped = model.watch.unscopedSyncCount, unscoped > 0 {
                 HStack {
-                    Label("Legacy watch items", systemImage: "questionmark.folder.fill")
+                    Label("Older watch items", systemImage: "questionmark.folder.fill")
                         .foregroundStyle(SendmeterStyle.caution)
                     Spacer()
                     Text("\(unscoped)").monospacedDigit()
@@ -555,10 +552,9 @@ struct SettingsView: View {
 
     private var activeQueueFailureExplanation: String? {
         guard let failure = model.latestQueuedWriteFailure else { return nil }
-        let reason = failure.rejectionClass.map {
+        return failure.rejectionClass.map {
             UserFacingError.message(for: $0)
-        } ?? "The last upload attempt failed."
-        return "Last \(failure.kind.lowercased()) attempt: \(reason) The app will retry automatically; use Retry Now if needed."
+        } ?? "Couldn’t save."
     }
 
     // MARK: About & Support
@@ -571,21 +567,23 @@ struct SettingsView: View {
             healthSubheader("Version", systemImage: "info.circle")
             LabeledContent("Version", value: appVersion)
 
-            healthSubheader("Data sync", systemImage: "externaldrive.badge.icloud")
+            healthSubheader("Saving", systemImage: "externaldrive.badge.icloud")
             HStack {
-                Label("Pending uploads", systemImage: "externaldrive.badge.icloud")
+                Label("Not saved yet", systemImage: "externaldrive.badge.icloud")
                 Spacer()
                 StatusPill(syncStatus.statusLabel, color: syncStatusColor)
                     .accessibilityIdentifier("sync-status-pill")
                     // #920 AC6: VoiceOver reads the row as a labelled value
                     // rather than an unlabelled pill.
-                    .accessibilityLabel("Upload status")
+                    .accessibilityLabel("Save status")
                     .accessibilityValue(syncStatus.statusLabel)
             }
-            Text(syncStatus.explanation)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("sync-status-explanation")
+            if let explanation = syncStatus.explanation {
+                Text(explanation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("sync-status-explanation")
+            }
             if let activeQueueFailureExplanation {
                 Text(activeQueueFailureExplanation)
                     .font(.caption)
@@ -652,14 +650,14 @@ struct SettingsView: View {
                 }
             } label: {
                 HStack {
-                    Label("Repair local data", systemImage: "wrench.and.screwdriver")
+                    Label("Repair data", systemImage: "wrench.and.screwdriver")
                     Spacer()
                     if repairingLocalData { ProgressView() }
                 }
             }
             .disabled(repairingLocalData)
             .accessibilityIdentifier("local-repair")
-            Text("Sets aside anything on this iPhone that Sendmeter can\u{2019}t read and rebuilds it from your account. Anything that hasn\u{2019}t synced yet is never touched.")
+            Text("Reloads your data from your account. Unsaved changes are kept.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let breadcrumb = model.queueBreadcrumbs.first {
@@ -674,16 +672,16 @@ struct SettingsView: View {
             // must not render as "nothing quarantined" (#269).
             if let quarantined = model.quarantinedWrites {
                 if quarantined.isEmpty {
-                    LabeledContent("Rejected uploads", value: "None")
+                    LabeledContent("Couldn’t save", value: "None")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
                     LabeledContent(
-                        "Rejected uploads",
+                        "Couldn’t save",
                         value: "\(quarantined.count) — not retrying automatically"
                     )
                     .foregroundStyle(SendmeterStyle.alert)
-                    Text("The server rejected these permanently. They are kept on this device and never retried on their own; retry them by hand if you believe they should upload now, or discard them.")
+                    Text("Retry or discard these.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(quarantined) { item in
@@ -707,7 +705,7 @@ struct SettingsView: View {
                     }
                 }
             } else {
-                LabeledContent("Rejected uploads", value: "Checking…")
+                LabeledContent("Couldn’t save", value: "Checking…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -971,7 +969,7 @@ struct SettingsView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Label("Delete Account", systemImage: "person.crop.circle.badge.minus")
-                    Text("Permanently deletes your account and all server data. Cannot be undone.")
+                    Text("Permanently deletes your account and all of your data. Cannot be undone.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1040,11 +1038,8 @@ private struct DeleteAccountSheet: View {
                 deleteAccountDangerBanner
             }
             Section("What this deletes") {
-                Text("Your account and every piece of data stored for it on the server: workouts, training sessions, force recordings and curves, readiness and health history, presets, routines, tags, and settings.")
+                Text("Your account and all of your data: workouts, training sessions, force recordings and curves, readiness and health history, presets, routines, tags, and settings.")
                     .font(.subheadline)
-                Text("Uploads still waiting for this account are removed only after the server confirms account deletion.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
             Section {
                 Button {
@@ -1113,7 +1108,7 @@ private struct DeleteAccountSheet: View {
                 .disabled(!gate.canConfirm || deleting)
                 .accessibilityHint(
                     gate.canConfirm
-                        ? "Permanently deletes your account and all server data."
+                        ? "Permanently deletes your account and all of your data."
                         : "Type DELETE exactly to enable this button."
                 )
             }
@@ -1127,7 +1122,7 @@ private struct DeleteAccountSheet: View {
                 .font(.title3)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                Text("This permanently deletes your account and all server data.")
+                Text("This permanently deletes your account and all of your data.")
                     .font(.subheadline.weight(.semibold))
                 Text("This cannot be undone.")
                     .font(.subheadline.weight(.semibold))

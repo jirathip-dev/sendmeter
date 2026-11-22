@@ -72,9 +72,9 @@ enum LossNotice: Equatable {
         case .gaugeSession:
             return "Your force recordings may appear ungrouped in History. Create a session for them on your phone."
         case .recording:
-            return "A recording couldn't be saved to your watch or uploaded. It's gone — the rest of your session is unaffected."
+            return "A recording couldn’t be saved. The rest of your session is fine."
         case .quarantineTrim:
-            return "Your new rep was saved. Storage was full, so an older recording the server kept rejecting gave up its stored force curve — its summary numbers remain."
+            return "Your new rep was saved. Watch storage was full, so an older recording kept its numbers but lost its force curve."
         }
     }
 }
@@ -527,9 +527,9 @@ private struct ActionsView: View {
                                 .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Quarantined uploads")
+                                Text("Couldn’t save")
                                     .font(.system(.footnote, design: .rounded).weight(.bold))
-                                Text("Uploads the server has stopped accepting")
+                                Text("Tap to retry")
                                     .font(.caption2)
                                     .foregroundStyle(WatchPalette.textSecondary)
                                     .lineLimit(2)
@@ -544,7 +544,7 @@ private struct ActionsView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("home-action-quarantine")
-                    .accessibilityHint("Shows uploads taken off the retry path")
+                    .accessibilityHint("Shows saves that need a retry")
                 }
 
                 // The "workout running" hint lives in HomeView now, above the
@@ -554,15 +554,15 @@ private struct ActionsView: View {
                 if visiblePendingUploads > 0, ScreenshotFixtures.actionState == nil {
                     WatchStateBanner(
                         state: .offline,
-                        title: "\(visiblePendingUploads) upload\(visiblePendingUploads == 1 ? "" : "s") waiting",
-                        message: "Saved on the watch; they upload when your iPhone is in range."
+                        title: "\(visiblePendingUploads) waiting for iPhone",
+                        message: "They’ll save when your iPhone is nearby."
                     )
                 }
 
                 if let actionState = ScreenshotFixtures.actionState {
                     WatchStateBanner(
                         state: actionState,
-                        title: actionState == .syncing ? "Syncing uploads" : "Offline saves",
+                        title: actionState == .syncing ? "Saving…" : "Saved on watch",
                         message: actionState == .syncing
                             ? "Your latest save is being sent to the iPhone."
                             : "\(visiblePendingUploads) saves stay on the watch until the connection recovers."
@@ -577,7 +577,7 @@ private struct ActionsView: View {
                     WatchStateBanner(
                         state: .offline,
                         title: "Waiting for iPhone",
-                        message: "New saves upload once it is in range."
+                        message: "They’ll save when it’s nearby."
                     )
                 } else if case let .stale(lastSuccessfulSyncAt)? = syncFreshness, !ScreenshotFixtures.enabled {
                 // #472b: a different signal from the row above — items are
@@ -593,7 +593,7 @@ private struct ActionsView: View {
                     WatchStateBanner(
                         state: .stale,
                         title: staleSyncMessage(lastSuccessfulSyncAt, retryScheduled: retryScheduled),
-                        message: "Pending uploads stay on the watch until the connection recovers."
+                        message: nil
                     )
                 }
             }

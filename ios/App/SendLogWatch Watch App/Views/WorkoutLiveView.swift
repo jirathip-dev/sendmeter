@@ -108,7 +108,7 @@ struct WorkoutLiveView: View {
         WatchStateBanner(
             state: .danger,
             title: "Last workout not saved",
-            message: "Your workout stays on the watch until a retry succeeds.",
+            message: "Your workout is safe on the watch. Try saving again.",
             actionTitle: workout.ending ? "Retrying…" : "Retry Save",
             action: { workout.retryFailedSave() },
             actionDisabled: workout.ending

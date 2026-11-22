@@ -182,15 +182,15 @@ enum ScreenshotFixtures {
         case .statusSyncing:
             return "Syncing from iPhone…"
         case .statusOffline:
-            return "Offline · showing cached"
+            return "Offline · last score"
         case .statusCached:
-            return "Cached · afternoon freeze"
+            return "Today’s score"
         case .statusAuthRequired:
             return "Open Sendmeter on iPhone to refresh"
         case .statusUnsupported:
             return "iPhone readiness unavailable"
         case .statusFailed:
-            return "Refresh failed · showing cached"
+            return "Couldn’t refresh · last score"
         default:
             return "Fresh from iPhone"
         }

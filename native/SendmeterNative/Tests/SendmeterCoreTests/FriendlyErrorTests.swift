@@ -383,19 +383,6 @@ final class FriendlyErrorTests: XCTestCase {
         XCTAssertFalse(message.localizedCaseInsensitiveContains(raw))
     }
 
-    func testQueueRejectionLabelsDoNotExposeInternalRawValues() {
-        let expectations: [(RejectionClass, String)] = [
-            (.retryable, "temporary issue"),
-            (.auth, "sign-in required"),
-            (.parked, "permission issue"),
-            (.permanent, "server rejection")
-        ]
-        for (kind, expected) in expectations {
-            XCTAssertEqual(UserFacingError.label(for: kind), expected)
-            XCTAssertFalse(UserFacingError.label(for: kind).contains(kind.rawValue))
-        }
-    }
-
     // MARK: - #964 round 2: the launch-path load funnel
 
     /// The delta reader's fail-closed errors are a launch-path data-load

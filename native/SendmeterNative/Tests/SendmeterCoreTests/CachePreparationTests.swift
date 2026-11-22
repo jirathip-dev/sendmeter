@@ -231,7 +231,7 @@ final class CachePreparationTests: XCTestCase {
         // The premise: these inputs DO read as "Synced" once the cache has
         // answered. Without that, the gate below would be vacuous.
         XCTAssertEqual(MutationSyncStatus.resolve(zeroInputs).state, .synced)
-        XCTAssertEqual(MutationSyncStatus.resolve(zeroInputs).statusLabel, "Synced")
+        XCTAssertEqual(MutationSyncStatus.resolve(zeroInputs).statusLabel, "All saved")
 
         for readiness in [
             CacheReadiness.preparing,

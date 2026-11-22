@@ -198,7 +198,7 @@ public enum ForceRecoveryActionPolicy {
     /// failed save leaves the summary with the device), so the honest next
     /// step is the user's: discard it, knowing it is not in the durable queue.
     public static let discardFallbackNotice =
-        "This pull still isn\u{2019}t in the durable queue. Discard it below if you don\u{2019}t need it \u{2014} it can\u{2019}t be recovered after that."
+        "This pull hasn\u{2019}t been saved yet. Discard it if you don\u{2019}t need it \u{2014} it can\u{2019}t be recovered after that."
 
     /// The retry affordance's title for the guided-launch failure row.
     public static let guidedLaunchRetryTitle = "Try Again"

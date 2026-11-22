@@ -278,7 +278,7 @@ private struct TodayDecisionCard: View {
             .sendmeterChalk()
         }
         .hapticButtonStyle(.plain)
-        .accessibilityHint("Shows the raw HealthKit metrics behind today's readiness score.")
+        .accessibilityHint("Shows the Apple Health data behind today's readiness score.")
     }
 }
 
@@ -422,7 +422,7 @@ private struct RecentSessionsCard: View {
                     } else {
                         ProductEmptyState(
                             title: "Your history is catching its breath",
-                            message: "Sync once to bring your recent sends back into view.",
+                            message: "Pull to refresh to load recent sessions.",
                             actionTitle: "Try again"
                         ) {
                             Task { await model.refreshAll() }
@@ -465,7 +465,7 @@ struct SessionSummaryRow: View {
                         .font(.subheadline.weight(.semibold))
                     if session.pending {
                         StatusPill(
-                            session.rejected ? "Rejected" : "Syncing",
+                            session.rejected ? "Not saved" : "Saving…",
                             color: session.rejected ? SendmeterStyle.alert : SendmeterStyle.caution
                         )
                     }

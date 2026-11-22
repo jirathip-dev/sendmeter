@@ -44,19 +44,18 @@ final class QuarantineDiagnosticsTests: XCTestCase {
     /// on its own, `.stuckRetrying` gets automatic + manual retries.
     func testSchemaRejectionCopySaysItWillNotRetry() {
         let title = QuarantineCopy.title(for: .schemaRejection)
-        XCTAssertTrue(title.contains("will not retry"))
-        XCTAssertFalse(title.lowercased().contains("waiting to upload"))
+        XCTAssertEqual(title, "Can’t be saved")
+        XCTAssertNotEqual(title, QuarantineCopy.title(for: .stuckRetrying))
         let detail = QuarantineCopy.detail(for: .schemaRejection)
-        XCTAssertTrue(detail.contains("permanently rejected"))
-        XCTAssertTrue(detail.contains("retrying it won't help"))
+        XCTAssertEqual(detail, "Sendmeter can’t save this. It stays on your watch.")
+        XCTAssertFalse(detail.lowercased().contains("retry"))
     }
 
     func testStuckRetryingCopySaysItRetriesAutomaticallyAndNow() {
         let title = QuarantineCopy.title(for: .stuckRetrying)
-        XCTAssertTrue(title.contains("retrying automatically"))
-        XCTAssertFalse(title.lowercased().contains("waiting to upload"))
+        XCTAssertEqual(title, "Trying to save…")
         let detail = QuarantineCopy.detail(for: .stuckRetrying)
-        XCTAssertTrue(detail.contains("automatic retry"))
+        XCTAssertTrue(detail.contains("try again later"))
         XCTAssertTrue(detail.contains("retry it now"))
     }
 
@@ -112,21 +111,21 @@ final class QuarantineDiagnosticsTests: XCTestCase {
     }
 
     func testRetryActionTitle() {
-        XCTAssertEqual(QuarantineRetryPolicy.retryActionTitle, "Retry stuck uploads")
+        XCTAssertEqual(QuarantineRetryPolicy.retryActionTitle, "Retry")
     }
 
     // MARK: Result copy
 
     func testResultSummaryCoversRestoredAndKept() {
-        XCTAssertEqual(QuarantineRetryPolicy.resultSummary(restored: 1, kept: 0), "1 upload moved back to the queue")
-        XCTAssertEqual(QuarantineRetryPolicy.resultSummary(restored: 2, kept: 1), "2 uploads moved back to the queue · 1 left in quarantine")
+        XCTAssertEqual(QuarantineRetryPolicy.resultSummary(restored: 1, kept: 0), "1 retrying")
+        XCTAssertEqual(QuarantineRetryPolicy.resultSummary(restored: 2, kept: 1), "2 retrying · 1 still not saved")
     }
 
     /// A zero-restore outcome must not read as success: nothing claims
     /// anything "moved back" when nothing did — only the kept count is said,
     /// and the VIEW (not this copy) picks a non-success tone for it.
     func testResultSummaryWithZeroRestoredNeverClaimsAMove() {
-        XCTAssertEqual(QuarantineRetryPolicy.resultSummary(restored: 0, kept: 3), "3 left in quarantine")
+        XCTAssertEqual(QuarantineRetryPolicy.resultSummary(restored: 0, kept: 3), "3 still not saved")
         XCTAssertFalse(
             QuarantineRetryPolicy.resultSummary(restored: 0, kept: 3)!.lowercased().contains("moved back"),
             "zero restores must never read as a move"

@@ -99,7 +99,7 @@ struct AcwrProjectionCard: View {
             } else {
                 ProductEmptyState(
                     title: "Your training history is catching its breath",
-                    message: "Sync once to bring your ACWR forecast back into view.",
+                    message: "Pull to refresh to load your forecast.",
                     actionTitle: "Try again"
                 ) {
                     Task { await model.refreshAll() }
@@ -115,7 +115,7 @@ struct AcwrProjectionCard: View {
                 model.selectedTab = .workout
             }
         } else {
-            Text("Your most recent sessions fall outside the 90-day window this card projects from, so there's no ACWR ratio to extend yet — log a session and this card will show where it drifts over the coming week.")
+            Text("No sessions in the last 90 days. Log one to see your forecast.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

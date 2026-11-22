@@ -224,7 +224,7 @@ final class ForceMotionWiringTests: XCTestCase {
     func testOutsideContextCardShowsArmedHeroIdentityAndChange() {
         let card = code(source("Sources/Features/Force/ForceRecordingContextCard.swift"))
 
-        XCTAssertTrue(card.contains("\"Recording context\""))
+        XCTAssertFalse(card.contains("\"Recording context\""))
         XCTAssertTrue(card.contains("\"Nothing armed\""))
         XCTAssertTrue(card.contains("\"Movement & side\""))
         XCTAssertTrue(card.contains("\"Armed protocol\""))

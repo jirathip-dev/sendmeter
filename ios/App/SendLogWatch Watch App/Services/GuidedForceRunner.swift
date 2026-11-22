@@ -475,7 +475,7 @@ final class GuidedForceRunner {
             // future sets to honest cadence-only rows.
             activeExecution = .salvaged(key: key)
             cadenceOnlyRun = true
-            completionMessage = "Progressor disconnected · force recovery queued"
+            completionMessage = "Progressor disconnected · pull saved"
         } else {
             // TindeqManager's disconnect path claims and queues the partial
             // measured hold. Stop this static run so later holds are never
@@ -483,7 +483,7 @@ final class GuidedForceRunner {
             // the recovered/queued outcome honestly.
             activeExecution = .salvaged(key: key)
             endRun(
-                message: "Progressor disconnected · partial hold recovered and queued",
+                message: "Progressor disconnected · partial hold saved",
                 terminalPhase: .completed
             )
         }

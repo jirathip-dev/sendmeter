@@ -1095,7 +1095,7 @@ struct ForceGaugeView: View {
         case .requiresProgressor:
             return "Connect Progressor to measure this static hold"
         case .alternatingSidesUnsupported:
-            return "Run this alternating-sides protocol on your iPhone; alternating sides are unsupported on watch"
+            return "Run this protocol on your iPhone."
         }
     }
 

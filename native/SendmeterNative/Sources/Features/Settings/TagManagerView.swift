@@ -89,20 +89,20 @@ struct TagManagerView: View {
                 EmptyView()
             }
         } header: {
-            Text("Not uploaded yet")
+            Text("Not saved yet")
         }
     }
 
     private var pendingChangesSummary: String {
         let noun = "exercise change\(pendingTagChanges == 1 ? "" : "s")"
         if case .unavailable(.noUploadPath) = syncStatus.retry {
-            return "\(pendingTagChanges) \(noun) can’t be uploaded by this app version."
+            return "Update Sendmeter to save these."
         }
         switch syncStatus.state {
         case .notLoaded:
-            return "\(pendingTagChanges) \(noun) on this iPhone — checking whether the server has them."
+            return "Checking…"
         default:
-            return "\(pendingTagChanges) \(noun) saved on this iPhone and not uploaded yet."
+            return "\(pendingTagChanges) \(noun) not saved yet."
         }
     }
 

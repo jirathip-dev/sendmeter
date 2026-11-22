@@ -47,8 +47,8 @@ struct QuarantineDiagnosticsView: View {
                 if let unscopedTotal, unscopedTotal > 0 {
                     WatchStateBanner(
                         state: .warning,
-                        title: "Legacy uploads need review",
-                        message: "\(unscopedTotal) watch item\(unscopedTotal == 1 ? "" : "s") have no account stamp. They are retained here but will not upload until an explicit recovery path can identify their owner."
+                        title: "Older saves need review",
+                        message: "\(unscopedTotal) save\(unscopedTotal == 1 ? "" : "s") from an earlier version can’t be matched to an account."
                     )
                 }
 
@@ -85,7 +85,7 @@ struct QuarantineDiagnosticsView: View {
         .scrollIndicators(.hidden)
         .padding(.horizontal, 4)
         .watchCanvas()
-        .navigationTitle("Quarantined uploads")
+        .navigationTitle("Couldn’t save")
         .task { await load() }
     }
 
@@ -164,7 +164,7 @@ struct QuarantineDiagnosticsView: View {
             WatchCard(accent: WatchPalette.secondary) {
                 VStack(alignment: .leading, spacing: 4) {
                     WatchEyebrow(text: "Recent history")
-                    Text("\(breadcrumbs.count) upload\(breadcrumbs.count == 1 ? "" : "s") left quarantine")
+                    Text("\(breadcrumbs.count) saved since")
                         .font(.system(.footnote, design: .rounded).weight(.bold))
                     Text("Most recent: \(historyLine(breadcrumbs[0]))")
                         .font(.caption2)
@@ -206,9 +206,6 @@ struct QuarantineDiagnosticsView: View {
                 Text(QuarantineRetryPolicy.retryActionTitle)
                     .font(.system(.footnote, design: .rounded).weight(.bold))
                     .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
-                Text(QuarantineRetryPolicy.retryActionDetail)
-                    .font(.caption2)
-                    .foregroundStyle(WatchPalette.textSecondary)
                 if isRetrying {
                     HStack(spacing: 6) {
                         ProgressView()
@@ -228,7 +225,7 @@ struct QuarantineDiagnosticsView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(WatchPalette.primary)
                     .accessibilityIdentifier("quarantine-retry-button")
-                    .accessibilityHint("Tries the retryable uploads again now instead of waiting for the automatic retry")
+                    .accessibilityHint("Tries these saves again now")
                 }
             }
         }
@@ -240,16 +237,12 @@ struct QuarantineDiagnosticsView: View {
     private var summaryCard: some View {
         WatchCard(accent: WatchPalette.warning) {
             VStack(alignment: .leading, spacing: 4) {
-                WatchEyebrow(text: "Off the upload path")
                 if let quarantinedTotal {
                     if quarantinedTotal == 0 {
-                        Text("No quarantined uploads")
+                        Text("Everything is saved")
                             .font(.system(.footnote, design: .rounded).weight(.bold))
-                        Text("Everything is on the ordinary upload path.")
-                            .font(.caption2)
-                            .foregroundStyle(WatchPalette.textSecondary)
                     } else {
-                        Text("\(quarantinedTotal) upload\(quarantinedTotal == 1 ? "" : "s") set aside")
+                        Text("\(quarantinedTotal) not saved")
                             .font(.system(.footnote, design: .rounded).weight(.bold))
                         Text(splitSummary(total: quarantinedTotal))
                             .font(.caption2)
@@ -262,7 +255,7 @@ struct QuarantineDiagnosticsView: View {
                 } else {
                     Text("Not reported")
                         .font(.system(.footnote, design: .rounded).weight(.bold))
-                    Text("The queues haven't been counted yet. Refresh this screen to read them.")
+                    Text("Checking…")
                         .font(.caption2)
                         .foregroundStyle(WatchPalette.textSecondary)
                 }
@@ -281,7 +274,7 @@ struct QuarantineDiagnosticsView: View {
     /// breakdown isn't reported yet.
     private func splitSummary(total: Int) -> String {
         guard let stuck = quarantinedStuckTotal else {
-            return "The retry breakdown hasn't been reported yet."
+            return "Checking…"
         }
         var parts: [String] = []
         if stuck > 0 {
@@ -289,7 +282,7 @@ struct QuarantineDiagnosticsView: View {
         }
         let permanent = max(0, total - stuck)
         if permanent > 0 {
-            parts.append("\(permanent) will not retry")
+            parts.append("\(permanent) can’t be saved")
         }
         let unreadable = entries.filter { if case .unreadable = $0 { return true } else { return false } }.count
         if unreadable > 0 {
@@ -304,7 +297,7 @@ struct QuarantineDiagnosticsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Nothing here")
                     .font(.system(.footnote, design: .rounded).weight(.bold))
-                Text("No quarantined uploads are stored on this watch.")
+                Text("Everything is saved")
                     .font(.caption2)
                     .foregroundStyle(WatchPalette.textSecondary)
             }
@@ -333,7 +326,7 @@ struct QuarantineDiagnosticsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Unreadable record")
                         .font(.system(.footnote, design: .rounded).weight(.bold))
-                    Text("The record can't be read by this build. It is kept on the watch (#287); a newer build may be able to recover it.")
+                    Text("This save can’t be read. Update Sendmeter to try again.")
                         .font(.caption2)
                         .foregroundStyle(WatchPalette.textSecondary)
                     Text("id \(id.uuidString.prefix(8))")
@@ -364,7 +357,7 @@ struct QuarantineDiagnosticsView: View {
             if let attemptCount = item.attemptCount {
                 fieldLine("Attempts", "\(attemptCount)")
             }
-            fieldLine("Quarantined", dateText(item.quarantinedAt))
+            fieldLine("Not saved since", dateText(item.quarantinedAt))
             if item.payloadDropped == true {
                 fieldLine("Note", QuarantineCopy.payloadDroppedNote)
             }

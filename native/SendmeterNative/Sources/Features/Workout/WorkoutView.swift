@@ -553,9 +553,9 @@ private struct WatchWorkoutMirrorCard: View {
     private var transportLabel: String {
         switch model.liveWorkoutSyncState {
         case .watchDirect: return "Live from your Apple Watch"
-        case .serverFallback: return "Server mirror"
-        case .temporarilyUnreachable: return "Link paused"
-        case .unknown: return "Mirror"
+        case .serverFallback: return "Live"
+        case .temporarilyUnreachable: return "Reconnecting…"
+        case .unknown: return "Live"
         }
     }
 

@@ -9,7 +9,7 @@ final class WatchDesignTests: XCTestCase {
 
     func testSemanticStatesHaveStableAccessibleLanguage() {
         XCTAssertEqual(WatchVisualState.allCases.map(\.label), [
-            "Ready", "Syncing", "Offline", "Cached", "Needs attention", "Saved", "Caution", "Error",
+            "Ready", "Syncing", "Offline", "Last update", "Needs attention", "Saved", "Caution", "Error",
         ])
         XCTAssertEqual(
             Set(WatchVisualState.allCases.map(\.symbolName)).count,

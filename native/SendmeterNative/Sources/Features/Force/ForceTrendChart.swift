@@ -298,12 +298,12 @@ private struct ForceTrendAccessibilityDescriptor: AXChartDescriptorRepresentable
 
     private var summary: String {
         guard let targetBand else {
-            return "Peak force for each measured static hold in this evidence set."
+            return "Peak force for each measured static hold."
         }
         let targetKilograms: String = formattedKilograms(targetBand.kilograms)
         let lowKilograms: String = formattedKilograms(targetBand.lowKilograms)
         let highKilograms: String = formattedKilograms(targetBand.highKilograms)
-        let targetDescription: String = "Peak force for each measured static hold in this evidence set, with a plan target of "
+        let targetDescription: String = "Peak force for each measured static hold, with a plan target of "
             + "\(targetKilograms) kilograms from "
         let rangeDescription: String = "\(lowKilograms) to \(highKilograms) kilograms."
         return targetDescription + rangeDescription

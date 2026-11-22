@@ -190,9 +190,9 @@ public struct MutationSyncStatus: Equatable, Sendable {
         case .notLoaded:
             return "Checking…"
         case .synced:
-            return "Synced"
+            return "All saved"
         case .awaitingUpload:
-            return "\(pendingCount) waiting to upload"
+            return "\(pendingCount) not saved yet"
         case .needsAttention:
             if let quarantinedCount, quarantinedCount > 0 {
                 return "\(quarantinedCount) rejected"
@@ -201,12 +201,12 @@ public struct MutationSyncStatus: Equatable, Sendable {
         }
     }
 
-    public var explanation: String {
+    public var explanation: String? {
         switch state {
         case .notLoaded:
-            return "Checking this iPhone's pending changes and uploads."
+            return "Checking…"
         case .synced:
-            return "Every change on this iPhone has been confirmed by the server."
+            return nil
         case .awaitingUpload:
             return awaitingUploadExplanation
         case .needsAttention:
@@ -215,22 +215,19 @@ public struct MutationSyncStatus: Equatable, Sendable {
     }
 
     private var awaitingUploadExplanation: String {
-        let queuedPhrase = "\(queuedCount) queued upload\(queuedCount == 1 ? "" : "s")"
-        let residuePhrase = "\(unsyncedCount) local change\(unsyncedCount == 1 ? "" : "s") saved on this iPhone"
-        if queuedCount > 0, unsyncedCount > 0 {
-            return "\(residuePhrase), plus \(queuedPhrase) kept here. Nothing has been dropped; uploads retry automatically."
+        let total = queuedCount + unsyncedCount
+        let changes = "\(total) change\(total == 1 ? "" : "s")"
+        if unsyncedCount == 0 {
+            return "\(changes) on this iPhone will save automatically."
         }
-        if queuedCount > 0 {
-            return "\(queuedPhrase.capitalizedFirst) kept on this iPhone and retrying automatically."
-        }
-        return "\(residuePhrase.capitalizedFirst) and not uploaded yet. Use Retry Now to upload it."
+        return "\(changes) on this iPhone. Tap Retry Now to save \(total == 1 ? "it" : "them")."
     }
 
     private var needsAttentionExplanation: String {
         if let quarantinedCount, quarantinedCount > 0 {
-            return "The server rejected \(quarantinedCount) change\(quarantinedCount == 1 ? "" : "s"). They are kept on this device and never retried on their own — retry or discard them below."
+            return "Sendmeter couldn’t save \(quarantinedCount) change\(quarantinedCount == 1 ? "" : "s"). Retry or discard \(quarantinedCount == 1 ? "it" : "them") below."
         }
-        return "\(unresolvedResidueCount) local change\(unresolvedResidueCount == 1 ? "" : "s") could not be uploaded and stayed on this iPhone. The server's answer never confirmed them."
+        return "\(unresolvedResidueCount) change\(unresolvedResidueCount == 1 ? "" : "s") couldn’t be saved. \(unresolvedResidueCount == 1 ? "It’s" : "They’re") still on this iPhone."
     }
 
     /// Shown beside a disabled Retry control so the disabled state is
@@ -239,16 +236,9 @@ public struct MutationSyncStatus: Equatable, Sendable {
         guard case let .unavailable(reason) = retry else { return nil }
         switch reason {
         case .nothingPending:
-            return "Nothing is waiting to upload."
+            return "Everything is saved."
         case .noUploadPath:
-            return "Retrying cannot move these changes: this app version has no upload path for them, so they stay on this iPhone until they are re-saved."
+            return "Update Sendmeter to save these changes."
         }
-    }
-}
-
-private extension String {
-    var capitalizedFirst: String {
-        guard let first else { return self }
-        return first.uppercased() + dropFirst()
     }
 }
