@@ -15,8 +15,8 @@ const SKY = {
   fog: ["#080B22", "#161B3C", "#2A3056"],
 };
 
-function facets(id, pts, bbox, r, light, tone) {
-  const [x0, y0, x1, y1] = bbox, step = 46;
+function facets(id, pts, bbox, r, light, tone, step = 46) {
+  const [x0, y0, x1, y1] = bbox;
   const cols = Math.ceil((x1 - x0) / step) + 1, rows = Math.ceil((y1 - y0) / step) + 1;
   const g = [];
   for (let j = 0; j <= rows; j++) for (let i = 0; i <= cols; i++) g.push([x0 + i * step + (r() - 0.5) * step * 0.8, y0 + j * step + (r() - 0.5) * step * 0.8]);
@@ -29,18 +29,18 @@ function facets(id, pts, bbox, r, light, tone) {
       const nx = (q[1] - p[1]) * (s[0] - p[0]) - (q[0] - p[0]) * (s[1] - p[1]);
       const lit = Math.max(0, Math.min(1, 0.5 + light * (((p[0] + q[0] + s[0]) / 3 - x0) / (x1 - x0) - 0.5) + (r() - 0.5) * 0.5 + (nx > 0 ? 0.08 : -0.08)));
       const l = tone[0] + lit * tone[1];
-      out += `<path d="M${p.map((v) => v.toFixed(0))}L${q.map((v) => v.toFixed(0))}L${s.map((v) => v.toFixed(0))}Z" fill="hsl(236 22% ${l.toFixed(1)}%)" stroke="hsl(236 26% ${(l - 2.5).toFixed(1)}%)" stroke-width="1.2"/>`;
+      out += `<path d="M${p.map((v) => v.toFixed(0))}L${q.map((v) => v.toFixed(0))}L${s.map((v) => v.toFixed(0))}Z" fill="hsl(236 22% ${l.toFixed(1)}%)" stroke="hsl(236 26% ${(l - 2.5).toFixed(1)}%)" stroke-width="${(step / 38).toFixed(1)}"/>`;
     }
   }
   return `<clipPath id="${id}"><path d="${pts}"/></clipPath><g clip-path="url(#${id})">${out}</g>`;
 }
 
-function rock(id, pts, bbox, seed, opts = {}) {
+export function rock(id, pts, bbox, seed, opts = {}) {
   const r = rand(seed);
-  const pockets = (opts.pockets || []).map(([x, y, s]) => `<path d="M${x - 9 * s} ${y}C${x - 8 * s} ${y - 8 * s} ${x + 8 * s} ${y - 9 * s} ${x + 10 * s} ${y - 1 * s}C${x + 9 * s} ${y + 6 * s} ${x - 6 * s} ${y + 7 * s} ${x - 9 * s} ${y}Z" fill="#06071A" stroke="hsl(236 20% 22%)" stroke-width="1.5"/>`).join("");
-  const cracks = (opts.cracks || []).map((d) => `<path d="${d}" fill="none" stroke="#05061A" stroke-width="3" stroke-linecap="round"/>`).join("");
-  const rim = (opts.rim || []).map((d) => `<path d="${d}" fill="none" stroke="var(--rim)" stroke-width="2.4" stroke-linecap="round" opacity=".85"/>`).join("");
-  return `<g>${facets(id, pts, bbox, r, opts.light ?? 0.6, opts.tone || [9, 13])}${pockets}${cracks}<path d="${pts}" fill="none" stroke="#04051A" stroke-width="4" stroke-linejoin="round"/>${rim}</g>`;
+  const pockets = (opts.pockets || []).map(([x, y, s]) => `<path d="M${x - 9 * s} ${y}C${x - 8 * s} ${y - 8 * s} ${x + 8 * s} ${y - 9 * s} ${x + 10 * s} ${y - 1 * s}C${x + 9 * s} ${y + 6 * s} ${x - 6 * s} ${y + 7 * s} ${x - 9 * s} ${y}Z" fill="#06071A" stroke="hsl(236 20% 22%)" stroke-width="${1.5 * (opts.line || 1)}"/>`).join("");
+  const cracks = (opts.cracks || []).map((d) => `<path d="${d}" fill="none" stroke="#05061A" stroke-width="${3 * (opts.line || 1)}" stroke-linecap="round"/>`).join("");
+  const rim = (opts.rim || []).map((d) => `<path d="${d}" fill="none" stroke="${opts.rimColor || "var(--rim)"}" stroke-width="${opts.rimWidth || 2.4}" stroke-linecap="round" opacity=".85"/>`).join("");
+  return `<g>${facets(id, pts, bbox, r, opts.light ?? 0.6, opts.tone || [9, 13], opts.step)}${pockets}${cracks}<path d="${pts}" fill="none" stroke="#04051A" stroke-width="${4 * (opts.line || 1)}" stroke-linejoin="round"/>${rim}</g>`;
 }
 
 export function scene(W, H, weather = "clear", { roo: withRoo = true, seed = 7 } = {}) {
@@ -82,10 +82,10 @@ export function scene(W, H, weather = "clear", { roo: withRoo = true, seed = 7 }
 
   return `<svg class="scene" viewBox="0 0 ${w.toFixed(0)} ${h}" preserveAspectRatio="xMidYMax slice" width="100%" height="100%" role="img" aria-label="Night crag, ${WEATHERS[weather]}" style="--rim:${rimC}">
   <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${sky[0]}"/><stop offset=".55" stop-color="${sky[1]}"/><stop offset="1" stop-color="${sky[2]}"/></linearGradient>
-  <radialGradient id="halo"><stop offset=".3" stop-color="#E9E6FF" stop-opacity=".35"/><stop offset="1" stop-color="#E9E6FF" stop-opacity="0"/></radialGradient>
+  <radialGradient id="halo"><stop offset=".33" stop-color="#E9E6FF" stop-opacity=".16"/><stop offset=".6" stop-color="#E9E6FF" stop-opacity=".06"/><stop offset="1" stop-color="#E9E6FF" stop-opacity="0"/></radialGradient>
   <filter id="fb" x="-10%" y="-50%" width="120%" height="200%"><feGaussianBlur stdDeviation="22"/></filter>${glow}</defs>
   <rect width="100%" height="100%" fill="url(#sky)"/>${stars}${dawnBand}
-  <g opacity="${moonO}"><circle cx="${mx}" cy="${my}" r="${mr * 3.2}" fill="url(#halo)"/><circle cx="${mx}" cy="${my}" r="${mr}" fill="#E9EAF6"/><circle cx="${mx - mr * 0.3}" cy="${my - mr * 0.2}" r="${mr * 0.18}" fill="#CFD1E6"/><circle cx="${mx + mr * 0.35}" cy="${my + mr * 0.3}" r="${mr * 0.12}" fill="#CFD1E6"/></g>
+  <g opacity="${moonO}"><circle cx="${mx}" cy="${my}" r="${mr * 2.6}" fill="url(#halo)"/><circle cx="${mx}" cy="${my}" r="${mr}" fill="#E9EAF6"/><circle cx="${mx - mr * 0.3}" cy="${my - mr * 0.2}" r="${mr * 0.18}" fill="#CFD1E6"/><circle cx="${mx + mr * 0.35}" cy="${my + mr * 0.3}" r="${mr * 0.12}" fill="#CFD1E6"/></g>
   ${rock("rb", back, [ox - 800, 500, ox + 1800, h], seed + 3, { tone: [6, 7], light: 0.3 })}
   <path d="${ground}" fill="#0C0E24"/>
   ${rock("rr", right, [ox + 580, 380, ox + 1700, h], seed + 5, { tone: [8, 12], pockets: [[ox + 760, 520, 1.2], [ox + 900, 560, 1], [ox + 1040, 520, 1.1]], cracks: [`M${L(760)} 440 L${L(800)} 560 L${L(780)} 700`], rim: [`M${L(640)} 520 L${L(740)} 430 L${L(900)} 400 L${L(1080)} 440`] })}

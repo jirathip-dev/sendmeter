@@ -70,11 +70,11 @@
     "view": "side",
     "angles": {
       "body": 2,
-      "head": 14,
-      "earFar": -16,
-      "earNear": 8,
-      "armFar": -40,
-      "armNear": 20,
+      "head": 22,
+      "earFar": 6,
+      "earNear": 12,
+      "armFar": -30,
+      "armNear": -12,
       "thighFar": 4,
       "shinFar": 10,
       "shoeFar": -14,
@@ -86,19 +86,11 @@
     "lift": 0,
     "props": [
       {
-        "name": "bag",
+        "name": "bagFront",
         "on": "body",
         "at": [
-          -30,
-          -14
-        ]
-      },
-      {
-        "name": "dust",
-        "on": "armNear",
-        "at": [
-          0,
-          42
+          25.718865824273884,
+          -13.974421035495883
         ]
       }
     ],
@@ -108,12 +100,12 @@
     "label": "Crimp",
     "view": "side",
     "angles": {
-      "body": -6,
-      "head": -22,
-      "earFar": -16,
-      "earNear": 8,
-      "armFar": -150,
-      "armNear": -128,
+      "body": -4,
+      "head": -4,
+      "earFar": -14,
+      "earNear": -6,
+      "armFar": -168,
+      "armNear": -108,
       "thighFar": -40,
       "shinFar": 60,
       "shoeFar": -40,
@@ -125,11 +117,19 @@
     "lift": 0,
     "props": [
       {
-        "name": "hold",
+        "name": "edge",
         "on": "armNear",
         "at": [
           0,
           46
+        ]
+      },
+      {
+        "name": "fingers",
+        "on": "armNear",
+        "at": [
+          0,
+          41
         ]
       }
     ],
@@ -156,6 +156,131 @@
     "lift": 0,
     "props": [],
     "eyes": "open"
+  },
+  "topout": {
+    "label": "Top-out slap",
+    "view": "side",
+    "angles": {
+      "body": 8,
+      "head": -14,
+      "earFar": -10,
+      "earNear": -2,
+      "armFar": -150,
+      "armNear": -96,
+      "thighFar": -30,
+      "shinFar": 50,
+      "shoeFar": -20,
+      "thighNear": -10,
+      "shinNear": 30,
+      "shoeNear": -10,
+      "tail": 20
+    },
+    "lift": 0,
+    "props": [],
+    "eyes": "open"
+  },
+  "deadhang": {
+    "label": "Rest hang",
+    "view": "front",
+    "angles": {
+      "body": 0,
+      "head": 4,
+      "earFar": -2,
+      "earNear": 14,
+      "armFar": 152,
+      "armNear": -152,
+      "thighFar": 4,
+      "shinFar": -4,
+      "shoeFar": 0,
+      "thighNear": -4,
+      "shinNear": 4,
+      "shoeNear": 0,
+      "tail": 6
+    },
+    "lift": 19,
+    "props": [
+      {
+        "name": "jug",
+        "on": "armFar",
+        "at": [
+          0,
+          50
+        ]
+      },
+      {
+        "name": "jug",
+        "on": "armNear",
+        "at": [
+          0,
+          50
+        ]
+      },
+      {
+        "name": "fingers",
+        "on": "armFar",
+        "at": [
+          0,
+          41
+        ]
+      },
+      {
+        "name": "fingers",
+        "on": "armNear",
+        "at": [
+          0,
+          41
+        ]
+      },
+      {
+        "name": "zz",
+        "on": "head",
+        "at": [
+          30,
+          -70
+        ]
+      }
+    ],
+    "eyes": "shut"
+  },
+  "tongue": {
+    "label": "Tongue",
+    "view": "front",
+    "angles": {
+      "body": 0,
+      "head": -6,
+      "earFar": -14,
+      "earNear": 6,
+      "armFar": 20,
+      "armNear": -128,
+      "thighFar": 6,
+      "shinFar": -6,
+      "shoeFar": 0,
+      "thighNear": -6,
+      "shinNear": 6,
+      "shoeNear": 0,
+      "tail": 0
+    },
+    "lift": 19,
+    "props": [
+      {
+        "name": "sloper",
+        "on": "armNear",
+        "at": [
+          0,
+          62
+        ]
+      },
+      {
+        "name": "fingers",
+        "on": "armNear",
+        "at": [
+          0,
+          40
+        ],
+        "rot": -30
+      }
+    ],
+    "eyes": "focus"
   },
   "hang": {
     "label": "Hang",

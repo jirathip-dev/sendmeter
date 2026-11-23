@@ -1,13 +1,28 @@
 ## Summary
 
-Decision: Round 5's look stands as approved, with two fixes to the roo kit. The roo has one round pink blush dot on its cheek (one per cheek when it faces front), not two white spots, in every pose, icon and the model sheet. Its climbing shoes now look like modern bouldering shoes: a downturned pointed toe, a black rubber rand and toe cap, a thick black sole, a soft-violet upper, two pale velcro straps and a violet heel tab, still flat and chunky. The Shoe icon shows the new shoe edging a foothold. Everything else, including the thin lavender rim, is unchanged.
-Screens: every image is re-rendered from the fixed kit (63 images at 390 and 1440); the model sheet, roo poses and icon sheet show the fixes best.
-Open questions: none. Five Blocks kinds are still marked stand-ins (listed below); filing them in blocks is not this lane's job.
+Decision: Round 7 changes only the icons and polishes Today. Every icon now has a full faceted boulder behind the roo, under the moon and stars. Each pose follows real technique: Crimp curls its fingertips on a thin edge, Dyno flies at a jug, Send slaps the top, Chalk-up has its paw in the bag, and Rest hangs straight-armed with its eyes shut. The Shoe icon is the roo's own foot toeing a small foothold. A new ninth icon, Tongue, shows the roo's face in effort, tongue out and eyes narrowed, with a paw on a big round hold. The roo is bigger and its rim brighter, so each icon reads at 29 to 40 px. On Today, This Week is tighter and the moon's glow is softer.
+Screens: every image is re-rendered (63); the icon sheet, the App icon picker, the roo kit's poses and Today show this round's changes.
+Open questions: none. The kit shoe now has one velcro strap everywhere (the round 7 note asked for one), not two. Five Blocks kinds are still marked stand-ins.
+
+## Round 7 changes
+
+- **A boulder in every icon.** Each icon is now a close crop on the same faceted night granite as Today's scene: a wall face, a peak behind the bust, a lip to peek over, or a top edge to slap. The facets are a little lighter than the roo so its dark silhouette stands out. Each boulder has a pale lavender rim line, and the moon and a few large stars stay.
+- **Poses true to technique, all re-posed from the kit** (the new poses are also on the kit sheet):
+  - **Crimp**: fingertips curled on a thin edge, with the thumb paw over them.
+  - **Dyno**: the roo tilted into the throw, its hands off and reaching a jug above.
+  - **Send**: one paw slapping flat on the boulder's top edge, with slap marks (pose "Top-out slap").
+  - **Chalk-up**: the near paw down inside the chalk bag, with dust puffing out.
+  - **Rest**: hanging straight-armed from two jugs, eyes shut, head fully in frame, with a small Zz (pose "Rest hang").
+- **Shoe.** A side view of the roo's own shin and bouldering shoe (downturned, black rand and sole, violet upper, one velcro strap), with the toe on a small foothold.
+- **Tongue (new).** The roo's face close up, front view, with its tongue out the side of its mouth and its eyes narrowed. Its paw grips a big round sloper at the frame edge.
+- **Readable small.** The roo fills more of each frame, the rim is brighter and twice as thick (#B3AEF5 in icons), the boulder has fewer, larger facets and there are fewer stars. The icon sheet adds every icon at 40 and 29 px so the silhouettes can be compared.
+- **Today.** This Week has less padding and smaller numbers. The moon's halo in the scene is fainter and smaller on every screen.
+- New kit props: thin edge, jug, sloper, foothold, curled fingers and the chalk bag front. Each prop now stays upright whatever the parent part's angle.
 
 ## Round 6 fixes
 
 - **One blush dot.** The kit's head part (its master drawing) now carries a single round blush dot (#E59AB8) in the side view, replacing the two white cheek spots. The front view shows one dot on each cheek. Every pose, icon and screen roo inherits it.
-- **Bouldering shoes.** The shoe part is redrawn from the owner's references (no reference image was placed, so it follows the description). It has a downturned, slightly asymmetric pointed toe and a black rubber shell that forms the rand, toe cap and a thick sole. It also has a soft-violet upper panel (#A99CF0, the palette's one accent), two pale velcro straps (#ECEEF8) and a violet pull-on heel tab. The front view is a black toe cap under a violet upper with one strap.
+- **Bouldering shoes.** The shoe part is redrawn from the owner's references (no reference image was placed, so it follows the description). It has a downturned, slightly asymmetric pointed toe and a black rubber shell that forms the rand, toe cap and a thick sole. It also has a soft-violet upper panel (#A99CF0, the palette's one accent), two pale velcro straps (#ECEEF8; round 7: one wide strap) and a violet pull-on heel tab. The front view is a black toe cap under a violet upper with one strap.
 - **Shoe icon.** It is now a close crop of the kit's own shin and shoe parts, posed with the toe edging a granite foothold under the moon, instead of a whole-body crop.
 - **Kit colours.** New: blush, shoe upper, velcro strap and chalk bag (the bag keeps its old pale colour). The rubber is now near-black (#0B0C16).
 - Images: `png/model-*` (the dot and the shoe in front, side and back), `png/mascots-*` (every pose), `png/icons-*` and `png/appicon-*` (the dot and the new Shoe icon).
@@ -27,10 +42,10 @@ Open questions: none. Five Blocks kinds are still marked stand-ins (listed below
 - **The roo kit** (`pack/roo.mjs`, `pack/roo-master.svg`, `pack/rig.json`, `pack/poses.json`):
   - The parts: one body, one head (side and front drawings), two ears, two arms, two thighs, two shins, two climbing shoes (side and front drawings) and a tail. Each is drawn once at its own pivot.
   - A pose is only a list of joint angles, an optional lift and props (chalk bag, hold, bar, flash bolt, PR star, zz). The thin rim is the whole posed silhouette stroked once behind the fills.
-  - The kit has 16 poses: stand, bust, sit, chalk-up, crimp, hang, dyno, flash, send, fall, rest, PR, shelter and moon-watch, plus the front and back views.
-- **Icons** (`pack/icons/*.svg`, 1024 px). Eight close crops of the kit, each on a dark navy background with a moon or crag hint:
+  - The kit has 19 poses: stand, bust, sit, chalk-up, crimp, hang, dyno, flash, send, fall, rest, PR, shelter, moon-watch, top-out slap, rest hang and tongue, plus the front and back views.
+- **Icons** (`pack/icons/*.svg`, 1024 px). Nine close crops of the kit (round 7: Tongue added, each on a faceted boulder under the moon):
   - **Profile** (side bust under the moon) is the new default and replaces the original icon.
-  - **Crimp** (a paw on a hold), **Chalk-up** (the bag and a dusty paw), **Dyno** (the arm reaching out of frame), **Shoe** (a climbing shoe on a foothold), **Peek** (over a boulder lip), **Rest** (asleep under a crescent) and **Send** (a raised fist).
+  - **Crimp** (a paw on a hold), **Chalk-up** (the bag and a dusty paw), **Dyno** (the arm reaching out of frame), **Shoe** (a climbing shoe on a foothold), **Peek** (over a boulder lip), **Rest** (a straight-arm hang, eyes shut), **Send** (a slap on the top) and **Tongue** (an effort face on a sloper).
 - **The scene.** The crag is faceted, overhanging granite like the original cave art: a big leaning overhang with pockets and cracks, a second boulder, back ridges, flagstone pads and a chalk bag, under the moon and stars.
   - The rim of each boulder catches a soft lavender moonlight line (not shimmer).
   - The weather shows inside the night: a dawn glow, rain streaks with a hazy moon, and fog bands.
@@ -61,8 +76,8 @@ Open questions: none. Five Blocks kinds are still marked stand-ins (listed below
 | `force` | Max hang, live: the curve in violet against your old best, peak/mean/time/bodyweight, and the **PR!** roo. It fits with no scrolling. |
 | `log`, `logbook` | The month: stats and sends by grade (Blocks `chart`). Then every tick by day. |
 | `settings` | Scene (**Live weather** or pin one of four), Look (App icon: Profile), Data and Account. |
-| `appicon` | Settings › App icon: the eight crops, with Profile selected as the default. |
-| `icons-390`, `icons-1440` | The full-size icon sheet: Profile large and at 180, 120, 87, 60, 40 and 29 px, then all eight. |
+| `appicon` | Settings › App icon: the nine crops, with Profile selected as the default. |
+| `icons-390`, `icons-1440` | The full-size icon sheet: Profile large and at 180, 120, 87, 60, 40 and 29 px, then all nine, then all nine at 40 and 29 px. |
 | `buttons-390`, `buttons-1440` | Moonstone: the primary button at rest and pressed (the glint), the plain button, and the surface at 4× to show the grain and pearl rim. |
 | `mascots-390`, `mascots-1440` | The roo kit's poses and where each one appears. |
 | `model-390`, `model-1440` | The model sheet: front, side and back on a one-head grid, the proportions, the 13 parts and every colour. |
@@ -93,7 +108,7 @@ The pack's contents, as they would move to jirathip-dev/swag:
 - **Roo kit:**
   - `pack/roo-master.svg` (every part and prop at its pivot), `pack/rig.json` (each part's parent, attach point and draw order, side and front), `pack/poses.json` (joint angles per pose) and `pack/roo.mjs` (the renderer).
   - Colours: fur #1A1C30, far limb #111222, near arm #23263F, inner ear #4A4E78, muzzle #ECEEF8, spots #D3D7EC (chalk dust, Zz), blush #E59AB8, shoe upper #A99CF0, rubber #0B0C16, velcro strap #ECEEF8, chalk bag #E4E6F2 and the rim #7471B0. No shimmer.
-- **Icons:** `pack/icons/*.svg`, eight at 1024 px, made from the kit by `pack/icons.mjs`.
+- **Icons:** `pack/icons/*.svg`, nine at 1024 px, made from the kit by `pack/icons.mjs`.
 - **Scene:** `pack/scene.mjs`.
   - Faceted overhangs (seeded low-poly facets lit from the moon side), pockets, cracks, a lavender rim, slabs, the bag, the moon and stars.
   - Dawn, rain and fog layers.

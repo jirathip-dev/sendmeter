@@ -69,15 +69,16 @@ function loading() {
 }
 
 function icons() {
-  const big = WIDE ? 200 : 150;
-  sheet(sheetHead("App icons", "8 close crops of the roo kit · Profile is the default") +
+  const big = WIDE ? 200 : 104;
+  sheet(sheetHead("App icons", "9 close crops of the roo kit · Profile is the default") +
     `<div style="display:flex;align-items:flex-end;gap:${WIDE ? 22 : 12}px;flex-wrap:wrap;margin-bottom:26px">${icon("profile", WIDE ? 300 : 200)}${[180, 120, 87, 60, 40, 29].map((s) => `<div style="text-align:center">${icon("profile", s)}<div style="font-size:11px;color:var(--mute);margin-top:4px">${s}</div></div>`).join("")}</div>
-    <div style="display:grid;grid-template-columns:repeat(${WIDE ? 8 : 2},1fr);gap:16px">${ICONS.map((ic) => `<div style="text-align:center">${icon(ic.id, WIDE ? 150 : big)}<div style="font:600 13px var(--body);margin-top:6px">${ic.label}</div></div>`).join("")}</div>`);
+    <div style="display:grid;grid-template-columns:repeat(${WIDE ? 9 : 3},1fr);gap:16px">${ICONS.map((ic) => `<div style="text-align:center">${icon(ic.id, WIDE ? 132 : big)}<div style="font:600 13px var(--body);margin-top:6px">${ic.label}</div></div>`).join("")}</div>
+    <div style="margin-top:22px;display:flex;flex-direction:column;gap:10px">${[40, 29].map((px) => `<div style="display:flex;align-items:center;gap:${WIDE ? 18 : 8}px;flex-wrap:wrap"><span style="width:44px;font-size:11px;color:var(--mute)">${px} px</span>${ICONS.map((ic) => icon(ic.id, px)).join("")}</div>`).join("")}</div>`);
 }
 
 function mascots() {
-  const poses = ["stand", "sit", "chalk", "crimp", "hang", "dyno", "flash", "send", "fall", "rest", "pr", "shelter", "moon"];
-  const where = { stand: "kit base", sit: "Session tab", chalk: "dawn, first run", crimp: "icon", hang: "Force tab", dyno: "loading", flash: "Flashed!", send: "Sent", fall: "Whipper, errors", rest: "empty, fog", pr: "PR!", shelter: "rain, can't read", moon: "clear night" };
+  const poses = ["stand", "sit", "chalk", "crimp", "hang", "dyno", "flash", "send", "fall", "rest", "pr", "shelter", "moon", "topout", "deadhang", "tongue"];
+  const where = { stand: "kit base", sit: "Session tab", chalk: "dawn, first run", crimp: "icon", hang: "Force tab", dyno: "loading", flash: "Flashed!", send: "Sent", fall: "Whipper, errors", rest: "empty, fog", pr: "PR!", shelter: "rain, can't read", moon: "clear night", topout: "Send icon", deadhang: "Rest icon", tongue: "Tongue icon" };
   const sz = WIDE ? 120 : 100;
   sheet(sheetHead("The roo kit", "13 parts · every pose re-posed from them, never redrawn") +
     `<div style="display:grid;grid-template-columns:repeat(${WIDE ? 7 : 3},minmax(0,1fr));gap:4px 6px">${poses.map((p) => `<div style="text-align:center">${roo(p, { size: sz })}<div style="font:600 12px var(--body)">${POSES[p].label}</div><div style="font-size:10.5px;color:var(--mute)">${where[p]}</div></div>`).join("")}</div>`);
@@ -135,5 +136,7 @@ function watch() {
     </div>`);
 }
 
-const SHEETS = { buttons, loading, icons, mascots, model, states, watch };
+function one() { sheet(`<div style="display:flex;flex-wrap:wrap;gap:12px">${(q.get("id") || "profile").split(",").map((i) => icon(i, +(q.get("px") || 400))).join("")}</div>`); }
+
+const SHEETS = { one, buttons, loading, icons, mascots, model, states, watch };
 if (SHEETS[S]) SHEETS[S](); else app();

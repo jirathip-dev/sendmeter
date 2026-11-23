@@ -1,3 +1,6 @@
 body.s-today [data-id=conditions] { margin-bottom: 150px; }
 body.s-today [data-id=conditions] .b-card__subtitle { margin: 0; flex-basis: 100%; color: var(--fg); font: 600 14px var(--body); }
 @media (min-width: 900px) { body.s-today [data-id=conditions] { margin-bottom: 0; } }
+body.s-today [data-id=week] { padding: 10px 16px 12px; }
+body.s-today [data-id=week] > .stats { margin-top: 4px; gap: 4px; }
+body.s-today [data-id=week] .b-stat__value { font-size: 22px; }
