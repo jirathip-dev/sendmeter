@@ -5,10 +5,12 @@ export const COLOURS = {
   ear: "#4A4E78",
   muzzle: "#ECEEF8",
   spot: "#D3D7EC",
+  blush: "#E59AB8",
   nose: "#0A0A12",
-  shoe: "#E4E6F2",
-  rubber: "#2A2D45",
-  strap: "#A99CF0",
+  upper: "#A99CF0",
+  rubber: "#0B0C16",
+  strap: "#ECEEF8",
+  bag: "#E4E6F2",
   rim: "#7471B0",
 };
 
@@ -28,28 +30,28 @@ const shapes = {
       <path d="M-5 -14 Q0 -10 5 -14" fill="none" stroke="${C.nose}" stroke-width="1.8" stroke-linecap="round"/>
       <circle data-eye="" cx="-12" cy="-36" r="3.8" fill="${C.nose}"/><circle data-eye="" cx="12" cy="-36" r="3.8" fill="${C.nose}"/>
       <circle data-glint="" cx="-11" cy="-37.4" r="1.2" fill="#fff"/><circle data-glint="" cx="13" cy="-37.4" r="1.2" fill="#fff"/>
-      <circle cx="-22" cy="-20" r="4.6" fill="${C.spot}"/><circle cx="22" cy="-20" r="4.6" fill="${C.spot}"/></g>`;
+      <circle data-blush="" cx="-21" cy="-21" r="5" fill="${C.blush}"/><circle data-blush="" cx="21" cy="-21" r="5" fill="${C.blush}"/></g>`;
     return `<circle cx="0" cy="-30" r="32"/><ellipse cx="26" cy="-20" rx="17" ry="14"/>
       <g data-detail=""><ellipse cx="30" cy="-20" rx="13" ry="11" fill="${C.muzzle}"/>
       <ellipse cx="40" cy="-24" rx="5" ry="4" fill="${C.nose}"/>
       <path d="M28 -13 Q33 -9 38 -13" fill="none" stroke="${C.nose}" stroke-width="1.8" stroke-linecap="round"/>
       <circle data-eye="" cx="14" cy="-38" r="3.8" fill="${C.nose}"/><circle data-glint="" cx="15" cy="-39.4" r="1.2" fill="#fff"/>
-      <circle cx="4" cy="-14" r="4.6" fill="${C.spot}"/><circle cx="-6" cy="-22" r="3.4" fill="${C.spot}"/></g>`;
+      <circle data-blush="" cx="5" cy="-16" r="5" fill="${C.blush}"/></g>`;
   },
   ear: () => `<ellipse cx="0" cy="-20" rx="13" ry="21"/><g data-detail=""><ellipse cx="0" cy="-19" rx="7" ry="13" fill="${C.ear}"/></g>`,
   arm: () => `<path d="M-7 0 L-7.5 34 A8.5 8.5 0 0 0 9.5 34 L7 0 A7 7 0 0 0 -7 0Z"/>`,
   thigh: () => `<ellipse cx="6" cy="12" rx="19" ry="22" transform="rotate(-20 6 12)"/>`,
   shin: () => `<path d="M-6 0 L-5 16 A5 5 0 0 0 5 16 L6 0 A6 6 0 0 0 -6 0Z"/>`,
   shoe: (v) => v === "front" || v === "back"
-    ? `<path d="M-11 2 C-12 -10 12 -10 11 2 C11 10 -11 10 -11 2Z" fill="${C.shoe}"/><g data-detail=""><path d="M-10 4 C-8 10 8 10 10 4" fill="none" stroke="${C.rubber}" stroke-width="3.4" stroke-linecap="round"/><path d="M-8 -3 L8 -3" stroke="${C.strap}" stroke-width="3" stroke-linecap="round"/></g>`
-    : `<g transform="scale(1.2)"><path d="M-6 -8 C-10 -2 -9 8 -2 10 L24 10 C31 10 34 5 30 1 C25 -4 14 -4 8 -9 C3 -12 -3 -12 -6 -8Z" fill="${C.shoe}"/>
-    <g data-detail=""><path d="M-7 4 C-7 9 -4 10.5 -1 10.5 L25 10.5 C30 10.5 33 7 32 3" fill="none" stroke="${C.rubber}" stroke-width="3.4" stroke-linecap="round"/>
-    <path d="M4 -8 L10 4" stroke="${C.strap}" stroke-width="3.2" stroke-linecap="round"/></g></g>`,
+    ? `<path d="M-11 2 C-12 -11 12 -11 11 2 C11 12 -11 12 -11 2Z" fill="${C.rubber}"/><g data-detail=""><path d="M-9 0 C-10 -9 10 -9 9 0 C6 3 -6 3 -9 0Z" fill="${C.upper}"/><path d="M-8 -4 L8 -4" stroke="${C.strap}" stroke-width="3" stroke-linecap="round"/></g>`
+    : `<g transform="scale(1.2)"><path d="M-6 -12 C-12 -10 -13 4 -9 11 C-2 13 8 10 16 10 C22 10 27 12 30 11 C33 9 31 3 26 0 C20 -4 12 -6 7 -11 C3 -15 -2 -14 -6 -12Z" fill="${C.rubber}"/>
+    <g data-detail=""><path d="M-7 -10 L-12 -17 C-12 -20 -8 -21 -6 -19 L-3 -12Z" fill="${C.upper}"/><path d="M-5 -10 C-10 -7 -10 2 -7 6 C0 7 9 5 16 6 C19 4 20 1 19 -2 C14 -4 9 -7 6 -10 C2 -13 -2 -12 -5 -10Z" fill="${C.upper}"/>
+    <path d="M0 -11 L3 4 M7 -8 L10 5" stroke="${C.strap}" stroke-width="3.4" stroke-linecap="round"/></g></g>`,
   tail: () => `<path d="M4 -16 C-18 -14 -40 0 -54 18 C-58 24 -53 30 -47 26 C-32 16 -16 12 4 12Z"/>`,
 };
 
 const PROPS = {
-  bag: `<g transform="translate(-8 4)"><path d="M-11 0 C-12 14 -10 22 0 22 C10 22 12 14 11 0Z" fill="${C.shoe}"/><rect x="-12" y="-4" width="24" height="6" rx="3" fill="${C.strap}"/><circle cx="-3" cy="-10" r="4" fill="${C.spot}" opacity=".6"/><circle cx="5" cy="-14" r="3" fill="${C.spot}" opacity=".45"/></g>`,
+  bag: `<g transform="translate(-8 4)"><path d="M-11 0 C-12 14 -10 22 0 22 C10 22 12 14 11 0Z" fill="${C.bag}"/><rect x="-12" y="-4" width="24" height="6" rx="3" fill="${C.upper}"/><circle cx="-3" cy="-10" r="4" fill="${C.spot}" opacity=".6"/><circle cx="5" cy="-14" r="3" fill="${C.spot}" opacity=".45"/></g>`,
   hold: `<path d="M-16 -2 C-14 -12 12 -14 18 -4 C20 2 12 6 0 6 C-10 6 -18 4 -16 -2Z" fill="#5A5F7E"/>`,
   bar: `<rect x="-60" y="-8" width="120" height="10" rx="5" fill="#5A5F7E"/>`,
   bolt: `<path d="M2 -26 L-10 0 L0 0 L-4 22 L12 -6 L2 -6 L8 -26Z" fill="${C.muzzle}"/>`,
@@ -149,6 +151,14 @@ export function roo(name = "stand", { size = 160, flip = false, edge = true, rim
   const [x, y, w, h] = box;
   return `<svg viewBox="${x} ${y} ${w} ${h}" width="${size}" height="${(size * h) / w}" role="img" aria-label="${label || "Roo, " + p.label}">
     ${outline}${wrap(draw(rig, p, "fill", view))}</svg>`;
+}
+
+export function foot({ shin = 0, shoe = 0, reach = 90, rim = RIM } = {}) {
+  const node = { id: "shinNear", shape: "shin", at: [0, 0], kids: [{ id: "shoeNear", shape: "shoe", at: [0, 20] }] };
+  const p = { angles: { shinNear: shin, shoeNear: shoe } };
+  const leg = `<rect x="-6" y="${-reach}" width="12" height="${reach + 4}"/>`;
+  return `<g transform="rotate(${shin})"><g fill="${C.rim}" stroke="${C.rim}" stroke-width="${rim}" stroke-linejoin="round">${leg}</g><g fill="${C.fur}">${leg}</g></g>
+    <g fill="${C.rim}" stroke="${C.rim}" stroke-width="${rim}" stroke-linejoin="round">${draw(node, p, "edge", "side")}</g>${draw(node, p, "fill", "side")}`;
 }
 
 export function master() {

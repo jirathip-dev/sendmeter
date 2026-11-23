@@ -1,12 +1,20 @@
 ## Summary
 
-Decision: Round 5 makes the roo shorter and cuter, like the original mascot: a big round head, round ears, a round belly, short legs and big climbing shoes. It is drawn in Cooee's flat style: flat fills, no inner lines, one thin flat rim and no shimmer. The primary button is Moonstone: a solid deep-violet pill with a faint granite grain and a thin pearl rim. A soft shimmer glint shows only while it is pressed. The shimmer otherwise stays only on the Send-o-meter fill. Everything else from round 4 stays: calm navy and moonlight white, one soft violet, Zilla Slab with Inter, the faceted overhang crag, the eight close-crop icons and every screen drawn by Blocks.
-Screens: every screen from round 4, redrawn with the new roo and button. The roo kit, model sheet and icon sheet are rebuilt, and a new Moonstone button sheet is added (63 images at 390 and 1440).
-Open questions: (1) Should the roo keep the thin lavender rim, which makes the black roo readable on the night scene, or have no outline at all? (2) Five Blocks kinds are still marked stand-ins (listed below); filing them in blocks is not this lane's job.
+Decision: Round 5's look stands as approved, with two fixes to the roo kit. The roo has one round pink blush dot on its cheek (one per cheek when it faces front), not two white spots, in every pose, icon and the model sheet. Its climbing shoes now look like modern bouldering shoes: a downturned pointed toe, a black rubber rand and toe cap, a thick black sole, a soft-violet upper, two pale velcro straps and a violet heel tab, still flat and chunky. The Shoe icon shows the new shoe edging a foothold. Everything else, including the thin lavender rim, is unchanged.
+Screens: every image is re-rendered from the fixed kit (63 images at 390 and 1440); the model sheet, roo poses and icon sheet show the fixes best.
+Open questions: none. Five Blocks kinds are still marked stand-ins (listed below); filing them in blocks is not this lane's job.
+
+## Round 6 fixes
+
+- **One blush dot.** The kit's head part (its master drawing) now carries a single round blush dot (#E59AB8) in the side view, replacing the two white cheek spots. The front view shows one dot on each cheek. Every pose, icon and screen roo inherits it.
+- **Bouldering shoes.** The shoe part is redrawn from the owner's references (no reference image was placed, so it follows the description). It has a downturned, slightly asymmetric pointed toe and a black rubber shell that forms the rand, toe cap and a thick sole. It also has a soft-violet upper panel (#A99CF0, the palette's one accent), two pale velcro straps (#ECEEF8) and a violet pull-on heel tab. The front view is a black toe cap under a violet upper with one strap.
+- **Shoe icon.** It is now a close crop of the kit's own shin and shoe parts, posed with the toe edging a granite foothold under the moon, instead of a whole-body crop.
+- **Kit colours.** New: blush, shoe upper, velcro strap and chalk bag (the bag keeps its old pale colour). The rubber is now near-black (#0B0C16).
+- Images: `png/model-*` (the dot and the shoe in front, side and back), `png/mascots-*` (every pose), `png/icons-*` and `png/appicon-*` (the dot and the new Shoe icon).
 
 ## Round 5 changes
 
-- **The roo is shorter and cuter.** The head is a circle (one head unit). The roo stands 3.2 heads tall with ears, down from 6.2. It has round-tipped ears, a round belly, stubby arms, a round haunch, a short shin and a big climbing shoe. The face keeps the original: a white muzzle, a black nose with a smile, a bead eye and two white cheek spots.
+- **The roo is shorter and cuter.** The head is a circle (one head unit). The roo stands 3.2 heads tall with ears, down from 6.2. It has round-tipped ears, a round belly, stubby arms, a round haunch, a short shin and a big climbing shoe. The face keeps the original: a white muzzle, a black nose with a smile, a bead eye and a cheek spot (round 6: one pink blush dot).
 - **Flat, Cooee style.** Every part is one flat fill with no seam lines, and depth comes from tone: the far limbs are darker and the near arm is lighter. There is no iridescent cutline. One thin flat rim (#7471B0) runs round the silhouette and the near arm, so the black roo still reads on the night sky. The icons use the same rim, scaled thin.
 - **Poses re-posed for the new build.** Hang, Flash and PR face front with both arms up in a V, because short arms cannot clear the big head side-on. Crimp, Dyno and Send reach forward. Every pose stands on one ground line.
 - **Moonstone buttons.** The primary button is a solid deep violet (#46379A) with a faint granite grain, a thin pearl rim and white slab text. Pressing it sweeps a soft purple-teal-pink glint across. Other buttons are unchanged.
@@ -84,7 +92,7 @@ The pack's contents, as they would move to jirathip-dev/swag:
 - **Fonts** (`fonts/`): Zilla Slab 600 and 700 (Mozilla, SIL OFL 1.1) and Inter, variable 400–600 (SIL OFL 1.1). The licences are `fonts/*-OFL.txt`.
 - **Roo kit:**
   - `pack/roo-master.svg` (every part and prop at its pivot), `pack/rig.json` (each part's parent, attach point and draw order, side and front), `pack/poses.json` (joint angles per pose) and `pack/roo.mjs` (the renderer).
-  - Colours: fur #1A1C30, far limb #111222, near arm #23263F, inner ear #4A4E78, muzzle #ECEEF8, spots #D3D7EC, shoe #E4E6F2, rubber #2A2D45, strap #A99CF0 and the rim #7471B0. No shimmer.
+  - Colours: fur #1A1C30, far limb #111222, near arm #23263F, inner ear #4A4E78, muzzle #ECEEF8, spots #D3D7EC (chalk dust, Zz), blush #E59AB8, shoe upper #A99CF0, rubber #0B0C16, velcro strap #ECEEF8, chalk bag #E4E6F2 and the rim #7471B0. No shimmer.
 - **Icons:** `pack/icons/*.svg`, eight at 1024 px, made from the kit by `pack/icons.mjs`.
 - **Scene:** `pack/scene.mjs`.
   - Faceted overhangs (seeded low-poly facets lit from the moon side), pockets, cracks, a lavender rim, slabs, the bag, the moon and stars.
