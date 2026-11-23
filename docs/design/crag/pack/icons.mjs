@@ -1,14 +1,14 @@
 import { roo } from "./roo.mjs";
 
 export const ICONS = [
-  { id: "profile", label: "Profile", pose: "bust", box: [-46, -156, 140, 140], bg: "moon" },
-  { id: "crimp", label: "Crimp", pose: "crimp", box: [-90, -215, 150, 150], bg: "moon" },
-  { id: "chalk", label: "Chalk-up", pose: "chalk", box: [-90, -176, 150, 150], bg: "moon" },
+  { id: "profile", label: "Profile", pose: "bust", box: [-48, -162, 140, 140], bg: "moon" },
+  { id: "crimp", label: "Crimp", pose: "crimp", box: [-44, -150, 125, 125], bg: "moon" },
+  { id: "chalk", label: "Chalk-up", pose: "chalk", box: [-84, -168, 176, 176], bg: "moon" },
   { id: "dyno", label: "Dyno", pose: "dyno", box: [-36, -136, 112, 112], bg: "stars" },
-  { id: "shoe", label: "Shoe", pose: "stand", box: [-6, 34, 64, 64], bg: "foothold" },
-  { id: "peek", label: "Peek", pose: "stand", box: [-60, -186, 150, 150], bg: "lip" },
-  { id: "rest", label: "Rest", pose: "rest", box: [-40, -172, 130, 130], bg: "crescent" },
-  { id: "send", label: "Send", pose: "send", box: [-40, -170, 130, 130], bg: "moon" },
+  { id: "shoe", label: "Shoe", pose: "stand", box: [-16, 2, 70, 70], bg: "foothold" },
+  { id: "peek", label: "Peek", pose: "stand", box: [-50, -146, 130, 130], bg: "lip" },
+  { id: "rest", label: "Rest", pose: "rest", box: [-50, -128, 150, 150], bg: "crescent" },
+  { id: "send", label: "Send", pose: "send", box: [-38, -160, 125, 125], bg: "moon" },
 ];
 
 const BG = {
@@ -25,7 +25,7 @@ const FRONT = {
 
 export function icon(id, size = 180, { radius = true } = {}) {
   const ic = ICONS.find((i) => i.id === id) || ICONS[0];
-  const inner = roo(ic.pose, { size: 1024, box: ic.box }).replace(/<svg [^>]*?(viewBox="[^"]*")[^>]*>/, `<svg x="0" y="0" width="1024" height="1024" $1 preserveAspectRatio="xMidYMid slice">`);
+  const inner = roo(ic.pose, { size: 1024, box: ic.box, rim: ic.box[2] / 90 }).replace(/<svg [^>]*?(viewBox="[^"]*")[^>]*>/, `<svg x="0" y="0" width="1024" height="1024" $1 preserveAspectRatio="xMidYMid slice">`);
   const r = radius ? 226 : 0;
   return `<svg viewBox="0 0 1024 1024" width="${size}" height="${size}" role="img" aria-label="App icon, ${ic.label}">
     <defs><clipPath id="ic-${id}-${size}"><rect width="1024" height="1024" rx="${r}"/></clipPath><linearGradient id="ib-${id}-${size}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#151A45"/><stop offset="1" stop-color="#060820"/></linearGradient></defs>

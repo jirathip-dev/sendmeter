@@ -22,6 +22,10 @@
   --on-iri: #120F2E;
   --select: rgba(185, 168, 255, .18);
   --iri: linear-gradient(110deg, #C2A8FF 0%, #8FE6E0 50%, #FFB3DC 100%);
+  --moonstone: #46379A;
+  --on-moonstone: #F6F4FF;
+  --pearl: linear-gradient(180deg, rgba(244, 240, 255, .85), rgba(196, 186, 240, .35) 45%, rgba(230, 222, 255, .6));
+  --grain: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='4'/%3E%3CfeColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .55 -.18'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23g)'/%3E%3C/svg%3E");
   --display: "Zilla Slab", Georgia, serif;
   --body: "Inter", system-ui, sans-serif;
   --radius: 22px;
@@ -51,7 +55,8 @@ body { min-height: 100vh; overflow: hidden; }
 button, a.btn { text-transform: none; color: var(--link); font-family: var(--body); font-weight: 600; font-size: 15px; height: var(--ctl); padding: 0 18px; border-radius: 999px; background: rgba(185, 168, 255, .12); }
 button:before, button:after, a.btn:before, a.btn:after { content: none; }
 button:active { background: var(--select); color: var(--fg); }
-button.primary { background: var(--iri); color: var(--on-iri); font-family: var(--display); font-weight: 700; font-size: 19px; height: 56px; width: 100%; box-shadow: 0 8px 28px rgba(160, 140, 255, .28); }
+button.primary { position: relative; isolation: isolate; border: 1.5px solid transparent; background: var(--grain) padding-box, linear-gradient(180deg, #5242AE, var(--moonstone) 55%, #3B2E86) padding-box, var(--pearl) border-box; color: var(--on-moonstone); font-family: var(--display); font-weight: 700; font-size: 19px; height: 56px; width: 100%; box-shadow: 0 8px 24px rgba(40, 26, 110, .45), inset 0 1px 0 rgba(255, 255, 255, .18); }
+button.primary:active, button.primary.pressed { background: linear-gradient(115deg, transparent 20%, rgba(194, 168, 255, .3) 38%, rgba(143, 230, 224, .22) 50%, rgba(255, 179, 220, .28) 62%, transparent 80%) padding-box, var(--grain) padding-box, linear-gradient(180deg, #4A3BA2, #3E3090) padding-box, var(--pearl) border-box; color: var(--on-moonstone); }
 button.destructive, button.bad { color: var(--r); background: rgba(255, 157, 176, .1); }
 
 .b-main { position: relative; z-index: 1; }

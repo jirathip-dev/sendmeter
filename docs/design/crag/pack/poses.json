@@ -5,8 +5,8 @@
     "angles": {
       "body": 4,
       "head": 0,
-      "earFar": -14,
-      "earNear": 10,
+      "earFar": -16,
+      "earNear": 8,
       "armFar": 14,
       "armNear": -8,
       "thighFar": 4,
@@ -27,8 +27,8 @@
     "angles": {
       "body": 4,
       "head": -4,
-      "earFar": -14,
-      "earNear": 10,
+      "earFar": -16,
+      "earNear": 8,
       "armFar": 14,
       "armNear": 34,
       "thighFar": 4,
@@ -49,8 +49,8 @@
     "angles": {
       "body": -2,
       "head": 0,
-      "earFar": -14,
-      "earNear": 10,
+      "earFar": -16,
+      "earNear": 8,
       "armFar": -30,
       "armNear": -40,
       "thighFar": -70,
@@ -61,7 +61,7 @@
       "shoeNear": -20,
       "tail": -14
     },
-    "lift": -34,
+    "lift": 23,
     "props": [],
     "eyes": "open"
   },
@@ -71,8 +71,8 @@
     "angles": {
       "body": 2,
       "head": 14,
-      "earFar": -14,
-      "earNear": 10,
+      "earFar": -16,
+      "earNear": 8,
       "armFar": -40,
       "armNear": 20,
       "thighFar": 4,
@@ -89,8 +89,8 @@
         "name": "bag",
         "on": "body",
         "at": [
-          -24,
-          -18
+          -30,
+          -14
         ]
       },
       {
@@ -98,7 +98,7 @@
         "on": "armNear",
         "at": [
           0,
-          52
+          42
         ]
       }
     ],
@@ -108,12 +108,12 @@
     "label": "Crimp",
     "view": "side",
     "angles": {
-      "body": -8,
-      "head": -18,
-      "earFar": -14,
-      "earNear": 10,
-      "armFar": -200,
-      "armNear": -150,
+      "body": -6,
+      "head": -22,
+      "earFar": -16,
+      "earNear": 8,
+      "armFar": -150,
+      "armNear": -128,
       "thighFar": -40,
       "shinFar": 60,
       "shoeFar": -40,
@@ -129,7 +129,7 @@
         "on": "armNear",
         "at": [
           0,
-          56
+          46
         ]
       }
     ],
@@ -139,19 +139,19 @@
     "label": "Dyno",
     "view": "side",
     "angles": {
-      "body": 16,
-      "head": -26,
-      "earFar": -30,
-      "earNear": -6,
-      "armFar": -205,
-      "armNear": -160,
-      "thighFar": 26,
-      "shinFar": 6,
+      "body": 18,
+      "head": -34,
+      "earFar": -40,
+      "earNear": -20,
+      "armFar": -150,
+      "armNear": -122,
+      "thighFar": 30,
+      "shinFar": 10,
       "shoeFar": 18,
-      "thighNear": -2,
-      "shinNear": 36,
+      "thighNear": 0,
+      "shinNear": 40,
       "shoeNear": 10,
-      "tail": 30
+      "tail": 34
     },
     "lift": 0,
     "props": [],
@@ -159,30 +159,30 @@
   },
   "hang": {
     "label": "Hang",
-    "view": "side",
+    "view": "front",
     "angles": {
       "body": 0,
-      "head": 8,
-      "earFar": -14,
-      "earNear": 10,
-      "armFar": -195,
-      "armNear": -165,
-      "thighFar": 8,
-      "shinFar": 0,
-      "shoeFar": 10,
+      "head": 0,
+      "earFar": -12,
+      "earNear": 12,
+      "armFar": 160,
+      "armNear": -160,
+      "thighFar": 4,
+      "shinFar": -6,
+      "shoeFar": 0,
       "thighNear": -6,
-      "shinNear": 10,
-      "shoeNear": 6,
-      "tail": 28
+      "shinNear": 6,
+      "shoeNear": 0,
+      "tail": 8
     },
-    "lift": 0,
+    "lift": 19,
     "props": [
       {
         "name": "bar",
-        "on": "armNear",
+        "on": "body",
         "at": [
           0,
-          55
+          -88
         ]
       }
     ],
@@ -190,30 +190,30 @@
   },
   "flash": {
     "label": "Flash",
-    "view": "side",
+    "view": "front",
     "angles": {
       "body": 0,
-      "head": -8,
-      "earFar": -14,
-      "earNear": 10,
-      "armFar": -215,
+      "head": 0,
+      "earFar": -12,
+      "earNear": 12,
+      "armFar": 150,
       "armNear": -150,
-      "thighFar": 4,
-      "shinFar": 10,
-      "shoeFar": -14,
+      "thighFar": 6,
+      "shinFar": -6,
+      "shoeFar": 0,
       "thighNear": -6,
-      "shinNear": 18,
-      "shoeNear": -12,
-      "tail": -6
+      "shinNear": 6,
+      "shoeNear": 0,
+      "tail": 0
     },
-    "lift": 0,
+    "lift": 19,
     "props": [
       {
         "name": "bolt",
-        "on": "armNear",
+        "on": "body",
         "at": [
           0,
-          70
+          -146
         ]
       }
     ],
@@ -224,11 +224,11 @@
     "view": "side",
     "angles": {
       "body": 2,
-      "head": -6,
-      "earFar": -14,
-      "earNear": 10,
+      "head": -10,
+      "earFar": -16,
+      "earNear": 8,
       "armFar": 18,
-      "armNear": -155,
+      "armNear": -132,
       "thighFar": 4,
       "shinFar": 10,
       "shoeFar": -14,
@@ -281,14 +281,14 @@
       "shoeNear": -20,
       "tail": -14
     },
-    "lift": -34,
+    "lift": 23,
     "props": [
       {
         "name": "zz",
         "on": "head",
         "at": [
-          30,
-          -50
+          36,
+          -64
         ]
       }
     ],
@@ -296,30 +296,30 @@
   },
   "pr": {
     "label": "PR",
-    "view": "side",
+    "view": "front",
     "angles": {
       "body": 0,
-      "head": -10,
-      "earFar": -14,
-      "earNear": 10,
-      "armFar": -215,
+      "head": 0,
+      "earFar": -12,
+      "earNear": 12,
+      "armFar": 150,
       "armNear": -150,
-      "thighFar": 4,
-      "shinFar": 10,
-      "shoeFar": -14,
+      "thighFar": 6,
+      "shinFar": -6,
+      "shoeFar": 0,
       "thighNear": -6,
-      "shinNear": 18,
-      "shoeNear": -12,
-      "tail": -6
+      "shinNear": 6,
+      "shoeNear": 0,
+      "tail": 0
     },
-    "lift": 0,
+    "lift": 19,
     "props": [
       {
         "name": "star",
-        "on": "head",
+        "on": "body",
         "at": [
-          6,
-          -70
+          0,
+          -150
         ]
       }
     ],
@@ -343,7 +343,7 @@
       "shoeNear": -20,
       "tail": -20
     },
-    "lift": -30,
+    "lift": -3,
     "props": [],
     "eyes": "open"
   },
@@ -365,7 +365,7 @@
       "shoeNear": -20,
       "tail": -14
     },
-    "lift": -34,
+    "lift": 18,
     "props": [],
     "eyes": "open"
   },
@@ -381,13 +381,13 @@
       "armNear": -18,
       "thighFar": 6,
       "shinFar": -6,
-      "shoeFar": 90,
+      "shoeFar": 0,
       "thighNear": -6,
       "shinNear": 6,
-      "shoeNear": 90,
+      "shoeNear": 0,
       "tail": 0
     },
-    "lift": 0,
+    "lift": 19,
     "props": [],
     "eyes": "open"
   },
@@ -403,13 +403,13 @@
       "armNear": -18,
       "thighFar": 6,
       "shinFar": -6,
-      "shoeFar": 90,
+      "shoeFar": 0,
       "thighNear": -6,
       "shinNear": 6,
-      "shoeNear": 90,
+      "shoeNear": 0,
       "tail": -60
     },
-    "lift": 0,
+    "lift": 13,
     "props": [],
     "eyes": "open"
   }

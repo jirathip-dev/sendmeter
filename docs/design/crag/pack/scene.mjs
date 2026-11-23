@@ -77,7 +77,7 @@ export function scene(W, H, weather = "clear", { roo: withRoo = true, seed = 7 }
     : "";
   const moonO = weather === "rain" ? 0.45 : weather === "fog" ? 0.6 : 1;
   const rimC = weather === "dawn" ? "#E7C6F2" : "#C9C6F0";
-    const [rx, ry] = wide ? [ox + 590, 780] : [ox + 470, 262];
+    const [rx, ry] = wide ? [ox + 590, 780] : [ox + 425, 250];
   const rooSvg = withRoo ? `<g transform="translate(${rx - 68} ${ry - 148}) scale(.62)">${roo(ROO_POSE[weather], { size: 220 }).replace(/<svg [^>]*>/, '<svg x="0" y="0" width="220" height="275" viewBox="-120 -200 240 300" overflow="visible">')}</g>` : "";
 
   return `<svg class="scene" viewBox="0 0 ${w.toFixed(0)} ${h}" preserveAspectRatio="xMidYMax slice" width="100%" height="100%" role="img" aria-label="Night crag, ${WEATHERS[weather]}" style="--rim:${rimC}">

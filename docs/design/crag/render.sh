@@ -20,6 +20,8 @@ if [ -z "${KEEP:-}" ]; then
   shot today-dawn-390 390,844 "s=today&m=dawn"
   shot today-fog-1440 1440,900 "s=today&m=fog"
   shot session-rain-390 390,844 "s=session&m=rain"
+  shot buttons-390 390,600 "s=buttons"
+  shot buttons-1440 1440,420 "s=buttons"
   shot states-390 390,880 "s=states"
   shot states-1440 1440,800 "s=states"
   shot icons-390 390,1460 "s=icons"

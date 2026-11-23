@@ -16,8 +16,8 @@
       "shape": "tail",
       "parent": "body",
       "at": [
-        -14,
-        -2
+        -18,
+        -4
       ],
       "behind": true,
       "far": false
@@ -27,8 +27,8 @@
       "shape": "thigh",
       "parent": "body",
       "at": [
-        -2,
-        -8
+        -4,
+        -12
       ],
       "behind": true,
       "far": true
@@ -38,8 +38,8 @@
       "shape": "shin",
       "parent": "thighFar",
       "at": [
-        10,
-        32
+        12,
+        28
       ],
       "behind": true,
       "far": true
@@ -50,7 +50,7 @@
       "parent": "shinFar",
       "at": [
         0,
-        42
+        20
       ],
       "behind": false,
       "far": false
@@ -60,8 +60,8 @@
       "shape": "arm",
       "parent": "body",
       "at": [
-        10,
-        -58
+        12,
+        -46
       ],
       "behind": true,
       "far": true
@@ -71,8 +71,8 @@
       "shape": "head",
       "parent": "body",
       "at": [
-        6,
-        -66
+        8,
+        -56
       ],
       "behind": false,
       "far": false
@@ -82,8 +82,8 @@
       "shape": "ear",
       "parent": "head",
       "at": [
-        -6,
-        -32
+        -12,
+        -54
       ],
       "behind": true,
       "far": true
@@ -93,8 +93,8 @@
       "shape": "ear",
       "parent": "head",
       "at": [
-        6,
-        -34
+        4,
+        -58
       ],
       "behind": false,
       "far": false
@@ -105,7 +105,7 @@
       "parent": "body",
       "at": [
         2,
-        -6
+        -10
       ],
       "behind": false,
       "far": false
@@ -115,8 +115,8 @@
       "shape": "shin",
       "parent": "thighNear",
       "at": [
-        10,
-        32
+        12,
+        28
       ],
       "behind": true,
       "far": false
@@ -127,7 +127,7 @@
       "parent": "shinNear",
       "at": [
         0,
-        42
+        20
       ],
       "behind": false,
       "far": false
@@ -137,8 +137,8 @@
       "shape": "arm",
       "parent": "body",
       "at": [
-        14,
-        -56
+        18,
+        -44
       ],
       "behind": false,
       "far": false
@@ -161,8 +161,8 @@
       "shape": "tail",
       "parent": "body",
       "at": [
-        -6,
-        -4
+        -8,
+        -6
       ],
       "behind": true,
       "far": false
@@ -172,19 +172,19 @@
       "shape": "thigh",
       "parent": "body",
       "at": [
-        -12,
-        -8
+        -16,
+        -10
       ],
       "behind": false,
-      "far": true
+      "far": false
     },
     {
       "part": "shinFar",
       "shape": "shin",
       "parent": "thighFar",
       "at": [
-        6,
-        32
+        4,
+        28
       ],
       "behind": true,
       "far": false
@@ -195,7 +195,7 @@
       "parent": "shinFar",
       "at": [
         0,
-        42
+        20
       ],
       "behind": false,
       "far": false
@@ -205,8 +205,8 @@
       "shape": "thigh",
       "parent": "body",
       "at": [
-        12,
-        -8
+        16,
+        -10
       ],
       "behind": false,
       "far": false
@@ -216,8 +216,8 @@
       "shape": "shin",
       "parent": "thighNear",
       "at": [
-        6,
-        32
+        4,
+        28
       ],
       "behind": true,
       "far": false
@@ -228,7 +228,7 @@
       "parent": "shinNear",
       "at": [
         0,
-        42
+        20
       ],
       "behind": false,
       "far": false
@@ -238,8 +238,8 @@
       "shape": "arm",
       "parent": "body",
       "at": [
-        -20,
-        -56
+        -26,
+        -48
       ],
       "behind": false,
       "far": false
@@ -249,8 +249,8 @@
       "shape": "arm",
       "parent": "body",
       "at": [
-        20,
-        -56
+        26,
+        -48
       ],
       "behind": false,
       "far": false
@@ -261,7 +261,7 @@
       "parent": "body",
       "at": [
         0,
-        -68
+        -58
       ],
       "behind": false,
       "far": false
@@ -271,8 +271,8 @@
       "shape": "ear",
       "parent": "head",
       "at": [
-        -11,
-        -33
+        -16,
+        -52
       ],
       "behind": false,
       "far": false
@@ -282,8 +282,8 @@
       "shape": "ear",
       "parent": "head",
       "at": [
-        11,
-        -33
+        16,
+        -52
       ],
       "behind": false,
       "far": false

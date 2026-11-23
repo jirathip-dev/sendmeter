@@ -9,12 +9,12 @@ const SCENE = {
   rain: ["#3A3D5C", "#04061A"],
   fog: ["#6A6E8E", "#080B22"],
 };
-const IRI = { "iri-purple": "#C2A8FF", "iri-teal": "#8FE6E0", "iri-pink": "#FFB3DC" };
+const SOLID = { "moonstone-top": "#5242AE", moonstone: "#46379A", "glint-violet": "#6E5CBE", "glint-teal": "#5961B0", "glint-pink": "#805FB3" };
 const need = { body: 4.5, large: 3 };
 const pairs = [
   ["fg", "card", "body"], ["mute", "card", "body"], ["link", "card", "body"], ["g", "card", "body"], ["a", "card", "body"], ["r", "card", "body"],
   ["link", "button", "body"], ["r", "bad-button", "body"],
-  ["on-iri", "iri-purple", "body"], ["on-iri", "iri-teal", "body"], ["on-iri", "iri-pink", "body"],
+  ["on-moonstone", "moonstone-top", "body"], ["on-moonstone", "moonstone", "body"], ["on-moonstone", "glint-violet", "body"], ["on-moonstone", "glint-teal", "body"], ["on-moonstone", "glint-pink", "body"],
   ["fg", "dim", "large"],
 ];
 
@@ -39,7 +39,7 @@ for (const [w, parts] of Object.entries(SCENE)) {
     dim: parts.map((p) => scale(p, 0.55)),
   };
   for (const [fg, bg, size] of pairs) {
-    const [onLight, onDark] = (backs[bg] || [IRI[bg], IRI[bg]]).map((b) => ratio(tok[fg], b));
+    const [onLight, onDark] = (backs[bg] || [SOLID[bg], SOLID[bg]]).map((b) => ratio(tok[fg], b));
     const ok = Math.min(onLight, onDark) >= need[size];
     if (!ok) fails++;
     console.log(`| ${w} | \`${fg}\` ${tok[fg]} | \`${bg}\` | ${onLight.toFixed(2)} | ${onDark.toFixed(2)} | ${need[size]} | ${ok ? "pass" : "FAIL"} |`);
