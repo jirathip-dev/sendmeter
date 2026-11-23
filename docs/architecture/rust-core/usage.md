@@ -10,13 +10,13 @@ out.
 // crates/sm-screens/src/screens/today.rs
 pub const ROUTE: &str = "today";
 
-pub struct Input { pub readiness: Option<Readiness>, pub kind: SessionKind, pub week: Week, pub ticks: Vec<Tick>, pub can: Abilities }
+pub struct Input { pub readiness: Option<Readiness>, pub kind: SessionKind, pub week: Week, pub ticks: Vec<Tick> }
 
 pub fn build(i: &Input) -> Block {
     Screen::new().id("today").title("Today").large(true)
         .actions(vec![open("Settings", "gearshape", "settings")])
         .blocks(vec![
-            readiness_tiles(i.readiness.as_ref()),            // score only where the inputs are sealed
+            readiness_tiles(i.readiness.as_ref()),
             kind_chips(i.kind),
             Button::new("Start session").id("start").style(Primary).action("start").into(),
             week_section(&i.week),
@@ -25,21 +25,17 @@ pub fn build(i: &Input) -> Block {
         .into()
 }
 
-pub fn act(action: &str, values: &Values) -> Option<Intent> {
-    match action {
+pub fn act(action: &Action) -> Option<Intent> {
+    match action.name.as_str() {
         "start" => Some(Intent::StartSession),
-        "kind" => values.one("kind").map(Intent::SetSessionKind),
+        "kind" => action.value("kind").map(Intent::SetSessionKind),
         _ => None,
     }
 }
 ```
 
-Its test builds an `Input` from the design's sample numbers and compares the result with
-`native/SendmeterNative/design/redesign/screens/today.json`. A button a device cannot serve is left out here:
-
-```rust
-if i.can.bluetooth { blocks.push(Button::new("Light it").action("light").into()) }
-```
+Its test builds an `Input` from the design's sample numbers and compares the result with the approved
+design's JSON for that screen. Adding a screen is adding this one file: the build script finds it.
 
 ## The core answering (Rust, `sm-app`)
 
@@ -49,63 +45,107 @@ let app = App::open(config)?;
 app.handle(Event::Open { route: "today".into() }, stamp);
 //  → [Screen { route: "today", json }]
 
-app.handle(Event::Act { route: "today".into(), action: "start".into(), block: None, values: "{}".into() }, stamp);
-//  → [Ops { route: "today", json }, Nav(Native(Recording))]       on the phone
-//  → [Ops { route: "today", json }, Nav(Push("session/live"))]    on the web
+app.handle(Event::Act { route: "today".into(), action: r#"{"name":"start"}"#.into() }, stamp);
+//  → [Ops { route: "today", json }, Nav(Live(Recording)), Live(frame), Wake { after_ms: 1000 }]
 
-app.handle(Event::Cloud(CloudEvent::Fetched { changed, deleted, more: false }), stamp);
+app.handle(Event::Cloud(CloudEvent::Fetched { changed, deleted }), stamp);
 //  → [Ops { route: "today", json }]            a screen that is open is patched; nothing else is told
 ```
 
-A whole flow is a host test: open a store in memory, send events, assert on effects and on the next screen.
+Every call is a plain function call that returns. A whole flow is a host test: open a store in memory, send
+events, assert on effects and on the next screen.
+
+## A query and its test (Rust, `sm-store`)
+
+```sql
+select id, date, type, duration_min, rpe, load from sessions
+where deleted_at is null and date between ?1 and ?2 and (?3 is null or type = ?3)
+order by date desc, created_at desc
+```
+
+```rust
+// crates/sm-store/src/read/sessions.rs — the statement above is queries/sessions_in_week.sql
+pub fn sessions_in_week(db: &Db, week: Week, kind: Option<SessionKind>) -> Result<Vec<SessionRow>, StoreError> {
+    db.rows(sql::SESSIONS_IN_WEEK, (week.first(), week.last(), kind), SessionRow::read)
+}
+
+// crates/sm-store/tests/queries/sessions_in_week.rs
+#[test]
+fn sessions_in_week() {
+    let db = migrated();                                  // in memory, through every real migration
+    seed(&db, [session("2026-11-16", Board), session("2026-11-23", Board), deleted("2026-11-17")]);
+    let rows = read::sessions_in_week(&db, week_of("2026-11-16"), None).unwrap();
+    assert_eq!(dates(&rows), ["2026-11-16"]);
+}
+```
+
+A query file with no test of its name does not build.
+
+## A write
+
+```rust
+store.write(stamp, |tx| tx.log_session(&draft))?;        // one call, one transaction; returns the stored row
+store.write(stamp, |tx| tx.purge_session(id))?;          // a former RPC
+store.write(stamp, |tx| tx.ingest(&watch_record))?;      // idempotent by id
+```
+
+Only `sm-app` and `sm-sync` call the store. A screen never does: it returns an `Intent`. A write marks its
+row pending through the store's triggers; nobody calls "sync this".
 
 ## The phone (Swift)
 
 ```swift
-@main
-struct SendmeterNativeApp: App {
-    @State private var core = CoreHost(                       // an actor around the Rust core
-        store: .file(LocalStore.defaultPath), can: .phone,
-        radios: [TindeqBluetooth(), BoardBluetooth()], cloud: CloudKitTransport(),
-        health: HealthKitService(), watch: WatchLink())
+actor CoreHost {                                          // owns the Rust core; the only caller
+    private let core: SendmeterCore                       // UniFFI: open, handle
+    private let events: AsyncStream<(Event, Stamp)>
+    private nonisolated let inbox: AsyncStream<(Event, Stamp)>.Continuation
 
-    var body: some SwiftUI.Scene {
-        WindowGroup { RootTabs(layout: core.layout) }         // the five tabs, from the core
+    nonisolated func send(_ event: Event) { inbox.yield((event, .now())) }     // from any thread, in order
+
+    func run() async {                                    // the one loop: one event at a time
+        for await (event, stamp) in events { await carryOut(core.handle(event: event, stamp: stamp)) }
     }
+
+    private func carryOut(_ effects: [Effect]) async {
+        for effect in effects {
+            switch effect {
+            case .screen, .ops, .nav, .live, .pick: await shown.apply(effect)      // main actor
+            case .ble(let command): radios.run(command)
+            case .cloud(let command): cloud.run(command)
+            case .watch(let out): watch.send(out)
+            case .widget(let payload): ReadinessWidget.write(payload)
+            case .save(let name, let bytes): export.write(name, bytes)
+            case .wake(let ms): timer.fire(after: ms) { self.send(.tick) }
+            }
+        }
+    }
+}
+
+@MainActor @Observable final class Shown {                // what the views read; decides nothing
+    var screens: [String: Block] = [:]
+    var path = NavPath()
+    var live: LiveFrame?
 }
 
 // Features/ScreenHost: the only view that knows BlocksUI; it knows no screen
 struct ScreenHost: View {
     let route: String
-    @Environment(CoreHost.self) private var core
+    @Environment(Shown.self) private var shown
+    @Environment(\.core) private var core
 
     var body: some View {
-        BlocksView(core.shown[route] ?? .loading, source: nil, act: { core.send(.act(route: route, $0)) })
+        BlocksView(shown.screens[route] ?? .loading, source: nil, act: { core.send(.act(route: route, action: $0.json)) })
             .appBlocks(AppKinds.all)                          // Features/Kinds/*Kind.swift
-            .blocksLook(core.look(scheme))                    // tokens from the core
+            .blocksLook(shown.look)                           // tokens from the core
             .task { core.send(.open(route: route)) }
-    }
-}
-
-// CoreHost: every effect has one place
-func carryOut(_ effect: Effect) {
-    switch effect {
-    case .screen(let route, let json): shown[route] = decode(json)
-    case .ops(let route, let json): try? shown[route]?.apply(decode(json))
-    case .nav(let nav): path.go(nav)                          // push, sheet, back, tab, or a native live view
-    case .ble(let command): radios.run(command)
-    case .cloud(let command): cloud.run(command)
-    case .live(let frame): live.frame = frame                 // what the SwiftUI live views draw
-    case .watch(let out): watch.send(out)
-    case .widget(let payload): ReadinessWidget.write(payload)
-    case .pick(let what): picker.present(what)
-    case .save(let name, let bytes): export.write(name, bytes)
-    case .wake(let ms): timer.fire(after: ms) { self.send(.tick) }
     }
 }
 ```
 
-A platform class is the same three lines in each direction:
+`send` never awaits and never reads state: it stamps the event and queues it. No view or service makes a
+decision from a value it captured before an `await`; the decision is made in the core, in order.
+
+A platform class is the same few lines in each direction:
 
 ```swift
 // Platform/TindeqBluetooth.swift
@@ -121,7 +161,25 @@ core.send(.health(HealthDay(date: day, hrvSdnnMs: hrv, restingHr: rhr, sleepHour
 session.didReceive(file) { core.send(.watch(.record(bytes))) }     // the core stores it, then answers .watch(.ack)
 ```
 
-## The iCloud link on the phone (Swift, `Data/CloudKit`)
+## A live view (Swift, `Features/Live`)
+
+```swift
+struct LiveForceView: View {
+    let frame: LiveFrame                                  // everything it shows; it computes nothing
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {                     // full, then without secondary rows; never a ScrollView
+            ForceLayout(frame, rows: .all)
+            ForceLayout(frame, rows: .primary)
+        }
+    }
+}
+```
+
+Its layout test draws it at 375 × 667 points with the fullest `LiveFrame` and asserts the first layout that
+fits shows every primary item. The watch's live views have the same test at 40 mm in the watch suite.
+
+## The iCloud link (Swift, `Data/CloudKit`)
 
 ```swift
 final class CloudKitTransport: CKSyncEngineDelegate {
@@ -130,7 +188,7 @@ final class CloudKitTransport: CKSyncEngineDelegate {
         case .stateUpdate(let e): core.send(.cloud(.engineState(encode(e.stateSerialization))))
         case .accountChange(let e): core.send(.cloud(.account(status(e))))
         case .fetchedRecordZoneChanges(let e):
-            core.send(.cloud(.fetched(changed: e.modifications.map(record), deleted: e.deletions.map(name), more: false)))
+            core.send(.cloud(.fetched(changed: e.modifications.map(record), deleted: e.deletions.map(name))))
         case .sentRecordZoneChanges(let e):
             core.send(.cloud(.sent(saved: e.savedRecords.map(saved), failed: e.failedRecordSaves.map(failed))))
         default: break
@@ -143,55 +201,9 @@ final class CloudKitTransport: CKSyncEngineDelegate {
 }
 ```
 
-`record`, `saved`, `failed` and `batch` are the mechanical conversions the fixtures test. Sealed fields go
-through `encryptedValues`, the rest through plain keys.
-
-## The web (TypeScript)
-
-```ts
-// web/src/main.ts
-const core = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-const can = { bluetooth: "bluetooth" in navigator, health: false, watch: false, saved, live: "blocks", sync: "signIn" };
-const send = (event: Event) => core.postMessage({ event, stamp: stamp() });
-
-const shell = mount({                                          // Blocks' shell, on a local source (blocks #354)
-  root, layout, blocks: kinds, theme,
-  local: { open: (route) => send({ open: { route } }), act: (route, a) => send({ act: { route, ...a } }) },
-});
-
-core.onmessage = ({ data: effects }: MessageEvent<Effect[]>) => {
-  for (const e of effects) {
-    if ("screen" in e) shell.screen(e.screen.route, JSON.parse(e.screen.json));
-    else if ("ops" in e) shell.ops(e.ops.route, JSON.parse(e.ops.json));
-    else if ("nav" in e) shell.go(e.nav);
-    else if ("ble" in e) ble.run(e.ble);
-    else if ("cloud" in e) cloud.run(e.cloud);
-    else if ("pick" in e) files.pick(e.pick);
-    else if ("save" in e) files.download(e.save.name, e.save.bytes);
-    else if ("wake" in e) setTimeout(() => send("tick"), e.wake.after_ms);
-  }
-};
-```
-
-```ts
-// web/src/cloud.ts: the whole transport is this shape
-export async function run(command: CloudCommand) {
-  if ("fetch" === command) {
-    const r = await db.fetchRecordZoneChanges({ zoneID, syncToken });
-    send({ cloud: { fetched: { changed: r.records.map(fromCloudKit), deleted: r.deleted, more: r.moreComing } } });
-  } else if ("send" in command) {
-    const r = await db.saveRecords(command.send.saves.map(toCloudKit), { zoneID });   // every field with its type
-    send({ cloud: { sent: { saved: r.records.map(saved), failed: (r.errors ?? []).map(failed) } } });
-  }
-  // signIn, signOut, start, stop, deleteZone, forget: the same, one call each
-}
-
-// web/src/ble.ts
-if ("scan" in command) {
-  const device = await navigator.bluetooth.requestDevice(filterFor(command.scan));     // the browser's chooser
-  send({ ble: { found: { device: ref(device), name: device.name, services: [] } } });
-}
-```
+`record`, `saved`, `failed` and `batch` are the mechanical conversions the fixtures test: every field through
+`encryptedValues`, the asset column through a `CKAsset` file. `ask` goes through the same queue as `send` and
+returns that event's effects.
 
 ## Sync, as the rest of the app sees it
 
@@ -199,24 +211,13 @@ There is no sync API to call. Settings is a screen like any other:
 
 ```rust
 // crates/sm-screens/src/screens/settings.rs
-"sync-on" => Some(Intent::Sync(SyncAsk::TurnOn)),        // phone: the switch; web: the sign-in button
+"sync-on" => Some(Intent::Sync(SyncAsk::TurnOn)),
 "sync-off" => Some(Intent::Sync(SyncAsk::TurnOff)),
 "sync-merge" => Some(Intent::Sync(SyncAsk::Merge)),
 ```
 
 `sm-app` feeds the ask to `sm-sync::reduce`, carries the new state into the Settings input, and returns the
-`CloudCommand`s as effects. A write anywhere marks its row pending through the store's triggers; nobody calls
-"sync this".
-
-## A write
-
-```rust
-store.write(stamp, |tx| tx.log_session(&draft))?;        // one call, one transaction; returns the stored row
-store.write(stamp, |tx| tx.purge_session(id))?;          // a former RPC
-store.write(stamp, |tx| tx.ingest(&watch_record))?;      // idempotent by id
-```
-
-Only `sm-app` and `sm-sync` call the store. A screen never does: it returns an `Intent`.
+`CloudCommand`s as effects.
 
 ## Boards
 

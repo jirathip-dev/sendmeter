@@ -1,154 +1,157 @@
-# Sync: one rule set, two transports
+# Sync: the rules in Rust, CKSyncEngine as the transport
 
-Sync is off until the user turns it on (phone) or signs in (web). In every state, on both platforms, local
-reads and writes work and nothing waits on the network. #1045's conflict rules are kept word for word
-(`local-first/sync.md`): last edit wins by `updated_at`, samples and traces are written once, the health rule,
-a permanent delete beats an edit, the one-open-phase repair. They move from Swift to `sm-sync`.
+Sync is native iCloud only, between the user's iPhones, and off until the user turns it on. In every state
+local reads and writes work and nothing waits on the network. #1045's design is kept
+(`local-first/sync.md`): its statechart, its five conflict rules (last edit wins by `updated_at`, samples and
+traces are written once, the health rule, a permanent delete beats an edit, the one-open-phase repair) and its
+encryption. What changes is where the rules live: in `sm-sync`, not in Swift.
 
 ## Who does what
 
-| Job | Phone | Web | Shared? |
-|---|---|---|---|
-| Which rows are pending | `sm-sync`, from the store's change log | the same | yes |
-| Row ↔ record, field names and types | `sm-sync` (`CloudRecord`) | the same | yes |
-| Conflict rules, the phase repair | `sm-sync` | the same | yes |
-| The sync state and what Settings says | `sm-sync` (`SyncState`, `reduce`) | the same | yes |
-| Batches: at most 100 records and 900 KB each | `sm-sync` | the same | yes |
-| When to send and fetch, retry and back-off | `CKSyncEngine` | the poll engine in `sm-sync::poll` | no |
-| Where the server's place is remembered | the engine's saved state, kept in `sync_meta` | the zone's change token, kept in `sync_meta` | no |
-| Hearing of a remote change | a silent push | a fetch when the tab is shown, every 60 s while open, after each send | no |
-| The account | the engine's account events | CloudKit JS sign-in and its token | no |
-| `CloudRecord` ↔ the platform's record | `CloudKitTransport` (Swift) | `cloud.ts` | no: mechanical, fixture-tested |
-
-Everything in a "no" row is plumbing. A transport makes no decision about data.
-
-## How the two stay consistent
-
-1. **One writer of fields.** Both transports get records as `CloudRecord` from Rust: the same names, the same
-   types. The web always sends each field with its explicit type, because CloudKit JS guesses `INT64` for a
-   whole-number `DOUBLE` such as an RPE of 7 and the save then fails.
-2. **One schema file.** `just gen-cloudkit` writes `cloudkit/schema.ckdb` from the store's table list. It is
-   committed and checked (`generated` in `arch.toml`); the owner imports and deploys it. No one edits the
-   schema by hand in the console.
-3. **One set of transport fixtures.** `fixtures/cloud/` holds a `CloudRecord` for every record type (empty
-   fields, non-ASCII text, the largest bytes) and a table of server errors. A simulator test turns each into a
-   `CKRecord` and back; a node test turns each into CloudKit JS's record object and back. Both must return what
-   they were given, and both must map every error in the table to the same `Failed` or `TransportFailure`.
-4. **One rule suite.** `cargo test -p sm-sync` runs two stores against a fake transport through every rule and
-   every edge of the statechart, and asserts both stores end equal. It is the same code on both platforms, so
-   it runs once.
-5. **One real check.** A phone and a browser on one throwaway Apple ID: an edit on each reaches the other.
-   Device-only; the owner's.
-
-Error table (part of the fixtures):
-
-| Server says (native / web) | Core gets |
+| Job | Where |
 |---|---|
-| `serverRecordChanged` / `CONFLICT` | `Failed::Conflict` with the server's record |
-| `unknownItem` / `NOT_FOUND` | `Failed::Unknown`: deleted elsewhere, the local row goes |
-| `quotaExceeded` / `QUOTA_EXCEEDED` | `Failed::Quota` |
-| `zoneNotFound`, `userDeletedZone` / `ZONE_NOT_FOUND` | `ZoneGone` |
-| `notAuthenticated` / `AUTHENTICATION_REQUIRED` | `Account(None)` on the phone, `Account(Expired)` on the web |
-| — / `ACCESS_DENIED` on the private database, or a refused sign-in | `Account(Refused)` |
-| `networkUnavailable`, `networkFailure` / a failed request | `TransportFailure::Network` |
-| `requestRateLimited`, `serviceUnavailable` / `THROTTLED`, `TRY_AGAIN_LATER` | `TransportFailure::Throttled` |
-| `limitExceeded` / a request too large | the core halves the batch and sends again |
+| Which rows are pending | `sm-sync`, from the store's change log |
+| Row ↔ record: field names, types, the asset column | `sm-sync` (`CloudRecord`) |
+| Conflict rules, the phase repair | `sm-sync` |
+| The sync state and what Settings says | `sm-sync` (`SyncState`, `reduce`) |
+| Batches: at most 100 records and 900 KB each | `sm-sync` |
+| When to send and fetch, retry and back-off, pushes | `CKSyncEngine` |
+| Where the server's place is remembered | the engine's saved state, kept by the core in `sync_meta` |
+| The account | the engine's account events |
+| `CloudRecord` ↔ `CKRecord`, `encryptedValues`, `CKAsset` files | `CloudKitTransport` (Swift): mechanical, fixture-tested |
 
-## The state as a type (`sm-sync`, pure, host-tested)
+The transport makes no decision about data.
+
+## One turn
+
+```mermaid
+sequenceDiagram
+    participant E as CKSyncEngine
+    participant T as CloudKitTransport (Swift)
+    participant H as CoreHost (actor)
+    participant C as the core (Rust)
+    Note over C: a local write marks its row pending (trigger)
+    C-->>H: Effect Cloud(MarkPending)
+    H->>T: run(MarkPending)
+    T->>E: add pending record zone changes
+    E->>T: nextRecordZoneChangeBatch
+    T->>H: ask(BatchWanted)
+    H->>C: handle(Cloud(BatchWanted), stamp)
+    C-->>H: Effect Cloud(Send(batch))
+    H-->>T: the batch
+    T-->>E: records to save, names to delete
+    E->>T: sentRecordZoneChanges (saved, failed)
+    T->>H: send(Sent)
+    H->>C: handle(Cloud(Sent), stamp)
+    Note over C: a conflict is settled by rule in the same call, the winner is marked pending again
+    E->>T: fetchedRecordZoneChanges
+    T->>H: send(Fetched)
+    H->>C: handle(Cloud(Fetched), stamp)
+    Note over C: applied in one transaction, then the phase repair
+    C-->>H: Effect Ops for every open screen that changed
+```
+
+Every arrow into the core goes through `CoreHost`'s one queue, so a fetch, a tap and a Bluetooth packet are
+never handled at the same time and never out of order.
+
+## The state
+
+```mermaid
+stateDiagram-v2
+    [*] --> Off
+    Off --> Starting: user turns sync on
+    Starting --> On: iCloud account found, zone ready
+    Starting --> SignedOut: no iCloud account, or restricted
+
+    state On {
+        [*] --> Idle
+        Idle --> Syncing: local change, push, foreground, "Sync now"
+        Syncing --> Idle: sent and fetched
+        Syncing --> Resolving: iCloud has another copy of a record
+        Resolving --> Syncing: rule applied, the winner kept
+        Syncing --> Waiting: no network, or iCloud busy
+        Waiting --> Syncing: the engine retries
+    }
+
+    On --> QuotaFull: a save is refused, iCloud storage is full
+    QuotaFull --> On: a later save succeeds
+    On --> SignedOut: signed out of iCloud, or restricted
+    QuotaFull --> SignedOut: signed out of iCloud, or restricted
+    SignedOut --> On: the same Apple ID is back
+    SignedOut --> AccountChanged: a different Apple ID
+    On --> AccountChanged: the Apple ID was switched
+    AccountChanged --> Starting: user picks "merge into this iCloud"
+    AccountChanged --> Off: user picks "keep on this iPhone only"
+    On --> Off: user turns sync off, or the iCloud copy was deleted
+    QuotaFull --> Off: user turns sync off
+    SignedOut --> Off: user turns sync off
+```
+
+This is #1045's chart, as approved. What each state sends, fetches and shows in Settings is #1045's table,
+kept. As a type (`sm-sync`, pure, host-tested):
 
 ```rust
 pub enum SyncState {
-    Off,                                   // phone: "On this iPhone only"; web: local-only
-    Starting,                              // phone: account and zone; web: the sign-in window, then the zone
-    On(Activity),                          // Idle { last_synced }, Syncing, Resolving(n), Waiting(why)
+    Off,
+    Starting,
+    On(Activity),                          // Idle { last_synced }, Syncing, Resolving(n), Waiting
     QuotaFull { unsent: u32 },
-    SignedOut(Why),                        // NoAccount, Restricted (phone); Expired (web)
+    SignedOut(Why),                        // NoAccount, Restricted
     AccountChanged,
-    Refused(RefusedWhy),                   // web: WebAccessOff, AdvancedDataProtection, Unknown
+}
+
+pub enum SyncEvent {
+    UserTurnedOn, UserTurnedOff, UserChoseMerge, UserChoseLocalOnly, UserAskedRetry,
+    Cloud(CloudEvent),                     // what the transport reported (shapes.md)
+    LocalChange,
 }
 
 pub fn reduce(state: &SyncState, event: &SyncEvent) -> (SyncState, Vec<CloudCommand>)
 ```
 
-It is #1045's type with two additions for the web, `Refused` and `SignedOut(Expired)`. The phone's statechart
-in `local-first/sync.md` is kept as drawn.
+`sm-app` feeds user asks and `CloudEvent`s to `reduce`, applies records through `sm-store`, puts the new
+state into the Settings screen's input and returns the `CloudCommand`s as effects. The state is rebuilt from
+`sync_meta` at `open`, so a relaunch resumes where it was.
 
-## Sync on the web
+## How the transport is held honest
 
-```mermaid
-stateDiagram-v2
-    [*] --> LocalOnly
-    LocalOnly --> SigningIn: "Sign in with Apple"
-    SigningIn --> LocalOnly: window closed
-    SigningIn --> Refused: Apple refuses web access for this account
-    SigningIn --> AccountChanged: this browser last synced another Apple ID
-    SigningIn --> SignedIn: signed in, zone ready
-    Refused --> SigningIn: try again
-    Refused --> LocalOnly: dismissed
+1. **One writer of fields.** The transport gets every record as a `CloudRecord` from Rust and copies it: the
+   same names and types on every phone and every build.
+2. **Fixtures.** `fixtures/cloud/` holds a `CloudRecord` for every record type (empty fields, non-ASCII text,
+   the largest asset) and a table of server errors. An app-target test turns each into a `CKRecord` and back
+   and must return what it was given, and maps every error to the `Failed` or `TransportFailure` below.
+3. **The rule suite.** `cargo test -p sm-sync` runs two stores against a fake transport through every rule and
+   every edge of the statechart, and asserts both stores end equal.
+4. **The real check.** Two phones on one throwaway Apple ID: an edit on each reaches the other. Device-only;
+   the owner's.
 
-    state SignedIn {
-        [*] --> Syncing
-        Idle --> Syncing: local change, tab shown, every 60 s, "Sync now"
-        Syncing --> Idle: sent and fetched
-        Syncing --> Conflict: iCloud has another copy of a record
-        Conflict --> Syncing: rule applied, the winner kept
-        Syncing --> Waiting: offline, or iCloud asks to slow down
-        Waiting --> Syncing: back online, or the wait is over
-    }
+| CloudKit says | The core gets |
+|---|---|
+| `serverRecordChanged` | `Failed::Conflict` with the server's record |
+| `unknownItem` | `Failed::Unknown`: deleted elsewhere, the local row goes |
+| `quotaExceeded` | `Failed::Quota` |
+| `zoneNotFound`, `userDeletedZone` | `ZoneGone` |
+| an account change to no account, or restricted | `Account(None)`, `Account(Restricted)` |
+| `networkUnavailable`, `networkFailure`, `requestRateLimited`, `serviceUnavailable` | `TransportFailure::Network`; the engine retries by itself |
+| `limitExceeded` | the core halves the batch for the next `BatchWanted` |
 
-    SignedIn --> QuotaFull: a save is refused, iCloud storage is full
-    QuotaFull --> SignedIn: a later save succeeds
-    SignedIn --> SignedOut: the sign-in ran out, or was ended elsewhere
-    QuotaFull --> SignedOut: the sign-in ran out
-    SignedOut --> SigningIn: "Sign in again"
-    SignedOut --> LocalOnly: "Stop syncing"
-    AccountChanged --> SignedIn: "Merge into this iCloud"
-    AccountChanged --> LocalOnly: "Keep in this browser only"
-    SignedIn --> LocalOnly: user signs out, or the iCloud copy was deleted
-    QuotaFull --> LocalOnly: user signs out
-```
+## Two phones on different builds
 
-| Web state | `SyncState` | Sends | Fetches | Settings shows |
-|---|---|---|---|---|
-| LocalOnly | `Off` | no; no request leaves the site | no | "Only in this browser", Export, "Sign in with Apple" |
-| SigningIn | `Starting` | no | no | "Signing in…" |
-| SignedIn · Idle | `On(Idle)` | 2 s after a change | on show, every 60 s | "Synced" and the time |
-| SignedIn · Syncing | `On(Syncing)` | yes | yes | "Syncing…" |
-| SignedIn · Conflict | `On(Resolving)` | paused for those records | yes | "Syncing…" (a conflict is never shown) |
-| SignedIn · Waiting | `On(Waiting)` | retried with back-off | retried | "Waiting for network" |
-| QuotaFull | `QuotaFull` | no; changes queue in the store | yes | "iCloud storage is full", the count not sent, "Try again" |
-| SignedOut | `SignedOut(Expired)` | no; changes queue | no | "Sign in again to sync" |
-| AccountChanged | `AccountChanged` | no | no | A choice: merge this browser's data into this iCloud, or keep it here and stay signed out |
-| Refused | `Refused` | no | no | Why, in plain words, and what to turn on (below) |
-
-Notes:
-
-- **Local-only is a full app.** With no Apple ID the web app logs, shows stats and sets routes from its own
-  store. CloudKit JS is not even loaded until the user asks to sign in.
-- **Signing in is turning sync on.** The first sync sends every row never sent and merges what the zone holds
-  by the rules, exactly as the phone's first turn-on does.
-- **Signing out** asks: keep this browser's copy, or remove it. A shared computer needs the second.
-- **Conflict** is a moment inside syncing, settled by rule; the user never sees a question.
-- **The account** is CloudKit's user record name, the same value on the phone and the web for one Apple ID,
-  kept in `sync_meta.apple_id`.
-- **Sealed fields** never reach the web, and the web never writes a `health_metrics` record, so it cannot
-  drop them.
-- **A newer schema.** An unknown field is left on the server and ignored; an unknown record type is skipped.
-  A migration that adds a synced table or column clears the saved place, so the next sync fetches the zone
+- A synced schema change is add-only: a new column or a new table, never a rename or a new meaning.
+- A field the app does not know is kept on the record and ignored; a record type it does not know is skipped.
+- A migration that adds a synced table or column clears the saved place, so the next sync fetches the zone
   again and nothing skipped stays missing.
 
-## What protects the data, and Advanced Data Protection
+## What protects the data
 
-- Standard protection, for every user: encrypted in transit and at rest in iCloud, with keys Apple holds.
-  Apple can read the plain fields; an app or person without the user's Apple ID cannot.
-- Sealed fields (the recovery inputs) are in `encryptedValues`: end-to-end encrypted when the user has
-  Advanced Data Protection, standard otherwise, and never on the web either way.
-- **A user with Advanced Data Protection must turn on** Settings › [name] › iCloud › iCloud.com › **Allow Data
-  Access** (before iOS 26.4: "Access iCloud Data on the Web"), then approve each web sign-in on a trusted
-  device. Apple's page gives an approval one hour.
-- **That may not be enough.** Apple documents the switch for iCloud.com. One public test found CloudKit JS
-  sign-in refused for such an account with the switch on, and calls with an older token answered
-  `ACCESS_DENIED` ("private db access disabled for this account"). If so, the web app shows `Refused` with
-  "Web sync is not available for this Apple Account while Advanced Data Protection is on. Your data stays in
-  this browser." and the phone is unaffected. Device-only; open question 2.
-- Because nothing the web needs is an asset or a sealed field, an account that *is* let in reads everything.
+As #1045 decided, unchanged:
+
+- Every value field is written through `encryptedValues`; the two heavy columns are `CKAsset`s. The data is
+  in the user's private database, which the developer cannot read.
+- With Advanced Data Protection on, the user's iCloud data is end-to-end encrypted; without it, Apple's
+  standard protection applies. The user turns nothing on for Sendmeter either way.
+- This issue's AC asked for plain fields and a list of what such users must turn on for web access. The owner
+  dropped the web app (q3123), so no field is weakened and there is no web access to turn on. Health values
+  stay on the phone and in the user's private iCloud.
+
+Not verified here, device-only: `CKSyncEngine`, pushes, account changes, quota, Advanced Data Protection.
