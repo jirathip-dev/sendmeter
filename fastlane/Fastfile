@@ -81,7 +81,7 @@ platform :ios do
 
     # 2. Generate the Xcode project. The project spec and native resource
     #    inputs are committed; the .xcodeproj is generated fresh on every run
-    #    (same as native-swift.yml).
+    #    (same as the gatekeeper local/app gate).
     UI.user_error!(
       "xcodegen is not installed — run `brew install xcodegen` first"
     ) unless system("which xcodegen >/dev/null 2>&1")

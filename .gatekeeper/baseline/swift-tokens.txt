@@ -1,0 +1,1341 @@
+ios/App/SendLogWatch Watch App/Services/AuthManager.swift: raw `.seconds(20` #1
+ios/App/SendLogWatch Watch App/Services/AuthManager.swift: raw `.seconds(6` #1
+ios/App/SendLogWatch Watch App/Services/GuidedForceRunner.swift: raw `.milliseconds(100` #1
+ios/App/SendLogWatch Watch App/Services/GuidedForceRunner.swift: raw `.seconds(8` #1
+ios/App/SendLogWatch Watch App/Services/ReadinessManager.swift: raw `.seconds(6` #1
+ios/App/SendLogWatch Watch App/Services/TindeqManager.swift: raw `.seconds(2.5` #1
+ios/App/SendLogWatch Watch App/Services/WorkoutManager.swift: raw `.seconds(0.6` #1
+ios/App/SendLogWatch Watch App/Services/WorkoutManager.swift: raw `.seconds(1.6` #1
+ios/App/SendLogWatch Watch App/Shared/StatusVisuals.swift: raw `.black` #1
+ios/App/SendLogWatch Watch App/Shared/StatusVisuals.swift: raw `.white` #1
+ios/App/SendLogWatch Watch App/Shared/StatusVisuals.swift: raw `cornerRadius: 1.5` #1
+ios/App/SendLogWatch Watch App/Shared/StatusVisuals.swift: raw `cornerRadius: 1.5` #2
+ios/App/SendLogWatch Watch App/Shared/StatusVisuals.swift: raw `lineWidth: 0.5` #1
+ios/App/SendLogWatch Watch App/Shared/StatusVisuals.swift: raw `lineWidth: 1` #1
+ios/App/SendLogWatch Watch App/Shared/StatusVisuals.swift: raw `width: 3` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `.black` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `.padding(.horizontal, 10` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `.padding(.horizontal, 12` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `.padding(.horizontal, 4` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `.padding(.horizontal, 6` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `.padding(.leading, 14` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `.padding(.top, 1` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `.padding(.top, 2` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `.padding(.vertical, 2` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `.white` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `Color(red` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `Color.black` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `Color.white` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `Color.white` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `Color.white` #3
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `Color.white` #4
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `Color.white` #5
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `Color.white` #6
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `cornerRadius: 12` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `cornerRadius: 12` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `cornerRadius: 12` #3
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `cornerRadius: 14` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `cornerRadius: 14` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `cornerRadius: 14` #3
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `cornerRadius: 18` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `cornerRadius: 18` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `cornerRadius: 8` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `height: 197` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `height: 24` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `height: 24` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `height: 24` #3
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `height: 251` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `height: 2` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `lineWidth: 0.7` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `lineWidth: 0.8` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `lineWidth: 1` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `lineWidth: 1` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `lineWidth: 1` #3
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `size: 10` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `size: 16` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `size: 16` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `spacing: 2` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `spacing: 2` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `spacing: 2` #3
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `spacing: 2` #4
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `spacing: 3` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `spacing: 6` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `spacing: 6` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `spacing: 8` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `spacing: 9` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `spacing: 9` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `width: 162` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `width: 205` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `width: 24` #1
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `width: 24` #2
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `width: 24` #3
+ios/App/SendLogWatch Watch App/Shared/WatchDesignSystem.swift: raw `width: 30` #1
+ios/App/SendLogWatch Watch App/Views/Components/Sparkline.swift: raw `lineWidth: 2` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `.padding(.horizontal, 6` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `.padding(.horizontal, 8` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `.padding(.horizontal, 8` #2
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `.padding(.horizontal, 9` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `.padding(.horizontal, 9` #2
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `height: 1` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `height: 26` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `height: 28` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `height: 28` #2
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `height: 28` #3
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `height: 32` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `height: 6` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `lineWidth: 0.8` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `maxHeight: 47` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `maxHeight: 50` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `minHeight: 28` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `minHeight: 47` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `minLength: 4` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 12` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 12` #2
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 12` #3
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 12` #4
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 13` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 13` #2
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 26` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 26` #2
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 28` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 42` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `size: 46` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 1` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 2` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 2` #2
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 3` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 4` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 4` #2
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 4` #3
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 4` #4
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 5` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 5` #2
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 6` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 6` #2
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `spacing: 6` #3
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `width: 24` #1
+ios/App/SendLogWatch Watch App/Views/ForceGaugeView.swift: raw `width: 6` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `.padding(.bottom, 14` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `.padding(.horizontal, 8` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `.padding(.horizontal, 9` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `.padding(.horizontal, 9` #2
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `.padding(.top, 2` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `.padding(.top, 2` #2
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `.padding(.top, 4` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `height: 24` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `height: 32` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `height: 32` #2
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `size: 12` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `size: 12` #2
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `spacing: 10` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `spacing: 6` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `spacing: 8` #1
+ios/App/SendLogWatch Watch App/Views/ForceProtocolViews.swift: raw `width: 24` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `.padding(.horizontal, 2` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `.padding(.horizontal, 4` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `.padding(.horizontal, 6` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `.padding(.horizontal, 6` #2
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `.padding(.horizontal, 8` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `.padding(.vertical, 2` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `.padding(.vertical, 4` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `maxHeight: 22` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `maxHeight: 24` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `maxHeight: 30` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `minHeight: 16` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `minHeight: 18` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `minHeight: 22` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `minLength: 2` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `minLength: 2` #2
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `minLength: 2` #3
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `minLength: 2` #4
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `minLength: 2` #5
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `minLength: 3` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `minLength: 4` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `size: 34` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `size: 38` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `size: 43` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `size: 44` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `size: 52` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 1` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 2` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 2` #2
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 2` #3
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 3` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 3` #2
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 3` #3
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 3` #4
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 4` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 4` #2
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 4` #3
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 4` #4
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 4` #5
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 4` #6
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 5` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 5` #2
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 6` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 7` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `spacing: 8` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `width: 40` #1
+ios/App/SendLogWatch Watch App/Views/GuidedForceRunnerView.swift: raw `width: 46` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `.black` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `.padding(.horizontal, 4` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `.padding(.horizontal, 4` #2
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `.padding(.leading, 6` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `Color.black` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `height: 30` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `size: 18` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `size: 18` #2
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `size: 18` #3
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `spacing: 10` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `spacing: 10` #2
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `spacing: 10` #3
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `spacing: 2` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `spacing: 2` #2
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `spacing: 2` #3
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `spacing: 2` #4
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `spacing: 2` #5
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `spacing: 8` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `width: 24` #1
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `width: 24` #2
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `width: 24` #3
+ios/App/SendLogWatch Watch App/Views/HomeView.swift: raw `width: 30` #1
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `.padding(.horizontal, 4` #1
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `minHeight: 80` #1
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `spacing: 2` #1
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `spacing: 4` #1
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `spacing: 4` #2
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `spacing: 4` #3
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `spacing: 4` #4
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `spacing: 4` #5
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `spacing: 6` #1
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `spacing: 6` #2
+ios/App/SendLogWatch Watch App/Views/QuarantineDiagnosticsView.swift: raw `spacing: 8` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `.padding(.bottom, 6` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `.padding(.horizontal, 4` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `.padding(.top, 1` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `lineWidth: 7` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `minLength: 4` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `size: 10` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `size: 10` #2
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `size: 11` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `size: 13` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `size: 13` #2
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `size: 15` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `size: 28` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `size: 8` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `size: 9` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `spacing: 4` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `spacing: 5` #1
+ios/App/SendLogWatch Watch App/Views/StatusView.swift: raw `spacing: 6` #1
+ios/App/SendLogWatch Watch App/Views/WaitingForPhoneView.swift: raw `.padding(.horizontal, 6` #1
+ios/App/SendLogWatch Watch App/Views/WaitingForPhoneView.swift: raw `.padding(.vertical, 5` #1
+ios/App/SendLogWatch Watch App/Views/WaitingForPhoneView.swift: raw `minLength: 4` #1
+ios/App/SendLogWatch Watch App/Views/WaitingForPhoneView.swift: raw `spacing: 1` #1
+ios/App/SendLogWatch Watch App/Views/WaitingForPhoneView.swift: raw `spacing: 7` #1
+ios/App/SendLogWatch Watch App/Views/WaitingForPhoneView.swift: raw `spacing: 8` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `.padding(.bottom, 7` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `.padding(.horizontal, 8` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `.padding(.top, 7` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `.padding(.top, 7` #2
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `.padding(.vertical, 2` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `Color(red` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `cornerRadius: 12` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `height: 197` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `height: 251` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `height: 28` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 11` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 11` #2
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 11` #3
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 11` #4
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 11` #5
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 12` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 18` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 31` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 31` #2
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 31` #3
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `size: 9` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 2` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 3` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 3` #2
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 3` #3
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 4` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 4` #2
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 6` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 6` #2
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 7` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 8` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 8` #2
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `spacing: 9` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `width: 162` #1
+ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift: raw `width: 205` #1
+ios/App/SendLogWatchWidgets/LaunchWidgets.swift: raw `size: 15` #1
+ios/App/SendLogWatchWidgets/LaunchWidgets.swift: raw `size: 20` #1
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `Color(red` #1
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `size: 11` #1
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `size: 11` #2
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `size: 12` #1
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `size: 12` #2
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `size: 14` #1
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `size: 16` #1
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `size: 22` #1
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `spacing: 1` #1
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `spacing: 2` #1
+ios/App/SendLogWatchWidgets/LiveWorkoutWidget.swift: raw `spacing: 4` #1
+ios/App/SendLogWatchWidgets/StatusColors.swift: raw `Color(red` #1
+ios/App/SendLogWatchWidgets/StatusColors.swift: raw `Color(red` #2
+ios/App/SendLogWatchWidgets/StatusVisuals.swift: raw `.black` #1
+ios/App/SendLogWatchWidgets/StatusVisuals.swift: raw `.white` #1
+ios/App/SendLogWatchWidgets/StatusVisuals.swift: raw `Color.white` #1
+ios/App/SendLogWatchWidgets/StatusVisuals.swift: raw `cornerRadius: 1.5` #1
+ios/App/SendLogWatchWidgets/StatusVisuals.swift: raw `cornerRadius: 1.5` #2
+ios/App/SendLogWatchWidgets/StatusVisuals.swift: raw `lineWidth: 0.5` #1
+ios/App/SendLogWatchWidgets/StatusVisuals.swift: raw `lineWidth: 1` #1
+ios/App/SendLogWatchWidgets/StatusVisuals.swift: raw `width: 3` #1
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `.padding(3` #1
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `.padding(3` #2
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `height: 43` #1
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `lineWidth: 5` #1
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `lineWidth: 5` #2
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `lineWidth: 5` #3
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `size: 18` #1
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `size: 9` #1
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `size: 9` #2
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `size: 9` #3
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `spacing: 2` #1
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `spacing: 3` #1
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `spacing: 4` #1
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `spacing: 8` #1
+ios/App/SendLogWatchWidgets/StatusWidget.swift: raw `width: 43` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.black` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.black` #2
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.padding(.bottom, 24` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.padding(.bottom, 84` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.padding(.horizontal, 10` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.padding(.top, 8` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.padding(.vertical, 6` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.red` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.white` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.white` #2
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `.white` #3
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `Color.black` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `duration: 0.2` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `duration: 0.2` #2
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `radius: 18` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `x: 0.5` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `x: 0.5` #2
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `y: 0.52` #1
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `y: 0.52` #2
+native/SendmeterNative/Sources/App/SendmeterNativeApp.swift: raw `y: 16` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `.black` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `.padding(.top, 36` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `.padding(12` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `.padding(12` #2
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `.white` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `cornerRadius: 12` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `cornerRadius: 12` #2
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `cornerRadius: 12` #3
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `height: 140` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `maxWidth: 560` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `minHeight: 44` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `minHeight: 44` #2
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `spacing: 24` #1
+native/SendmeterNative/Sources/Features/Auth/LoginView.swift: raw `width: 140` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `.padding(8` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `cornerRadius: 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `cornerRadius: 8` #2
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `height: 150` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `height: 150` #2
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `lineWidth: 1` #3
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `lineWidth: 1` #4
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `lineWidth: 1` #5
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `lineWidth: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `minHeight: 108` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `radius: 4` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrProjectionCard.swift: raw `y: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `.padding(.top, 10` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `cornerRadius: 3` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `cornerRadius: 5` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `height: 10` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `height: 12` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `height: 1` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `lineWidth: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `spacing: 10` #2
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `spacing: 10` #3
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `spacing: 24` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `spacing: 4` #2
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Dashboard/AcwrStatusCard.swift: raw `width: 12` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `.cornerRadius(5` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `cornerRadius: 6` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `height: 150` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `height: 42` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `height: 64` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `minHeight: 120` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 12` #2
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 12` #3
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 12` #4
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 12` #5
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 14` #2
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 14` #3
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 16` #2
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 20` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 3` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 6` #2
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 7` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `width: 42` #1
+native/SendmeterNative/Sources/Features/Dashboard/DashboardView.swift: raw `width: 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `.padding(8` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `cornerRadius: 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `cornerRadius: 8` #2
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `height: 170` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `height: 170` #2
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `lineWidth: 1` #3
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `minHeight: 44` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `radius: 4` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/ReadinessTrendCard.swift: raw `y: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `.cornerRadius(2` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `.padding(8` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `Color(red` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `cornerRadius: 1.5` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `cornerRadius: 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `cornerRadius: 8` #2
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `height: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `height: 2` #2
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `height: 9` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `lineWidth: 1.5` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `lineWidth: 1` #3
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `lineWidth: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `radius: 4` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 14` #2
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 3` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 5` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 5` #2
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 5` #3
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `spacing: 6` #2
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `width: 14` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `width: 14` #2
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `width: 9` #1
+native/SendmeterNative/Sources/Features/Dashboard/RecoveryInputsSheet.swift: raw `y: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `.cornerRadius(2` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `.padding(12` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `.white` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `cornerRadius: 10` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `height: 10` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `height: 14` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `height: 6` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `lineWidth: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `spacing: 5` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `spacing: 5` #2
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `spacing: 6` #2
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `width: 14` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `width: 64` #1
+native/SendmeterNative/Sources/Features/Dashboard/SendConditionsDetailSheet.swift: raw `width: 64` #2
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ActivityMixBar.swift: raw `cornerRadius: 5` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ActivityMixBar.swift: raw `cornerRadius: 5` #2
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ActivityMixBar.swift: raw `lineWidth: 1.5` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ActivityMixBar.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ActivityMixBar.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `.padding(.horizontal, 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `.padding(.vertical, 4` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `cornerRadius: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `cornerRadius: 2` #2
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `cornerRadius: 2` #3
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `cornerRadius: 6` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `cornerRadius: 6` #2
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `height: 52` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `height: 7` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `height: 9` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `lineWidth: 1.5` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `size: 9` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `size: 9` #2
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `spacing: 4` #2
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/ContributionHeatmapView.swift: raw `width: 9` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `cornerRadius: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `cornerRadius: 3` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `cornerRadius: 3` #2
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `height: 9` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `lineWidth: 1.5` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `spacing: 12` #2
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `spacing: 12` #3
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadSheet.swift: raw `width: 9` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift: raw `.padding(.horizontal, 8` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift: raw `.padding(.vertical, 5` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift: raw `cornerRadius: 7` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift: raw `cornerRadius: 7` #2
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift: raw `radius: 4` #1
+native/SendmeterNative/Sources/Features/Dashboard/TrainingLoad/TrainingLoadTooltip.swift: raw `y: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `.padding(-3` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `.padding(.bottom, 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `.padding(.bottom, 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `.padding(.horizontal, 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `.padding(.horizontal, 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `.padding(.horizontal, 14` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `.padding(.horizontal, 18` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `.padding(.top, 11` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `.padding(.top, 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `cornerRadius: 16` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `cornerRadius: 16` #2
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `cornerRadius: 16` #3
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `cornerRadius: 22` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `cornerRadius: 22` #2
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `height: 9` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `lineWidth: 1` #3
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `lineWidth: 1` #4
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `lineWidth: 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `minHeight: 30` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `minHeight: 44` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `minHeight: 44` #2
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `minHeight: 44` #3
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `minHeight: 50` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `minLength: 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `minWidth: 132` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `radius: 14` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `spacing: 1` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `spacing: 1` #2
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `spacing: 5` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `width: 9` #1
+native/SendmeterNative/Sources/Features/Force/ForceBottomBar.swift: raw `y: 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `.padding(.horizontal, 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `.padding(.vertical, 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `.padding(8` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `cornerRadius: 3` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `cornerRadius: 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `cornerRadius: 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `height: 108` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `minHeight: 108` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `radius: 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `size: 9` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `size: 9` #2
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `spacing: 6` #2
+native/SendmeterNative/Sources/Features/Force/ForceConsistencyCard.swift: raw `y: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `.padding(12` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `cornerRadius: 16` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `cornerRadius: 16` #2
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `cornerRadius: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `height: 40` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `minHeight: 150` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `minHeight: 154` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `spacing: 10` #2
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `spacing: 10` #3
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `spacing: 10` #4
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `spacing: 3` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceProgressCard.swift: raw `spacing: 6` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(-2.5` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 10` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 10` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 11` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 24` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 3` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 5` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 7` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 8` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 8` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 8` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 9` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.bottom, 9` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 10` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 10` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 10` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 10` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 10` #6
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 10` #7
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 10` #8
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 11` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 12` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 12` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 12` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 12` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 12` #6
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 14` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 15` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 15` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 15` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 17` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 20` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 3` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 6` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 6` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 6` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 9` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.horizontal, 9` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.leading, 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.leading, 10` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 10` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 10` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 8` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 8` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 8` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 9` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.top, 9` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.trailing, 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.trailing, 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 3` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 6` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 6` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 6` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 7` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 7` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(.vertical, 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(11` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(12` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(12` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `.padding(3` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `Color.white` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `Color.white` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 10` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 10` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 10` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 10` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 11` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 11` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 11` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 11` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 11` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 11` #6
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 11` #7
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 11` #8
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 12` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 12` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 14` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 14` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 15` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 15` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 7` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 9` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 9` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 9` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `cornerRadius: 9` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 1` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 1` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 1` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 1` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 1` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 32` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 32` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 32` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 44` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `height: 6` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #10
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #11
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #12
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #13
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #14
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #15
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #16
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #6
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #7
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #8
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 1` #9
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `lineWidth: 3` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 15` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 24` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 26` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 26` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 28` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 36` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 40` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 44` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 44` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 44` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 44` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 44` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 44` #6
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 44` #7
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 52` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 52` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 56` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 56` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minHeight: 92` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #10
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #11
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #6
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #7
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #8
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `minLength: 8` #9
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `size: 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `size: 13` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `size: 14` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `size: 14` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `size: 15` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `size: 15` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `size: 15` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 2` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 2` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 2` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 2` #6
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 2` #7
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 3` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 3` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 3` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 5` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 5` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 5` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 6` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 6` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 6` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 6` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 7` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 7` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 7` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 8` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 8` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 8` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 8` #6
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 8` #7
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 8` #8
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 9` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 9` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 9` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 9` #4
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 9` #5
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `spacing: 9` #6
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `width: 1` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `width: 22` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `width: 34` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `width: 34` #2
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `width: 34` #3
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `width: 44` #1
+native/SendmeterNative/Sources/Features/Force/ForceRecordingContextCard.swift: raw `width: 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `.padding(.leading, 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `.padding(.top, 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `.padding(8` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `cornerRadius: 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `cornerRadius: 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `height: 190` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `height: 190` #2
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `lineWidth: 1.5` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `lineWidth: 1` #3
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `radius: 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceTrendChart.swift: raw `y: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.black` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(.bottom, 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(.bottom, 12` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(.horizontal, 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(.horizontal, 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(.horizontal, 18` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(.top, 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(.top, 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(.vertical, 18` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(.vertical, 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(12` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(12` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(14` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(14` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(14` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.padding(6` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `.white` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 12` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 12` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 12` #4
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 12` #5
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 14` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 18` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 18` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 18` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 22` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 22` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 28` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `cornerRadius: 28` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `duration: 0.25` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `height: 100` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `height: 14` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `height: 190` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `height: 44` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `lineWidth: 0.5` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `lineWidth: 1.5` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `lineWidth: 2.5` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `lineWidth: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `maxWidth: 620` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `maxWidth: 620` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minHeight: 44` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minLength: 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minLength: 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minLength: 4` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minLength: 4` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minLength: 4` #4
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minLength: 4` #5
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minLength: 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minLength: 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minLength: 8` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `minWidth: 44` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `size: 26` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 10` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 10` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 10` #4
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 10` #5
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 10` #6
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 10` #7
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 12` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 12` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 12` #4
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 12` #5
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 12` #6
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 12` #7
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 1` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 2` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 3` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 3` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 3` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 4` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 5` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 7` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 8` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 8` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 8` #4
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 8` #5
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `spacing: 8` #6
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `width: 44` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `width: 80` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `width: 80` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `width: 80` #3
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `width: 80` #4
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `width: 80` #5
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `width: 90` #1
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `width: 90` #2
+native/SendmeterNative/Sources/Features/Force/ForceView.swift: raw `y: -14` #1
+native/SendmeterNative/Sources/Features/Force/MovementDetailView.swift: raw `minHeight: 100` #1
+native/SendmeterNative/Sources/Features/Force/MovementDetailView.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Force/MovementDetailView.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Force/MovementDetailView.swift: raw `spacing: 18` #1
+native/SendmeterNative/Sources/Features/Force/MovementDetailView.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `.padding(8` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `cornerRadius: 12` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `cornerRadius: 12` #2
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `cornerRadius: 2` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `cornerRadius: 8` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `cornerRadius: 8` #2
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `height: 14` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `height: 190` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `height: 3` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `height: 3` #2
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `height: 8` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `lineWidth: 1.5` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `lineWidth: 1` #3
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `lineWidth: 1` #4
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `lineWidth: 1` #5
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `lineWidth: 2` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `minHeight: 150` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `radius: 4` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `spacing: 12` #2
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `spacing: 6` #2
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `spacing: 6` #3
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `width: 10` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `width: 14` #1
+native/SendmeterNative/Sources/Features/Force/NativeForceCurveCard.swift: raw `y: 2` #1
+native/SendmeterNative/Sources/Features/Force/SideAsymmetryCard.swift: raw `cornerRadius: 4` #1
+native/SendmeterNative/Sources/Features/Force/SideAsymmetryCard.swift: raw `cornerRadius: 4` #2
+native/SendmeterNative/Sources/Features/Force/SideAsymmetryCard.swift: raw `height: 8` #1
+native/SendmeterNative/Sources/Features/Force/SideAsymmetryCard.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Force/SideAsymmetryCard.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Force/SideAsymmetryCard.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Force/StaticCapacityDetailView.swift: raw `minHeight: 120` #1
+native/SendmeterNative/Sources/Features/Force/StaticCapacityDetailView.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `.padding(.bottom, 4` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `.padding(.bottom, 8` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `.padding(.leading, 15` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `.padding(.leading, 15` #2
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `.padding(.leading, 15` #3
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `.padding(.leading, 15` #4
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `.padding(.leading, 28` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `.padding(.top, 4` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `.padding(.vertical, 4` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `height: 8` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `spacing: 3` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Force/TrainingBalanceDetailView.swift: raw `width: 8` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `.padding(12` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `cornerRadius: 12` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `cornerRadius: 12` #2
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `cornerRadius: 4` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `cornerRadius: 4` #2
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `height: 8` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `minHeight: 44` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `spacing: 5` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `width: 46` #1
+native/SendmeterNative/Sources/Features/Force/ZoneFocusCard.swift: raw `width: 74` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.black` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.padding(.bottom, 4` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.padding(.bottom, 4` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.padding(.bottom, 4` #3
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.padding(.horizontal, 12` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.padding(.horizontal, 16` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.padding(.vertical, 12` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.padding(.vertical, 6` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.padding(10` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.padding(10` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.padding(12` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.white` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `.white` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `Color.white` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `cornerRadius: 10` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `cornerRadius: 10` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `cornerRadius: 12` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `cornerRadius: 18` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `cornerRadius: 18` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `cornerRadius: 3` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `height: 220` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `height: 46` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `minHeight: 120` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `minHeight: 160` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `minHeight: 44` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `radius: 12` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 10` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 12` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 12` #3
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 12` #4
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 12` #5
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 3` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 3` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 3` #3
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 4` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 4` #3
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 4` #4
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 6` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 7` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 7` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 7` #3
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 7` #4
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 8` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `spacing: 8` #3
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `width: 34` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `width: 34` #2
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `width: 34` #3
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `width: 5` #1
+native/SendmeterNative/Sources/Features/History/HistoryView.swift: raw `y: 6` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `.padding(.horizontal, 8` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `.padding(.vertical, 3` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `.padding(8` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `cornerRadius: 12` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `cornerRadius: 12` #2
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `cornerRadius: 2.5` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `cornerRadius: 4` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `cornerRadius: 4` #2
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `cornerRadius: 8` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `cornerRadius: 8` #2
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `height: 110` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `height: 3` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `lineWidth: 1.5` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `lineWidth: 1` #3
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `lineWidth: 1` #4
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `lineWidth: 1` #5
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `lineWidth: 1` #6
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `lineWidth: 1` #7
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `minHeight: 100` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `minHeight: 100` #2
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `minHeight: 100` #3
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `radius: 4` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 10` #2
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 10` #3
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 10` #4
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 12` #2
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 12` #3
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `spacing: 8` #2
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `width: 28` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `width: 3` #1
+native/SendmeterNative/Sources/Features/History/SessionDetailView.swift: raw `y: 2` #1
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `.cornerRadius(1.5` #1
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `.padding(8` #1
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `cornerRadius: 8` #1
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `cornerRadius: 8` #2
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `height: 110` #1
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `radius: 4` #1
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/History/WorkoutEffortChartView.swift: raw `y: 2` #1
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `.padding(8` #1
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `cornerRadius: 8` #1
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `cornerRadius: 8` #2
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `height: 160` #1
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `lineWidth: 1.5` #1
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `radius: 4` #1
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/History/WorkoutHrChartView.swift: raw `y: 2` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `.milliseconds(50` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `.padding(.top, 5` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `.padding(.vertical, 9` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `.padding(.vertical, 9` #2
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `.white` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `Color.black` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `cornerRadius: 12` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `cornerRadius: 12` #2
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `cornerRadius: 14` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `height: 10` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 12` #2
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 12` #3
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 12` #4
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 12` #5
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 12` #6
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 3` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 3` #2
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 5` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Phases/PhasesView.swift: raw `width: 10` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `.orange` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `.padding(.vertical, 2` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `.padding(.vertical, 2` #2
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `.padding(.vertical, 2` #3
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `.padding(.vertical, 2` #4
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `.padding(.vertical, 4` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `.padding(12` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `cornerRadius: 12` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 2` #3
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 2` #4
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 2` #5
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 4` #2
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 6` #2
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 8` #2
+native/SendmeterNative/Sources/Features/Settings/SettingsView.swift: raw `spacing: 8` #3
+native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift: raw `.padding(.top, 2` #1
+native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift: raw `.padding(.vertical, 2` #1
+native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift: raw `.padding(.vertical, 6` #1
+native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift: raw `.padding(10` #1
+native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift: raw `cornerRadius: 10` #1
+native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift: raw `spacing: 10` #2
+native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Settings/TagManagerView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.padding(.bottom, 16` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.padding(.horizontal, 10` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.padding(.horizontal, 16` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.padding(.horizontal, 16` #2
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.padding(.horizontal, 18` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.padding(.top, 2` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.padding(.top, 8` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.padding(.vertical, 26` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.padding(.vertical, 8` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.padding(12` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `.white` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `cornerRadius: 12` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `cornerRadius: 12` #2
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `cornerRadius: 28` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `cornerRadius: 28` #2
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `duration: 0.12` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `duration: 0.15` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `duration: 0.8` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `height: 44` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `lineWidth: 12` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `lineWidth: 12` #2
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `lineWidth: 1` #3
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `lineWidth: 1` #4
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `maxWidth: 540` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `minHeight: 44` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `minHeight: 44` #2
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `minWidth: 44` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `size: 30` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `spacing: 10` #2
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `spacing: 8` #2
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `spacing: 8` #3
+native/SendmeterNative/Sources/Features/Workout/ManualWorkoutFullscreen.swift: raw `width: 44` #1
+native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift: raw `minHeight: 32` #1
+native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift: raw `minHeight: 44` #1
+native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift: raw `minWidth: 32` #1
+native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift: raw `spacing: 12` #2
+native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift: raw `spacing: 12` #3
+native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Workout/RoutinePreviewSheet.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.black` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.black` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.black` #3
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.padding(.horizontal, 10` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.padding(.horizontal, 12` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.padding(.horizontal, 12` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.padding(.horizontal, 16` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.padding(.horizontal, 8` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.padding(.vertical, 5` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.padding(.vertical, 8` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.padding(.vertical, 9` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.padding(5` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.white` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `.white` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `Color.black` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `Color.black` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `Color.white` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `Color.white` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `cornerRadius: 16` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `cornerRadius: 16` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `cornerRadius: 16` #3
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `cornerRadius: 18` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `cornerRadius: 18` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `duration: 0.12` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `duration: 0.22` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `height: 52` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `lineWidth: 1` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `lineWidth: 1` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `lineWidth: 1` #3
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `lineWidth: 1` #4
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `lineWidth: 7` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `lineWidth: 7` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `minHeight: 40` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `minHeight: 44` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `minHeight: 44` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `minLength: 8` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `minLength: 8` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `radius: 24` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 12` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 12` #3
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 16` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 18` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 18` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 26` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 28` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 3` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 4` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 5` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 5` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 8` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 8` #2
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 8` #3
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `spacing: 9` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `width: 32` #1
+native/SendmeterNative/Sources/Features/Workout/WorkoutView.swift: raw `width: 52` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `.blue` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `.green` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `.green` #2
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `.green` #3
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `.padding(14` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `.white` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `.white` #2
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `.white` #3
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `.yellow` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `.yellow` #2
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `Color.black` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `maxWidth: 44` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `maxWidth: 64` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `size: 34` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Widgets/GuidedProtocolLiveActivity.swift: raw `spacing: 6` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `.blue` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `.green` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `.green` #2
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `.orange` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `.padding(14` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `.white` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `.white` #2
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `Color.black` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `maxWidth: 44` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `maxWidth: 64` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `size: 34` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Widgets/ManualWorkoutLiveActivity.swift: raw `spacing: 4` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `height: 8` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `minLength: 4` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `minLength: 8` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 10` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 12` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 14` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 18` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 1` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 2` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 2` #2
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 2` #3
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 7` #1
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 7` #2
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `spacing: 7` #3
+native/SendmeterNative/Sources/Widgets/ReadinessWidget.swift: raw `width: 8` #1

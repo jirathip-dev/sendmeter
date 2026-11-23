@@ -1,0 +1,77 @@
+frozen = [".gatekeeper/baseline/swift-anti-slop.txt", ".gatekeeper/baseline/swift-tokens.txt", "ci/cap.toml", "justfile", "native/SendmeterNative/Sources/App/AppModel.swift"]
+generated = [".claude/skills/gatekeeper/examples/core-actionlint.md", ".claude/skills/gatekeeper/examples/core-arch.md", ".claude/skills/gatekeeper/examples/core-cap.md", ".claude/skills/gatekeeper/examples/core-deps.md", ".claude/skills/gatekeeper/examples/core-hygiene.md", ".claude/skills/gatekeeper/examples/core-pin.md", ".claude/skills/gatekeeper/examples/core-pr-body.md", ".claude/skills/gatekeeper/examples/core-rules.md", ".claude/skills/gatekeeper/examples/rust-bans.md", ".claude/skills/gatekeeper/examples/rust-clippy.md", ".claude/skills/gatekeeper/examples/rust-deny.md", ".claude/skills/gatekeeper/examples/rust-fmt.md", ".claude/skills/gatekeeper/examples/supabase-migrations.md", ".claude/skills/gatekeeper/examples/supabase-pgtap.md", ".claude/skills/gatekeeper/examples/swift-anti-slop.md", ".claude/skills/gatekeeper/examples/swift-tokens.md", ".claude/skills/gatekeeper/examples/swift-warnings.md", ".claude/skills/gatekeeper/examples/ts-knip.md", ".claude/skills/gatekeeper/examples/ts-oxlint.md", ".claude/skills/gatekeeper/examples/ts-tsc.md", ".claude/skills/gatekeeper/packs/core.md", ".claude/skills/gatekeeper/packs/rust.md", ".claude/skills/gatekeeper/packs/supabase.md", ".claude/skills/gatekeeper/packs/swift.md", ".claude/skills/gatekeeper/packs/ts.md", ".claude/skills/gatekeeper/SKILL.md"]
+generate = "./.gatekeeper/run skill --to .claude/skills"
+
+[[collect]]
+dir = "ci/cap.d"
+glob = "*.toml"
+
+[[collect]]
+dir = ".gatekeeper/gates"
+glob = "*.toml"
+
+[[ban]]
+pattern = "import SwiftUI"
+paths = ["native/SendmeterNative/Sources/Core/**", "native/SendmeterNative/Sources/Data/**", "native/SendmeterNative/Sources/Platform/**", "ios/App/SendLogWatchCore/Sources/**", "native-plugins/sendlog-health-core/Sources/**"]
+reason = "#1049: views live in Features, App and Widgets; Core, Data, Platform and the pure packages hold no UI"
+
+[[ban]]
+pattern = "import UIKit"
+paths = ["native/SendmeterNative/Sources/Core/**", "ios/App/SendLogWatchCore/Sources/**", "native-plugins/sendlog-health-core/Sources/**"]
+reason = "#1049: Core and the pure packages are Foundation-only so their tests run on the host"
+
+[[ban]]
+pattern = "import Supabase"
+paths = ["native/SendmeterNative/Sources/**", "ios/App/SendLogWatchCore/Sources/**", "native-plugins/sendlog-health-core/Sources/**"]
+except = ["native/SendmeterNative/Sources/Data/**"]
+reason = "#1049: the phone reaches Supabase only through Data's typed repositories"
+
+[[ban]]
+pattern = "import Auth"
+paths = ["native/SendmeterNative/Sources/**", "ios/App/SendLogWatchCore/Sources/**", "native-plugins/sendlog-health-core/Sources/**"]
+except = ["native/SendmeterNative/Sources/Data/**", "native/SendmeterNative/Sources/App/AppModel.swift", "native/SendmeterNative/Sources/Features/Auth/LoginView.swift", "native/SendmeterNative/Sources/Features/Settings/SettingsView.swift", "native/SendmeterNative/Sources/Platform/WatchConnectivityService.swift"]
+reason = "#1049: the session lives in Data; the four files that read its types today are the only exceptions, and the list only shrinks"
+
+[[ban]]
+pattern = "import HealthKit"
+paths = ["native/SendmeterNative/Sources/**", "ios/App/SendLogWatchCore/Sources/**", "native-plugins/sendlog-health-core/Sources/**"]
+except = ["native/SendmeterNative/Sources/Platform/**"]
+reason = "#1049: the phone reads HealthKit only in Platform"
+
+[[ban]]
+pattern = "import CoreBluetooth"
+paths = ["native/SendmeterNative/Sources/**", "ios/App/SendLogWatchCore/Sources/**", "native-plugins/sendlog-health-core/Sources/**"]
+except = ["native/SendmeterNative/Sources/Platform/**"]
+reason = "#1049: the phone talks to the Tindeq only in Platform"
+
+[[ban]]
+pattern = "import WatchConnectivity"
+paths = ["native/SendmeterNative/Sources/**", "ios/App/SendLogWatchCore/Sources/**", "native-plugins/sendlog-health-core/Sources/**"]
+except = ["native/SendmeterNative/Sources/Platform/**"]
+reason = "#1049: the phone talks to the watch only in Platform"
+
+[[ban]]
+pattern = "import ActivityKit"
+paths = ["native/SendmeterNative/Sources/Core/**", "native/SendmeterNative/Sources/Data/**", "native/SendmeterNative/Sources/Platform/**", "native/SendmeterNative/Sources/Features/**", "ios/App/SendLogWatchCore/Sources/**", "native-plugins/sendlog-health-core/Sources/**"]
+reason = "#1049: Live Activities are driven from App, Shared and Widgets"
+
+[[ban]]
+pattern = "import SendLogWatchCore"
+paths = ["native-plugins/sendlog-health-core/Sources/**"]
+reason = "#1049: the health core sits below the watch core; it never imports it"
+
+[[ban]]
+pattern = "import SendmeterCore"
+paths = ["ios/App/SendLogWatchCore/Sources/**", "native-plugins/sendlog-health-core/Sources/**"]
+reason = "#1049: the pure packages sit below the phone's core; they never import it"
+
+[[ban]]
+pattern = "refreshToken"
+paths = ["ios/App/SendLogWatch Watch App/**"]
+reason = "#1049: the watch holds a relayed access token only; a second refresh-token holder revokes the session family"
+
+[[ban]]
+pattern = "Calendar.current"
+paths = ["native/SendmeterNative/Sources/**", "ios/App/SendLogWatchCore/Sources/**", "native-plugins/sendlog-health-core/Sources/**", "ios/App/SendLogWatch Watch App/**", "ios/App/SendLogWatchWidgets/**"]
+except = ["native/SendmeterNative/Sources/Platform/WeatherService.swift"]
+reason = "#1049: a Thai-region device's current calendar is Buddhist; use the Gregorian DateSupport helpers"

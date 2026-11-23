@@ -53,10 +53,7 @@ public final class WorkoutPartialSettleGate: @unchecked Sendable {
     /// nothing ever was) in flight. The task was captured when the gate was
     /// held, so a newer `hold` never disturbs a waiter on the older one.
     public func waitForCurrent() async {
-        let task: Task<Void, Never>?
-        lock.lock()
-        task = current
-        lock.unlock()
+        let task = lock.withLock { current }
         guard let task else { return }
         await task.value
     }

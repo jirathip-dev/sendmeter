@@ -9,7 +9,7 @@ import Supabase
 /// attempt fails. A protocol (not a concrete type) so `LiveWorkoutSync`'s
 /// tests can inject a recording double instead of touching the filesystem or
 /// `LiveWorkoutTerminalRetry.shared`.
-protocol LiveWorkoutTerminalRetrying: Sendable {
+nonisolated protocol LiveWorkoutTerminalRetrying: Sendable {
     func handOff(_ row: LiveWorkoutUpsert, error: Error) async
 }
 
@@ -19,7 +19,7 @@ protocol LiveWorkoutTerminalRetrying: Sendable {
 /// ("only mutations need scripting"). This actor's `readPersisted()` needs a
 /// scriptable read too, so an undecodable/unreadable row can be exercised
 /// from a test instead of only through the real filesystem (#549 finding 5).
-protocol TerminalRetryFileIO: QueueFileIO {
+nonisolated protocol TerminalRetryFileIO: QueueFileIO {
     func read(from url: URL) throws -> Data
 }
 
@@ -37,7 +37,7 @@ extension RealQueueFileIO: TerminalRetryFileIO {
 /// swallowed" fix makes is untestable (#549 F4) — and issue #549 itself named
 /// "no monitoring surface beyond OSLog" as one of the seven residuals; only
 /// the *pending* case got one (via `PendingSyncCache`) until this seam.
-protocol TerminalLossReporting: Sendable {
+nonisolated protocol TerminalLossReporting: Sendable {
     /// A row could not be persisted to disk AND the signed-in account no
     /// longer matches it — no durable copy exists anywhere, so this is a
     /// genuine, permanent loss (unlike `drainPass()`'s own mismatch arm,
@@ -60,7 +60,7 @@ protocol TerminalLossReporting: Sendable {
 /// Sentry-equivalent here yet — see CLAUDE.md's `src/lib/monitoring.ts`
 /// note). The seam exists now so a real reporter can be dropped in later
 /// without touching call sites, and so it's independently testable today.
-struct NoOpTerminalLossReporter: TerminalLossReporting {
+nonisolated struct NoOpTerminalLossReporter: TerminalLossReporting {
     func reportAccountMismatchLoss(runId: UUID, sequence: Int) {}
     func reportUnrecoverableUploadFailure(runId: UUID, sequence: Int, error: Error) {}
     func reportUndecodableRow(error: Error) {}
@@ -134,7 +134,7 @@ struct NoOpTerminalLossReporter: TerminalLossReporting {
 actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
     static let shared = LiveWorkoutTerminalRetry()
 
-    private static let log = Logger(
+    nonisolated private static let log = Logger(
         subsystem: "com.jirathip.sendlog.watchkitapp", category: "liveWorkoutRetry"
     )
 
@@ -147,7 +147,7 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
     /// formatter in this target (`Repo.swift`, `LiveActivityManager.swift`)
     /// — none of them are stored as shared statics, since the type is a
     /// mutable, non-`Sendable` class.
-    private static func makeEncoder() -> JSONEncoder {
+    nonisolated private static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .custom { date, encoder in
             let formatter = ISO8601DateFormatter()
@@ -163,7 +163,7 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
     /// writes fractional now, but decode must keep accepting the plain form,
     /// or this change would itself manufacture finding 5's undecodable-row
     /// failure on every device that upgrades with a row already queued.
-    private static func makeDecoder() -> JSONDecoder {
+    nonisolated private static func makeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()

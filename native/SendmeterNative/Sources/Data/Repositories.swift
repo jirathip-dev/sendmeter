@@ -2210,7 +2210,7 @@ public final class SendmeterRepository: @unchecked Sendable {
 
     // MARK: Helpers
 
-    private func patchVoid<Payload: Encodable>(
+    private func patchVoid<Payload: Encodable & Sendable>(
         table: String,
         id: UUID,
         payload: Payload,

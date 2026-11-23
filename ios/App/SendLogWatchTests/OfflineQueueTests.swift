@@ -1839,7 +1839,7 @@ final class OfflineQueueTests: XCTestCase {
         let uploader = ScriptedUploader(failing: [:])
         let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
         signIn(as: otherAccountB)
-        await queue.enqueue(bundle)
+        _ = await queue.enqueue(bundle)
 
         for _ in 0..<5 {
             await queue.drain()
@@ -2078,9 +2078,7 @@ private final class RecordingScheduler: DrainScheduling, @unchecked Sendable {
     /// schedule made by the action itself is never confused with the one
     /// being fired.
     func fireOldest() async {
-        lock.lock()
-        let action = scheduled.isEmpty ? nil : scheduled.removeFirst()
-        lock.unlock()
+        let action = lock.withLock { scheduled.isEmpty ? nil : scheduled.removeFirst() }
         await action?.run()
     }
 }

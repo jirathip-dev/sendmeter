@@ -62,7 +62,7 @@ public final class GuidedProtocolActivityManager {
             fallbackSide: fallbackSide,
             start: Date()
         )
-        var mirror = GuidedActivityMirror(content: content)
+        let mirror = GuidedActivityMirror(content: content)
         self.mirror = mirror
         // The initial push comes from the run's LIVE anchor (stageStartedAt
         // is set by the view's onAppear before this is called), never from

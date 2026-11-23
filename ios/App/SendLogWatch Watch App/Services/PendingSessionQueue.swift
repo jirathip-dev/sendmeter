@@ -6,11 +6,11 @@ import Supabase
 /// before the consolidation it called `Repo.logTindeqSession` directly, so
 /// none of its behavior was exercisable off-device. Mirrors
 /// `WorkoutBundleUploading`/`TindeqRecordingUploading`.
-protocol TindeqSessionUploading: Sendable {
+nonisolated protocol TindeqSessionUploading: Sendable {
     func upload(_ session: PendingTindeqSession) async throws
 }
 
-struct RepoSessionUploader: TindeqSessionUploading {
+nonisolated struct RepoSessionUploader: TindeqSessionUploading {
     func upload(_ session: PendingTindeqSession) async throws {
         try await Repo.logTindeqSession(session)
     }
@@ -82,7 +82,7 @@ extension PendingSessionQueue: QueueDepthReporting {
     func refreshReportedCounts() async { await engine.refreshReportedCounts() }
 }
 
-extension PendingTindeqSession: QueueUploadItem {
+nonisolated extension PendingTindeqSession: QueueUploadItem {
     var queueFileId: UUID { id }
 
     /// A pending session is a few hundred bytes of scalars — there is no

@@ -274,7 +274,6 @@ public final class HealthKitService: ObservableObject {
         let resp = try await respMap
         let sleep = try await sleepMap
         let bodyMass = try await bodyMassMap
-        let today = LocalDateSupport.string(from: now, timeZone: timeZone)
         let sourceDates = Set(hrv.keys)
             .union(rhr.keys)
             .union(resp.keys)

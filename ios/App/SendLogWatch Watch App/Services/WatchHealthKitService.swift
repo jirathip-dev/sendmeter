@@ -8,7 +8,7 @@ import SendLogWatchCore
 /// handlers independently of Swift task cancellation, so cancellation must
 /// stop the query and resume the continuation itself; the lock makes the
 /// cancellation/result race one-shot).
-private final class HealthKitQueryCancellation<Value>: @unchecked Sendable {
+private nonisolated final class HealthKitQueryCancellation<Value>: @unchecked Sendable {
     private let store: HKHealthStore
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Value, Error>?
@@ -207,8 +207,11 @@ final class WatchHealthKitService {
         now: Date,
         timeZone: TimeZone
     ) async throws -> WatchHealthMaps {
-        var calendar = Calendar.gregorianLocal
-        calendar.timeZone = timeZone
+        let calendar = {
+            var calendar = Calendar.gregorianLocal
+            calendar.timeZone = timeZone
+            return calendar
+        }()
         let todayStart = calendar.startOfDay(for: now)
         guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart),
               let baselineStart = calendar.date(

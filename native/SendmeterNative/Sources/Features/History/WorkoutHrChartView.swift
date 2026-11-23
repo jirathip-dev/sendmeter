@@ -164,7 +164,7 @@ struct WorkoutHrChartView: View {
                 .chartOverlay { proxy in
                     GeometryReader { geo in
                         if selectedTime != nil, let selectedSample {
-                            let plotFrame = geo[proxy.plotAreaFrame]
+                            let plotFrame = proxy.plotFrame.map { geo[$0] } ?? .zero
                             let x = (proxy.position(forX: selectedSample.t) ?? 0) + plotFrame.minX
                             tooltip(for: selectedSample, x: x, plotFrame: plotFrame)
                         }
@@ -311,7 +311,7 @@ struct WorkoutHrChartView: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { tooltipSize = geo.size }
-                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                        .onChange(of: geo.size) { _, newSize in tooltipSize = newSize }
                 }
             )
             .position(

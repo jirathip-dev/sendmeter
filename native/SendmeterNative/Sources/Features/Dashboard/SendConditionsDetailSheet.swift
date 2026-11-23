@@ -239,7 +239,7 @@ struct SendConditionsDetailSheet: View {
                 .frame(height: chartHeight)
                 .chartXSelection(value: $selectedDate)
                 .hapticTapMuted()
-                .onChange(of: selectedDate) { _ in
+                .onChange(of: selectedDate) { _, _ in
                     if let selectedDay {
                         if SelectionHaptics.valueChanged(tickedDay, selectedDay) {
                             tickedDay = selectedDay
@@ -251,7 +251,7 @@ struct SendConditionsDetailSheet: View {
                 }
                 .chartOverlay { proxy in
                     GeometryReader { geo in
-                        let plotFrame = geo[proxy.plotAreaFrame]
+                        let plotFrame = proxy.plotFrame.map { geo[$0] } ?? .zero
                         referenceLineLabels(history: history, conditions: conditions, proxy: proxy, plotFrame: plotFrame)
                         if selectedDate != nil, let selectedDay {
                             let x = (proxy.position(forX: selectedDay.date) ?? 0) + plotFrame.minX
@@ -402,7 +402,7 @@ struct SendConditionsDetailSheet: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { tooltipSize = geo.size }
-                        .onChange(of: geo.size) { newSize in
+                        .onChange(of: geo.size) { _, newSize in
                             tooltipSize = newSize
                         }
                 }

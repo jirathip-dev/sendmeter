@@ -22,14 +22,14 @@ owns each concern now) is
 | `native-plugins/sendlog-health-core/` | `SendLogHealthCore` — readiness/ACWR math and the readiness-widget contract shared by the phone app, watch and widget. |
 | `supabase/` | Migrations, SQL regression tests, seed, local stack config. |
 | `mcp/` | A separate, package-local, **read-only** MCP server (own `package.json` + lockfile + CI job). |
-| `scripts/`, `tools/anti-slop-swift/`, `fastlane/` | Repo gates and migration tooling; the vendored Swift lint tool; the `native_beta` TestFlight lane. |
+| `.gatekeeper/`, `scripts/`, `fastlane/` | Gatekeeper's config, baselines and the repo's own gates; the scripts those gates and the migration tooling run; the `native_beta` TestFlight lane. |
 
 ## Gates
 
 ```bash
-just --list     # every recipe — the canonical gate entry point
-just fast       # anti-slop + the three SwiftPM suites (host, no simulator)
-just ci         # everything CI gates on (adds gen, check-watch-project, build-ios, build-watch)
+./.gatekeeper/run check                      # every gate: the same command CI and drover's done check run
+./.gatekeeper/run check --gate local/app     # one gate alone
+./.gatekeeper/run list                       # the planned gates, their budgets and why one is skipped
 ```
 
 Heavy Xcode builds are serialized: **one at a time, never two concurrent

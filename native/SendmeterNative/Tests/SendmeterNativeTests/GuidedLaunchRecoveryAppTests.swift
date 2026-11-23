@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SwiftUI
 import UIKit
 import XCTest
@@ -60,18 +61,18 @@ final class GuidedLaunchRecoveryAppTests: XCTestCase {
     /// The sibling app suites' storage double is file-private; each suite keeps
     /// its own so nothing here can depend on another file's test internals.
     private final class RecoveryInMemoryAuthStorage: AuthLocalStorage {
-        private var store: [String: Data] = [:]
+        private let store = OSAllocatedUnfairLock(initialState: [String: Data]())
 
         func store(key: String, value: Data) throws {
-            store[key] = value
+            store.withLock { $0[key] = value }
         }
 
         func retrieve(key: String) throws -> Data? {
-            store[key]
+            store.withLock { $0[key] }
         }
 
         func remove(key: String) throws {
-            store.removeValue(forKey: key)
+            _ = store.withLock { $0.removeValue(forKey: key) }
         }
     }
 
@@ -454,7 +455,7 @@ final class GuidedLaunchRecoveryAppTests: XCTestCase {
     /// fixed iteration budget. The deadline decides only how long a wait may
     /// take; what is asserted never changes, and expiry reports the state
     /// actually observed.
-    private static let waitDeadline: Duration = .seconds(60)
+    nonisolated private static let waitDeadline: Duration = .seconds(60)
 
     /// Polls `isSatisfied` until it holds or `timeout` elapses, then fails the
     /// test with the elapsed time and the state `observed`.

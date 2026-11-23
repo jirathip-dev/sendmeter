@@ -4,13 +4,13 @@ import Observation
 import SendLogWatchCore
 import WatchConnectivity
 
-protocol TindeqRecordingQueueing: Sendable {
+nonisolated protocol TindeqRecordingQueueing: Sendable {
     func enqueue(_ pending: PendingTindeqRecording) async -> QueuePersistOutcome
 }
 
 extension PendingRecordingQueue: TindeqRecordingQueueing {}
 
-protocol TindeqSessionQueueing: Sendable {
+nonisolated protocol TindeqSessionQueueing: Sendable {
     func enqueue(_ pending: PendingTindeqSession) async -> QueuePersistOutcome
 }
 

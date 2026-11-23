@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SwiftUI
 import UIKit
 import XCTest
@@ -353,7 +354,7 @@ final class ForceLockOrphanAppTests: XCTestCase {
 
     // MARK: - Deadline-bound waits (duplicated from GuidedProtocolCompletionTests)
 
-    private static let waitDeadline: Duration = .seconds(60)
+    nonisolated private static let waitDeadline: Duration = .seconds(60)
 
     /// Polls `isSatisfied` until it holds or `timeout` elapses, then fails the
     /// test with the elapsed time and the state `observed`.
@@ -431,18 +432,18 @@ final class ForceLockOrphanAppTests: XCTestCase {
     // those helpers are file-private)
 
     private final class InMemoryAuthStorage: AuthLocalStorage {
-        private var store: [String: Data] = [:]
+        private let store = OSAllocatedUnfairLock(initialState: [String: Data]())
 
         func store(key: String, value: Data) throws {
-            store[key] = value
+            store.withLock { $0[key] = value }
         }
 
         func retrieve(key: String) throws -> Data? {
-            store[key]
+            store.withLock { $0[key] }
         }
 
         func remove(key: String) throws {
-            store.removeValue(forKey: key)
+            _ = store.withLock { $0.removeValue(forKey: key) }
         }
     }
 

@@ -68,7 +68,7 @@ struct RecoveryInputsSheet: View {
             }
         }
         .onAppear { rebuild() }
-        .onChange(of: model.healthMetrics) { _ in rebuild() }
+        .onChange(of: model.healthMetrics) { _, _ in rebuild() }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             rebuild()
         }
@@ -370,7 +370,7 @@ private struct RecoveryMetricRowView: View {
         }
         .chartOverlay { proxy in
             GeometryReader { geo in
-                let plotFrame = geo[proxy.plotAreaFrame]
+                let plotFrame = proxy.plotFrame.map { geo[$0] } ?? .zero
                 Color.clear
                     .contentShape(Rectangle())
                     .hapticTapMuted()
@@ -474,7 +474,7 @@ private struct RecoveryMetricRowView: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { tooltipSize = geo.size }
-                        .onChange(of: geo.size) { newSize in
+                        .onChange(of: geo.size) { _, newSize in
                             tooltipSize = newSize
                         }
                 }

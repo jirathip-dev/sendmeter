@@ -199,7 +199,6 @@ final class MutationSyncStatusTests: XCTestCase {
         // The outcome carries its own account, so a pass for account A cannot
         // disable B's retry: B's inputs carry only B's own measured pass.
         let accountA = UUID()
-        let accountB = UUID()
         let outcomeA = MutationRetryOutcome(
             accountUserID: accountA,
             queuedBefore: 1,

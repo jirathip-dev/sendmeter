@@ -55,7 +55,7 @@ final class FakeTindeqTransport {
     private var connectionGeneration: UInt64 = 0
     private var streamGeneration: UInt64 = 0
 
-    init(script: FakeTindeqScript) {
+    nonisolated init(script: FakeTindeqScript) {
         self.script = script
     }
 

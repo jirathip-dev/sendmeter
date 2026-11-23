@@ -274,69 +274,39 @@ build.
 
 ## Native Swift source quality
 
-The native source is linted with a vendored copy of
-[sawfwair/anti-slop-swift](https://github.com/sawfwair/anti-slop-swift), pinned
-at upstream revision `259e1a32dd9a41e65478513ab3b902a1cb8036e0`. The pre-fix
-baseline on Swift 6.3.3 was **53 violations across 134 files and four rule
-types**: 21 `no-any-dictionary-value`, 14 `no-force-unwrap`, 10
-`no-any-parameters`, and 8 `no-swallowed-errors`.
+Every gate runs through gatekeeper (`.gatekeeper/config.toml`): `./.gatekeeper/run check`
+is the same command locally, in drover's done check and in CI
+(`.github/workflows/gates.yml`). The Swift side is:
 
-The committed `.anti-slop.json` disables exactly `no-any-dictionary-value` and
-`no-any-parameters`. WatchConnectivity's system API requires `[String: Any]`
-payload bridges and `Any?` callback parameters, so those two rules are
-intentional exceptions while the remaining rules stay enabled. The CI step is
-advisory for findings: it annotates violations as GitHub warnings without
-blocking this first pass, while missing paths/configuration or a tool-build
-failure remains a real CI failure.
-
-Run the same pinned executable locally from the repository root:
-
-```bash
-bash scripts/anti-slop-swift.sh native/SendmeterNative/Sources
-```
-
-The native workflow also runs the cold-build regression, which removes the
-vendored tool's debug products before invoking the wrapper and requires both a
-successful rebuild and its positive scanned-file signal. Run it locally with:
-
-```bash
-bash scripts/validate-anti-slop-cold.sh
-```
+1. `swift/anti-slop`: gatekeeper's prebuilt anti-slop-swift over every Swift
+   source and test folder, the 19 shared rules plus `no-comments`,
+   `sorted-imports`, `no-any` and `explicit-access`. No rule is switched off;
+   the findings that existed at adoption (#1049) are listed in
+   `.gatekeeper/baseline/swift-anti-slop.txt`, which may only shrink.
+2. `swift/warnings`: the three SwiftPM packages build with their tests under
+   `GATEKEEPER_STRICT=1`, which adds `-warnings-as-errors` to every target.
+3. `swift/tokens`: no raw colour or size in the view folders but
+   `DesignSystem.swift` and `ChartTheme.swift`; the adoption findings are in
+   `.gatekeeper/baseline/swift-tokens.txt`.
+4. `local/coverage`: the three packages' `swift test` under the floors in
+   `docs/testing.md`.
+5. `local/app`: XcodeGen from `project.yml`
+   (`scripts/xcodegen.sh`, which also runs
+   `scripts/assert-native-watch-project.rb`), an unsigned iOS Simulator build
+   with warnings as errors, `SendmeterNativeTests` and the four-test UI smoke
+   suite.
+6. `local/watch`: `SendLogWatchTests` on a booted watchOS simulator.
 
 When a force unwrap, cast, try, or process-termination primitive is genuinely
-required, put a specific `// SAFETY:` explanation in the contiguous comment
-block immediately above it. Prefer an explicit unwrap or error path whenever
-the invariant is not independently guaranteed.
+required, put a specific `// SAFETY:` line immediately above it.
 
 ## Verification
-
-The no-Xcode source gate can be run from the repository root:
-
-```bash
-bash scripts/validate-native-static.sh
-```
-
-It parses every native application, widget, Core, and test Swift file with
-`swiftc -parse`, generates a temporary XcodeGen project, checks that the Force
-files are present in the app target, and verifies the recording-context and
-fullscreen accessibility invariants. This is a local supplemental gate; PR CI
-separately runs:
-
-1. Pure Swift Core tests.
-2. XcodeGen project generation and Swift package resolution.
-3. Generated-project assertions for watch/widget source and resource
-   membership, entitlements exclusion, package links, and embed destinations
-   (`scripts/assert-native-watch-project.rb`).
-4. A complete iOS Simulator compile with code signing disabled.
-5. Existing repository quality checks where applicable.
 
 `swift test` does not typecheck the SwiftUI application target: the package
 target intentionally contains only `Sources/Core` plus `ChartTheme.swift`.
 The focused `SendmeterNativeTests/AuthRecoveryWiringTests` target covers the
-application-target PostgREST/date/session recovery seams on an iOS Simulator;
-the static gate still proves parsing and generated-project inclusion. A clean
-Xcode project compile remains required when the serialized Xcode lane is
-available; the regular Force fullscreen, hands-free trigger/re-arm loop,
+application-target PostgREST/date/session recovery seams on an iOS Simulator
+(`local/app`). The regular Force fullscreen, hands-free trigger/re-arm loop,
 disconnect salvage, and protocol handoff also remain device-only with a real
 Progressor.
 

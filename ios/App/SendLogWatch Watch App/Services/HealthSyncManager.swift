@@ -163,7 +163,7 @@ final class HealthSyncManager {
                lastStartedAt: UserDefaults.standard.object(forKey: startKey) as? Date,
                calendar: calendar
            ) {
-            var progress = WatchHealthMorningProgress(
+            let progress = WatchHealthMorningProgress(
                 accountUserID: userID,
                 startedAt: now,
                 timeZoneIdentifier: calendar.timeZone.identifier

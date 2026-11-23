@@ -325,7 +325,7 @@ final class GuidedForceRunner {
                 startStaticHold(set: set, rep: rep, shouldCue: shouldCue)
             case let .finishStaticHold(set, rep):
                 finishStaticHold(set: set, rep: rep)
-            case let .rest(_, _):
+            case .rest:
                 phase = .rest
                 if shouldCue { play(.click) }
             case .completed:

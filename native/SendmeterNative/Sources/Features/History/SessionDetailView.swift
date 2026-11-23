@@ -83,7 +83,7 @@ struct SessionDetailView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(session.typeLabel)
         .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: selectedWorkoutTime) { _ in
+        .onChange(of: selectedWorkoutTime) { _, _ in
             handleWorkoutScrubHaptic()
         }
         .onDisappear {
@@ -778,7 +778,7 @@ struct RepBoxPlotCanvas: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { tooltipSize = geo.size }
-                        .onChange(of: geo.size) { newSize in tooltipSize = newSize }
+                        .onChange(of: geo.size) { _, newSize in tooltipSize = newSize }
                 }
             )
             .position(

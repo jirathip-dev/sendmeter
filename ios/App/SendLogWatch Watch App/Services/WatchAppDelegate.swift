@@ -13,7 +13,7 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
     func handle(_ backgroundTasks: Set<WKRefreshBackgroundTask>) {
         for task in backgroundTasks {
             guard let refresh = task as? WKApplicationRefreshBackgroundTask else {
-                task.setTaskCompleted()
+                task.setTaskCompletedWithSnapshot(false)
                 continue
             }
             // Blocker-2 fix: the pass is AWAITED — the background task may
@@ -22,7 +22,7 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
             // the app mid-compute.
             Task { @MainActor in
                 await HealthSyncManager.current?.runAwaitingBackgroundPass()
-                refresh.setTaskCompleted()
+                refresh.setTaskCompletedWithSnapshot(false)
             }
         }
     }

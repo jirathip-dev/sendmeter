@@ -258,7 +258,7 @@ private actor OrderLog {
             continuation = c
             timeoutTask = Task {
                 try? await Task.sleep(for: timeout)
-                await self.expireWait(token)
+                self.expireWait(token)
             }
         }
     }

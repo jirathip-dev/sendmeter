@@ -282,7 +282,7 @@ final class SignOutQueuePolicyTests: XCTestCase {
                 // the snapshot but before each upload's revalidation.
                 var failureAt = now
                 for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
-                    try? await queue.markFailure(
+                    _ = try? await queue.markFailure(
                         id: quarantineCandidate.id,
                         accountUserID: accountUserID,
                         error: "constraint",

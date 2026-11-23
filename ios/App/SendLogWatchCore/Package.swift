@@ -1,5 +1,10 @@
 // swift-tools-version: 5.9
+import Foundation
 import PackageDescription
+
+let strict: [SwiftSetting] = ProcessInfo.processInfo.environment["GATEKEEPER_STRICT"] == "1"
+    ? [.unsafeFlags(["-warnings-as-errors"])]
+    : []
 
 // Pure-Swift (Foundation only) watch-app logic — attempt detection, RPE
 // modeling, ACWR, Tindeq protocol parsing, hands-free force control, and the
@@ -24,7 +29,8 @@ let package = Package(
             dependencies: [
                 .product(name: "SendLogHealthCore", package: "sendlog-health-core")
             ],
-            path: "Sources/SendLogWatchCore"
+            path: "Sources/SendLogWatchCore",
+            swiftSettings: strict
         ),
         .testTarget(
             name: "SendLogWatchCoreTests",
@@ -33,7 +39,8 @@ let package = Package(
             resources: [
                 .copy("Fixtures/rpe-depletion-parity.json"),
                 .copy("Fixtures/readiness-acwr-parity.json")
-            ]
+            ],
+            swiftSettings: strict
         )
     ]
 )
