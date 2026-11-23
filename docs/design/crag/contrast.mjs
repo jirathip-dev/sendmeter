@@ -8,7 +8,6 @@ const SCENE = {
   dawn: ["#7A5A8E", "#060827"],
   rain: ["#3A3D5C", "#04061A"],
   fog: ["#6A6E8E", "#080B22"],
-  pads: ["#A98C40", "#14172E"],
 };
 const SOLID = { "moonstone-top": "#5242AE", moonstone: "#46379A", "glint-violet": "#6E5CBE", "glint-teal": "#5961B0", "glint-pink": "#805FB3" };
 const need = { body: 4.5, large: 3 };

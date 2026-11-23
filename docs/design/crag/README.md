@@ -1,21 +1,8 @@
 ## Summary
 
-Decision: Round 8 changes three things and keeps everything else. The boulders, in every scene and icon, are now one big rounded granite boulder with a large overhanging roof, smooth softly shaded faces, dark crack lines and round pocket holds, like the original loading screen; the low-poly triangles are gone. The ground is bright crash pads with diagonal pink, teal and yellow stripes and a dark edge band, not a stone floor. The roo takes the original mascot's shape: a round bean body, short stubby arms and legs, tiny dot eyes and smooth curves, still with one blush dot, the bouldering shoes and the thin lavender rim.
-Screens: every image is re-rendered (63); Today, Loading, the weather sheet, the icon sheet, the roo kit's poses and the model sheet show this round's changes.
-Open questions: none. The pads are dimmed a little for the night (a 32% navy veil) so text on glass cards over the yellow stripe still passes WCAG AA.
-
-## Round 8 changes
-
-- **Boulders.** One shared stone drawing replaces the triangle mesh. A boulder is one smooth outline with a soft moonlit gradient, a blurred lit band along its top and blurred shade near its foot, dark crack lines, round pockets with a pale lower lip, and the lavender rim on its moonlit edge.
-  - **Scene:** one big rounded boulder fills the left, its roof leaning far out to a blunt, rounded lip. Under the roof is a darker overhanging face with its own pockets and a crack. A low rounded boulder sits back right, and the far ridge is a soft dark hill line.
-  - **Icons:** every icon's wall, peak, lip and top edge is drawn with the same stone in smooth curves, with a crack and pockets where they fit.
-- **Crash pads.** Eleven pads in two rows replace the flagstones. Each pad has diagonal pink (#EE6FA2), teal (#33BDB1) and yellow (#F4C84A) stripes, a dark edge band (#14172E) and a pale top edge. A navy night veil (32%, 42% in rain and fog) keeps them bright but part of the night. The chalk bag sits on a pad. At 1440 the scene roo stands on the pads under the roof.
-- **The roo, in the kit master** (`pack/roo.mjs`, so every pose, icon and screen follows):
-  - The body is one round bean that runs up into the head; the front view is a bean too.
-  - The arms are short capsules with round paws (0.55 head, down from 0.75). Every hand prop (edge, jug, sloper, fingers, bar, chalk bag) moves with the shorter arm.
-  - The haunch is a smooth round shape, the shin a short stub and the shoe attaches 4 units higher. The whole roo drops by the same 4, so every pose keeps its ground line.
-  - The eyes are tiny dots with no glint. The tail is thicker with a round tip.
-- **Contrast.** The check now includes the brightest pad stripe behind a glass card (`node contrast.mjs`: 0 failing of 70).
+Decision: Round 7 changes only the icons and polishes Today. Every icon now has a full faceted boulder behind the roo, under the moon and stars. Each pose follows real technique: Crimp curls its fingertips on a thin edge, Dyno flies at a jug, Send slaps the top, Chalk-up has its paw in the bag, and Rest hangs straight-armed with its eyes shut. The Shoe icon is the roo's own foot toeing a small foothold. A new ninth icon, Tongue, shows the roo's face in effort, tongue out and eyes narrowed, with a paw on a big round hold. The roo is bigger and its rim brighter, so each icon reads at 29 to 40 px. On Today, This Week is tighter and the moon's glow is softer.
+Screens: every image is re-rendered (63); the icon sheet, the App icon picker, the roo kit's poses and Today show this round's changes.
+Open questions: none. The kit shoe now has one velcro strap everywhere (the round 7 note asked for one), not two. Five Blocks kinds are still marked stand-ins.
 
 ## Round 7 changes
 
@@ -56,14 +43,14 @@ Open questions: none. The pads are dimmed a little for the night (a 32% navy vei
   - The parts: one body, one head (side and front drawings), two ears, two arms, two thighs, two shins, two climbing shoes (side and front drawings) and a tail. Each is drawn once at its own pivot.
   - A pose is only a list of joint angles, an optional lift and props (chalk bag, hold, bar, flash bolt, PR star, zz). The thin rim is the whole posed silhouette stroked once behind the fills.
   - The kit has 19 poses: stand, bust, sit, chalk-up, crimp, hang, dyno, flash, send, fall, rest, PR, shelter, moon-watch, top-out slap, rest hang and tongue, plus the front and back views.
-- **Icons** (`pack/icons/*.svg`, 1024 px). Nine close crops of the kit (round 7: Tongue added, each on a boulder under the moon; round 8: smooth rounded granite):
+- **Icons** (`pack/icons/*.svg`, 1024 px). Nine close crops of the kit (round 7: Tongue added, each on a faceted boulder under the moon):
   - **Profile** (side bust under the moon) is the new default and replaces the original icon.
   - **Crimp** (a paw on a hold), **Chalk-up** (the bag and a dusty paw), **Dyno** (the arm reaching out of frame), **Shoe** (a climbing shoe on a foothold), **Peek** (over a boulder lip), **Rest** (a straight-arm hang, eyes shut), **Send** (a slap on the top) and **Tongue** (an effort face on a sloper).
-- **The scene** (round 8: smooth rounded granite and crash pads). The crag is overhanging granite like the original cave art: a big leaning overhang with pockets and cracks, a second boulder, back ridges, pads and a chalk bag, under the moon and stars.
+- **The scene.** The crag is faceted, overhanging granite like the original cave art: a big leaning overhang with pockets and cracks, a second boulder, back ridges, flagstone pads and a chalk bag, under the moon and stars.
   - The rim of each boulder catches a soft lavender moonlight line (not shimmer).
   - The weather shows inside the night: a dawn glow, rain streaks with a hazy moon, and fog bands.
   - The scene roo reacts: it watches the moon (clear), chalks up (dawn), shelters (rain) and sleeps (fog). On the phone it sits on the overhang's lip, inside Today's window; at 1440 it stands on the ground.
-- **Loading** is new and replaces the original screen: the same crag and moon (round 8: the rounded boulder and crash pads), with the kit roo mid-dyno toward the moon on a dotted arc, the Zilla Slab wordmark and a violet progress bar.
+- **Loading** is new and replaces the original screen: the same faceted crag and moon, with the kit roo mid-dyno toward the moon on a dotted arc, the Zilla Slab wordmark and a violet progress bar.
 - **Built on Blocks.** Every app screen is a Blocks `screen` drawn by Blocks' own HTML shell (`blocks/blocks.js`, vendored from blocks `staging` at the commit in `blocks/PIN`).
   - They use only Blocks kinds (`card`, `stat`, `list`/`row`, `button`, `chips`, `chart`, `steps`, `form`, `section`, `text`) plus the five stand-ins below.
   - The tab bar is Blocks' layout `nav`; at 1440 the pack turns it into a left rail.
@@ -123,7 +110,7 @@ The pack's contents, as they would move to jirathip-dev/swag:
   - Colours: fur #1A1C30, far limb #111222, near arm #23263F, inner ear #4A4E78, muzzle #ECEEF8, spots #D3D7EC (chalk dust, Zz), blush #E59AB8, shoe upper #A99CF0, rubber #0B0C16, velcro strap #ECEEF8, chalk bag #E4E6F2 and the rim #7471B0. No shimmer.
 - **Icons:** `pack/icons/*.svg`, nine at 1024 px, made from the kit by `pack/icons.mjs`.
 - **Scene:** `pack/scene.mjs`.
-  - Smooth rounded boulders (gradient, blurred lit and shade bands, round pockets, cracks, a lavender rim), striped crash pads, the bag, the moon and stars.
+  - Faceted overhangs (seeded low-poly facets lit from the moon side), pockets, cracks, a lavender rim, slabs, the bag, the moon and stars.
   - Dawn, rain and fog layers.
   - The scene roo per weather.
   - A later scene pack (#1061) swaps the art and keeps these states.

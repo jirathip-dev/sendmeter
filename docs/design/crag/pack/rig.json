@@ -50,7 +50,7 @@
       "parent": "shinFar",
       "at": [
         0,
-        16
+        20
       ],
       "behind": false,
       "far": false
@@ -127,7 +127,7 @@
       "parent": "shinNear",
       "at": [
         0,
-        16
+        20
       ],
       "behind": false,
       "far": false
@@ -195,7 +195,7 @@
       "parent": "shinFar",
       "at": [
         0,
-        16
+        20
       ],
       "behind": false,
       "far": false
@@ -228,7 +228,7 @@
       "parent": "shinNear",
       "at": [
         0,
-        16
+        20
       ],
       "behind": false,
       "far": false

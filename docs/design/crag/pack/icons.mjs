@@ -17,28 +17,16 @@ export const ICONS = [
 ];
 
 const ROCK = {
-  face: "M-40 1064 L-40 -40 L480 -40 C620 20 720 100 800 200 C900 320 980 380 1064 400 L1064 1064Z",
-  faceL: "M1064 1064 L1064 -40 L540 -40 C400 20 300 100 224 200 C124 320 44 380 -40 400 L-40 1064Z",
-  peak: "M-40 1064 L-40 520 C20 400 160 280 330 260 C480 244 600 320 660 440 C700 520 720 640 780 760 C840 840 960 860 1064 870 L1064 1064Z",
-  lip: "M-40 1064 L-40 720 C120 660 300 640 520 660 C720 680 900 640 1064 690 L1064 1064Z",
+  face: "M-40 1064 L-40 -40 L520 -40 L700 90 L860 250 L1064 430 L1064 1064Z",
+  faceL: "M1064 1064 L1064 -40 L500 -40 L330 90 L170 250 L-40 430 L-40 1064Z",
+  peak: "M-40 1064 L-40 520 L120 330 L330 250 L520 300 L640 430 L700 600 L760 760 L1064 860 L1064 1064Z",
+  lip: "M-40 1064 L-40 720 L220 650 L520 690 L800 640 L1064 700 L1064 1064Z",
 };
 const RIMS = {
-  face: "M480 -40 C620 20 720 100 800 200 C900 320 980 380 1064 400",
-  faceL: "M540 -40 C400 20 300 100 224 200 C124 320 44 380 -40 400",
-  peak: "M-40 520 C20 400 160 280 330 260 C480 244 600 320 660 440",
-  lip: "M-40 720 C120 660 300 640 520 660 C720 680 900 640 1064 690",
-};
-const CRACKS = {
-  face: ["M300 -40 C260 160 340 320 280 520 C240 660 300 820 260 1064"],
-  faceL: ["M720 -40 C760 160 690 320 750 520 C790 660 720 820 770 1064"],
-  peak: ["M360 270 C330 420 400 560 350 720 C320 840 360 960 340 1064"],
-  lip: ["M300 650 C290 760 330 880 300 1064", "M800 668 C820 780 780 900 810 1064"],
-};
-const SHADE = {
-  face: ["M-40 760 C200 700 500 780 1064 720 L1064 1064 L-40 1064Z"],
-  faceL: ["M-40 720 C400 780 700 700 1064 760 L1064 1064 L-40 1064Z"],
-  peak: ["M-40 860 C300 800 600 900 1064 940 L1064 1064 L-40 1064Z"],
-  lip: ["M-40 900 C300 860 700 900 1064 880 L1064 1064 L-40 1064Z"],
+  face: "M520 -40 L700 90 L860 250 L1064 430",
+  faceL: "M500 -40 L330 90 L170 250 L-40 430",
+  peak: "M-40 520 L120 330 L330 250 L520 300 L640 430",
+  lip: "M-40 720 L220 650 L520 690 L800 640 L1064 700",
 };
 
 function stars(seed) {
@@ -49,20 +37,19 @@ function moon([x, y, r]) {
   return `<circle cx="${x}" cy="${y}" r="${r * 1.7}" fill="#E9E6FF" opacity=".07"/><circle cx="${x}" cy="${y}" r="${r}" fill="#E9EAF6"/><circle cx="${x - r * 0.32}" cy="${y - r * 0.2}" r="${r * 0.2}" fill="#CFD1E6"/>`;
 }
 
-const STONE = { tone: [18, 14], blur: 40, line: 3, rimColor: LIP, rimWidth: 12 };
-const boulder = (key, d, uid) =>
-  rock(`r-${uid}`, d, [-40, -40, 1064, 1064], 0, { ...STONE, rim: [RIMS[key]], cracks: CRACKS[key], shade: SHADE[key], pockets: key.startsWith("face") ? [[key === "face" ? 150 : 870, 880, 4], [key === "face" ? 860 : 170, 620, 3.2]] : key === "peak" ? [[520, 560, 3]] : [] });
+const boulder = (key, d, uid, seed) =>
+  rock(`r-${uid}`, d, [-40, -40, 1064, 1064], seed, { tone: [19, 12], light: 0.8, step: 170, line: 3, rimColor: LIP, rimWidth: 12, rim: RIMS[key] ? [RIMS[key]] : [], pockets: key.startsWith("face") ? [[160, 860, 4], [880, 560, 3.4]] : [] });
 
 function topRock(ic, uid) {
   const [bx, by, bw] = ic.box, k = 1024 / bw;
-  const [, hy] = where(ic.pose, "armNear", [0, 38]);
+  const [, hy] = where(ic.pose, "armNear", [0, 44]);
   const y = Math.round((hy - 4 - by) * k);
-  const edge = `M-40 ${y + 40} C200 ${y + 4} 600 ${y - 10} 1064 ${y + 30}`;
-  return rock(`r-${uid}`, `${edge} L1064 1064 L-40 1064Z`, [-40, y - 40, 1064, 1064], 0, { ...STONE, rim: [edge], cracks: [`M640 ${y} C610 ${y + 160} 680 ${y + 300} 630 1064`], shade: [`M-40 ${y + 380} C400 ${y + 320} 700 ${y + 400} 1064 ${y + 360} L1064 1064 L-40 1064Z`] });
+  const d = `M-40 1064 L-40 ${y + 40} L300 ${y + 8} L700 ${y} L1064 ${y + 30} L1064 1064Z`;
+  return rock(`r-${uid}`, d, [-40, y - 40, 1064, 1064], 5, { tone: [19, 12], light: 0.8, step: 170, line: 3, rimColor: LIP, rimWidth: 12, rim: [`M-40 ${y + 40} L300 ${y + 8} L700 ${y} L1064 ${y + 30}`] });
 }
 
 function jug(ic) {
-  const [hx, hy] = where(ic.pose, "armNear", [0, 38]);
+  const [hx, hy] = where(ic.pose, "armNear", [0, 44]);
   const at = [hx + 22, hy - 26];
   const lines = [0, 1, 2].map((i) => `<path d="M${hx - 30 - i * 8} ${hy + 18 + i * 14} l-30 18" stroke="${LIP}" stroke-width="3.4" stroke-linecap="round" opacity=".7"/>`).join("");
   return { under: `<g transform="translate(${at[0]} ${at[1]}) rotate(${-ic.tilt}) scale(1.15)">${shapeJug}</g>${lines}` };
@@ -70,7 +57,7 @@ function jug(ic) {
 const shapeJug = `<path d="M-26 -6 C-26 -20 26 -20 26 -6 C26 6 16 12 0 12 C-16 12 -26 6 -26 -6Z" fill="#7D82A8" stroke="#06071A" stroke-width="2"/><path d="M-16 -4 C-10 -9 10 -9 16 -4" fill="none" stroke="#06071A" stroke-width="5" stroke-linecap="round"/><path d="M-20 -13 C-10 -17 10 -17 20 -13" fill="none" stroke="#C9CCE6" stroke-width="2" stroke-linecap="round"/>`;
 
 function slap(ic) {
-  const [hx, hy] = where(ic.pose, "armNear", [0, 34]);
+  const [hx, hy] = where(ic.pose, "armNear", [0, 40]);
   return { over: [[-26, -14], [-6, -24], [16, -20]].map(([dx, dy]) => `<path d="M${hx + 8 + dx * 0.55} ${hy - 8 + dy * 0.45} l${dx * 0.5} ${dy * 0.5}" stroke="${LIP}" stroke-width="3" stroke-linecap="round"/>`).join("") };
 }
 
@@ -89,7 +76,7 @@ export function icon(id, size = 180, { radius = true } = {}) {
     inner = roo(ic.pose, { size: 1024, box: ic.box, rim: ic.box[2] / 46, rimColor: RIM, ...extra })
       .replace(/<svg [^>]*?(viewBox="[^"]*")[^>]*>/, `<svg x="0" y="0" width="1024" height="1024" $1 preserveAspectRatio="xMidYMid slice">`);
   }
-  const back = ic.rock === "top" ? topRock(ic, uid) : boulder(ic.rock, ROCK[ic.rock], uid);
+  const back = ic.rock === "top" ? topRock(ic, uid) : boulder(ic.rock, ROCK[ic.rock], uid, 3 + id.length);
   const lipFront = ic.rock === "lip";
   if (ic.tilt) inner = `<g transform="rotate(${ic.tilt} 512 512)">${inner}</g>`;
   const r = radius ? 226 : 0;
