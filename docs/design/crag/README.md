@@ -1,8 +1,25 @@
 ## Summary
 
-Decision: Round 7 changes only the icons and polishes Today. Every icon now has a full faceted boulder behind the roo, under the moon and stars. Each pose follows real technique: Crimp curls its fingertips on a thin edge, Dyno flies at a jug, Send slaps the top, Chalk-up has its paw in the bag, and Rest hangs straight-armed with its eyes shut. The Shoe icon is the roo's own foot toeing a small foothold. A new ninth icon, Tongue, shows the roo's face in effort, tongue out and eyes narrowed, with a paw on a big round hold. The roo is bigger and its rim brighter, so each icon reads at 29 to 40 px. On Today, This Week is tighter and the moon's glow is softer.
-Screens: every image is re-rendered (63); the icon sheet, the App icon picker, the roo kit's poses and Today show this round's changes.
-Open questions: none. The kit shoe now has one velcro strap everywhere (the round 7 note asked for one), not two. Five Blocks kinds are still marked stand-ins.
+Decision: Round 9 goes back to round 7's roo, boulders, scenes and icons (round 8 is dropped) and makes three small changes. The roo is a bit cuter: a rounder, chubbier head with full cheeks, a shorter, softer snout, bigger shiny eyes, a bigger blush dot and rounder ears, with round 7's proportions and poses. The ground is dark slate crash pads, no colour, laid like the original loading screen: thick, rounded pads at slight angles, overlapping a little, in perspective. The shoes follow the original mascot: chunky and rounded, a pale upper, one black velcro strap, a dark rubber toe and sole, and a bold dark outline.
+Screens: every image is re-rendered (63); Today, Loading, the weather sheet, the icon sheet, the roo kit's poses and the model sheet show this round's changes.
+Open questions: none.
+
+## Round 9 changes
+
+- **Round 7 restored.** A separate commit puts back round 7's kit, faceted boulders, scenes, icons and images exactly as they were in cf55396f. History is not rewritten; round 8 stays in the log.
+- **Cuter roo, in the kit master** (`pack/roo.mjs`, so every pose, icon and screen follows):
+  - The side head is fuller: a round cheek fills the lower head, and the snout is shorter and rounder.
+  - The front head is a little wider than tall, with round cheeks.
+  - The eyes are larger (4.4, up from 3.8) with a bigger glint. The blush dot is bigger (6, up from 5), still one dot.
+  - The ears have rounder tips. Body, limbs and proportions are unchanged.
+- **Crash pads.** Nine thick dark-slate pads replace the five flat slabs. Each pad has a top (#1E2240), a darker thick side (#0E1027), a dark outline, a stitched border and a centre fold. They lie at slight angles, overlap a little and get bigger toward the front, so the floor reads in perspective. The chalk bag sits on a back pad.
+- **Shoes like the original mascot's.** The side view is one chunky rounded shoe: a dark rubber toe and sole (#0B0C16), a pale upper (#E9EAF4) with a bold dark outline (#06071A) and one black velcro strap. The front view is a pale upper over a dark toe cap with one black strap. The violet upper and heel tab are gone. The chalk bag's band keeps the violet (#A99CF0, new kit colour "bag band"). The Shoe icon shows the new shoe.
+- **Model sheet.** It lists the new colours (shoe upper, black strap, outline, bag band) and is now 600 px tall at 1440 so every swatch fits.
+- **Contrast.** `node contrast.mjs`: 0 failing of 56. The pads are darker than any text and sit behind the glass cards.
+
+## Round 8 (dropped)
+
+Round 8 (d265ba2e) changed the boulders to a smooth rounded roof, the floor to striped colour pads and the roo to a bean body. The owner judged it worse, and round 9 restores round 7 instead.
 
 ## Round 7 changes
 
@@ -107,10 +124,10 @@ The pack's contents, as they would move to jirathip-dev/swag:
 - **Fonts** (`fonts/`): Zilla Slab 600 and 700 (Mozilla, SIL OFL 1.1) and Inter, variable 400–600 (SIL OFL 1.1). The licences are `fonts/*-OFL.txt`.
 - **Roo kit:**
   - `pack/roo-master.svg` (every part and prop at its pivot), `pack/rig.json` (each part's parent, attach point and draw order, side and front), `pack/poses.json` (joint angles per pose) and `pack/roo.mjs` (the renderer).
-  - Colours: fur #1A1C30, far limb #111222, near arm #23263F, inner ear #4A4E78, muzzle #ECEEF8, spots #D3D7EC (chalk dust, Zz), blush #E59AB8, shoe upper #A99CF0, rubber #0B0C16, velcro strap #ECEEF8, chalk bag #E4E6F2 and the rim #7471B0. No shimmer.
+  - Colours: fur #1A1C30, far limb #111222, near arm #23263F, inner ear #4A4E78, muzzle #ECEEF8, spots #D3D7EC (chalk dust, Zz), blush #E59AB8, shoe upper #E9EAF4, rubber #0B0C16, velcro strap #0B0C16, outline #06071A, bag band #A99CF0, chalk bag #E4E6F2 and the rim #7471B0. No shimmer.
 - **Icons:** `pack/icons/*.svg`, nine at 1024 px, made from the kit by `pack/icons.mjs`.
 - **Scene:** `pack/scene.mjs`.
-  - Faceted overhangs (seeded low-poly facets lit from the moon side), pockets, cracks, a lavender rim, slabs, the bag, the moon and stars.
+  - Faceted overhangs (seeded low-poly facets lit from the moon side), pockets, cracks, a lavender rim, thick slate crash pads in perspective, the bag, the moon and stars.
   - Dawn, rain and fog layers.
   - The scene roo per weather.
   - A later scene pack (#1061) swaps the art and keeps these states.

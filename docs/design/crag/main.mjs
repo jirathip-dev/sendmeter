@@ -86,7 +86,7 @@ function mascots() {
 
 function model() {
   const sz = WIDE ? 230 : 170;
-  const sw = Object.entries({ fur: COLOURS.fur, "far limb": COLOURS.far, "near arm": COLOURS.limb, "inner ear": COLOURS.ear, muzzle: COLOURS.muzzle, spots: COLOURS.spot, blush: COLOURS.blush, "shoe upper": COLOURS.upper, rubber: COLOURS.rubber, "velcro strap": COLOURS.strap, "chalk bag": COLOURS.bag, rim: COLOURS.rim });
+  const sw = Object.entries({ fur: COLOURS.fur, "far limb": COLOURS.far, "near arm": COLOURS.limb, "inner ear": COLOURS.ear, muzzle: COLOURS.muzzle, spots: COLOURS.spot, blush: COLOURS.blush, "shoe upper": COLOURS.upper, rubber: COLOURS.rubber, "velcro strap": COLOURS.strap, outline: COLOURS.line, "bag band": COLOURS.band, "chalk bag": COLOURS.bag, rim: COLOURS.rim });
   const grid = (svg) => `<div style="position:relative;display:inline-block">${svg}<div style="position:absolute;inset:0;background:repeating-linear-gradient(180deg,transparent 0 ${sz * 64 / 240 - 1}px,rgba(185,168,255,.25) ${sz * 64 / 240 - 1}px ${sz * 64 / 240}px)"></div></div>`;
   const parts = rigJson().side;
   sheet(sheetHead("Roo model sheet", "front, side, back · proportions · colours") +

@@ -61,9 +61,15 @@ export function scene(W, H, weather = "clear", { roo: withRoo = true, seed = 7 }
   const right = `M${L(640)} 790 L${L(600)} 640 L${L(640)} 520 L${L(740)} 430 L${L(900)} 400 L${L(1080)} 440 L${L(1700)} 470 L${L(1700)} ${h} Z`;
   const back = `M${L(-800)} 700 L${L(-200)} 560 L${L(200)} 600 L${L(500)} 540 L${L(820)} 600 L${L(1200)} 520 L${L(1800)} 620 L${L(1800)} ${h} L${L(-800)} ${h}Z`;
   const ground = `M${L(-800)} 760 L${L(1800)} 760 L${L(1800)} ${h} L${L(-800)} ${h}Z`;
-  const slabs = [[180, 812, 170, 44, -4], [370, 834, 200, 52, 3], [600, 806, 150, 40, -6], [260, 900, 220, 60, 2], [520, 905, 180, 50, -3]]
-    .map(([x, y, sw, sh, a]) => `<g transform="translate(${L(x)} ${y}) rotate(${a})"><rect x="${-sw / 2}" y="${-sh / 2}" width="${sw}" height="${sh}" rx="10" fill="#171A33" stroke="#05061A" stroke-width="3"/><path d="M${-sw / 2 + 10} ${-sh / 2 + 3} H${sw / 2 - 10}" stroke="hsl(236 22% 30%)" stroke-width="2" stroke-linecap="round"/></g>`).join("");
-  const bag = `<g transform="translate(${L(640)} 792)"><path d="M-14 0 C-16 18 -12 26 0 26 C12 26 16 18 14 0Z" fill="#232743" stroke="#05061A" stroke-width="2.5"/><rect x="-15" y="-5" width="30" height="7" rx="3.5" fill="#2E3356" stroke="#05061A" stroke-width="2"/></g>`;
+  const pad = ([x, y, sw, sd, a, k]) => {
+    const t = 16 * k, top = `<rect x="${-sw / 2}" y="${-sd / 2}" width="${sw}" height="${sd}" rx="${18}"/>`;
+    const flat = (dy, inner) => `<g transform="translate(${L(x)} ${y + dy}) scale(${k} ${k * 0.42}) rotate(${a})">${inner}</g>`;
+    return flat(t, `<g fill="#0E1027" stroke="#04051A" stroke-width="${7}">${top}</g>`)
+      + flat(t * 0.5, `<g fill="#0E1027">${top}</g>`)
+      + flat(0, `<g fill="#1E2240" stroke="#04051A" stroke-width="${6}">${top}</g><rect x="${-sw / 2 + 14}" y="${-sd / 2 + 10}" width="${sw - 28}" height="${sd - 20}" rx="12" fill="none" stroke="hsl(236 22% 27%)" stroke-width="3"/><path d="M0 ${-sd / 2 + 6} V${sd / 2 - 6}" stroke="#121530" stroke-width="5"/>`);
+  };
+  const slabs = [[170, 790, 210, 150, -8, 0.82], [560, 786, 190, 140, 10, 0.78], [-40, 830, 230, 160, 6, 0.9], [360, 828, 240, 170, -4, 0.95], [710, 846, 220, 150, -12, 0.95], [110, 906, 260, 180, 4, 1.15], [470, 918, 270, 190, -6, 1.2], [-200, 900, 240, 170, -10, 1.1], [820, 930, 240, 170, 8, 1.15]].map(pad).join("");
+  const bag = `<g transform="translate(${L(585)} 770)"><path d="M-14 0 C-16 18 -12 26 0 26 C12 26 16 18 14 0Z" fill="#232743" stroke="#05061A" stroke-width="2.5"/><rect x="-15" y="-5" width="30" height="7" rx="3.5" fill="#2E3356" stroke="#05061A" stroke-width="2"/></g>`;
 
   const glow = weather === "dawn"
     ? `<linearGradient id="dg" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#FF9CC8" stop-opacity=".75"/><stop offset=".45" stop-color="#B58BFF" stop-opacity=".35"/><stop offset="1" stop-color="#A88BFF" stop-opacity="0"/></linearGradient>`

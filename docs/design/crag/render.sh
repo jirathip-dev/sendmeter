@@ -29,7 +29,7 @@ if [ -z "${KEEP:-}" ]; then
   shot mascots-390 390,1180 "s=mascots"
   shot mascots-1440 1440,800 "s=mascots"
   shot model-390 390,900 "s=model"
-  shot model-1440 1440,520 "s=model"
+  shot model-1440 1440,600 "s=model"
   shot watch-390 390,640 "s=watch"
   shot watch-1440 1440,400 "s=watch"
 fi

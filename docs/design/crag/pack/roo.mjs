@@ -7,9 +7,11 @@ export const COLOURS = {
   spot: "#D3D7EC",
   blush: "#E59AB8",
   nose: "#0A0A12",
-  upper: "#A99CF0",
+  upper: "#E9EAF4",
   rubber: "#0B0C16",
-  strap: "#ECEEF8",
+  strap: "#0B0C16",
+  line: "#06071A",
+  band: "#A99CF0",
   bag: "#E4E6F2",
   rim: "#7471B0",
 };
@@ -25,33 +27,33 @@ const shapes = {
   head: (v) => {
     if (v === "back") return `<circle cx="0" cy="-30" r="32"/>`;
     if (v === "front")
-      return `<circle cx="0" cy="-30" r="32"/>
-      <g data-detail=""><ellipse cx="0" cy="-17" rx="15" ry="11" fill="${C.muzzle}"/><ellipse cx="0" cy="-22" rx="5.4" ry="4" fill="${C.nose}"/>
+      return `<path d="M0 -63 C22 -63 35 -48 35 -30 C35 -10 20 2 0 2 C-20 2 -35 -10 -35 -30 C-35 -48 -22 -63 0 -63Z"/>
+      <g data-detail=""><ellipse cx="0" cy="-16" rx="14" ry="10.5" fill="${C.muzzle}"/><ellipse cx="0" cy="-21" rx="5" ry="3.8" fill="${C.nose}"/>
       <path d="M-5 -14 Q0 -10 5 -14" fill="none" stroke="${C.nose}" stroke-width="1.8" stroke-linecap="round"/>
-      <circle data-eye="" cx="-12" cy="-36" r="3.8" fill="${C.nose}"/><circle data-eye="" cx="12" cy="-36" r="3.8" fill="${C.nose}"/>
-      <circle data-glint="" cx="-11" cy="-37.4" r="1.2" fill="#fff"/><circle data-glint="" cx="13" cy="-37.4" r="1.2" fill="#fff"/>
-      <circle data-blush="" cx="-21" cy="-21" r="5" fill="${C.blush}"/><circle data-blush="" cx="21" cy="-21" r="5" fill="${C.blush}"/></g>`;
-    return `<circle cx="0" cy="-30" r="32"/><ellipse cx="26" cy="-20" rx="17" ry="14"/>
-      <g data-detail=""><ellipse cx="30" cy="-20" rx="13" ry="11" fill="${C.muzzle}"/>
-      <ellipse cx="40" cy="-24" rx="5" ry="4" fill="${C.nose}"/>
-      <path d="M28 -13 Q33 -9 38 -13" fill="none" stroke="${C.nose}" stroke-width="1.8" stroke-linecap="round"/>
-      <circle data-eye="" cx="14" cy="-38" r="3.8" fill="${C.nose}"/><circle data-glint="" cx="15" cy="-39.4" r="1.2" fill="#fff"/>
-      <circle data-blush="" cx="5" cy="-16" r="5" fill="${C.blush}"/></g>`;
+      <circle data-eye="" cx="-12" cy="-33" r="4.4" fill="${C.nose}"/><circle data-eye="" cx="12" cy="-33" r="4.4" fill="${C.nose}"/>
+      <circle data-glint="" cx="-10.8" cy="-34.6" r="1.5" fill="#fff"/><circle data-glint="" cx="13.2" cy="-34.6" r="1.5" fill="#fff"/>
+      <circle data-blush="" cx="-22" cy="-19" r="6" fill="${C.blush}"/><circle data-blush="" cx="22" cy="-19" r="6" fill="${C.blush}"/></g>`;
+    return `<circle cx="0" cy="-31" r="32"/><circle cx="4" cy="-15" r="17"/><ellipse cx="23" cy="-19" rx="15" ry="13.5"/>
+      <g data-detail=""><ellipse cx="26" cy="-19" rx="11.5" ry="10.5" fill="${C.muzzle}"/>
+      <ellipse cx="35" cy="-23" rx="4.6" ry="3.8" fill="${C.nose}"/>
+      <path d="M24 -13 Q29 -9.5 34 -13" fill="none" stroke="${C.nose}" stroke-width="1.8" stroke-linecap="round"/>
+      <circle data-eye="" cx="13" cy="-36" r="4.4" fill="${C.nose}"/><circle data-glint="" cx="14.4" cy="-37.6" r="1.5" fill="#fff"/>
+      <circle data-blush="" cx="4" cy="-16" r="6" fill="${C.blush}"/></g>`;
   },
-  ear: () => `<ellipse cx="0" cy="-20" rx="13" ry="21"/><g data-detail=""><ellipse cx="0" cy="-19" rx="7" ry="13" fill="${C.ear}"/></g>`,
+  ear: () => `<path d="M0 -41 C9 -41 14 -30 14 -18 C14 -6 8 1 0 1 C-8 1 -14 -6 -14 -18 C-14 -30 -9 -41 0 -41Z"/><g data-detail=""><ellipse cx="0" cy="-19" rx="7.5" ry="12.5" fill="${C.ear}"/></g>`,
   arm: () => `<path d="M-7 0 L-7.5 34 A8.5 8.5 0 0 0 9.5 34 L7 0 A7 7 0 0 0 -7 0Z"/>`,
   thigh: () => `<ellipse cx="6" cy="12" rx="19" ry="22" transform="rotate(-20 6 12)"/>`,
   shin: () => `<path d="M-6 0 L-5 16 A5 5 0 0 0 5 16 L6 0 A6 6 0 0 0 -6 0Z"/>`,
   shoe: (v) => v === "front" || v === "back"
-    ? `<path d="M-11 2 C-12 -11 12 -11 11 2 C11 12 -11 12 -11 2Z" fill="${C.rubber}"/><g data-detail=""><path d="M-9 0 C-10 -9 10 -9 9 0 C6 3 -6 3 -9 0Z" fill="${C.upper}"/><path d="M-8 -4 L8 -4" stroke="${C.strap}" stroke-width="3" stroke-linecap="round"/></g>`
-    : `<g transform="scale(1.2)"><path d="M-6 -12 C-12 -10 -13 4 -9 11 C-2 13 8 10 16 10 C22 10 27 12 30 11 C33 9 31 3 26 0 C20 -4 12 -6 7 -11 C3 -15 -2 -14 -6 -12Z" fill="${C.rubber}"/>
-    <g data-detail=""><path d="M-7 -10 L-12 -17 C-12 -20 -8 -21 -6 -19 L-3 -12Z" fill="${C.upper}"/><path d="M-5 -10 C-10 -7 -10 2 -7 6 C0 7 9 5 16 6 C19 4 20 1 19 -2 C14 -4 9 -7 6 -10 C2 -13 -2 -12 -5 -10Z" fill="${C.upper}"/>
-    <path d="M3 -11 L6 5" stroke="${C.strap}" stroke-width="5" stroke-linecap="round"/></g></g>`,
+    ? `<path d="M-12 2 C-13 -12 13 -12 12 2 C12 12 -12 12 -12 2Z" fill="${C.rubber}"/><g data-detail=""><path d="M-9.5 -1 C-10 -10 10 -10 9.5 -1 C6 1 -6 1 -9.5 -1Z" fill="${C.upper}" stroke="${C.line}" stroke-width="1.8" stroke-linejoin="round"/><path d="M-8.5 -5 L8.5 -5" stroke="${C.strap}" stroke-width="4" stroke-linecap="round"/></g>`
+    : `<g transform="scale(1.2)"><path d="M-8 -11 C-13 -8 -13 8 -8 12 L23 12 C31 12 33 3 27 -1 C21 -5 12 -6 5 -11 C1 -14 -4 -14 -8 -11Z" fill="${C.rubber}"/>
+    <g data-detail=""><path d="M-7 -9.5 C-11 -6 -11 3 -8 5.5 L17 5.5 C21.5 5.5 22 1.5 18.5 -0.5 C13 -3 9 -4.5 4.5 -9 C1 -12 -3.5 -12 -7 -9.5Z" fill="${C.upper}" stroke="${C.line}" stroke-width="1.8" stroke-linejoin="round"/>
+    <path d="M1.5 -9 L5.5 3.5" stroke="${C.strap}" stroke-width="5.5" stroke-linecap="round"/><path d="M-9 8.6 H25" stroke="#2A2D48" stroke-width="1.4" stroke-linecap="round"/></g></g>`,
   tail: () => `<path d="M4 -16 C-18 -14 -40 0 -54 18 C-58 24 -53 30 -47 26 C-32 16 -16 12 4 12Z"/>`,
 };
 
 const PROPS = {
-  bag: `<g transform="translate(-8 4)"><path d="M-11 0 C-12 14 -10 22 0 22 C10 22 12 14 11 0Z" fill="${C.bag}"/><rect x="-12" y="-4" width="24" height="6" rx="3" fill="${C.upper}"/><circle cx="-3" cy="-10" r="4" fill="${C.spot}" opacity=".6"/><circle cx="5" cy="-14" r="3" fill="${C.spot}" opacity=".45"/></g>`,
+  bag: `<g transform="translate(-8 4)"><path d="M-11 0 C-12 14 -10 22 0 22 C10 22 12 14 11 0Z" fill="${C.bag}"/><rect x="-12" y="-4" width="24" height="6" rx="3" fill="${C.band}"/><circle cx="-3" cy="-10" r="4" fill="${C.spot}" opacity=".6"/><circle cx="5" cy="-14" r="3" fill="${C.spot}" opacity=".45"/></g>`,
   hold: `<path d="M-16 -2 C-14 -12 12 -14 18 -4 C20 2 12 6 0 6 C-10 6 -18 4 -16 -2Z" fill="#5A5F7E"/>`,
   bar: `<rect x="-60" y="-8" width="120" height="10" rx="5" fill="#5A5F7E"/>`,
   bolt: `<path d="M2 -26 L-10 0 L0 0 L-4 22 L12 -6 L2 -6 L8 -26Z" fill="${C.muzzle}"/>`,
@@ -63,7 +65,7 @@ const PROPS = {
   rail: `<g><rect x="-44" y="-7" width="88" height="15" rx="7" fill="#7D82A8" stroke="#06071A" stroke-width="2"/><path d="M-38 -4 H38" stroke="#C9CCE6" stroke-width="2" stroke-linecap="round"/></g>`,
   sloper: `<g><circle r="30" fill="#7D82A8" stroke="#06071A" stroke-width="2"/><path d="M-22 -14 A26 26 0 0 1 14 -24" fill="none" stroke="#C9CCE6" stroke-width="3" stroke-linecap="round"/></g>`,
   foothold: `<g><path d="M-14 4 C-14 -4 -6 -7 4 -7 C12 -7 16 -2 16 4Z" fill="#7D82A8" stroke="#06071A" stroke-width="1.6"/><path d="M-11 -2 C-6 -6 6 -6.5 13 -3" fill="none" stroke="#C9CCE6" stroke-width="1.2" stroke-linecap="round"/></g>`,
-  bagFront: `<g><path d="M-15 -2 C-17 18 -13 28 0 28 C13 28 17 18 15 -2Z" fill="${C.bag}"/><rect x="-16" y="-6" width="32" height="7" rx="3.5" fill="${C.upper}"/><circle cx="-6" cy="-14" r="4.5" fill="${C.spot}" opacity=".65"/><circle cx="6" cy="-20" r="3.4" fill="${C.spot}" opacity=".5"/><circle cx="-1" cy="-27" r="2.4" fill="${C.spot}" opacity=".4"/></g>`,
+  bagFront: `<g><path d="M-15 -2 C-17 18 -13 28 0 28 C13 28 17 18 15 -2Z" fill="${C.bag}"/><rect x="-16" y="-6" width="32" height="7" rx="3.5" fill="${C.band}"/><circle cx="-6" cy="-14" r="4.5" fill="${C.spot}" opacity=".65"/><circle cx="6" cy="-20" r="3.4" fill="${C.spot}" opacity=".5"/><circle cx="-1" cy="-27" r="2.4" fill="${C.spot}" opacity=".4"/></g>`,
   zz: `<g fill="none" stroke="${C.spot}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M0 0h10L0 10h10"/><path d="M14 -16h7l-7 7h7" stroke-width="1.8"/></g>`,
 };
 
