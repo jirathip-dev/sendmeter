@@ -63,7 +63,7 @@ Round 8 (d265ba2e) changed the boulders to a smooth rounded roof, the floor to s
 - **Icons** (`pack/icons/*.svg`, 1024 px). Nine close crops of the kit (round 7: Tongue added, each on a faceted boulder under the moon):
   - **Profile** (side bust under the moon) is the new default and replaces the original icon.
   - **Crimp** (a paw on a hold), **Chalk-up** (the bag and a dusty paw), **Dyno** (the arm reaching out of frame), **Shoe** (a climbing shoe on a foothold), **Peek** (over a boulder lip), **Rest** (a straight-arm hang, eyes shut), **Send** (a slap on the top) and **Tongue** (an effort face on a sloper).
-- **The scene.** The crag is faceted, overhanging granite like the original cave art: a big leaning overhang with pockets and cracks, a second boulder, back ridges, flagstone pads and a chalk bag, under the moon and stars.
+- **The scene.** The crag is faceted, overhanging granite like the original cave art: a big leaning overhang with pockets and cracks, a second boulder, back ridges, thick slate crash pads and a chalk bag, under the moon and stars.
   - The rim of each boulder catches a soft lavender moonlight line (not shimmer).
   - The weather shows inside the night: a dawn glow, rain streaks with a hazy moon, and fog bands.
   - The scene roo reacts: it watches the moon (clear), chalks up (dawn), shelters (rain) and sleeps (fog). On the phone it sits on the overhang's lip, inside Today's window; at 1440 it stands on the ground.
