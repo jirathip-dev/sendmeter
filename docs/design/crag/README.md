@@ -1,8 +1,26 @@
 ## Summary
 
-Decision: Round 9 goes back to round 7's roo, boulders, scenes and icons (round 8 is dropped) and makes three small changes. The roo is a bit cuter: a rounder, chubbier head with full cheeks, a shorter, softer snout, bigger shiny eyes, a bigger blush dot and rounder ears, with round 7's proportions and poses. The ground is dark slate crash pads, no colour, laid like the original loading screen: thick, rounded pads at slight angles, overlapping a little, in perspective. The shoes follow the original mascot: chunky and rounded, a pale upper, one black velcro strap, a dark rubber toe and sole, and a bold dark outline.
-Screens: every image is re-rendered (63); Today, Loading, the weather sheet, the icon sheet, the roo kit's poses and the model sheet show this round's changes.
+Decision: Round 10 changes only the roo's arms, hands and shoes, in the roo kit master, so every pose, scene and icon follows. The arms are short and stubby. Each grows out of the body in the same fur, with no line at the shoulder and the rim only along its outer edge. It tapers from wide at the body to a slim wrist and ends in a small slim paw, and on a hold two short finger lines curl over the edge, with the hold moved in close. The shoes are aggressive bouldering shoes in the crag palette: a downturned pointy toe, a black knit upper, a big rubber toe cap wrapping over the top, one wide velcro strap, a heel pull loop, and a black rubber heel cup with a separate lavender band sweeping from the loop down to the sole and along the side. They carry no logos or text.
+Screens: every image is re-rendered (63); the roo kit's poses, the model sheet, the icon sheet (Crimp, Rest, Tongue, Dyno, Send and Shoe most of all), Loading and Today show this round's changes.
 Open questions: none.
+
+## Round 10 changes
+
+- **Arms, in the kit master** (`pack/roo.mjs`, the `arm` part):
+  - **Growing out of the body.** The near arm is now the same fur as the body (the lighter "near arm" colour is gone) and has no outline of its own, so the shoulder doesn't show. A thin rim line runs only along the arm's outer edge, from below the shoulder to the paw. In front view both arms carry it, each on its own outer side.
+  - **Short and stubby.** Each arm is about 0.45 head long, down from 0.75, so the paw reaches the chest or chin. Stand holds its paws at the chest, Send's paw is at the chin, and Dyno's paws reach up past the nose.
+  - **Soft taper.** Each arm is wide where it leaves the body and narrows with a slight curve to a slim wrist.
+  - **A small slim paw.** It is a narrow rounded tip, barely wider than the wrist. The old separate finger piece (three round knuckles) is gone.
+- **Holds closer, fingers on them.** Every hold is drawn behind the paw, right at its tip: the crimp edge, the rest-hang jugs, the tongue sloper, the Force tab's bar (now at cheek height, behind the head) and the Dyno icon's jug. On a hold, two short finger lines curl over the edge. The chalk bag sits at the shorter paw.
+- **Shoes, in the kit master** (the `shoe` part; side and front views):
+  - **Shape.** A downturned, pointed toe and a thick rubber sole.
+  - **Upper.** Black knit (#262840) with faint knit stitches.
+  - **Toe cap.** A big black rubber cap (#0B0C16) wraps the toe and runs over the top.
+  - **Strap.** One wide velcro strap (#14162A) with stitching.
+  - **Heel.** A rubber heel pull loop sits at the back. The heel reads as two parts: a black rubber heel cup at the back, and in front of it a clear lavender band (#A99CF0). The band sweeps from the loop down to the sole and runs forward along the side. A dark line sets it apart from both the cup and the knit.
+  - The front view is a knit upper over the black toe cap, with the wide strap and a lavender side panel on each side. The pale upper and the bold outline from round 9 are gone.
+- **Model sheet.** The colours are now knit upper, stitching, rubber, velcro strap, heel band, outline, bag band, chalk bag and rim. The "near arm" and "shoe upper" swatches are gone. The proportions line gives the new arm length, and the image is 660 px tall at 1440 so every swatch fits.
+- **Contrast.** `node contrast.mjs`: 0 failing of 56. Nothing behind text changed.
 
 ## Round 9 changes
 

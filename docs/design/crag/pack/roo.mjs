@@ -1,16 +1,17 @@
 export const COLOURS = {
   fur: "#1A1C30",
   far: "#111222",
-  limb: "#23263F",
   ear: "#4A4E78",
   muzzle: "#ECEEF8",
   spot: "#D3D7EC",
   blush: "#E59AB8",
   nose: "#0A0A12",
-  upper: "#E9EAF4",
+  knit: "#262840",
+  stitch: "#3A3D5E",
   rubber: "#0B0C16",
-  strap: "#0B0C16",
+  strap: "#14162A",
   line: "#06071A",
+  panel: "#A99CF0",
   band: "#A99CF0",
   bag: "#E4E6F2",
   rim: "#7471B0",
@@ -18,6 +19,8 @@ export const COLOURS = {
 
 const C = COLOURS;
 const RIM = 5;
+let rimNow = C.rim;
+const ARM = { tip: 29.5, hand: 25 };
 
 const shapes = {
   body: (v) =>
@@ -41,14 +44,23 @@ const shapes = {
       <circle data-blush="" cx="4" cy="-16" r="6" fill="${C.blush}"/></g>`;
   },
   ear: () => `<path d="M0 -41 C9 -41 14 -30 14 -18 C14 -6 8 1 0 1 C-8 1 -14 -6 -14 -18 C-14 -30 -9 -41 0 -41Z"/><g data-detail=""><ellipse cx="0" cy="-19" rx="7.5" ry="12.5" fill="${C.ear}"/></g>`,
-  arm: () => `<path d="M-7 0 L-7.5 34 A8.5 8.5 0 0 0 9.5 34 L7 0 A7 7 0 0 0 -7 0Z"/>`,
+  arm: (v, n = {}) => {
+    const k = n.outer || 1, x = (d) => d.replace(/(-?[\d.]+) (-?[\d.]+)/g, (_, a, b) => `${+a * k} ${b}`);
+    const line = n.outer ? `<g data-detail=""><path d="${x("M9.6 5 C8.8 11 7.2 15 5.6 19 C7.6 22.5 7 28.6 1.5 29.5")}" fill="none" stroke="${rimNow}" stroke-width="2" stroke-linecap="round"/></g>` : "";
+    return `<path d="${x("M-10 0 C-10 -8 10 -8 10 0 C10 8 7 14 5.5 19 C7.5 22 7 28.5 1.5 29.5 C-3.5 30 -5 26 -3.8 20 C-5 13 -9 7 -10 0Z")}"/>${line}`;
+  },
   thigh: () => `<ellipse cx="6" cy="12" rx="19" ry="22" transform="rotate(-20 6 12)"/>`,
   shin: () => `<path d="M-6 0 L-5 16 A5 5 0 0 0 5 16 L6 0 A6 6 0 0 0 -6 0Z"/>`,
   shoe: (v) => v === "front" || v === "back"
-    ? `<path d="M-12 2 C-13 -12 13 -12 12 2 C12 12 -12 12 -12 2Z" fill="${C.rubber}"/><g data-detail=""><path d="M-9.5 -1 C-10 -10 10 -10 9.5 -1 C6 1 -6 1 -9.5 -1Z" fill="${C.upper}" stroke="${C.line}" stroke-width="1.8" stroke-linejoin="round"/><path d="M-8.5 -5 L8.5 -5" stroke="${C.strap}" stroke-width="4" stroke-linecap="round"/></g>`
-    : `<g transform="scale(1.2)"><path d="M-8 -11 C-13 -8 -13 8 -8 12 L23 12 C31 12 33 3 27 -1 C21 -5 12 -6 5 -11 C1 -14 -4 -14 -8 -11Z" fill="${C.rubber}"/>
-    <g data-detail=""><path d="M-7 -9.5 C-11 -6 -11 3 -8 5.5 L17 5.5 C21.5 5.5 22 1.5 18.5 -0.5 C13 -3 9 -4.5 4.5 -9 C1 -12 -3.5 -12 -7 -9.5Z" fill="${C.upper}" stroke="${C.line}" stroke-width="1.8" stroke-linejoin="round"/>
-    <path d="M1.5 -9 L5.5 3.5" stroke="${C.strap}" stroke-width="5.5" stroke-linecap="round"/><path d="M-9 8.6 H25" stroke="#2A2D48" stroke-width="1.4" stroke-linecap="round"/></g></g>`,
+    ? `<path d="M-12 2 C-13 -12 13 -12 12 2 C12 12 -12 12 -12 2Z" fill="${C.rubber}"/><g data-detail=""><path d="M-9 -3 C-9.5 -10 9.5 -10 9 -3 C5 -1 -5 -1 -9 -3Z" fill="${C.knit}"/><path d="M-12 1 C-11 -2 -9 -3 -8 -3 L-8 6 C-10 6 -12 4 -12 1Z" fill="${C.panel}"/><path d="M12 1 C11 -2 9 -3 8 -3 L8 6 C10 6 12 4 12 1Z" fill="${C.panel}"/><path d="M-9.5 -5.5 L9.5 -5.5" stroke="${C.strap}" stroke-width="5" stroke-linecap="round"/><path d="M-9.5 -5.5 L9.5 -5.5" stroke="${C.stitch}" stroke-width="1" stroke-linecap="round" stroke-dasharray="1.5 2"/><path d="M-11 4 C-6 7 6 7 11 4" fill="none" stroke="${C.stitch}" stroke-width="1.2"/></g>`
+    : `<g transform="scale(1.2)"><path d="M-7.6 -8.4 C-10.4 -14.6 -4.6 -16.4 -4.2 -9.8Z" fill="${C.rubber}"/><path d="M-7 -8 C-11 -6 -13 0 -12 5 C-11.5 9 -8 11 -4 10.6 C4 10 14 12 22 14.5 C26 15.6 29 15 28.5 12.5 C27.5 8 21 3 14 -0.5 C9 -3 5 -7 3 -9 C0 -10.6 -4 -10.2 -7 -8Z" fill="${C.rubber}"/>
+    <g data-detail=""><path d="M-6.6 -13 C-6.8 -14.6 -5 -14.8 -4.9 -12.8" fill="none" stroke="${C.stitch}" stroke-width="1.1" stroke-linecap="round"/>
+    <path d="M-3.6 -9.6 C0 -10 2 -9 3 -8.6 C6 -6 9 -3 13 -1 C10.5 2 9.5 5 10 8 L-1.2 7.6 C-2.2 2 -3 -4 -3.6 -9.6Z" fill="${C.knit}"/>
+    <path d="M-1 -5.6 l1.6 1.2 l1.6 -1.2 M0 -0.6 l1.6 1.2 l1.6 -1.2 M5.4 1.4 l1.6 1.2 l1.6 -1.2 M1 4.4 l1.6 1.2 l1.6 -1.2" fill="none" stroke="${C.stitch}" stroke-width=".8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M13 -1 C10.5 2 9.5 5 10 8" fill="none" stroke="${C.line}" stroke-width="1.2" stroke-linecap="round"/><path d="M15.5 0.6 C20 3 24.5 6.6 26.6 10.2" fill="none" stroke="${C.stitch}" stroke-width="1.2" stroke-linecap="round"/>
+    <path d="M-7.4 -8.4 C-6.6 -9 -5.6 -9.4 -4.6 -9.6 C-4.4 -3 -3.2 2.6 -1.4 7.4 C3 7.9 7 8.1 10 8 L10.2 10 C6 10.2 0 10.2 -4.6 10.3 C-6.4 4 -7.2 -2 -7.4 -8.4Z" fill="${C.panel}" stroke="${C.line}" stroke-width="1" stroke-linejoin="round"/>
+    <path d="M2.4 -8.6 L6.6 5" stroke="${C.line}" stroke-width="6.6" stroke-linecap="round"/><path d="M2.4 -8.6 L6.6 5" stroke="${C.strap}" stroke-width="5" stroke-linecap="round"/><path d="M3.1 -6.4 L5.9 2.8" stroke="${C.stitch}" stroke-width=".9" stroke-linecap="round" stroke-dasharray="1.4 1.6"/>
+    <path d="M-10.6 8.4 C-6 10.8 6 11.2 21.4 14" fill="none" stroke="#2A2D48" stroke-width="1.1" stroke-linecap="round"/></g></g>`,
   tail: () => `<path d="M4 -16 C-18 -14 -40 0 -54 18 C-58 24 -53 30 -47 26 C-32 16 -16 12 4 12Z"/>`,
 };
 
@@ -60,7 +72,7 @@ const PROPS = {
   star: `<path d="M0 -14 L4 -4 L14 -3 L6 4 L9 14 L0 8 L-9 14 L-6 4 L-14 -3 L-4 -4Z" fill="${C.muzzle}"/>`,
   dust: `<g fill="${C.spot}" opacity=".7"><circle cx="-10" cy="-6" r="3"/><circle cx="8" cy="-10" r="2.4"/><circle cx="2" cy="-18" r="2"/><circle cx="14" cy="0" r="1.8"/><circle cx="-4" cy="-24" r="1.4"/></g>`,
   edge: `<g><rect x="-22" y="-3" width="44" height="7" rx="2" fill="#7D82A8" stroke="#06071A" stroke-width="1.6"/><path d="M-20 -2.6 H20" stroke="#C9CCE6" stroke-width="1.4" stroke-linecap="round"/></g>`,
-  fingers: `<g fill="${C.limb}" stroke="${C.rim}" stroke-width="1.6"><circle cx="-6" cy="-4" r="4.2"/><circle cx="1" cy="-5" r="4.2"/><circle cx="8" cy="-4" r="4.2"/><ellipse cx="-1" cy="0" rx="9" ry="4" transform="rotate(-8)"/></g>`,
+  fingers: `<g fill="none" stroke="RIMNOW" stroke-width="1.5" stroke-linecap="round"><path d="M-2.2 -5 C-2.8 -1.5 -2.4 1.6 -0.6 3.2"/><path d="M1.6 -5 C1 -1.5 1.4 1.6 3.2 3.2"/></g>`,
   jug: `<g><path d="M-26 -6 C-26 -20 26 -20 26 -6 C26 6 16 12 0 12 C-16 12 -26 6 -26 -6Z" fill="#7D82A8" stroke="#06071A" stroke-width="2"/><path d="M-16 -4 C-10 -9 10 -9 16 -4" fill="none" stroke="#06071A" stroke-width="5" stroke-linecap="round"/><path d="M-20 -13 C-10 -17 10 -17 20 -13" fill="none" stroke="#C9CCE6" stroke-width="2" stroke-linecap="round"/></g>`,
   rail: `<g><rect x="-44" y="-7" width="88" height="15" rx="7" fill="#7D82A8" stroke="#06071A" stroke-width="2"/><path d="M-38 -4 H38" stroke="#C9CCE6" stroke-width="2" stroke-linecap="round"/></g>`,
   sloper: `<g><circle r="30" fill="#7D82A8" stroke="#06071A" stroke-width="2"/><path d="M-22 -14 A26 26 0 0 1 14 -24" fill="none" stroke="#C9CCE6" stroke-width="3" stroke-linecap="round"/></g>`,
@@ -85,7 +97,7 @@ const RIG = {
       ] },
     { id: "thighNear", shape: "thigh", at: [2, -10],
       kids: [{ id: "shinNear", shape: "shin", at: [12, 28], behind: true, kids: [{ id: "shoeNear", shape: "shoe", at: [0, 20] }] }] },
-    { id: "armNear", shape: "arm", at: [18, -44] },
+    { id: "armNear", shape: "arm", at: [18, -44], outer: 1 },
   ],
 };
 
@@ -95,8 +107,8 @@ const FRONT = {
     { id: "tail", shape: "tail", at: [-8, -6], behind: true },
     { id: "thighFar", shape: "thigh", at: [-16, -10], kids: [{ id: "shinFar", shape: "shin", at: [4, 28], behind: true, kids: [{ id: "shoeFar", shape: "shoe", at: [0, 20] }] }] },
     { id: "thighNear", shape: "thigh", at: [16, -10], kids: [{ id: "shinNear", shape: "shin", at: [4, 28], behind: true, kids: [{ id: "shoeNear", shape: "shoe", at: [0, 20] }] }] },
-    { id: "armFar", shape: "arm", at: [-26, -48] },
-    { id: "armNear", shape: "arm", at: [26, -48] },
+    { id: "armFar", shape: "arm", at: [-26, -48], outer: -1 },
+    { id: "armNear", shape: "arm", at: [26, -48], outer: 1 },
     { id: "head", shape: "head", at: [0, -58], kids: [
       { id: "earFar", shape: "ear", at: [-16, -52] },
       { id: "earNear", shape: "ear", at: [16, -52] },
@@ -108,20 +120,20 @@ const Z = { body: 0, head: 0, earFar: -16, earNear: 8, armFar: 0, armNear: 0, th
 const pose = (o) => ({ ...Z, ...o });
 
 export const POSES = {
-  stand: { label: "Stand", angles: pose({ body: 4, armFar: 14, armNear: -8, thighFar: 4, shinFar: 10, shoeFar: -14, thighNear: -6, shinNear: 18, shoeNear: -12, tail: -6 }) },
+  stand: { label: "Stand", angles: pose({ body: 4, armFar: -30, armNear: -62, thighFar: 4, shinFar: 10, shoeFar: -14, thighNear: -6, shinNear: 18, shoeNear: -12, tail: -6 }) },
   bust: { label: "Bust", angles: pose({ body: 4, head: -4, armFar: 14, armNear: 34, thighFar: 4, shinFar: 10, shoeFar: -14, thighNear: -6, shinNear: 18, shoeNear: -12, tail: -6 }) },
   sit: { label: "Sit", angles: pose({ body: -2, armFar: -30, armNear: -40, thighFar: -70, shinFar: 92, shoeFar: -24, thighNear: -64, shinNear: 84, shoeNear: -20, tail: -14 }), y: 23 },
   chalk: { label: "Chalk-up", angles: pose({ body: 2, head: 22, earFar: 6, earNear: 12, armFar: -30, armNear: -12, thighFar: 4, shinFar: 10, shoeFar: -14, thighNear: -6, shinNear: 18, shoeNear: -12, tail: -6 }) },
   crimp: { label: "Crimp", angles: pose({ body: -4, head: -4, earFar: -14, earNear: -6, armFar: -168, armNear: -108, thighFar: -40, shinFar: 60, shoeFar: -40, thighNear: 20, shinNear: 10, shoeNear: -10, tail: 20 }),
-    props: [{ name: "edge", on: "armNear", at: [0, 46] }, { name: "fingers", on: "armNear", at: [0, 41] }] },
-  dyno: { label: "Dyno", angles: pose({ body: 18, head: -34, earFar: -40, earNear: -20, armFar: -150, armNear: -122, thighFar: 30, shinFar: 10, shoeFar: 18, thighNear: 0, shinNear: 40, shoeNear: 10, tail: 34 }) },
+    props: [{ name: "edge", on: "armNear", at: [0, 27.5], back: true }, { name: "fingers", on: "armNear", at: [0, 25], local: true }] },
+  dyno: { label: "Dyno", angles: pose({ body: 18, head: -34, earFar: -40, earNear: -20, armFar: -176, armNear: -150, thighFar: 30, shinFar: 10, shoeFar: 18, thighNear: 0, shinNear: 40, shoeNear: 10, tail: 34 }) },
   topout: { label: "Top-out slap", angles: pose({ body: 8, head: -14, earFar: -10, earNear: -2, armFar: -150, armNear: -96, thighFar: -30, shinFar: 50, shoeFar: -20, thighNear: -10, shinNear: 30, shoeNear: -10, tail: 20 }) },
   deadhang: { label: "Rest hang", view: "front", eyes: "shut", angles: pose({ head: 4, earFar: -2, earNear: 14, thighFar: 4, shinFar: -4, shoeFar: 0, thighNear: -4, shinNear: 4, shoeNear: 0, tail: 6, armFar: 152, armNear: -152 }), y: 19,
-    props: [{ name: "jug", on: "armFar", at: [0, 50] }, { name: "jug", on: "armNear", at: [0, 50] }, { name: "fingers", on: "armFar", at: [0, 41] }, { name: "fingers", on: "armNear", at: [0, 41] }, { name: "zz", on: "head", at: [30, -70] }] },
+    props: [{ name: "jug", on: "armFar", at: [0, 31], back: true }, { name: "jug", on: "armNear", at: [0, 31], back: true }, { name: "fingers", on: "armFar", at: [0, 25], local: true }, { name: "fingers", on: "armNear", at: [0, 25], local: true }, { name: "zz", on: "head", at: [30, -70] }] },
   tongue: { label: "Tongue", view: "front", eyes: "focus", face: "tongue", angles: pose({ head: -6, earFar: -14, earNear: 6, armFar: 20, armNear: -128, thighFar: 6, shinFar: -6, shoeFar: 0, thighNear: -6, shinNear: 6, shoeNear: 0, tail: 0 }), y: 19,
-    props: [{ name: "sloper", on: "armNear", at: [0, 62] }, { name: "fingers", on: "armNear", at: [0, 40], rot: -30 }] },
+    props: [{ name: "sloper", on: "armNear", at: [0, 46], back: true }, { name: "fingers", on: "armNear", at: [0, 25], local: true }] },
   hang: { label: "Hang", view: "front", angles: pose({ earFar: -12, earNear: 12, thighFar: 4, shinFar: -6, shoeFar: 0, thighNear: -6, shinNear: 6, shoeNear: 0, tail: 8, armFar: 160, armNear: -160 }), y: 19,
-    props: [{ name: "bar", on: "body", at: [0, -88] }] },
+    props: [{ name: "bar", on: "body", at: [0, -76], back: true }] },
   flash: { label: "Flash", view: "front", angles: pose({ earFar: -12, earNear: 12, thighFar: 6, shinFar: -6, shoeFar: 0, thighNear: -6, shinNear: 6, shoeNear: 0, tail: 0, armFar: 150, armNear: -150 }), y: 19,
     props: [{ name: "bolt", on: "body", at: [0, -146] }] },
   send: { label: "Send", angles: pose({ body: 2, head: -10, armFar: 18, armNear: -132, thighFar: 4, shinFar: 10, shoeFar: -14, thighNear: -6, shinNear: 18, shoeNear: -12, tail: -6 }) },
@@ -139,25 +151,29 @@ export const POSES = {
 function draw(node, p, pass, view, acc = 0) {
   const a = p.angles[node.id] || 0;
   const tf = `translate(${node.at[0]} ${node.at[1]}) rotate(${a})`;
-  let shape = shapes[node.shape](view);
+  let shape = shapes[node.shape](view, node);
   if (node.shape === "head" && p.eyes === "shut") shape = shape.replace(/<circle data-glint=""[^>]*\/>/g, "").replace(/<circle data-eye="" cx="(-?[\d.]+)" cy="(-?[\d.]+)"[^>]*\/>/g, (_, x, y) => `<path d="M${+x - 4} ${y} Q${x} ${+y + 3.5} ${+x + 4} ${y}" fill="none" stroke="${C.nose}" stroke-width="2" stroke-linecap="round"/>`);
   if (node.shape === "head" && p.eyes === "focus") shape = shape.replace(/<circle data-glint=""[^>]*\/>/g, "").replace(/<circle data-eye="" cx="(-?[\d.]+)" cy="(-?[\d.]+)"[^>]*\/>/g, (_, x, y) => `<path d="M${+x - 4.6} ${+y - 1} Q${x} ${+y + 3.2} ${+x + 4.6} ${+y - 1}Z" fill="${C.nose}"/><path d="M${+x - 5.5} ${+y - 2.6} L${+x + 5} ${+y - 0.4}" stroke="${C.nose}" stroke-width="2.2" stroke-linecap="round"/>`);
   if (node.shape === "head" && p.face === "tongue") shape = shape.replace(/<path d="M-5 -14 Q0 -10 5 -14"[^>]*\/>/, `<path d="M-6 -13.5 Q-1 -10.5 4 -13" fill="none" stroke="${C.nose}" stroke-width="1.8" stroke-linecap="round"/><path d="M3 -13.6 C4 -8 6 -4 9.5 -4.6 C13 -5.4 12.6 -10 9 -14.4Z" fill="#F27FA6" stroke="${C.nose}" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.6 -11 L8.4 -6.6" stroke="#C9567E" stroke-width="1.2" stroke-linecap="round"/>`);
   if (view === "back" && node.shape === "head") shape = shapes.head("back");
-  const fill = node.far ? C.far : node.id === "armNear" ? C.limb : C.fur;
+  const fill = node.far ? C.far : C.fur;
   const body = pass === "fill"
-    ? `<g fill="${fill}"${node.id === "armNear" ? ` stroke="${C.rim}" stroke-width="2"` : ""}>${shape}</g>`
+    ? `<g fill="${fill}">${shape}</g>`
     : `<g>${shape.replace(/<g data-detail="">[\s\S]*?<\/g>/g, "")}</g>`;
   const kids = node.kids || [];
   const order = view === "back" ? (k) => !k.behind : (k) => k.behind;
   const back = kids.filter(order).map((k) => draw(k, p, pass, view, acc + a)).join("");
   const front = kids.filter((k) => !order(k)).map((k) => draw(k, p, pass, view, acc + a)).join("");
-  const props = pass === "fill" ? (p.props || []).filter((q) => q.on === node.id).map((q) => `<g transform="translate(${q.at[0]} ${q.at[1]}) rotate(${(q.rot || 0) - acc - a})">${PROPS[q.name]}</g>`).join("") : "";
-  return `<g data-part="${node.id}" transform="${tf}">${back}${body}${front}${props}</g>`;
+  const prop = (q) => `<g transform="translate(${q.at[0]} ${q.at[1]}) rotate(${(q.rot || 0) - (q.local ? 0 : acc + a)})">${PROPS[q.name].replaceAll("RIMNOW", rimNow)}</g>`;
+  const mine = pass === "fill" ? (p.props || []).filter((q) => q.on === node.id) : [];
+  const under = mine.filter((q) => q.back).map(prop).join("");
+  const props = mine.filter((q) => !q.back).map(prop).join("");
+  return `<g data-part="${node.id}" transform="${tf}">${under}${back}${body}${front}${props}</g>`;
 }
 
 export function roo(name = "stand", { size = 160, flip = false, edge = true, rim = RIM, box = [-120, -200, 240, 300], label, under = "", over = "", rimColor = C.rim } = {}) {
   const p = POSES[name] || POSES.stand;
+  rimNow = rimColor;
   const view = p.view || "side";
   const rig = view === "side" ? RIG : FRONT;
   const ry = p.y || 0;
@@ -210,4 +226,4 @@ export function rigJson() {
   return { side: flat(RIG, null, []), front: flat(FRONT, null, []) };
 }
 
-POSES.chalk.props = [{ name: "bagFront", on: "body", at: where("chalk", "armNear", [1, 30]) }];
+POSES.chalk.props = [{ name: "bagFront", on: "body", at: where("chalk", "armNear", [1, 20]) }];

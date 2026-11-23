@@ -86,7 +86,7 @@ function mascots() {
 
 function model() {
   const sz = WIDE ? 230 : 170;
-  const sw = Object.entries({ fur: COLOURS.fur, "far limb": COLOURS.far, "near arm": COLOURS.limb, "inner ear": COLOURS.ear, muzzle: COLOURS.muzzle, spots: COLOURS.spot, blush: COLOURS.blush, "shoe upper": COLOURS.upper, rubber: COLOURS.rubber, "velcro strap": COLOURS.strap, outline: COLOURS.line, "bag band": COLOURS.band, "chalk bag": COLOURS.bag, rim: COLOURS.rim });
+  const sw = Object.entries({ fur: COLOURS.fur, "far limb": COLOURS.far, "inner ear": COLOURS.ear, muzzle: COLOURS.muzzle, spots: COLOURS.spot, blush: COLOURS.blush, "knit upper": COLOURS.knit, stitching: COLOURS.stitch, rubber: COLOURS.rubber, "velcro strap": COLOURS.strap, "heel band": COLOURS.panel, outline: COLOURS.line, "bag band": COLOURS.band, "chalk bag": COLOURS.bag, rim: COLOURS.rim });
   const grid = (svg) => `<div style="position:relative;display:inline-block">${svg}<div style="position:absolute;inset:0;background:repeating-linear-gradient(180deg,transparent 0 ${sz * 64 / 240 - 1}px,rgba(185,168,255,.25) ${sz * 64 / 240 - 1}px ${sz * 64 / 240}px)"></div></div>`;
   const parts = rigJson().side;
   sheet(sheetHead("Roo model sheet", "front, side, back · proportions · colours") +
@@ -95,9 +95,9 @@ function model() {
       <div style="min-width:${WIDE ? 380 : 340}px;font-size:13px;line-height:1.55">
         <div style="font:700 13px var(--display);letter-spacing:.1em;color:var(--mute);margin-bottom:6px">PROPORTIONS</div>
         <div>Head = 1 unit (64, a circle). Standing height 3.2 heads with ears, 2.6 without.</div>
-        <div>Body 1.1 heads, a round belly. Ears 0.65 head, round-tipped. Arms 0.75 head, stubby.</div>
+        <div>Body 1.1 heads, a round belly. Ears 0.65 head, round-tipped. Arms 0.45 head, stubby: wide at the body, a slim wrist, a small paw.</div>
         <div>Legs 0.9 head: a round haunch, a short shin, a big climbing shoe. Tail 0.9 head.</div>
-        <div>Flat fills, no inner lines. One thin flat rim (${COLOURS.rim}) round the silhouette and the near arm.</div>
+        <div>Flat fills, no inner lines. One thin flat rim (${COLOURS.rim}) round the silhouette and along each front arm's outer edge.</div>
         <div style="font:700 13px var(--display);letter-spacing:.1em;color:var(--mute);margin:12px 0 6px">PARTS (${parts.length})</div>
         <div style="color:var(--mute)">${parts.map((p) => p.part).join(" · ")}</div>
         <div style="font:700 13px var(--display);letter-spacing:.1em;color:var(--mute);margin:12px 0 6px">COLOURS</div>

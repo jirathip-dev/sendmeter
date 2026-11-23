@@ -42,22 +42,22 @@ const boulder = (key, d, uid, seed) =>
 
 function topRock(ic, uid) {
   const [bx, by, bw] = ic.box, k = 1024 / bw;
-  const [, hy] = where(ic.pose, "armNear", [0, 44]);
+  const [, hy] = where(ic.pose, "armNear", [0, 30]);
   const y = Math.round((hy - 4 - by) * k);
   const d = `M-40 1064 L-40 ${y + 40} L300 ${y + 8} L700 ${y} L1064 ${y + 30} L1064 1064Z`;
   return rock(`r-${uid}`, d, [-40, y - 40, 1064, 1064], 5, { tone: [19, 12], light: 0.8, step: 170, line: 3, rimColor: LIP, rimWidth: 12, rim: [`M-40 ${y + 40} L300 ${y + 8} L700 ${y} L1064 ${y + 30}`] });
 }
 
 function jug(ic) {
-  const [hx, hy] = where(ic.pose, "armNear", [0, 44]);
-  const at = [hx + 22, hy - 26];
+  const [hx, hy] = where(ic.pose, "armNear", [0, 28]);
+  const at = [hx + 12, hy - 16];
   const lines = [0, 1, 2].map((i) => `<path d="M${hx - 30 - i * 8} ${hy + 18 + i * 14} l-30 18" stroke="${LIP}" stroke-width="3.4" stroke-linecap="round" opacity=".7"/>`).join("");
   return { under: `<g transform="translate(${at[0]} ${at[1]}) rotate(${-ic.tilt}) scale(1.15)">${shapeJug}</g>${lines}` };
 }
 const shapeJug = `<path d="M-26 -6 C-26 -20 26 -20 26 -6 C26 6 16 12 0 12 C-16 12 -26 6 -26 -6Z" fill="#7D82A8" stroke="#06071A" stroke-width="2"/><path d="M-16 -4 C-10 -9 10 -9 16 -4" fill="none" stroke="#06071A" stroke-width="5" stroke-linecap="round"/><path d="M-20 -13 C-10 -17 10 -17 20 -13" fill="none" stroke="#C9CCE6" stroke-width="2" stroke-linecap="round"/>`;
 
 function slap(ic) {
-  const [hx, hy] = where(ic.pose, "armNear", [0, 40]);
+  const [hx, hy] = where(ic.pose, "armNear", [0, 26]);
   return { over: [[-26, -14], [-6, -24], [16, -20]].map(([dx, dy]) => `<path d="M${hx + 8 + dx * 0.55} ${hy - 8 + dy * 0.45} l${dx * 0.5} ${dy * 0.5}" stroke="${LIP}" stroke-width="3" stroke-linecap="round"/>`).join("") };
 }
 

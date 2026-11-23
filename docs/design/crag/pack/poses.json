@@ -7,8 +7,8 @@
       "head": 0,
       "earFar": -16,
       "earNear": 8,
-      "armFar": 14,
-      "armNear": -8,
+      "armFar": -30,
+      "armNear": -62,
       "thighFar": 4,
       "shinFar": 10,
       "shoeFar": -14,
@@ -89,8 +89,8 @@
         "name": "bagFront",
         "on": "body",
         "at": [
-          25.718865824273884,
-          -13.974421035495883
+          23.98238404760458,
+          -23.822498565617963
         ]
       }
     ],
@@ -121,16 +121,18 @@
         "on": "armNear",
         "at": [
           0,
-          46
-        ]
+          27.5
+        ],
+        "back": true
       },
       {
         "name": "fingers",
         "on": "armNear",
         "at": [
           0,
-          41
-        ]
+          25
+        ],
+        "local": true
       }
     ],
     "eyes": "open"
@@ -143,8 +145,8 @@
       "head": -34,
       "earFar": -40,
       "earNear": -20,
-      "armFar": -150,
-      "armNear": -122,
+      "armFar": -176,
+      "armNear": -150,
       "thighFar": 30,
       "shinFar": 10,
       "shoeFar": 18,
@@ -204,32 +206,36 @@
         "on": "armFar",
         "at": [
           0,
-          50
-        ]
+          31
+        ],
+        "back": true
       },
       {
         "name": "jug",
         "on": "armNear",
         "at": [
           0,
-          50
-        ]
+          31
+        ],
+        "back": true
       },
       {
         "name": "fingers",
         "on": "armFar",
         "at": [
           0,
-          41
-        ]
+          25
+        ],
+        "local": true
       },
       {
         "name": "fingers",
         "on": "armNear",
         "at": [
           0,
-          41
-        ]
+          25
+        ],
+        "local": true
       },
       {
         "name": "zz",
@@ -267,17 +273,18 @@
         "on": "armNear",
         "at": [
           0,
-          62
-        ]
+          46
+        ],
+        "back": true
       },
       {
         "name": "fingers",
         "on": "armNear",
         "at": [
           0,
-          40
+          25
         ],
-        "rot": -30
+        "local": true
       }
     ],
     "eyes": "focus"
@@ -307,8 +314,9 @@
         "on": "body",
         "at": [
           0,
-          -88
-        ]
+          -76
+        ],
+        "back": true
       }
     ],
     "eyes": "open"
