@@ -4,12 +4,12 @@ const M = q.get("m") || "night";
 const W = innerWidth, H = innerHeight;
 const WIDE = W > 700;
 document.documentElement.dataset.mode = M;
-const LIGHT = ["day", "golden", "fog"].includes(M);
+const WEATHER = { night: "Clear", dawn: "Dawn", rain: "Rain", fog: "Fog" };
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 const ICON = {
   today: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 19 9 8l4 6 3-4 6 9z"/><circle cx="17" cy="5" r="2"/></svg>`,
-  session: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.4 7.2C7 5.6 6.4 2.6 7.2 1.6c1.2.4 2.4 3 2.6 5zM15.6 7.2c1.4-1.6 2-4.6 1.2-5.6-1.2.4-2.4 3-2.6 5z"/><ellipse cx="12" cy="9.6" rx="5" ry="4.4"/><ellipse cx="12" cy="17.4" rx="4.6" ry="5"/><ellipse cx="9" cy="22.6" rx="3" ry="1.3"/><ellipse cx="15" cy="22.6" rx="3" ry="1.3"/><path d="M15.8 19.6c3 .4 5.6-.4 6-3.4.1-.8-1-.9-1.1-.1-.3 1.9-2 2.4-4.6 2z"/></svg>`,
+  session: `<svg viewBox="0 0 24 24" fill="currentColor"><ellipse cx="8.9" cy="4.4" rx="1.9" ry="3.2" transform="rotate(-16 8.9 4.4)"/><ellipse cx="15.1" cy="4.4" rx="1.9" ry="3.2" transform="rotate(16 15.1 4.4)"/><ellipse cx="12" cy="9.6" rx="5" ry="4.4"/><ellipse cx="12" cy="17.4" rx="4.6" ry="5"/><ellipse cx="9" cy="22.6" rx="3" ry="1.3"/><ellipse cx="15" cy="22.6" rx="3" ry="1.3"/><path d="M15.8 19.6c3 .4 5.6-.4 6-3.4.1-.8-1-.9-1.1-.1-.3 1.9-2 2.4-4.6 2z"/></svg>`,
   board: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="5" r="2.3"/><circle cx="12" cy="5" r="2.3"/><circle cx="19" cy="5" r="2.3"/><circle cx="5" cy="12" r="2.3"/><circle cx="12" cy="12" r="2.3"/><circle cx="19" cy="12" r="2.3"/><circle cx="5" cy="19" r="2.3"/><circle cx="12" cy="19" r="2.3"/><circle cx="19" cy="19" r="2.3"/></svg>`,
   force: `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="1" width="20" height="2.4" rx="1.2"/><path d="M8.6 12.4 6.6 3.4h2.2l1.8 7.8zM15.4 12.4l2-9h-2.2l-1.8 7.8z"/><path d="M9.6 10.2 8.8 6.6l2 2.6zM14.4 10.2l.8-3.6-2 2.6z"/><ellipse cx="12" cy="11.4" rx="4" ry="3.5"/><ellipse cx="12" cy="17.4" rx="3.6" ry="4"/><ellipse cx="10.4" cy="22.2" rx="1.5" ry="1.6"/><ellipse cx="13.6" cy="22.2" rx="1.5" ry="1.6"/><path d="M15 19.6c2.4.8 3.8 2.2 4 3.8l-1.3.3c-.4-1.4-1.4-2.3-3-2.9z"/></svg>`,
   log: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 3.5h12.5v17H6.5A1.5 1.5 0 0 1 5 19z"/><path d="M5 17.5h12.5M8.5 3.5v14"/></svg>`,
@@ -44,32 +44,40 @@ function chip() {
     <span class="fr"><span>Friction</span>78</span></div>`;
 }
 
-function moonGauge(v, size) {
-  const r = 70, cx = 100, cy = 92, lit = v / 100;
+const IRI_STOPS = `<stop offset="0" stop-color="#C2A8FF"/><stop offset=".5" stop-color="#8FE6E0"/><stop offset="1" stop-color="#FFB3DC"/>`;
+let gid = 0;
+function moonPath(cx, cy, r, lit) {
   const k = Math.cos(Math.PI * lit) * r;
-  const d = `M${cx} ${cy - r} A${r} ${r} 0 0 1 ${cx} ${cy + r} A${Math.abs(k)} ${r} 0 0 ${lit > 0.5 ? 1 : 0} ${cx} ${cy - r}Z`;
+  return `M${cx} ${cy - r} A${r} ${r} 0 0 1 ${cx} ${cy + r} A${Math.abs(k).toFixed(2)} ${r} 0 0 ${lit > 0.5 ? 1 : 0} ${cx} ${cy - r}Z`;
+}
+
+function moonGauge(v, size) {
+  const r = 70, cx = 100, cy = 92, lit = v / 100, id = `mi${gid++}`;
   const ink = css("--ink"), acc = css("--accent-ink");
-  const phase = (f, x) => { const kk = Math.cos(Math.PI * f) * 9; return `<g transform="translate(${x} 196)"><circle r="9" fill="${css("--moon-dark")}" stroke="${css("--track")}"/><path d="M0 -9 A9 9 0 0 1 0 9 A${Math.abs(kk)} 9 0 0 ${f > 0.5 ? 1 : 0} 0 -9Z" fill="${css("--moon-lit")}"/></g>`; };
+  const phase = (f, x, on) => `<g transform="translate(${x} 196)"><circle r="9" fill="${css("--moon-dark")}" stroke="${on ? "url(#" + id + ")" : css("--track")}" stroke-width="${on ? 2.5 : 1}"/><path d="${moonPath(0, 0, 9, f)}" fill="url(#${id})"/></g>`;
   const zone = v >= 75 ? "SEND" : v >= 40 ? "TRAIN" : "REST";
   return `<svg class="gauge" viewBox="0 0 200 232" width="${size * 0.7}" height="${size * 0.81}" role="img" aria-label="Ready ${v}, ${zone}">
-    <defs><radialGradient id="mg"><stop offset=".55" stop-color="${css("--glow")}"/><stop offset="1" stop-color="rgba(255,169,77,0)"/></radialGradient></defs>
-    <circle cx="${cx}" cy="${cy}" r="${r + 26}" fill="url(#mg)"/>
-    <circle cx="${cx}" cy="${cy}" r="${r}" fill="${css("--moon-dark")}"/>
-    <path d="${d}" fill="${css("--moon-lit")}"/>
-    <circle cx="${cx + 30}" cy="${cy - 34}" r="8" fill="#000" opacity=".07"/><circle cx="${cx + 46}" cy="${cy + 30}" r="6" fill="#000" opacity=".07"/><circle cx="${cx - 14}" cy="${cy + 44}" r="5" fill="#000" opacity=".07"/>
+    <defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">${IRI_STOPS}</linearGradient>
+    <radialGradient id="${id}g"><stop offset=".6" stop-color="${css("--glow")}"/><stop offset="1" stop-color="rgba(160,130,255,0)"/></radialGradient>
+    <filter id="${id}s"><feTurbulence type="fractalNoise" baseFrequency=".05" numOctaves="2" seed="4"/><feColorMatrix values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .35 0"/><feComposite in2="SourceGraphic" operator="in"/></filter></defs>
+    <circle cx="${cx}" cy="${cy}" r="${r + 26}" fill="url(#${id}g)"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="${css("--moon-dark")}" stroke="rgba(238,240,250,.14)"/>
+    <path d="${moonPath(cx, cy, r, lit)}" fill="url(#${id})"/>
+    <path d="${moonPath(cx, cy, r, lit)}" fill="#fff" filter="url(#${id}s)"/>
+    <circle cx="${cx + 30}" cy="${cy - 34}" r="8" fill="#120F2E" opacity=".1"/><circle cx="${cx + 46}" cy="${cy + 30}" r="6" fill="#120F2E" opacity=".1"/><circle cx="${cx - 14}" cy="${cy + 44}" r="5" fill="#120F2E" opacity=".1"/>
     <text x="${cx + 6}" y="${cy + 16}" text-anchor="middle" font-family="Barlow Condensed" font-weight="800" font-size="48" fill="${css("--moon-num")}">${v}</text>
-    ${phase(0.25, 40)}${phase(0.6, 100)}${phase(1, 160)}
+    ${phase(0.25, 40, zone === "REST")}${phase(0.6, 100, zone === "TRAIN")}${phase(1, 160, zone === "SEND")}
     ${[["REST", 40], ["TRAIN", 100], ["SEND", 160]].map(([t, x]) => `<text x="${x}" y="226" text-anchor="middle" font-family="Barlow Condensed" font-weight="800" font-size="13" letter-spacing="1" fill="${t === zone ? acc : ink}" opacity="${t === zone ? 1 : 0.75}">${t}</text>`).join("")}
   </svg>`;
 }
 
 function dial(label, val, sub, f, size = 54) {
-  const cx = 28, cy = 28, r = 21, a = 135 + f * 270;
-  const [nx, ny] = P(cx, cy, r - 5, a);
-  return `<div class="dial"><svg viewBox="0 0 56 56" width="${size}" height="${size}">
-    <path d="${arc(cx, cy, r, 135, 405)}" fill="none" stroke="${css("--track")}" stroke-width="6" stroke-linecap="round"/>
-    <path d="${arc(cx, cy, r, 135, a)}" fill="none" stroke="${css("--accent")}" stroke-width="6" stroke-linecap="round"/>
-    <line x1="${cx}" y1="${cy}" x2="${nx}" y2="${ny}" stroke="${css("--ink")}" stroke-width="3" stroke-linecap="round"/><circle cx="${cx}" cy="${cy}" r="4" fill="${css("--ink")}"/>
+  const id = `sm${gid++}`;
+  return `<div class="dial"><svg viewBox="0 0 56 56" width="${size}" height="${size}" role="img" aria-label="${label} ${val}">
+    <defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">${IRI_STOPS}</linearGradient></defs>
+    <circle cx="28" cy="28" r="26" fill="${css("--glow")}" opacity=".35"/>
+    <circle cx="28" cy="28" r="20" fill="${css("--moon-dark")}" stroke="rgba(238,240,250,.16)"/>
+    <path d="${moonPath(28, 28, 20, f)}" fill="url(#${id})"/>
   </svg><div><small>${label}</small><b>${val}</b><span class="mute" style="font-size:12px">${sub}</span></div></div>`;
 }
 
@@ -80,7 +88,7 @@ function meterCard(size) {
 
 function weekCard() {
   const days = ["M", "T", "W", "T", "F", "S", "S"], on = [1, 1, 0, 1, 0, 1, 0];
-  return card(`${hd("This week", "4 sessions · 12 sends")}<div class="row" style="justify-content:space-between;padding:2px 4px">${days.map((d, i) => `<div style="text-align:center"><div style="width:24px;height:24px;border-radius:50%;margin:0 auto 6px;${on[i] ? "background:var(--accent);box-shadow:0 0 14px var(--glow)" : "border:1.5px solid var(--track)"}"></div><span class="mute small">${d}</span></div>`).join("")}</div>`);
+  return card(`${hd("This week", "4 sessions · 12 sends")}<div class="row" style="justify-content:space-between;padding:2px 4px">${days.map((d, i) => `<div style="text-align:center"><div style="width:24px;height:24px;border-radius:50%;margin:0 auto 6px;${on[i] ? "background:var(--iri);box-shadow:0 0 14px var(--glow)" : "border:1.5px solid var(--track)"}"></div><span class="mute small">${d}</span></div>`).join("")}</div>`);
 }
 
 const TICKS = [["V5", "Moon Arete", "Pine Gully · today", "Flash", "on"], ["V4", "Slab Crack", "Pine Gully · today", "Send", "good"], ["6B+", "Warm-up 3", "Home board · Fri", "Send", "good"], ["V6", "Night Shift", "Pine Gully · 14 Nov", "Project", ""]];
@@ -115,20 +123,20 @@ function forceCurve(wd, ht) {
   const pk = pts.reduce((a, b) => (b[1] > a[1] ? b : a));
   const ink = css("--ink"), acc = css("--accent");
   return `<svg viewBox="0 0 ${wd} ${ht}" width="100%" height="${ht}">
-    <defs><linearGradient id="fc" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${acc}" stop-opacity=".35"/><stop offset="1" stop-color="${acc}" stop-opacity="0"/></linearGradient></defs>
+    <defs><linearGradient id="fc" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${acc}" stop-opacity=".35"/><stop offset="1" stop-color="${acc}" stop-opacity="0"/></linearGradient><linearGradient id="fl" x1="0" y1="0" x2="1" y2="0">${IRI_STOPS}</linearGradient></defs>
     ${[0, 20, 40, 60].map((k) => `<text x="${L - 6}" y="${Y(k) + 4}" text-anchor="end" font-family="Barlow" font-size="11" fill="${ink}" opacity=".75">${k}</text><path d="M${L} ${Y(k)} H${R}" stroke="${ink}" opacity=".08"/>`).join("")}
     ${[0, 2, 4, 6, 8, 10].map((s) => `<text x="${X(s / 10)}" y="${ht - 8}" text-anchor="middle" font-family="Barlow" font-size="11" fill="${ink}" opacity=".75">${s}s</text>`).join("")}
     <path d="M${L} ${Y(50.6)} H${R}" stroke="${ink}" stroke-width="1.2" stroke-dasharray="5 4" opacity=".55"/>
     <text x="${R}" y="${Y(50.6) + 16}" text-anchor="end" font-family="Barlow" font-size="12" fill="${ink}" opacity=".8">best 50.6</text>
     <path d="${d} L${X(1)} ${B} L${L} ${B}Z" fill="url(#fc)"/>
-    <path d="${d}" fill="none" stroke="${acc}" stroke-width="3" stroke-linejoin="round" style="filter:drop-shadow(0 0 6px ${acc})"/>
-    <circle cx="${X(pk[0])}" cy="${Y(pk[1])}" r="7" fill="${acc}" stroke="${css("--on-accent")}" stroke-width="2"/>
+    <path d="${d}" fill="none" stroke="url(#fl)" stroke-width="3" stroke-linejoin="round" style="filter:drop-shadow(0 0 6px ${acc})"/>
+    <circle cx="${X(pk[0])}" cy="${Y(pk[1])}" r="7" fill="#8FE6E0" stroke="${css("--on-accent")}" stroke-width="2"/>
   </svg>`;
 }
 
 function nav(active) {
   if (!WIDE) return `<nav class="tabbar glass">${TABS.map((k) => `<a class="${k === active ? "on" : ""}">${ICON[k]}${cap(k)}</a>`).join("")}</nav>`;
-  return `<nav class="side glass"><div class="brand"><img src="icons/current.png" width="34" height="34" style="border-radius:9px">Sendmeter</div>${[...TABS, "settings"].map((k) => `<a class="${k === active ? "on" : ""}">${ICON[k]}${cap(k)}</a>`).join("")}<div class="foot mute small" style="padding:0 10px">${{ night: "Night", day: "Day", dawn: "Dawn", golden: "Golden hour", rain: "Rain", fog: "Fog" }[M]} · Automatic</div></nav>`;
+  return `<nav class="side glass"><div class="brand"><img src="icons/current.png" width="34" height="34" style="border-radius:9px">Sendmeter</div>${[...TABS, "settings"].map((k) => `<a class="${k === active ? "on" : ""}">${ICON[k]}${cap(k)}</a>`).join("")}<div class="foot mute small" style="padding:0 10px">${WEATHER[M]} · Pine Gully</div></nav>`;
 }
 
 function topBar(title, opts = {}) {
@@ -161,7 +169,7 @@ const SCREENS = {
     return { tab: "today", dim: true, html: SCREENS.today().html.replace('class="content"', 'class="content" style="opacity:.35"').replace('class="main"', 'class="main" style="opacity:.35;left:auto;width:440px"') + `<div class="scrim"></div>` + sheet };
   },
   session() {
-    const live = card(`<div class="row"><div><div class="h">Session · Pine Gully</div><div class="num" style="font-size:52px;margin-top:4px">0:42:10</div></div><span class="sp"></span>${mascot("chalk", WIDE ? 96 : 74, { hand: "headlamp" })}</div>
+    const live = card(`<div class="row"><div><div class="h">Session · Pine Gully</div><div class="num" style="font-size:52px;margin-top:4px">0:42:10</div></div><span class="sp"></span>${mascot("chalk", WIDE ? 96 : 74, {})}</div>
       ${tiles([["14", "Tries"], ["5", "Sends"], ["V5", "Top"], ["128", "Heart"]], 4)}`);
     const now = card(`${hd("On now")}<div class="row"><span class="grade" style="font-size:28px">V6</span><span class="n" style="font:700 18px var(--f-body)">Night Shift<small class="mute" style="display:block;font:400 13px var(--f-body)">Try 4 · last one a whipper</small></span></div>
       <div class="btns" style="margin-top:14px"><button class="btn">${ICON.check}Sent</button><button class="btn ghost">Fell</button></div>`);
@@ -207,8 +215,8 @@ const SCREENS = {
   log() {
     const st = card(`${hd("November", "‹ ›")}${tiles([["14", "Sessions"], ["63", "Sends"], ["V6", "Top"]], 3)}`);
     const grades = [["V6", 2, 6], ["V5", 9, 14], ["V4", 18, 21], ["V3", 22, 24], ["V2", 12, 12]];
-    const pyr = card(`${hd("Grades", "sends / tries")}${grades.map(([g, s, t]) => `<div class="row" style="margin:7px 0"><span class="grade" style="font-size:16px;min-width:30px">${g}</span><div style="flex:1;height:14px;border-radius:7px;background:var(--fill);position:relative"><div style="position:absolute;inset:0 auto 0 0;width:${(t / 24) * 100}%;border-radius:7px;background:var(--track)"></div><div style="position:absolute;inset:0 auto 0 0;width:${(s / 24) * 100}%;border-radius:7px;background:var(--accent);box-shadow:0 0 10px var(--glow)"></div></div><span class="mute small" style="min-width:44px;text-align:right">${s}/${t}</span></div>`).join("")}`);
-    const cal = card(`${hd("Days")}<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">${[...Array(30)].map((_, i) => { const v = [0, 2, 0, 3, 0, 1, 0][i % 7] * ((i * 7) % 5 ? 1 : 0); return `<div style="width:26px;height:26px;margin:0 auto;border-radius:50%;background:${v ? "var(--accent)" : "var(--fill)"};opacity:${v ? 0.35 + v * 0.22 : 1}"></div>`; }).join("")}</div>`);
+    const pyr = card(`${hd("Grades", "sends / tries")}${grades.map(([g, s, t]) => `<div class="row" style="margin:7px 0"><span class="grade" style="font-size:16px;min-width:30px">${g}</span><div style="flex:1;height:14px;border-radius:7px;background:var(--fill);position:relative"><div style="position:absolute;inset:0 auto 0 0;width:${(t / 24) * 100}%;border-radius:7px;background:var(--track)"></div><div style="position:absolute;inset:0 auto 0 0;width:${(s / 24) * 100}%;border-radius:7px;background:var(--iri);box-shadow:0 0 10px var(--glow)"></div></div><span class="mute small" style="min-width:44px;text-align:right">${s}/${t}</span></div>`).join("")}`);
+    const cal = card(`${hd("Days")}<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">${[...Array(30)].map((_, i) => { const v = [0, 2, 0, 3, 0, 1, 0][i % 7] * ((i * 7) % 5 ? 1 : 0); return `<div style="width:26px;height:26px;margin:0 auto;border-radius:50%;background:${v ? "var(--iri)" : "var(--fill)"};opacity:${v ? 0.35 + v * 0.22 : 1}"></div>`; }).join("")}</div>`);
     const sess = card(`${hd("Sessions")}${list([["Sun 22", "Pine Gully · 0:42", "5 sends"], ["Fri 20", "Home wall · 1:10", "8 sends"], ["Wed 18", "Pine Gully · 2:05", "11 sends"]].map(([a, b, c]) => `<span class="n">${a}<small>${b}</small></span><span class="sp"></span><span class="val">${c}</span><span class="chev">›</span>`))}`);
     return { tab: "log", html: layout("Log", [[st, pyr], [cal, sess]], { right: `<span class="act acc">Logbook ›</span>` }) };
   },
@@ -219,8 +227,7 @@ const SCREENS = {
   },
   settings() {
     const row = (a, b, extra = "") => `<span class="n">${a}</span><span class="sp"></span>${b ? `<span class="val">${b}</span>` : ""}${extra || '<span class="chev">›</span>'}`;
-    const scene = card(`${hd("Scene")}${list([row("Automatic", "", '<span class="toggle on"></span>')])}<div class="mute small" style="margin:4px 0 8px">Or pin one</div><div class="chips">${["Day", "Night", "Dawn", "Golden hour", "Rain", "Fog"].map((k) => `<span>${k}</span>`).join("")}</div>
-      <div class="list" style="margin-top:8px"><div>${row("Loading screen", "Headlamp")}</div><div><span class="n">Iridescent<small>Unlocks at 100 sends · 63 so far</small></span><span class="sp"></span><span class="tag">Locked</span></div></div>`);
+    const scene = card(`${hd("Scene")}${list([row("Live weather", "", '<span class="toggle on"></span>')])}<div class="mute small" style="margin:4px 0 8px">Or pin one</div><div class="chips">${["Clear", "Dawn", "Rain", "Fog"].map((k) => `<span>${k}</span>`).join("")}</div>`);
     const look = card(`${hd("Look")}${list([`<img src="icons/current.png" width="40" height="40" style="border-radius:10px"><span class="n">App icon<small>Original</small></span><span class="sp"></span><span class="chev">›</span>`, row("Units", "kg · °C")])}`);
     const data = card(`${hd("Data")}${list([row("Apple Health", "On"), row("iCloud sync", "Off"), row("Bring over old data", ""), row("Boards", "1")])}`);
     const acct = card(`${hd("Account")}${list([row("Signed in", "Apple"), row("Help", "")])}`);
@@ -230,7 +237,7 @@ const SCREENS = {
     const sets = iconSets();
     const grp = (h, items, sz) => card(`${hd(h, items.length + "")}<div style="display:grid;grid-template-columns:repeat(${WIDE ? (items.length > 6 ? 8 : 6) : 4},1fr);gap:${WIDE ? 16 : 12}px 10px">${items.map(([html, name, on]) => `<div style="text-align:center"><div style="display:inline-block;border-radius:${sz * 0.225 + 3}px;padding:3px;${on ? "box-shadow:0 0 0 2.5px var(--accent)" : ""}">${html}</div><div class="small ${on ? "acc" : "mute"}" style="margin-top:4px">${name}</div></div>`).join("")}</div>`);
     const sz = WIDE ? 84 : 62;
-    return { tab: "settings", html: layout(WIDE ? "App icon" : "", [[WIDE ? null : topBar("App icon", { back: "Settings" }), grp("Original", [[iconImg(sets.original, sz), "Original", true]], sz), grp("Weather", sets.weather.map(([k, n]) => [stateIcon(k, sz), n]), sz), grp("Sticker", sets.sticker.map(([k, n]) => [stickerIcon(k, sz), n]), sz)]], { tpl: "1fr" }) };
+    return { tab: "settings", html: layout(WIDE ? "App icon" : "", [[WIDE ? null : topBar("App icon", { back: "Settings" }), grp("Original", [[iconImg(sets.original, sz), "Original", true]], sz), grp("Sticker", sets.sticker.map(([k, n]) => [stickerIcon(k, sz), n]), sz)]], { tpl: "1fr" }) };
   },
   pick() {
     const walls = `<div class="chips"><span class="on">Home wall · 2016</span><span>Gym · Mini 2020</span></div>`;
@@ -294,7 +301,21 @@ const SCREENS = {
     return { nav: false, dim: false, flow: true, html: WIDE ? `<div class="main">${hero}${steps}<button class="btn">Get started</button></div>` : `<div class="content" style="bottom:24px">${hero}<div style="flex:1"></div>${steps}<button class="btn">Get started</button></div>` };
   },
   loading() {
-    return { nav: false, dim: false, loading: true, html: `<div style="position:absolute;left:0;right:0;bottom:${WIDE ? 90 : 120}px;text-align:center;z-index:3"><div style="font:800 ${WIDE ? 56 : 40}px/1 var(--f-display);letter-spacing:.1em;text-transform:uppercase;color:#FFF;text-shadow:0 0 24px rgba(255,169,77,.5)">Sendmeter</div><div style="width:120px;height:6px;border-radius:3px;margin:18px auto 0;background:rgba(255,255,255,.15);overflow:hidden"><div style="width:60%;height:100%;background:var(--accent);box-shadow:0 0 10px var(--glow)"></div></div></div>` };
+    const [mx, my] = WIDE ? [1256, 107] : [372, 79];
+    const st = rnd(5);
+    const stars = [...Array(WIDE ? 26 : 12)].map((_, i) => `<circle cx="${(mx + (st() - 0.5) * (WIDE ? 420 : 150)).toFixed(0)}" cy="${(my + (st() - 0.3) * (WIDE ? 200 : 130)).toFixed(0)}" r="${(st() * 1.2 + 0.4).toFixed(1)}" fill="${["#EEF0FA", "#D9CCFF", "#C8F4F0", "#FFD6EC"][i % 4]}" opacity="${(st() * 0.5 + 0.3).toFixed(2)}"/>`).join("");
+    const stage = WIDE ? 440 : 312, cx = WIDE ? 720 : 195, cy = WIDE ? 400 : 380;
+    const ghost = WIDE ? [cx - 150, cy + 210] : [cx - 70, cy + 180];
+    const arcP = `<path d="M${ghost[0]} ${ghost[1]} Q ${ghost[0] - 20} ${cy - 40} ${cx - stage * 0.08} ${cy - stage * 0.22}" fill="none" stroke="url(#la)" stroke-width="3" stroke-dasharray="2 11" stroke-linecap="round" opacity=".8"/>`;
+    return { nav: false, dim: false, loading: true, html: `
+      <div style="position:absolute;inset:0;background:url(ref/original-cave.png) center ${WIDE ? "8%" : "57%"}/cover"></div>
+      <div style="position:absolute;inset:0;background:linear-gradient(rgba(0,0,0,.24), transparent 44%, rgba(0,0,0,.49))"></div>
+      <div style="position:absolute;inset:0;background:radial-gradient(circle at ${mx}px ${my}px, rgba(220,210,255,.5) 0 ${WIDE ? 34 : 22}px, rgba(190,160,255,.22) ${WIDE ? 50 : 32}px, rgba(140,220,230,.08) ${WIDE ? 150 : 96}px, transparent ${WIDE ? 260 : 170}px)"></div>
+      <div style="position:absolute;inset:0;background:linear-gradient(125deg, rgba(194,168,255,.5), rgba(143,230,224,.3) 45%, rgba(255,179,220,.45));mix-blend-mode:soft-light"></div>
+      <svg style="position:absolute;inset:0" width="${W}" height="${H}"><defs><linearGradient id="la" x1="0" y1="1" x2="1" y2="0">${IRI_STOPS}</linearGradient></defs>${stars}${arcP}</svg>
+      <img src="ref/original-roo.png" style="position:absolute;width:${stage * 0.62}px;left:${ghost[0] - stage * 0.31}px;top:${ghost[1] - stage * 0.4}px;opacity:.12;filter:blur(1.5px);transform:rotate(14deg)">
+      <img src="ref/original-roo.png" style="position:absolute;width:${stage}px;left:${cx - stage / 2}px;top:${cy - stage / 2}px;transform:rotate(-9deg) scale(1.02, .98);filter:drop-shadow(0 16px 18px rgba(0,0,0,.4)) drop-shadow(0 0 22px rgba(180,150,255,.35))">
+      <div style="position:absolute;left:0;right:0;bottom:${WIDE ? 90 : 120}px;text-align:center;z-index:3"><div class="iri-text" style="display:inline-block;font:800 ${WIDE ? 56 : 40}px/1 var(--f-display);letter-spacing:.1em;text-transform:uppercase;filter:drop-shadow(0 0 18px rgba(180,150,255,.45))">Sendmeter</div><div style="width:120px;height:6px;border-radius:3px;margin:18px auto 0;background:rgba(255,255,255,.15);overflow:hidden"><div style="width:60%;height:100%;background:var(--iri);box-shadow:0 0 10px var(--glow)"></div></div></div>` };
   },
 };
 
@@ -303,86 +324,63 @@ function iconImg(src, sz) { return `<img src="${src}" width="${sz}" height="${sz
 function iconSets() {
   return {
     original: "icons/current.png",
-    weather: [["day", "Day"], ["night", "Night"], ["dawn", "Dawn"], ["golden", "Golden"], ["rain", "Rain"], ["fog", "Fog"]],
     sticker: [["dyno", "Dyno"], ["crimp", "Crimp"], ["chalk", "Chalk-up"], ["flash", "Flash"], ["send", "Send"], ["fall", "Fall"], ["rest", "Rest"], ["pr", "PR"]],
   };
 }
 
-const ICON_TINT = {
-  day: ["linear-gradient(#7FB6E6, #CFE6F2 60%, #E9E4D6)", "color", 0.78, "sun"],
-  night: ["linear-gradient(#0B1430, #1C2B50)", "color", 0.35, "moon"],
-  dawn: ["linear-gradient(#3B3462, #C98A93 55%, #F5C69A)", "color", 0.7, "sunrise"],
-  golden: ["linear-gradient(#E9A55A, #F3D08C 55%, #B8804B)", "color", 0.75, "sun"],
-  rain: ["linear-gradient(#4B5866, #6E7C89)", "color", 0.7, "rain"],
-  fog: ["linear-gradient(#B9C0C2, #DADDDA)", "color", 0.72, "fog"],
-};
-
-function stateIcon(k, sz) {
-  const [grad, blend, a, sky] = ICON_TINT[k];
-  const light = k === "day" || k === "golden" || k === "fog";
-  let over = "";
-  if (sky === "sun") over = `<div style="position:absolute;right:14%;top:9%;width:20%;height:20%;border-radius:50%;background:#FFF3C4;box-shadow:0 0 ${sz * 0.12}px ${sz * 0.06}px rgba(255,236,170,.8)"></div>`;
-  if (sky === "sunrise") over = `<div style="position:absolute;right:10%;top:16%;width:22%;height:22%;border-radius:50%;background:#FFD9A8;box-shadow:0 0 ${sz * 0.14}px ${sz * 0.06}px rgba(255,190,140,.8)"></div>`;
-  if (sky === "rain") over = `<div style="position:absolute;inset:0;background:repeating-linear-gradient(105deg, transparent 0 ${sz * 0.07}px, rgba(220,232,244,.55) ${sz * 0.07}px ${sz * 0.075}px);"></div>`;
-  if (sky === "fog") over = `<div style="position:absolute;inset:0;background:linear-gradient(transparent 20%, rgba(236,238,236,.75) 55%, rgba(236,238,236,.35) 85%)"></div>`;
-  return `<div style="position:relative;width:${sz}px;height:${sz}px;border-radius:${sz * 0.225}px;overflow:hidden;isolation:isolate">
-    <img src="icons/current.png" width="${sz}" height="${sz}" style="display:block;${light ? "filter:brightness(1.9) contrast(.85)" : ""}">
-    <div style="position:absolute;inset:0;background:${grad};mix-blend-mode:${blend};opacity:${a}"></div>
-    ${light ? `<div style="position:absolute;inset:0;background:${grad};mix-blend-mode:multiply;opacity:.45"></div>` : ""}${over}</div>`;
-}
-
-const STICKER_BG = { dyno: "#1B2140", crimp: "#2B2350", chalk: "#1F3346", flash: "#3A2448", send: "#1E3A36", fall: "#3B2A2E", rest: "#22284A", pr: "#3A2E1E" };
 function stickerIcon(k, sz) {
-  const bg = STICKER_BG[k];
-  return `<div style="width:${sz}px;height:${sz}px;border-radius:${sz * 0.225}px;overflow:hidden;background:radial-gradient(circle at 84% 14%, rgba(255,240,210,.3) 0 7%, transparent 7.5%), ${bg};display:grid;place-items:end center">
-    ${rooSvg(k, sz * 0.74, { props: true })}</div>`;
+  return `<div style="position:relative;width:${sz}px;height:${sz}px;border-radius:${sz * 0.225}px;overflow:hidden;background:radial-gradient(circle at 80% 17%, #F2F0FA 0 7%, rgba(200,186,255,.35) 7.5%, transparent 18%), radial-gradient(ellipse 90% 60% at 20% 10%, rgba(160,120,255,.22), transparent 70%), #0B0E2A;display:grid;place-items:end center">
+    <div style="position:absolute;left:0;right:0;bottom:0;height:16%;background:#1A1C2E;border-top:${Math.max(1, sz * 0.012)}px solid rgba(201,184,255,.45)"></div>
+    <div style="position:relative">${rooSvg(k, sz * 0.74, { props: true })}</div></div>`;
 }
 
 function render() {
   if (S === "states") return (document.body.innerHTML = statesSheet());
+  if (S === "icons") return (document.body.innerHTML = iconSheet());
   if (S === "mascots") return (document.body.innerHTML = mascotSheet());
   if (S === "watch") return (document.body.innerHTML = watchSheet());
   const sc = SCREENS[S]();
   const dim = sc.dim ?? true;
   const state = M;
   let bg = scene(state, W, H, { rooScale: WIDE ? 0.48 : 0.34, ground: !WIDE && !dim ? Math.round(H * 0.4) : undefined });
-  if (sc.loading) bg = loadingDyno();
+  if (sc.loading) bg = "";
   const tab = sc.tab;
   document.body.innerHTML = `<div class="page ${WIDE ? "p1440" : "p390"} ${dim ? "dim" : ""} ${sc.nav === false ? "" : "tabbed"} ${sc.flow ? "flow" : ""}">
-    <div class="bg">${bg}</div><div class="beam"></div>
-    ${WIDE ? "" : `<div class="status" style="color:${LIGHT && !dim ? "#1F1A14" : LIGHT ? "#2A2118" : "#fff"}"><span>9:41</span><i></i></div>`}
+    <div class="bg">${bg}</div>
+    ${WIDE ? "" : `<div class="status"><span>9:41</span><i></i></div>`}
     ${sc.html}${sc.nav === false ? "" : nav(tab === "settings" && !WIDE ? "today" : tab)}</div>`;
 }
 
-function loadingDyno() {
-  const svg = scene("night", W, H, { pose: "sit", rooScale: 0.001 });
-  const rs = WIDE ? 0.6 : 0.44;
-  const [hx, hy, gx, gy] = WIDE ? [800, 40, 690, 250] : [236, 104, 170, 250];
-  const at = (x, y, pose, o) => `<g opacity="${o}" transform="translate(${x - 100 * rs} ${y}) scale(${rs})">${roo(pose, "headlamp", false)}</g>`;
-  const path = `<path d="M${gx} ${gy + 40 * rs} Q ${gx + 10} ${hy + 20} ${hx} ${hy + 100 * rs}" fill="none" stroke="#FFC98A" stroke-width="3" stroke-dasharray="2 10" stroke-linecap="round" opacity=".75"/>`;
-  return svg.replace("</svg>", `${path}${at(gx, gy, "crimp", 0.3)}${at(hx, hy, "dyno", 1)}</svg>`);
+function statesSheet() {
+  const states = [["night", "Clear"], ["dawn", "Dawn"], ["rain", "Rain"], ["fog", "Fog"]];
+  const fw = WIDE ? 300 : 170, fh = WIDE ? 649 : 368;
+  return `<div class="sheetpage"><h1>Today · weather in the night scene</h1><div class="grid" style="grid-template-columns:repeat(${WIDE ? 4 : 2},1fr)">${states.map(([k, n]) => `<figure><iframe src="index.html?s=today&m=${k}" width="390" height="844" style="border:0;border-radius:${WIDE ? 48 : 36}px;width:390px;height:844px;transform:scale(${fw / 390});transform-origin:0 0;margin-bottom:${fh - 844}px;margin-right:${fw - 390}px"></iframe><figcaption>${n}<small>${{ night: "Moon, stars, the roo moon-watching", dawn: "Pink-violet glow on the horizon; the roo chalks up", rain: "Streaks, hazy moon; the roo shelters", fog: "Mist bands over the crag" }[k]}</small></figcaption></figure>`).join("")}</div></div>`;
 }
 
-function statesSheet() {
-  const states = [["day", "Day"], ["dawn", "Dawn"], ["golden", "Golden hour"], ["night", "Night"], ["rain", "Rain"], ["fog", "Fog"]];
-  const fw = WIDE ? 216 : 170, fh = WIDE ? 468 : 368;
-  return `<div class="sheetpage"><h1>Today in every state</h1><div class="grid" style="grid-template-columns:repeat(${WIDE ? 6 : 2},1fr)">${states.map(([k, n]) => `<figure><iframe src="index.html?s=today&m=${k}" width="390" height="844" style="border:0;border-radius:${WIDE ? 40 : 36}px;width:390px;height:844px;transform:scale(${fw / 390});transform-origin:0 0;margin-bottom:${fh - 844}px;margin-right:${fw - 390}px"></iframe><figcaption>${n}<small>${{ day: "Light cards, dark text", dawn: "Rose glass, low beam", golden: "Warm light cards", night: "Dark glass, headlamp beam", rain: "Slate glass, roo shelters", fog: "Mist-white cards" }[k]}</small></figcaption></figure>`).join("")}</div></div>`;
+function iconSheet() {
+  const sets = iconSets(), big = WIDE ? 220 : 150, sm = WIDE ? 150 : 100;
+  const fig = (html, n, sub) => `<figure style="align-items:center;text-align:center">${html}<figcaption>${n}<small>${sub}</small></figcaption></figure>`;
+  const sizes = [180, 120, 87, 60, 40, 29].filter((x) => WIDE || x <= 120);
+  return `<div class="sheetpage"><h1>App icons · full size</h1>
+    <div class="row" style="gap:${WIDE ? 40 : 18}px;align-items:flex-end;flex-wrap:wrap">${fig(iconImg(sets.original, big), "Original", "Default · unchanged")}
+    <div class="row" style="gap:${WIDE ? 22 : 10}px;align-items:flex-end">${sizes.map((x) => fig(iconImg(sets.original, x), `${x}`, "px")).join("")}</div></div>
+    <h2>Stickers · the original roo</h2><div class="grid" style="grid-template-columns:repeat(${WIDE ? 8 : 2},1fr);gap:${WIDE ? 18 : 16}px">${sets.sticker.map(([k, n]) => fig(stickerIcon(k, sm), n, "")).join("")}</div></div>`;
 }
 
 function mascotSheet() {
   const poses = [["sit", "Sit · tab, Today"], ["chalk", "Chalk-up · Today"], ["look", "Moon-watch · night"], ["shelter", "Shelter · rain"], ["dyno", "Dyno · loading"], ["crimp", "Crimp"], ["hang", "Hang · Force tab"], ["flash", "Flash · Flashed!"], ["send", "Send · Sent"], ["fall", "Fall · Whipper, errors"], ["rest", "Rest · empty, rest day"], ["pr", "PR · new best"]];
   const sz = WIDE ? 150 : 104;
-  return `<div class="sheetpage"><h1>The roo · sticker style</h1><div class="grid" style="grid-template-columns:repeat(${WIDE ? 6 : 3},1fr);gap:${WIDE ? 22 : 14}px 10px">${poses.map(([p, n]) => `<figure style="align-items:center;text-align:center">${rooSvg(p, sz, { props: true, hand: p === "look" || p === "shelter" ? "headlamp" : "" })}<figcaption>${n.split(" · ")[0]}<small>${n.split(" · ")[1] || ""}</small></figcaption></figure>`).join("")}</div>
+  return `<div class="sheetpage"><h1>The roo · original, rounder ears</h1><div class="grid" style="grid-template-columns:repeat(${WIDE ? 6 : 3},1fr);gap:${WIDE ? 22 : 14}px 10px">${poses.map(([p, n]) => `<figure style="align-items:center;text-align:center">${rooSvg(p, sz, { props: true })}<figcaption>${n.split(" · ")[0]}<small>${n.split(" · ")[1] || ""}</small></figcaption></figure>`).join("")}</div>
     <h2>Tab icons at 25 pt</h2><div class="row" style="gap:28px;color:var(--ink)">${TABS.map((k) => `<div style="text-align:center;${k === "session" ? "color:var(--accent-ink)" : ""}">${ICON[k].replace("<svg", '<svg width="25" height="25"')}<div class="small mute">${cap(k)}</div></div>`).join("")}</div></div>`;
 }
 
 function watchSheet() {
   const w = (inner) => `<div class="watch">${inner}</div>`;
   const ready = w(`<div class="wtop"><span>Ready</span><span>9:41</span></div><div style="display:grid;place-items:center;margin-top:-4px">${moonGauge(82, 150)}</div>`);
-  const sess = w(`<div class="wtop"><span class="acc">0:42</span><span>9:41</span></div><div style="padding:0 6px"><div class="h">V6 · Night Shift</div><div class="mute small">Try 4</div></div><div class="row" style="gap:6px;padding:0 4px"><div style="flex:1;text-align:center"><b style="font:800 30px var(--f-display)">14</b><div class="mute small">tries</div></div><div style="flex:1;text-align:center"><b style="font:800 30px var(--f-display)">5</b><div class="mute small">sends</div></div></div><div class="wbtn" style="background:var(--accent);color:var(--on-accent);margin-top:auto">Sent</div><div class="wbtn" style="background:var(--fill);height:36px;font-size:15px">Fell</div>`);
+  const sess = w(`<div class="wtop"><span class="acc">0:42</span><span>9:41</span></div><div style="padding:0 6px"><div class="h">V6 · Night Shift</div><div class="mute small">Try 4</div></div><div class="row" style="gap:6px;padding:0 4px"><div style="flex:1;text-align:center"><b style="font:800 30px var(--f-display)">14</b><div class="mute small">tries</div></div><div style="flex:1;text-align:center"><b style="font:800 30px var(--f-display)">5</b><div class="mute small">sends</div></div></div><div class="wbtn" style="background:var(--iri);color:var(--on-accent);margin-top:auto">Sent</div><div class="wbtn" style="background:var(--fill);height:36px;font-size:15px">Fell</div>`);
   const force = w(`<div class="wtop"><span>Hang · L</span><span>9:41</span></div><div style="text-align:center"><div class="num" style="font-size:54px;margin-top:6px">48.2</div><div class="mute small">kg · 6.1 s</div></div><div style="padding:0 6px">${forceCurve(180, 80)}</div>`);
   const moment = w(`<div style="display:grid;place-items:center;flex:1">${rooSvg("flash", 104, { props: true })}<div class="moment"><span class="big" style="font-size:30px">Flashed!</span></div><div class="mute small">V5 · Moon Arete</div></div>`);
-  const start = w(`<div class="wtop"><span>Sendmeter</span><span>9:41</span></div><div style="display:grid;place-items:center;flex:1">${rooSvg("chalk", 84, { props: true })}</div><div class="mute small" style="text-align:center">Pine Gully · friction 78</div><div class="wbtn" style="background:var(--accent);color:var(--on-accent)">Start session</div>`);
+  const start = w(`<div class="wtop"><span>Sendmeter</span><span>9:41</span></div><div style="display:grid;place-items:center;flex:1">${rooSvg("chalk", 84, { props: true })}</div><div class="mute small" style="text-align:center">Pine Gully · friction 78</div><div class="wbtn" style="background:var(--iri);color:var(--on-accent)">Start session</div>`);
   const items = [[start, "Start", "Plain label; the roo chalks up"], [ready, "Send-o-meter", "The moon gauge, alone"], [sess, "Session", "Sent / Fell, big targets"], [force, "Force", "Live kg and curve"], [moment, "Flashed!", "The moment, 2 s"]];
   return `<div class="sheetpage"><h1>Apple Watch</h1><div class="grid" style="grid-template-columns:repeat(${WIDE ? 5 : 2},1fr);gap:30px 18px;${WIDE ? "" : "transform:scale(.8);transform-origin:0 0;width:125%"}">${items.map(([h, n, s]) => `<figure style="align-items:center;text-align:center">${h}<figcaption style="margin-top:12px">${n}<small>${s}</small></figcaption></figure>`).join("")}</div></div>`;
 }

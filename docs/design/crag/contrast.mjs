@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 
-const css = readFileSync(new URL("headlamp.css", import.meta.url), "utf8");
-const MODES = ["night", "dawn", "rain", "day", "golden", "fog"];
-const DARKEST = { night: "#070B16", dawn: "#27304F", rain: "#2C3034", day: "#55545D", golden: "#4E4339", fog: "#4A4F52" };
-const DIM = { dark: 0.45, light: 1.0 };
+const css = readFileSync(new URL("moon.css", import.meta.url), "utf8");
+const MODES = ["night", "dawn", "rain", "fog"];
+const DARKEST = { night: "#04061A", dawn: "#05071C", rain: "#04061A", fog: "#05071C" };
+const DIM = { dark: 0.5 };
 const need = { body: 4.5, large: 3 };
 const pairs = [
   ["ink", "card", "body"], ["mute", "card", "body"], ["accent-ink", "card", "body"],
   ["good", "card", "body"], ["warn", "card", "body"], ["bad", "card", "body"],
-  ["on-accent", "accent", "body"], ["on-bad", "bad", "body"], ["moon-num", "moon-lit", "large"], ["title", "dim", "large"],
+  ["on-accent", "iri-a", "body"], ["on-accent", "iri-b", "body"], ["on-accent", "iri-c", "body"], ["on-bad", "bad", "body"], ["moon-num", "iri-a", "large"], ["moon-num", "iri-b", "large"], ["moon-num", "iri-c", "large"], ["title", "dim", "large"],
 ];
 
 const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
@@ -30,11 +30,9 @@ console.log("| Mode | Text | On | Light scene | Dark scene | Needs | Result |\n|
 for (const mode of MODES) {
   const tok = Object.assign({}, ...blocks.filter((b) => b.modes.includes(mode)).map((b) => b.tok));
   const [glass, a] = rgba(tok.glass);
-  const light = lum(tok.ink) < 0.2;
-  const [washC, washA] = rgba(tok.wash) || ["#000000", 0];
-  const backs = {
+    const backs = {
     card: [mix(tok.lightest, glass, a), mix(DARKEST[mode], glass, a)],
-    dim: light ? [mix(tok.lightest, washC, washA), mix(DARKEST[mode], washC, washA)] : [scale(tok.lightest, DIM.dark), scale(DARKEST[mode], DIM.dark)],
+    dim: [scale(tok.lightest, DIM.dark), scale(DARKEST[mode], DIM.dark)],
   };
   for (const [fg, bg, size] of pairs) {
     const [onLight, onDark] = (backs[bg] || [tok[bg], tok[bg]]).map((b) => ratio(tok[fg], b));
