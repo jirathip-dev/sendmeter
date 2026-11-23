@@ -94,9 +94,9 @@ function model() {
       ${[["front", "Front"], ["stand", "Side"], ["back", "Back"]].map(([p, l]) => `<div style="text-align:center">${grid(roo(p, { size: WIDE ? sz : 112 }))}<div style="font:700 14px var(--display);margin-top:4px">${l}</div></div>`).join("")}
       <div style="min-width:${WIDE ? 380 : 340}px;font-size:13px;line-height:1.55">
         <div style="font:700 13px var(--display);letter-spacing:.1em;color:var(--mute);margin-bottom:6px">PROPORTIONS</div>
-        <div>Head = 1 unit (64, a circle). Standing height 3.2 heads with ears, 2.6 without.</div>
-        <div>Body 1.1 heads, a round belly. Ears 0.65 head, round-tipped. Arms 0.75 head, stubby.</div>
-        <div>Legs 0.9 head: a round haunch, a short shin, a big climbing shoe. Tail 0.9 head.</div>
+        <div>Head = 1 unit (64, a circle). Standing height 3 heads with ears, 2.4 without.</div>
+        <div>Body 1.2 heads, one round bean. Ears 0.65 head, round-tipped. Arms 0.55 head, stubby paws. Tiny dot eyes.</div>
+        <div>Legs 0.7 head: a round haunch, a stub of shin, a big climbing shoe. Tail 0.9 head. Smooth curves, no joints.</div>
         <div>Flat fills, no inner lines. One thin flat rim (${COLOURS.rim}) round the silhouette and the near arm.</div>
         <div style="font:700 13px var(--display);letter-spacing:.1em;color:var(--mute);margin:12px 0 6px">PARTS (${parts.length})</div>
         <div style="color:var(--mute)">${parts.map((p) => p.part).join(" · ")}</div>
