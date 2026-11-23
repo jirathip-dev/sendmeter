@@ -1,0 +1,4 @@
+{
+  "screens": ["screens"],
+  "harness": [["sh", "-c", "exec node --no-warnings \"$BLOCKS_SRC/web/shot/cli.ts\" \"$@\"", "blocks-shot"]]
+}

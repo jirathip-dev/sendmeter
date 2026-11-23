@@ -1,0 +1,73 @@
+{
+  "type": "screen",
+  "id": "today",
+  "title": "Today",
+  "blocks": [
+    {
+      "type": "stat",
+      "id": "ready",
+      "items": [
+        {
+          "label": "Ready",
+          "value": 82
+        },
+        {
+          "label": "HRV",
+          "value": 68,
+          "unit": "ms"
+        },
+        {
+          "label": "Sleep",
+          "value": "7h 40m"
+        }
+      ]
+    },
+    {
+      "type": "island",
+      "id": "moon",
+      "name": "x-moon-gauge",
+      "size": {
+        "height": 220
+      },
+      "fallback": {
+        "title": "Stand-in: moon gauge (no Blocks kind yet)"
+      }
+    },
+    {
+      "type": "chart",
+      "id": "week",
+      "title": "Ready this week",
+      "chart": "line",
+      "x": [
+        "Mon",
+        "Tue",
+        "Wed",
+        "Thu",
+        "Fri",
+        "Sat",
+        "Sun"
+      ],
+      "series": [
+        {
+          "name": "Ready",
+          "values": [
+            64,
+            71,
+            58,
+            77,
+            80,
+            74,
+            82
+          ]
+        }
+      ]
+    },
+    {
+      "type": "button",
+      "id": "start",
+      "label": "Start session",
+      "action": "start-session",
+      "style": "primary"
+    }
+  ]
+}
