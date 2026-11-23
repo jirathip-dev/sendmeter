@@ -1,0 +1,292 @@
+{
+  "side": [
+    {
+      "part": "body",
+      "shape": "body",
+      "parent": null,
+      "at": [
+        0,
+        0
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "tail",
+      "shape": "tail",
+      "parent": "body",
+      "at": [
+        -14,
+        -2
+      ],
+      "behind": true,
+      "far": false
+    },
+    {
+      "part": "thighFar",
+      "shape": "thigh",
+      "parent": "body",
+      "at": [
+        -2,
+        -8
+      ],
+      "behind": true,
+      "far": true
+    },
+    {
+      "part": "shinFar",
+      "shape": "shin",
+      "parent": "thighFar",
+      "at": [
+        10,
+        32
+      ],
+      "behind": true,
+      "far": true
+    },
+    {
+      "part": "shoeFar",
+      "shape": "shoe",
+      "parent": "shinFar",
+      "at": [
+        0,
+        42
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "armFar",
+      "shape": "arm",
+      "parent": "body",
+      "at": [
+        10,
+        -58
+      ],
+      "behind": true,
+      "far": true
+    },
+    {
+      "part": "head",
+      "shape": "head",
+      "parent": "body",
+      "at": [
+        6,
+        -66
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "earFar",
+      "shape": "ear",
+      "parent": "head",
+      "at": [
+        -6,
+        -32
+      ],
+      "behind": true,
+      "far": true
+    },
+    {
+      "part": "earNear",
+      "shape": "ear",
+      "parent": "head",
+      "at": [
+        6,
+        -34
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "thighNear",
+      "shape": "thigh",
+      "parent": "body",
+      "at": [
+        2,
+        -6
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "shinNear",
+      "shape": "shin",
+      "parent": "thighNear",
+      "at": [
+        10,
+        32
+      ],
+      "behind": true,
+      "far": false
+    },
+    {
+      "part": "shoeNear",
+      "shape": "shoe",
+      "parent": "shinNear",
+      "at": [
+        0,
+        42
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "armNear",
+      "shape": "arm",
+      "parent": "body",
+      "at": [
+        14,
+        -56
+      ],
+      "behind": false,
+      "far": false
+    }
+  ],
+  "front": [
+    {
+      "part": "body",
+      "shape": "body",
+      "parent": null,
+      "at": [
+        0,
+        0
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "tail",
+      "shape": "tail",
+      "parent": "body",
+      "at": [
+        -6,
+        -4
+      ],
+      "behind": true,
+      "far": false
+    },
+    {
+      "part": "thighFar",
+      "shape": "thigh",
+      "parent": "body",
+      "at": [
+        -12,
+        -8
+      ],
+      "behind": false,
+      "far": true
+    },
+    {
+      "part": "shinFar",
+      "shape": "shin",
+      "parent": "thighFar",
+      "at": [
+        6,
+        32
+      ],
+      "behind": true,
+      "far": false
+    },
+    {
+      "part": "shoeFar",
+      "shape": "shoe",
+      "parent": "shinFar",
+      "at": [
+        0,
+        42
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "thighNear",
+      "shape": "thigh",
+      "parent": "body",
+      "at": [
+        12,
+        -8
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "shinNear",
+      "shape": "shin",
+      "parent": "thighNear",
+      "at": [
+        6,
+        32
+      ],
+      "behind": true,
+      "far": false
+    },
+    {
+      "part": "shoeNear",
+      "shape": "shoe",
+      "parent": "shinNear",
+      "at": [
+        0,
+        42
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "armFar",
+      "shape": "arm",
+      "parent": "body",
+      "at": [
+        -20,
+        -56
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "armNear",
+      "shape": "arm",
+      "parent": "body",
+      "at": [
+        20,
+        -56
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "head",
+      "shape": "head",
+      "parent": "body",
+      "at": [
+        0,
+        -68
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "earFar",
+      "shape": "ear",
+      "parent": "head",
+      "at": [
+        -11,
+        -33
+      ],
+      "behind": false,
+      "far": false
+    },
+    {
+      "part": "earNear",
+      "shape": "ear",
+      "parent": "head",
+      "at": [
+        11,
+        -33
+      ],
+      "behind": false,
+      "far": false
+    }
+  ]
+}

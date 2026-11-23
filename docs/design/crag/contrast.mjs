@@ -1,14 +1,21 @@
 import { readFileSync } from "node:fs";
 
-const css = readFileSync(new URL("moon.css", import.meta.url), "utf8");
-const MODES = ["night", "dawn", "rain", "fog"];
-const DARKEST = { night: "#04061A", dawn: "#05071C", rain: "#04061A", fog: "#05071C" };
-const DIM = { dark: 0.5 };
+const css = readFileSync(new URL("pack/crag.css", import.meta.url), "utf8");
+const root = css.match(/:root\s*\{([^}]*)\}/)[1];
+const tok = Object.fromEntries([...root.matchAll(/--([\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+const SCENE = {
+  clear: ["#5A5C86", "#03051A"],
+  dawn: ["#7A5A8E", "#060827"],
+  rain: ["#3A3D5C", "#04061A"],
+  fog: ["#6A6E8E", "#080B22"],
+};
+const IRI = { "iri-purple": "#C2A8FF", "iri-teal": "#8FE6E0", "iri-pink": "#FFB3DC" };
 const need = { body: 4.5, large: 3 };
 const pairs = [
-  ["ink", "card", "body"], ["mute", "card", "body"], ["accent-ink", "card", "body"],
-  ["good", "card", "body"], ["warn", "card", "body"], ["bad", "card", "body"],
-  ["on-accent", "iri-a", "body"], ["on-accent", "iri-b", "body"], ["on-accent", "iri-c", "body"], ["on-bad", "bad", "body"], ["moon-num", "iri-a", "large"], ["moon-num", "iri-b", "large"], ["moon-num", "iri-c", "large"], ["title", "dim", "large"],
+  ["fg", "card", "body"], ["mute", "card", "body"], ["link", "card", "body"], ["g", "card", "body"], ["a", "card", "body"], ["r", "card", "body"],
+  ["link", "button", "body"], ["r", "bad-button", "body"],
+  ["on-iri", "iri-purple", "body"], ["on-iri", "iri-teal", "body"], ["on-iri", "iri-pink", "body"],
+  ["fg", "dim", "large"],
 ];
 
 const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
@@ -18,27 +25,25 @@ const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
 const hex = (cs) => "#" + cs.map((c) => Math.round(Math.min(255, c)).toString(16).padStart(2, "0")).join("");
 const mix = (base, top, a) => hex(rgb(base).map((c, i) => c * (1 - a) + rgb(top)[i] * a));
 const scale = (h, k) => hex(rgb(h).map((c) => c * k));
-const rgba = (v) => { const m = v.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/); return m && [hex(m.slice(1, 4).map(Number)), Number(m[4])]; };
+const rgba = (v) => { const m = v.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/); return [hex(m.slice(1, 4).map(Number)), Number(m[4])]; };
 
-const blocks = [...css.matchAll(/(:root\s*|\[data-mode[^{]*)\{([^}]*)\}/g)].map(([, sel, body]) => ({
-  modes: sel.startsWith(":root") ? MODES : [...sel.matchAll(/"(\w+)"/g)].map((m) => m[1]),
-  tok: Object.fromEntries([...body.matchAll(/--([\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()])),
-}));
-
+const [glass, ga] = rgba(tok.card);
 let fails = 0;
-console.log("| Mode | Text | On | Light scene | Dark scene | Needs | Result |\n|---|---|---|---|---|---|---|");
-for (const mode of MODES) {
-  const tok = Object.assign({}, ...blocks.filter((b) => b.modes.includes(mode)).map((b) => b.tok));
-  const [glass, a] = rgba(tok.glass);
-    const backs = {
-    card: [mix(tok.lightest, glass, a), mix(DARKEST[mode], glass, a)],
-    dim: [scale(tok.lightest, DIM.dark), scale(DARKEST[mode], DIM.dark)],
+console.log("| Weather | Text | On | Light part | Dark part | Needs | Result |\n|---|---|---|---|---|---|---|");
+for (const [w, parts] of Object.entries(SCENE)) {
+  const card = parts.map((p) => mix(p, glass, ga));
+  const backs = {
+    card,
+    button: card.map((c) => mix(c, "#B9A8FF", 0.12)),
+    "bad-button": card.map((c) => mix(c, "#FF9DB0", 0.1)),
+    dim: parts.map((p) => scale(p, 0.55)),
   };
   for (const [fg, bg, size] of pairs) {
-    const [onLight, onDark] = (backs[bg] || [tok[bg], tok[bg]]).map((b) => ratio(tok[fg], b));
+    const [onLight, onDark] = (backs[bg] || [IRI[bg], IRI[bg]]).map((b) => ratio(tok[fg], b));
     const ok = Math.min(onLight, onDark) >= need[size];
     if (!ok) fails++;
-    console.log(`| ${mode} | \`${fg}\` ${tok[fg]} | \`${bg}\` | ${onLight.toFixed(2)} | ${onDark.toFixed(2)} | ${need[size]} | ${ok ? "pass" : "FAIL"} |`);
+    console.log(`| ${w} | \`${fg}\` ${tok[fg]} | \`${bg}\` | ${onLight.toFixed(2)} | ${onDark.toFixed(2)} | ${need[size]} | ${ok ? "pass" : "FAIL"} |`);
   }
 }
+console.error(`${fails} failing of ${pairs.length * Object.keys(SCENE).length}`);
 process.exitCode = fails ? 1 : 0;

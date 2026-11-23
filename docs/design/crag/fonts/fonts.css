@@ -1,5 +1,3 @@
-@font-face { font-family: 'Barlow'; font-weight: 400; font-display: block; src: url(Barlow-0.woff2) format('woff2'); }
-@font-face { font-family: 'Barlow'; font-weight: 600; font-display: block; src: url(Barlow-1.woff2) format('woff2'); }
-@font-face { font-family: 'Barlow'; font-weight: 700; font-display: block; src: url(Barlow-2.woff2) format('woff2'); }
-@font-face { font-family: 'Barlow Condensed'; font-weight: 600; font-display: block; src: url(BarlowCondensed-0.woff2) format('woff2'); }
-@font-face { font-family: 'Barlow Condensed'; font-weight: 800; font-display: block; src: url(BarlowCondensed-1.woff2) format('woff2'); }
+@font-face { font-family: 'Inter'; font-weight: 400 600; font-display: block; src: url(Inter.woff2) format('woff2'); }
+@font-face { font-family: 'Zilla Slab'; font-weight: 600; font-display: block; src: url(ZillaSlab-600.woff2) format('woff2'); }
+@font-face { font-family: 'Zilla Slab'; font-weight: 700; font-display: block; src: url(ZillaSlab-700.woff2) format('woff2'); }
