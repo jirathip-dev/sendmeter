@@ -1,7 +1,7 @@
 # What this keeps, changes and replaces
 
 **Kept**: stands as approved. **Changed**: the decision stands, the named part differs. **Replaced**: this ADR's
-version is built instead. None of the three plans' implementation issues are filed; `migration.md` is the list.
+version is built instead. **Withdrawn**: the owner dropped it; nothing is built. None of the three plans' implementation issues are filed; `migration.md` is the list.
 
 ## #1045 local-first (`docs/architecture/local-first/`)
 
@@ -10,7 +10,7 @@ version is built instead. None of the three plans' implementation issues are fil
 | 1 | The device is the source of truth; no server; no account; no login | Kept | |
 | 2 | Decision 1: one SQLite file, typed tables, Postgres names minus `user_id` | Kept | The same file and names |
 | 3 | Decision 1: through GRDB, in `SendmeterCore` | Replaced | rusqlite in `sm-store`; GRDB leaves the app |
-| 4 | Decision 1: "one schema, four generic adapters" (import, sync, export, MCP) driven by the table list | Kept | In Rust |
+| 4 | Decision 1: "one schema, four generic adapters" (import, sync, export, MCP) driven by the table list | Changed | Two adapters, in Rust: sync and export. The import and `mcp/` are gone (rows 14 to 16) |
 | 5 | Decision 2: `CKSyncEngine`, one zone `Sendmeter`, private database, off by default, record name `<table>:<key>` | Kept | |
 | 6 | Decision 2: every value field through `encryptedValues` | Kept | The plain-field change this issue first asked for is withdrawn with the web app |
 | 7 | Decision 2: the two heavy columns as `CKAsset`s | Kept | |
@@ -20,22 +20,22 @@ version is built instead. None of the three plans' implementation issues are fil
 | 11 | `sync.md`: rules as pure Swift in `Core/Sync`, a `CloudTransport` protocol, two-store host tests | Replaced | The same design in Rust; the transport is events and commands |
 | 12 | Decision 3: the watch hands records to the phone over WatchConnectivity; one snapshot back; live mirrors by `sendMessage`; the watch never talks to CloudKit | Kept | The phone side hands the bytes to the core |
 | 13 | `shapes.md`: `WatchSnapshot`, `WatchRecord`, `WatchRecordAck` in `SendLogWatchCore` | Kept | The core mirrors them with serde; `fixtures/watch/` holds them equal |
-| 14 | Decision 4: a one-time import that keeps ids; `ON CONFLICT DO NOTHING`; resumes per family; old queue first; 90 days; no delete button | Kept | |
-| 15 | Decision 4: the reader in Swift (`URLSession`), the row mapping in `Core/LegacyImport` | Changed | The reader stays Swift; the mapping moves to `sm-store` |
-| 16 | Decision 5: the export folder (`data.json`, `samples/`, `traces/`), off by default, location follows the sync switch; `mcp/` reads it | Kept | Written by the core |
+| 14 | Decision 4: a one-time import that keeps ids; `ON CONFLICT DO NOTHING`; resumes per family; old queue first; 90 days; no delete button | Withdrawn | No import (owner, 2026-11-24): both users start over. The owner exports the old data privately |
+| 15 | Decision 4: the reader in Swift (`URLSession`), the row mapping in `Core/LegacyImport` | Withdrawn | Neither is built. No `import_state` table, no Sign in with Apple |
+| 16 | Decision 5: the export folder (`data.json`, `samples/`, `traces/`), off by default, location follows the sync switch; `mcp/` reads it | Changed | The folder is kept, written by the core. `mcp/` is deleted by #1066; a reader can return as its own issue |
 | 17 | Decision 6: screens are pure builders in a Swift target `SendmeterScreens`, drawn by `BlocksView` in one `ScreenHost` | Replaced | Pure builders in the Rust crate `sm-screens`; `ScreenHost` stays, generic |
 | 18 | Decision 6: force curve, heat map, box plot and heart rate as app kinds drawn by existing SwiftUI views | Replaced | Blocks core kinds (plot, heat map, box plot: blocks #351 to #353, merged); only `board` and `mascot` are app kinds |
 | 19 | Decision 6: recording, the live gauge and the routine runner stay live SwiftUI | Changed | Kept, and each must fit one screen with no scrolling |
 | 20 | Decision 6 and `blocks.md`: wait for Blocks B1 and B2; the watch stays SwiftUI until B3 | Changed | All three landed. B2 is no longer needed (no Swift builders). Client-built screens (#354) landed too: nothing waits on Blocks |
-| 21 | Consequences: no login, "Erase all data", privacy "data not collected", ~25 Core files and 55 test files deleted, `supabase/` and its workflows deleted | Kept | |
+| 21 | Consequences: no login, "Erase all data", privacy "data not collected", ~25 Core files and 55 test files deleted, `supabase/` and its workflows deleted | Changed | Kept, and far more goes: #1066 deletes everything `ports.md` does not list |
 | 22 | Consequences: the 8 RPCs become store transactions; their SQL regressions become host tests | Kept | Rust transactions; `cargo test` |
 | 23 | Consequences: minimum iOS 26 | Kept | Raised in slice R2 |
 | 24 | Consequences: a synced column is a CloudKit schema change deployed before the build ships | Kept | |
-| 25 | Consequences: no promotion to `main` during the serial cut-over (group C) | Replaced | No serial cut-over: the new app is built behind a flag. Only group X holds promotion |
-| 26 | Owner actions: portal container, capabilities, schema deploy, 90-day project, device checks | Kept | Plus the cap issue and one Blocks issue to file (`adr.md`) |
+| 25 | Consequences: no promotion to `main` during the serial cut-over (group C) | Replaced | No cut-over: the old app is deleted first (#1066). No promotion from then until the owner accepts the new app |
+| 26 | Owner actions: portal container, capabilities, schema deploy, 90-day project, device checks | Changed | No 90-day project: the owner exports privately and shuts Supabase down. The rest is kept, plus the cap issue and one Blocks issue to file (`adr.md`) |
 | 27 | `boundaries.md`: the module table and the "Deleted" list | Changed | The "Deleted" list stands and grows; the module table is replaced by `boundaries.md` here |
-| 28 | Hot files and `arch.toml` lines | Replaced | `adr.md` here, added to #1049's file. `AppModel.swift` is never edited, only deleted |
-| 29 | `migration.md`: groups A, W, C, S, E, U and L1 | Replaced | `migration.md` here. W and L1 survive almost as written (X1, X4, X5, Z1) |
+| 28 | Hot files and `arch.toml` lines | Replaced | `adr.md` here, added to #1049's file. `AppModel.swift` is deleted by #1066 |
+| 29 | `migration.md`: groups A, W, C, S, E, U and L1 | Replaced | `migration.md` here. W survives almost as written (X1, X2, X3). C, E2 and L1 are gone: no cut-over, no `mcp/`, no importer to remove |
 | 30 | Proofs named as `just core`, `just watch-core`, `just build-ios` | Changed | #1049 retired those recipes: proofs are gatekeeper gates |
 
 ## #1046 redesign (`native/SendmeterNative/design/redesign/`)
@@ -82,6 +82,9 @@ version is built instead. None of the three plans' implementation issues are fil
 | Health values readable on the web (q3120) | Moot: no web. Every health value stays encrypted |
 | Blocks issues #351 to #354 first | Merged in Blocks; nothing waits |
 | A timer kind for Blocks (found by the first draft, for the web's live screens) | Not filed: the live screens are SwiftUI |
+| "The import readers" in the core, where they meant #1045's Supabase import | Withdrawn (amendment of 2026-11-24). The board makers' file readers (#1047, B13 to B15) are a different thing and stay |
+| Starting "from what lands with #1045 to #1047", beside today's app | Changed (same amendment, #1066): the old app is deleted first; `ports.md` lists what is kept, and each file goes with the PR that ports it |
+| The personal force models | #1065 designs them; they live in `sm-stats` (`adr.md`, decision 10) |
 
 ## #1048, rewritten: map each attempt to its route
 
@@ -115,7 +118,7 @@ version is built instead. None of the three plans' implementation issues are fil
       a shared fixture in `fixtures/watch/`.
 - [ ] The live session screen with a route shown passes its layout test at 375 × 667 points and at 40 mm.
 
-Waits on B11 (light a route), L3 (the phone's live session on the core) and X5 (watch records).
+Waits on B11 (light a route), L3 (the phone's live session on the core) and X3 (watch records).
 
 ## #1056, rewritten: add a route from a screenshot (MoonBoard first)
 

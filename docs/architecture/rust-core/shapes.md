@@ -23,7 +23,6 @@ pub enum Event {
     Watch(WatchIn),                        // Record(bytes), Reachable(bool)
     Picked { purpose: Pick, name: String, bytes: Vec<u8> },    // a file the user chose
     Pixels { width: u32, height: u32, rgba: Vec<u8> },         // a screenshot, decoded by the host (#1056)
-    LegacyRows { family: String, json: String },               // until the import window closes
 }
 
 pub enum Effect {
@@ -140,6 +139,9 @@ so `venue` is `board`, `gym` or `crag` and `board` may be empty. `repeat` and `f
 
 There are no enforced foreign keys between synced tables (#1045, kept): iCloud may deliver a child first.
 
+A later synced table is one more row of this list, added by a migration file and never by changing a row
+above. #1065's personal force model, if it stores a state per hand and grip, adds its table this way.
+
 ## What crosses the transport (`sm-sync`)
 
 ```rust
@@ -186,7 +188,8 @@ pub enum CloudCommand {
 
 ## Local-only tables
 
-#1045's five (`sync_table`, `sync_record`, `sync_meta`, `import_state`, `export_state`), unchanged, with:
+Four of #1045's five (`sync_table`, `sync_record`, `sync_meta`, `export_state`), unchanged; `import_state` is
+gone with the import. With:
 
 - `schema_step (name text primary key)`: the migrations applied;
 - `device (key text primary key, value text)`: the known Tindeq and boards, the current wall, the Apple Health
@@ -214,5 +217,5 @@ pub struct BoardProps {
 ## Unchanged from #1045
 
 `WatchSnapshot`, `WatchRecord` and `WatchRecordAck` (Swift, in `SendLogWatchCore`, JSON on the wire): the core
-reads and writes the same JSON with serde, held equal by `fixtures/watch/`. The export folder for `mcp/`
+reads and writes the same JSON with serde, held equal by `fixtures/watch/`. The export folder
 (`data.json`, `samples/`, `traces/`): written by the core as `Effect::Save` files.

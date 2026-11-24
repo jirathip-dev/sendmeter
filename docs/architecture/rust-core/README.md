@@ -2,21 +2,22 @@
 
 ## Summary
 
-Decision: one Rust core holds the data and its rules, the SQLite store, the sync rules, the stats, the force-gauge and board protocols, the file readers and every Blocks screen. Swift keeps Apple's parts (Health, the Bluetooth radio, the iCloud link, the live session and force views) and the whole Watch app. The core is plain synchronous Rust on one background queue. Sync is native iCloud only, encrypted as #1045 approved. There is no web app. The new app is built beside today's and replaces it in one step. Every live session and force screen fits one screen with no scrolling, on iPhone and Watch. Rust is gated as strictly as cooee from its first crate.
-Slices: 53 issues in 10 groups: foundation and gates (2), ported maths (4), store (5), sync (3), new shell (2), screens (7), live views (3), boards (16), the rewritten #1048 and #1056 (2), switch-over and Supabase removal (9). The four Blocks issues have landed; one Blocks bug is left to file and nothing waits on it.
-Open questions: (1) The Watch app stays Swift and gets its data through the phone, because stable Rust ships no ready-built library for watches before Series 9. Accept that (recommended), or drop those watches? (2) The line cap must count Rust, and rise while both apps exist side by side (estimate: a peak near 145,000 lines, about 80,000 after the old app is deleted). Approve a cap issue before the first Rust PR?
+Decision: one Rust core holds the data and its rules, the SQLite store, the sync rules, the stats, the force-gauge and board protocols, the file readers and every Blocks screen. Swift keeps Apple's parts (Health, the Bluetooth radio, the iCloud link, the live session and force views) and the whole Watch app. The core is plain synchronous Rust on one background queue. Sync is native iCloud only, encrypted as #1045 approved. There is no web app and no import: both users start over, the old app is deleted first, and only a listed set of files is kept. Every live session and force screen fits one screen with no scrolling, on iPhone and Watch. Rust is gated as strictly as cooee from its first crate.
+Slices: 48 issues in 10 groups, after the cleanup (#1066): foundation and gates (2), ported maths (4), store (4), sync (3), new shell (2), screens (7), live views (3), boards (16), the rewritten #1048 and #1056 (2), the Watch and the release (5). The four Blocks issues have landed; one Blocks bug is left to file and nothing waits on it.
+Open questions: (1) The Watch app stays Swift and gets its data through the phone, because stable Rust ships no ready-built library for watches before Series 9. Accept that (recommended), or drop those watches? (2) The line cap must count Rust. With the old app deleted first it can also come down: about 43,000 lines are kept, and the finished app is estimated at 70,000. Approve a cap issue that counts Rust and lowers the cap from 120,000 to 80,000?
 
 ## Read in this order
 
 | File | What |
 |---|---|
-| `adr.md` | The question, what was found, the nine decisions with their options, the consequences, the owner's actions, the open questions, the `arch.toml` lines |
+| `adr.md` | The question, what was found, the ten decisions with their options, the consequences, the owner's actions, the open questions, the `arch.toml` lines |
 | `usage.md` | How the calling code reads: a screen, a query and its test, the phone's host, a live view, the iCloud link |
 | `shapes.md` | Events and effects, the Bluetooth contract, every synced record, what crosses the transport |
 | `sync.md` | Who does what, one sync turn, the statechart, how the transport is held honest, what protects the data |
 | `boundaries.md` | The nine crates, the Swift modules, what moves, stays and goes, the dependencies |
 | `blocks.md` | The run on iOS, where Blocks stands, the one bug to file |
 | `supersedes.md` | #1045, #1046 and #1047 line by line: kept, changed, replaced; what the amendments withdrew from this issue; #1048 and #1056 rewritten |
+| `ports.md` | The files the cleanup (#1066) keeps: what is ported into the core and by which slice, what stays Swift |
 | `migration.md` | The issues to file, in order |
 
 ## The shape in one picture
@@ -56,6 +57,7 @@ Xcode 27.2, Rust 1.100.0. Detail and findings in `blocks.md`.
 | The UniFFI bridge compiles with `unsafe_code` forbidden | `RUSTFLAGS="-F unsafe-code" cargo check -p sm-probe` | 0 |
 | The watch cannot use ready-built Rust | `rustup target list`: no `arm64_32-apple-watchos` | 0 |
 | Today's counted lines are under the cap | `./.gatekeeper/run check --gate core/cap` | 0 |
+| The files of `ports.md` exist, and hold about 43,000 of the 100,332 counted lines | `wc -l` over the list (2026-11-24) | 0 |
 
 Not run, and not claimed: CloudKit and `CKSyncEngine`, Advanced Data Protection, HealthKit, CoreBluetooth with
 real hardware, a real iPhone or Watch, WatchConnectivity, the live views at their smallest sizes. Each slice

@@ -1,46 +1,53 @@
 # Migration order: the issues to file
 
-One PR each. What landed with #1045 to #1047 is documents and mockups, and #1049 added the gates, so the
-starting point is today's app on staging `d99394f2`: Swift, Supabase, gatekeeper, no Rust.
+One PR each. What landed with #1045 to #1047 is documents and mockups, and #1049 added the gates. The starting
+point is the tree the cleanup (#1066) leaves: no app that builds, the files of `ports.md`, three Swift
+packages that still pass, gatekeeper, no Rust. There is no import and no switch-over: both users start over
+(owner, 2026-11-24), and the new app is the only app.
 
 "Proof" is what the PR must run, as gates of `./.gatekeeper/run check`:
 
 - **rust**: the rust pack and the `local/rust-*` gates (`adr.md`, decision 8). Linux, no simulator.
-- **app**: `local/app` (the iOS build, the app-target tests, the UI smoke suite). macOS.
-- **watch**: `local/watch`. **swift**: `local/coverage` (the three Swift packages).
+- **app**: `local/app` (the iOS build, the app-target tests), back from R2. macOS.
+- **watch**: `local/watch`, back from X2. **swift**: `local/coverage` (the three Swift packages).
 
 "Device" marks what only a device can show: the PR says so and does not claim it.
 
-Today's app keeps shipping from `main` until X3. Nothing before group X changes what a user sees: the new app
-is reached only with the launch argument `-newCore` in debug builds.
+A slice that ports a file of `ports.md` deletes it and its tests in the same PR. Its first commit adds the
+vectors in `fixtures/<area>/` and makes the Swift suite read them; the PR body gives that Swift run. Its last
+commit deletes the Swift.
 
 ## Before R1 (not lanes' work)
 
 | # | What | Who |
 |---|---|---|
-| P1 | `cap:` issue: `ci/cap.toml` counts `crates/*/src/**/*.rs`; the cap covers the overlap (`adr.md`, open question 2) | the owner, through an orchestrator |
+| P0 | #1066, the cleanup, keeping `ports.md`'s list | its own lane, after this ADR is approved |
+| P1 | `cap:` issue: `ci/cap.toml` counts `crates/*/src/**/*.rs`, drops `mcp/`, and the cap comes down (`adr.md`, open question 2) | the owner, through an orchestrator |
 | P2 | Blocks: file G2 (`blocks.md`). Nothing waits on it | an orchestrator |
 
 Blocks #351 to #354 have merged; N1 pins Blocks at `976cf0f6` or later, so no screen slice waits on Blocks.
 
-## R. Foundation (no behaviour change)
+## R. Foundation
 
 | # | Issue | Scope | Proof |
 |---|---|---|---|
-| R1 | rust: the workspace and its gates | Root `Cargo.toml` with the lint floor, `rust-toolchain.toml` (1.99.1, the two iOS targets), `deny.toml`, `crates/sm-domain` (ids, `Stamp`, days, units, grades). In the same PR: `packs = ["core", "swift", "rust"]`, the `stable` and `msrv` legs, the six `local/rust-*` gate files, the `[cargo]` reasons in `.gatekeeper/deps.toml`, the Rust lines of `.drover/rules.md`, the R1 bans in `.drover/arch.toml`, the repo-map line and gate rows in `CLAUDE.md` | `./.gatekeeper/run list` shows every gate of decision 8; `./.gatekeeper/run check` passes |
-| R2 | rust: the door and the Swift bridge | `sm-app` (`open`, `handle` answering `Tick`), `sm-ffi-swift`, `scripts/rust-ios.sh` (the XCFramework and bindings, built for iOS 26, arm64 device and simulator), `project.yml` links it and runs the script before compiling, the iOS floor rises to 26, the `app` leg and the TestFlight lane set up Rust | rust, app: an app-target test calls the core in the simulator |
+| R1 | rust: the workspace and its gates | Root `Cargo.toml` with the lint floor, `rust-toolchain.toml` (1.99.1, the two iOS targets), `deny.toml`, `crates/sm-domain` (ids, `Stamp`, days, units, grades; ports `DateSupport`, `AppUnits`, `MassFormatting`). In the same PR: `packs = ["core", "swift", "rust"]`, the `stable` and `msrv` legs, the six `local/rust-*` gate files, the `[cargo]` reasons in `.gatekeeper/deps.toml`, the Rust lines of `.drover/rules.md`, the R1 bans in `.drover/arch.toml`, the repo-map line and gate rows in `CLAUDE.md` | `./.gatekeeper/run list` shows every gate of decision 8; `./.gatekeeper/run check` passes |
+| R2 | rust: the door, the Swift bridge, and an app that builds again | `sm-app` (`open`, `handle` answering `Tick`), `sm-ffi-swift`, `scripts/rust-ios.sh` (the XCFramework and bindings, built for iOS 26, arm64 device and simulator). `project.yml` is cut down to the phone target: an empty shell that calls the core, no Supabase, no GRDB, no Sign in with Apple, iOS 26. The `local/app` gate returns; the `app` leg and the TestFlight lane set up Rust | rust, app: an app-target test calls the core in the simulator |
 
 ## D. Ported maths (pure; side by side with R2 and A)
 
-Each port lands with vectors in `fixtures/<area>/` that the Rust tests and the existing Swift suite both read.
-The Swift code is not removed here: the old app and the watch still use it.
+Phone-side Swift is deleted by its port. The watch's and the widget's own Swift (`SendLogWatchCore`,
+`SendLogHealthCore`) stays and keeps reading the same vectors.
 
 | # | Issue | From | Proof |
 |---|---|---|---|
-| D1 | stats: load, ACWR and its projection, zone mix, phases, training-block guidance | `Metrics`, `TrainingLoad`, `AcwrProjection`, `ZoneMix`, `PhaseManager`, `SendLogHealthCore/Acwr` | rust, swift, on the same vectors |
-| D2 | stats: readiness (baseline, recovery engine, tunables) and the health precedence rule | `SendLogHealthCore`, `HealthMetricPrecedence` | rust, swift |
-| D3 | force: Tindeq byte format, recording limit, force engine, curve fit, guided protocol, hands-free control | `SendLogWatchCore`, `ForceEngine`, `ForceCurveEngine`, `HandsFreeForceController` | rust, swift |
-| D4 | stats: workout and attempt summaries, the RPE model, history derivations, grade pyramid, box-plot summary | `WorkoutStats`, `RPEModel`, `RPEDepletion`, `HistoryDerivedData`, `BoxPlot` | rust, swift |
+| D1 | stats: load, ACWR and its projection, zone mix, phases, training-block guidance | `Metrics`, `TrainingLoad`, `AcwrProjection`, `AcwrStatusCard`, `ZoneMix`, `PhaseManager`, `TrainingBlockGuidance`; equal to `SendLogHealthCore/Acwr` | rust, swift, on the same vectors |
+| D2 | stats: readiness (baseline, recovery engine, tunables), the health precedence rule, the send-conditions score | `RecoveryInputs`, `HealthMetricReconciliation`, `DashboardVerdict`, `SendConditions`, `SendConditionsDetails`; equal to `SendLogHealthCore` and the watch's `HealthMetricPrecedence` | rust, swift |
+| D3 | force: Tindeq byte format, recording limit, force engine, guided protocol, hands-free control; the curve fit, into `sm-stats` | `ForceEngine`, `ForceCurveEngine`, `HandsFreeForceController`, `TindeqConsistency`, `ForceProgress`, `GaugeSessionRPE`, `ForceProtocolSelection`, `ExerciseSideMode`; equal to the watch's Tindeq and force code | rust, swift |
+| D4 | stats: workout and attempt summaries, the RPE model, history derivations, grade pyramid, box-plot summary | `WorkoutStats`, `HistoryDerivedData`, `HistoryFilters`, `HistoryTimeline`, `BoxPlot`, `WorkoutRawTrace`; equal to the watch's `RPEModel` and `RPEDepletion` | rust, swift |
+
+The personal force model is #1065's ADR. Its slices come after D3, in `sm-stats` beside the curve fit, and
+are not counted here.
 
 ## A. The store
 
@@ -48,11 +55,10 @@ Every slice that adds a statement adds its file in `queries/` and its test in `t
 
 | # | Issue | Scope | Proof |
 |---|---|---|---|
-| A1 | store: schema, migrations and the query rule | `sm-store`: one `.sql` per step, the 12 tables of #1045 and the local-only tables, the change-log triggers, `sm_now` and `sm_remote`; the build script that collects migrations and queries, the `Query` type, the "no query without a test" check, the prepare-everything test | rust: a recorded PostgREST row per table round-trips; a query file without a test fails the build |
-| A2 | store: reads and plain writes | Every table: create, update, soft delete, restore; the read models the screens need | rust |
-| A3 | store: the eight former RPCs as transactions | Purge session, purge recording, health upsert with precedence, link recordings, merge sessions, rename tag, phone workout, erase all | rust: the cases of `supabase/tests/*.sql` as Rust tests |
+| A1 | store: schema, migrations and the query rule | `sm-store`: one `.sql` per step, the 12 tables of #1045 and the local-only tables, the change-log triggers, `sm_now` and `sm_remote`; the row types (ports `Models`); the build script that collects migrations and queries, the `Query` type, the "no query without a test" check, the prepare-everything test | rust: a row of every table round-trips; a query file without a test fails the build |
+| A2 | store: reads and plain writes | Every table: create, update, soft delete, restore; the read models the screens need; ports `TagCatalog` | rust |
+| A3 | store: the eight former RPCs as transactions | Purge session, purge recording, health upsert with precedence, link recordings, merge sessions, rename tag, phone workout, erase all; ports `TindeqSessionMerge`, `HistorySelection` and the kept `supabase/` files | rust: the cases of `supabase/tests/*.sql` as Rust tests |
 | A4 | store: the export bundle | `data.json` and the per-recording files as `Effect::Save`s, byte for byte from a seeded store, in steps | rust |
-| A5 | store: the legacy-import mapping | Rows by column name, `ON CONFLICT DO NOTHING`, per-family state, the old queue's items as local writes | rust: twice equals once; a local edit survives |
 
 ## S. Sync
 
@@ -67,7 +73,7 @@ Every slice that adds a statement adds its file in `queries/` and its test in `t
 | # | Issue | Scope | Proof |
 |---|---|---|---|
 | N1 | screens: the runtime | `sm-screens` (the route table from the folder, the look's tokens, the tab layout), `Open`, `Act` and `Close` in `sm-app`, shown screens answered with ops, the test that the Cargo and SwiftPM pins of Blocks agree; first screen: Settings, with its rows only | rust: the screen equals the approved JSON; an action returns ops that `apply` to the next screen |
-| N2 | native: the host | `CoreHost` and its queue, `Shown`, `ScreenHost`, the tab view from the core's layout, the look from tokens, `Features/Kinds` with `MascotKind`, the `-newCore` launch argument | app; a 390 screenshot of Settings; a test that events sent from many threads are handled in the order sent |
+| N2 | native: the host | `CoreHost` and its queue, `Shown`, `ScreenHost`, the tab view from the core's layout, the look from tokens, `Features/Kinds` with `MascotKind`, the splash carried over. On first launch it removes what an old install left behind (the account cache, the saved Supabase session, the old queue files) | app; a 390 screenshot of Settings; a test that events sent from many threads are handled in the order sent |
 
 ## U. Screens (after N; each is one Rust file, its actions, and its test against the approved JSON)
 
@@ -76,7 +82,7 @@ design's (#1046's, or #1060's once approved).
 
 | # | Issue | Waits on |
 |---|---|---|
-| U1 | Today: readiness tiles, session kind, Start, this week, last ticks | D1, D2, A2 |
+| U1 | Today: readiness tiles, session kind, Start, this week, last ticks; weather for send conditions where the approved Today shows them | D1, D2, A2 |
 | U2 | Log · Sessions: weekly load (heat map), sessions by week, filters | D1, D4, A2 |
 | U3 | Session detail: heart rate and effort (plot, box plot), attempts, edit, delete, merge | D4, A3 |
 | U4 | Log · Logbook: totals, the grade pyramid, the tick list, a tick's detail | D4, A2 |
@@ -87,15 +93,18 @@ design's (#1046's, or #1060's once approved).
 ## L. Live (SwiftUI on the phone, fed by the core)
 
 L2 and L3 carry decision 5: the screen fits 375 × 667 points with the fullest content and never scrolls. Each
-PR has the layout test and a screenshot at that size.
+PR has the layout test and a screenshot at that size. Each ports its row of `ports.md`: what the old policies
+decided, the core decides.
 
 | # | Issue | Scope | Proof |
 |---|---|---|---|
-| L1 | native: Apple Health into the core | `HealthKitService` sends `Health` events; the core applies precedence and readiness; the widget payload comes back as an effect | rust, app. Device: HealthKit, background delivery |
+| L1 | native: Apple Health into the core | `HealthKitService` sends `Health` events; the core applies precedence and readiness; the widget payload comes back as an effect; the widget target returns | rust, app. Device: HealthKit, background delivery |
 | L2 | native: the live force view on the core | `TindeqBluetooth` on the `ble` contract; the force-measure view draws `LiveFrame` on one screen; recordings saved by the core; the `ScrollView` ban | rust, app with the layout test. Device: a Tindeq |
 | L3 | native: the live session and the routine runner on the core | Fell and Sent, rest, the phone-recorded workout, each on one screen; Live Activity content from `LiveFrame` | rust, app with the layout tests. Device: Live Activity |
 
 ## B. Boards (#1047's fifteen steps, in Rust; B1 to B6 need nothing above but R1)
+
+Written new from `docs/architecture/boards/`: no board code exists to port.
 
 | # | Issue | Scope | Proof |
 |---|---|---|---|
@@ -116,41 +125,32 @@ PR has the layout test and a screenshot at that size.
 | B15 | boards: the import screen | How to ask each maker, the picker, the preview, apply; marking holds on a name-only route | rust, app |
 | B16 | release: board paperwork | As #1047's issue 15 | `local/docs` |
 
-Then the two rewritten issues (`supersedes.md`): **#1048** (attempt to route) after B11, L3 and X5; **#1056**
+B13 to B15 read a climber's own logbook from a board maker's export. They are not the Supabase import, which
+is gone.
+
+Then the two rewritten issues (`supersedes.md`): **#1048** (attempt to route) after B11, L3 and X3; **#1056**
 (route from a screenshot) after B9 and B12.
 
-## X. The switch and the removal (queued `--serial`; no promotion to `main` between X3 and X7)
+## X. The Watch, and the release
 
 | # | Issue | Scope | Proof |
 |---|---|---|---|
 | X1 | watch-core: the handoff types | `WatchSnapshot`, `WatchRecord`, `WatchRecordAck`, the outbox rule (#1045 W1); the core's serde mirror; `fixtures/watch/` | swift, rust |
-| X2 | native: the import | The PostgREST reader and sign-ins in Swift (#1045 A5), rows to the core, the import screens | rust; app: simulator tests against a stubbed `URLProtocol` |
-| X3 | native: the switch | The new shell is the app; the import is offered when an old session is found; the old root view is unreachable | every gate; a release note |
-| X4 | watch: reads the snapshot | The phone publishes the core's snapshot; the watch's seven table reads go (#1045 W2) | watch. Device: context delivery |
-| X5 | watch: sends records | The outbox over `transferFile`, the ack after the core has stored; the old upload queue's items move to the outbox; Supabase leaves the watch target (#1045 W3) | watch. Device: delivery, phone out of reach |
-| X6 | native: delete the old app | `AppModel.swift`, the old `Features`, `Data/Repositories`, the Supabase and realtime services, the cache and GRDB, the ported and dead `Core` files and their tests; the coverage floors shrink to what is left; the X6 lines of `arch.toml`; the Swift rules that no longer apply leave `.drover/rules.md` | every gate |
-| X7 | repo: remove Supabase | `supabase/`, two workflows, the scripts, the secret-scan entries; `CLAUDE.md`, the README, the App Store and review notes rewritten (the notes name rule 5.1.3) | every gate |
-| X8 | mcp: read the export | `createExportStore`; auth, the Supabase transport and its dependency deleted (#1045 E2) | `cd mcp && npm test`, `npm run typecheck`, `npm run dry-run` |
-| X9 | watch: views on Blocks' kit | The watch's views on BlocksUI's watch kit, in Swift (#1045 U9); the session and force-measure views move to `Views/Live`, each fits a 40 mm watch with no scrolling; the `ScrollView` ban | watch with the layout tests; 40 mm screenshots. Device |
-
-After X6, P1's second half: a `cap:` issue lowers the cap to what is left plus a margin.
-
-## Later, dated
-
-| # | Issue | When |
-|---|---|---|
-| Z1 | Delete the importer, its screens and the Sign in with Apple entitlement (#1045 L1) | 90 days after the first TestFlight build that contains X3 |
+| X2 | watch: builds again, on the snapshot | The watch and its widget targets return to `project.yml`; the phone publishes the core's snapshot through `WatchLink`; the watch reads it in place of its seven table reads (#1045 W2); the `local/watch` gate returns | watch. Device: context delivery |
+| X3 | watch: sends records | The outbox over `transferFile`, the ack after the core has stored (#1045 W3) | watch, rust. Device: delivery, phone out of reach |
+| X4 | watch: views on Blocks' kit | The watch's views on BlocksUI's watch kit, in Swift (#1045 U9); the session and force-measure views move to `Views/Live`, each fits a 40 mm watch with no scrolling; the `ScrollView` ban | watch with the layout tests; 40 mm screenshots. Device |
+| X5 | release: the new app's paperwork | The App Store copy and the review notes (they name rule 5.1.3), the privacy answers, the release notes, `CLAUDE.md` and the README read against the finished tree | `local/docs` |
 
 ## Order at a glance
 
 ```
-P1 → R1 → R2 ─┬→ D1 D2 D3 D4 ───────────────┐
-              ├→ A1 → A2 → A3, A4, A5 ──────┼→ N1 → N2 → U1 … U7 ─┐
-              │        └→ S1 ───────────────┘→ S2 → S3 ───────────┼→ X2 → X3 → X4 → X5 → X6 → X7 → X8, X9
-              │                               L1 L2 L3 (after N2) ┘
-        R1 → B1 → B2 … B6 → B7 (after A1, S1) → B8 → B9 … B12 → B13 B14 → B15 → B16 → #1048, #1056
-        X1 (any time after R1)
+#1066 → P1 → R1 → R2 ─┬→ D1 D2 D3 D4 ─────────────┐
+                      ├→ A1 → A2 → A3, A4 ────────┼→ N1 → N2 → U1 … U7
+                      │        └→ S1 ─────────────┘→ S2 → S3
+                      │                             L1 L2 L3 (after N2)
+                      └→ X1 → X2 (after N2) → X3 → X4 → X5 (last)
+                R1 → B1 → B2 … B6 → B7 (after A1, S1) → B8 → B9 … B12 → B13 B14 → B15 → B16 → #1048, #1056
 ```
 
-Fifty-three issues, the two rewritten ones among them, and one dated clean-up. The shortest path to a first
-screen drawn from real data is R1, R2, A1, A2, N1, N2, U1.
+Forty-eight issues, the two rewritten ones among them. #1066 and #1065's slices are counted in their own
+issues. The shortest path to a first screen drawn from real data is R1, R2, A1, A2, N1, N2, U1.

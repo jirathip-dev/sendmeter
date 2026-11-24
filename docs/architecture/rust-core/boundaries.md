@@ -19,7 +19,6 @@ sm-domain ◀── sm-stats      │
                sm-ffi-swift
                      ▲
             iPhone app (Swift)          Watch app ──▶ SendLogWatchCore, SendLogHealthCore
-            mcp/ ──▶ the export folder  (no Rust, no CloudKit)
 ```
 
 ## Crates
@@ -27,10 +26,10 @@ sm-domain ◀── sm-stats      │
 | Crate | Owns | May depend on | Must not |
 |---|---|---|---|
 | `sm-domain` | Ids, `Stamp` and days, units, grades, the row types, the `ble` contract, validation at the edges | serde, uuid | everything else of ours |
-| `sm-stats` | Load, ACWR and its projection, zone mix, readiness (baseline, recovery engine, health precedence), grade pyramid, box-plot and curve summaries | `sm-domain` | SQLite, Blocks |
-| `sm-force` | Tindeq byte format and link machine, the force engine, the curve fit, the guided protocol, hands-free control | `sm-domain` | SQLite, Blocks |
+| `sm-stats` | Load, ACWR and its projection, zone mix, readiness (baseline, recovery engine, health precedence), the send-conditions score, grade pyramid, box-plot summaries, the force curve fit, and the personal force model (#1065 designs it) | `sm-domain` | SQLite, Blocks |
+| `sm-force` | Tindeq byte format and link machine, the force engine, the guided protocol, hands-free control | `sm-domain` | SQLite, Blocks |
 | `sm-boards` | #1047's `BoardCore`: layouts, routes, the LED map, both lighting encoders, the link machine, the wiring check, the two file readers, the screenshot reader (#1056) | `sm-domain` | SQLite, Blocks, any network |
-| `sm-store` | The SQLite file, the migrations, the queries, write commands, the eight former RPCs, the change log, the export bundle, the legacy-import mapping | `sm-domain`, `sm-boards` (types), rusqlite | Blocks, `sm-sync` |
+| `sm-store` | The SQLite file, the migrations, the queries, write commands, the eight former RPCs, the change log, the export bundle | `sm-domain`, `sm-boards` (types), rusqlite | Blocks, `sm-sync` |
 | `sm-sync` | `CloudRecord`, the conflict rules, `SyncState` and `reduce`, batches | `sm-store`, `sm-domain` | Blocks, any network or CloudKit type |
 | `sm-screens` | One file per screen: input → `Block`, action → intent; the look's tokens; the tab layout | `blocks`, `sm-domain`, `sm-stats`, `sm-boards` | SQLite, `sm-store`, `sm-sync` |
 | `sm-app` | `open`, `handle`: loads a screen's input, runs intents as store commands, keeps shown screens and answers with ops, runs the live sessions | every crate above | UniFFI, any OS call |
@@ -52,21 +51,22 @@ No crate is async, reads a clock, or starts a thread (enforcers: the `async fn` 
 | `Features/Live` | The live recording, force and routine views (SwiftUI), drawn from `LiveFrame`; each fits one screen | SwiftUI, BlocksUI | deciding anything (reps, peaks and targets come from the core); `ScrollView` |
 | `Platform` | `HealthKitService`, `TindeqBluetooth`, `BoardBluetooth`, `WatchLink`, weather: each turns OS callbacks into events and commands into OS calls | the OS frameworks, `SendmeterRust` types | each other, CloudKit |
 | `Data/CloudKit` | `CloudKitTransport` over `CKSyncEngine` | CloudKit, `SendmeterRust` types | any rule |
-| `Data/LegacyImport` | The PostgREST reader and sign-ins (#1045, kept); rows go to the core as `LegacyRows` | Foundation, AuthenticationServices | any Supabase package |
 | `Shared`, `Widgets` | ActivityKit types, the widgets | `SendLogHealthCore` (the widget contract) | the core |
-| Watch app | Everything it has today, minus Supabase (#1045); its live views in `Views/Live` | `SendLogWatchCore`, `SendLogHealthCore` | Rust, CloudKit, `ScrollView` in `Views/Live` |
+| Watch app | What `ports.md` keeps of it: no Supabase, no upload queues; its live views in `Views/Live` | `SendLogWatchCore`, `SendLogHealthCore` | Rust, CloudKit, `ScrollView` in `Views/Live` |
 
 Enforcers: the `[[ban]]` lines in `.drover/arch.toml` (#1049's and this ADR's, checked by `core/arch`), and
 linking: the watch and widget targets do not link `SendmeterRust`.
 
 ## What Swift keeps, and what goes
 
+File by file, with the slice that ports or reworks each: `ports.md`.
+
 | | |
 |---|---|
-| **Stays Swift** | HealthKit, CoreBluetooth, `CKSyncEngine`, WatchConnectivity, ActivityKit and the widgets, weather, the watch app, the live SwiftUI views and their presentation helpers (haptics, keep-awake, the splash, plot geometry), the legacy-import reader |
+| **Stays Swift** | HealthKit, CoreBluetooth, `CKSyncEngine`, WatchConnectivity, ActivityKit and the widgets, weather, the watch app, the live SwiftUI views and their presentation helpers (haptics, keep-awake, the splash, plot geometry) |
 | **Stays Swift for the watch and widgets only** | `SendLogWatchCore` (attempt detection, the watch's RPE model, its Tindeq and force code, the handoff types, the palette) and `SendLogHealthCore` (the watch's readiness, the widget contract). The phone app stops calling their maths |
-| **Moves to Rust** | From `Sources/Core`: models, metrics, training load, ACWR, phases, tags, history and dashboard derivations, the force and workout engines, the guided protocol, unit and mass formatting, validation. From #1045: the store, the sync rules, the export, the import mapping. From #1047: all of `BoardCore`. From #1045 and #1046: every screen |
-| **Deleted, never ported** | Everything `local-first/boundaries.md` lists under "Deleted", plus `LocalCacheStore` and GRDB, `Data/Repositories.swift`, `AppModel.swift`, today's `Features/Dashboard`, `History`, `Phases`, `Settings`, `Workout` and `Force` screens, and `DesignSystem.swift` where the live views do not need it |
+| **Moves to Rust** | From `Sources/Core`: models, metrics, training load, ACWR, phases, tags, history and dashboard derivations, the force and workout engines, the guided protocol, unit and mass formatting, validation. From #1045: the store, the sync rules, the export. From #1047: all of `BoardCore`. From #1045 and #1046: every screen |
+| **Deleted by #1066, never ported** | Everything `ports.md` does not list: what `local-first/boundaries.md` lists under "Deleted", `LocalCacheStore` and GRDB, all of `Sources/Data`, `AppModel.swift`, every screen in `Sources/Features`, `DesignSystem.swift`, the app-target and UI tests, `supabase/` but the files A3 ports, `mcp/`. And #1045's import: no reader, no mapping, no sign-in |
 
 ## Dependencies (approved by the owner, q3124; nothing else without asking)
 
@@ -85,4 +85,4 @@ Each is listed with its reason in `.gatekeeper/deps.toml` by the slice that firs
 its commit message carries `Deps: #1059` and the owner's answer q3124, as `core/deps` asks. Errors are plain
 enums written by hand; tests use an in-memory store, so no test helper crate is needed.
 
-Removed at X6 to X8: GRDB, the Supabase Swift package, `@supabase/supabase-js` in `mcp/`.
+Removed by #1066: GRDB, the Supabase Swift package, and `@supabase/supabase-js` with `mcp/`.

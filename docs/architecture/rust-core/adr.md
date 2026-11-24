@@ -2,11 +2,11 @@
 
 ## Summary
 
-Decision: one Rust core holds the data and its rules, the SQLite store, the sync rules, the stats, the force-gauge and board protocols, the file readers and every Blocks screen. Swift keeps Apple's parts (Health, the Bluetooth radio, the iCloud link, the live session and force views) and the whole Watch app. The core is plain synchronous Rust on one background queue. Sync is native iCloud only, encrypted as #1045 approved. There is no web app. The new app is built beside today's and replaces it in one step. Every live session and force screen fits one screen with no scrolling, on iPhone and Watch. Rust is gated as strictly as cooee from its first crate.
-Slices: 53 issues in 10 groups: foundation and gates (2), ported maths (4), store (5), sync (3), new shell (2), screens (7), live views (3), boards (16), the rewritten #1048 and #1056 (2), switch-over and Supabase removal (9). The four Blocks issues have landed; one Blocks bug is left to file and nothing waits on it.
-Open questions: (1) The Watch app stays Swift and gets its data through the phone, because stable Rust ships no ready-built library for watches before Series 9. Accept that (recommended), or drop those watches? (2) The line cap must count Rust, and rise while both apps exist side by side (estimate: a peak near 145,000 lines, about 80,000 after the old app is deleted). Approve a cap issue before the first Rust PR?
+Decision: one Rust core holds the data and its rules, the SQLite store, the sync rules, the stats, the force-gauge and board protocols, the file readers and every Blocks screen. Swift keeps Apple's parts (Health, the Bluetooth radio, the iCloud link, the live session and force views) and the whole Watch app. The core is plain synchronous Rust on one background queue. Sync is native iCloud only, encrypted as #1045 approved. There is no web app and no import: both users start over, the old app is deleted first, and only a listed set of files is kept. Every live session and force screen fits one screen with no scrolling, on iPhone and Watch. Rust is gated as strictly as cooee from its first crate.
+Slices: 48 issues in 10 groups, after the cleanup (#1066): foundation and gates (2), ported maths (4), store (4), sync (3), new shell (2), screens (7), live views (3), boards (16), the rewritten #1048 and #1056 (2), the Watch and the release (5). The four Blocks issues have landed; one Blocks bug is left to file and nothing waits on it.
+Open questions: (1) The Watch app stays Swift and gets its data through the phone, because stable Rust ships no ready-built library for watches before Series 9. Accept that (recommended), or drop those watches? (2) The line cap must count Rust. With the old app deleted first it can also come down: about 43,000 lines are kept, and the finished app is estimated at 70,000. Approve a cap issue that counts Rust and lowers the cap from 120,000 to 80,000?
 
-Status: proposed, 2026-11-23. Read on staging `d99394f2`; Blocks at staging `976cf0f6`.
+Status: proposed, 2026-11-24. Read on staging `d99394f2`; Blocks at staging `976cf0f6`.
 
 ## Question
 
@@ -26,6 +26,11 @@ Fixed by the owner:
 - **Live session and force screens fit one screen**, no scrolling, on iPhone and Watch (q3117).
 - **Dependencies** (q3124): `blocks` (git, pinned), `serde`, `serde_json`, `rusqlite` (bundled SQLite),
   `uniffi`, `uuid`, a pinned Rust toolchain with the iOS targets, `cargo-deny`. Nothing else without asking.
+- **No Supabase import** (2026-11-24): both users start over with empty data. The one-time import, its reader
+  and its screens are gone from this ADR. The owner exports the old data once, privately, outside the repo.
+- **The old app is deleted first** (#1066), once this ADR is approved. This ADR lists the files to keep; each
+  goes with the PR that ports it (`ports.md`).
+- **The personal force models** (#1065) live in the core's stats crate; #1065 designs them.
 
 ## What was found
 
@@ -75,8 +80,7 @@ driven by a host test.
 | Async with sqlx and tokio | Queries checked at compile time | A runtime in the app; async across UniFFI; the check needs a database at build time |
 
 Decision: synchronous. Swift's `CoreHost` actor owns the core and is the only caller. Every event enters one
-queue and is handled in the order it was sent, off the main thread. Long work (the import, the export, a first
-sync) is cut into steps: the core does one step and returns `Wake`, so no call is long. What sqlx would have
+queue and is handled in the order it was sent, off the main thread. Long work (the export, a first sync) is cut into steps: the core does one step and returns `Wake`, so no call is long. What sqlx would have
 checked at compile time is checked by a test per query (decision 2).
 
 ### 2. The store: SQLite in Rust, one schema, one migration list, one tested file per query
@@ -131,7 +135,7 @@ generic: `ScreenHost` wraps `BlocksView`, applies ops and sends actions back. It
 ### 5. Live session and force screens fit one screen
 
 The live recording, force and routine views stay SwiftUI on the phone, fed by the core (`LiveFrame`); the
-watch's stay Swift. Requirement, on every slice that builds or changes one (L2, L3, X9, #1048):
+watch's stay Swift. Requirement, on every slice that builds or changes one (L2, L3, X4, #1048):
 
 - During a session, the session screen and the force-measure screen each show everything on one screen. They
   do not scroll, on the smallest iPhone the app supports (375 × 667 points) and the smallest Apple Watch
@@ -188,14 +192,28 @@ the TestFlight lane build the core before Xcode compiles (slice R2). `.drover/ru
 lines, so the Rust rules take at most five: the lint floor, no async and no clock, SQLite and SQL only as
 tested query files in `sm-store`, no scrolling live screen, each naming the gate above that enforces it.
 
-### 9. How it is built: beside today's app, then one switch
+### 9. How it is built: the old app is deleted first, the new one is the only app
 
 | Option | For | Against |
 |---|---|---|
-| #1045's order: move today's screens onto the new store one family at a time, then rebuild them | Small visible steps | Every screen is rebuilt anyway; the re-wiring of the 12,912-line `AppModel.swift` is thrown away, and that file is now frozen |
-| **Build the new app (core, store, new screens) behind a launch flag; switch in one PR; then delete the old** | `AppModel.swift` is never edited, only deleted; no serial cut-over; `main` stays shippable | Two apps in the binary, and under the line cap, until the switch |
+| #1045's order: move today's screens onto the new store one family at a time, then rebuild them | Small visible steps | Every screen is rebuilt anyway; the re-wiring of the 12,912-line `AppModel.swift` is thrown away |
+| Build the new app beside the old one behind a launch flag, then switch (this ADR's first draft) | `main` stays shippable | Two apps in the tree and under the line cap; an import to carry users across |
+| **Delete the old app (#1066), keep only what is ported or carried, build the new app in its place** (owner, 2026-11-24) | One app, one way to do each thing; no import, no flag, no switch; the cap falls | Nothing ships from staging until the new app is usable |
 
-Decision: the second. Existing users cross over by #1045's one-time import, as planned.
+Decision: the third. `ports.md` is the list #1066 keeps: 60 pure files to port into the core, each deleted by
+the PR that ports it, and the Swift that stays (Apple's edges, the watch, the widgets, the build skeleton).
+Nothing else of the old app survives. The watch's attempt detector is kept as Swift, because it runs on the
+watch (decision 7).
+
+The new app keeps the bundle ids, so it installs over the old one. It reads nothing the old app stored, and
+on first launch it removes what the old app left behind (slice N2).
+
+### 10. Room for the personal force model (#1065)
+
+Decision: the force curve fit moves from `sm-force` to `sm-stats`, beside readiness and training load, which
+the model reads. #1065's model is a module of `sm-stats`: pure, with no store and no clock, like the rest of
+that crate. If it needs a stored state, that is one more table: a migration file, its queries and tests, and
+one record type (`shapes.md`). The watch shows the model's numbers from the phone's snapshot and computes none.
 
 ## What this keeps, changes and replaces
 
@@ -213,7 +231,10 @@ amendments withdrew: `supersedes.md`.
 - Every call into the core is short by rule. A query that is slow on a large store is a bug with a test, not a
   reason for threads.
 - No dynamic SQL: a filter is a parameter of a fixed statement. A new query is two new files and edits no list.
-- Until the switch the binary and the line cap carry both apps (open question 2).
+- From #1066 until the new app is usable, staging builds no app. `main` keeps the last old build, and the
+  two installed apps keep working until the owner shuts Supabase down.
+- Both users start over: nothing is imported, and the new app removes the old app's files on first launch.
+- `mcp/` is deleted by #1066. The export folder stays, so a server that reads it can return as its own issue.
 - A phone may run an older build than another phone on the same iCloud. Synced schema changes are add-only, an
   unknown field is kept and ignored (#1045's rule), and a migration that adds a synced table or column asks
   for one full fetch.
@@ -223,8 +244,10 @@ amendments withdrew: `supersedes.md`.
 
 ### Owner actions (nothing a lane can do)
 
-- Before R1: the cap issue of open question 2 (`ci/cap.toml` counts `crates/*/src/**/*.rs`; the cap covers
-  the overlap).
+- Before R1: the cap issue of open question 2.
+- The private export of the old data, then shutting the two Supabase projects down. No slice depends on
+  either.
+- No promotion of staging to `main` between #1066 and a new app the owner accepts.
 - File G2 in Blocks (`blocks.md`). Nothing waits on it.
 - Apple Developer portal and CloudKit Console, as #1045 lists: the container, iCloud and push on the App IDs,
   the schema deployed to production.
@@ -238,11 +261,11 @@ amendments withdrew: `supersedes.md`.
    floor to Series 9 and later and link `sm-stats` and `sm-force` there; (c) a nightly toolchain for the watch
    build only, outside the gates. Nothing else in this ADR changes with the answer.
 2. **The line cap.** `ci/cap.toml` counts no Rust, and lanes may not edit it. To gate Rust lines from R1 it
-   needs `crates/*/src/**/*.rs` in `count`. Building beside the old app also needs room: about 100,000 lines
-   today, an estimated 35,000 of Rust and 8,000 of new Swift before slice X6 deletes about 60,000. Options:
-   (a) recommended: one cap issue before R1 that adds the glob and raises the cap to 145,000, and one after X6
-   that lowers it to what is left plus a margin; (b) keep 120,000 and delete old screens as new ones land,
-   which gives up "`main` stays shippable".
+   needs `crates/*/src/**/*.rs` in `count`. #1066 leaves about 43,000 of today's 100,332 counted lines; the
+   finished app is estimated at 70,000 (35,000 of Rust, 8,000 of new Swift, 27,000 carried), and ports delete
+   Swift as they add Rust. Options: (a) recommended: one cap issue, with #1066 or right after it, that adds
+   the glob, drops `mcp/src/**/*.ts`, and lowers the cap to 80,000; (b) add the glob and leave the cap at
+   120,000.
 
 ## Hot files
 
@@ -255,9 +278,9 @@ amendments withdrew: `supersedes.md`.
 | App kinds | central list | `native/SendmeterNative/Sources/Features/Kinds/<Name>Kind.swift`; a core test fails a kind a screen uses that the folder lacks |
 | Gates | CI per area | one file per gate in `.gatekeeper/gates/` (already collected); no workflow file is added |
 | Swift bindings, the XCFramework | generated | built by `scripts/rust-ios.sh` into `target/`, never committed |
-| `Sources/App/AppModel.swift` | frozen since #1049 | not edited: the new app does not use it, slice X6 deletes it |
+| `Sources/App/AppModel.swift` | frozen since #1049 | deleted by #1066, which also takes it out of `frozen` |
 | `justfile` | frozen since #1049 | not edited: new commands are gates or scripts |
-| `CLAUDE.md` | docs | one repo-map line and the gate rows in R1; rewritten once in X7 |
+| `CLAUDE.md` | docs | rewritten by #1066 for the cleaned tree; one repo-map line and the gate rows in R1; read once more in X5 |
 
 The exact `.drover/arch.toml` lines, added to the file #1049 created, each by the slice named:
 
@@ -320,19 +343,19 @@ reason = "#1059: a live session or force screen fits one screen and never scroll
 dir = "crates/sm-boards/src/layouts"
 glob = "*.rs"
 
-# slice X9 (the watch's views)
+# slice X4 (the watch's views)
 [[ban]]
 pattern = "ScrollView"
 paths = ["ios/App/SendLogWatch Watch App/Views/Live/**"]
 reason = "#1059: a live session or force screen fits one screen and never scrolls"
 
-# slice X6 (the old app deleted)
+# slice R2 (the app builds again)
 [[ban]]
 pattern = "import GRDB"
 paths = ["native/**", "ios/**"]
 reason = "#1059: the store is Rust: crates/sm-store"
 ```
 
-X6 also takes `native/SendmeterNative/Sources/App/AppModel.swift` out of `frozen` (the file is gone), deletes
-the `import Auth` ban, and drops `except` from the `import Supabase` ban, so it holds everywhere. #1045's and
-#1047's `arch.toml` lines are replaced by these.
+#1066 leaves no file that imports Supabase or `Auth`, and no `AppModel.swift`. It takes that file out of
+`frozen`, deletes the `import Auth` ban, and drops `except` from the `import Supabase` ban, so it holds
+everywhere. #1045's and #1047's `arch.toml` lines are replaced by these.
