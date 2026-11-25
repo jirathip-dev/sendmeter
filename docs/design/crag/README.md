@@ -1,8 +1,18 @@
 ## Summary
 
-Decision: Round 10 changes only the roo's arms, hands and shoes, in the roo kit master, so every pose, scene and icon follows. The arms are short and stubby. Each grows out of the body in the same fur, with no line at the shoulder and the rim only along its outer edge. It tapers from wide at the body to a slim wrist and ends in a small slim paw, and on a hold two short finger lines curl over the edge, with the hold moved in close. The shoes are aggressive bouldering shoes in the crag palette: a downturned pointy toe, a black knit upper, a big rubber toe cap wrapping over the top, one wide velcro strap, a heel pull loop, and a black rubber heel cup with a separate lavender band sweeping from the loop down to the sole and along the side. They carry no logos or text.
-Screens: every image is re-rendered (63); the roo kit's poses, the model sheet, the icon sheet (Crimp, Rest, Tongue, Dyno, Send and Shoe most of all), Loading and Today show this round's changes.
+Decision: Round 11 changes only the roo's arms, in the roo kit master, so every pose, scene and icon follows: they join the body like a plush toy's. From the front, each arm starts lower on the body side with a sloped, rounded join and no shoulder corner. From the back, only a small rounded nub of each arm shows at the sides. Raised arms (Hang, Flash, PR, Rest hang, Tongue) go straight up from that join, short and with no elbow. Side-view arms (Stand, Send, Crimp, Dyno and the rest) also start lower on the body with the same soft join. Shoes, holds and everything else stay as round 10.
+Screens: every image is re-rendered (63); the model sheet, the roo kit's poses, the icon sheet, Loading and Today show this round's changes.
 Open questions: none.
+
+## Round 11 changes
+
+- **Plush arm join, in the kit master** (`pack/roo.mjs`, the rig's arm attach points; the arm part itself is unchanged):
+  - **Front.** Each arm's pivot moved from the top corner of the chest (±26, −48) down and in (±21, −38), inside the body's edge, and the arms hang out at 40°. The arm's outer edge now leaves the body's curve at a shallow slope, so there is no square shoulder.
+  - **Back.** Same join; the arms sit behind the body, so only a small rounded nub of each paw shows at the sides.
+  - **Raised arms.** Hang, Flash, PR, Rest hang and Tongue lift the arms from the same low join; each arm is one short straight piece, no elbow. Holds stay at the paw tip.
+  - **Side.** The near arm's pivot moved from (18, −44) to (13, −37) and the far arm's from (12, −46) to (9, −39), so side arms also grow out lower on the body. Holds and the chalk bag follow the paw.
+- **Model sheet.** The proportions line describes the plush join.
+- **Contrast.** `node contrast.mjs`: 0 failing of 56. Nothing behind text changed.
 
 ## Round 10 changes
 

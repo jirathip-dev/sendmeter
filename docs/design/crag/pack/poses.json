@@ -89,8 +89,8 @@
         "name": "bagFront",
         "on": "body",
         "at": [
-          23.98238404760458,
-          -23.822498565617963
+          18.741133435591596,
+          -17.001260259996805
         ]
       }
     ],
@@ -510,8 +510,8 @@
       "head": 0,
       "earFar": -10,
       "earNear": 10,
-      "armFar": 18,
-      "armNear": -18,
+      "armFar": 40,
+      "armNear": -40,
       "thighFar": 6,
       "shinFar": -6,
       "shoeFar": 0,
@@ -532,8 +532,8 @@
       "head": 0,
       "earFar": -10,
       "earNear": 10,
-      "armFar": 18,
-      "armNear": -18,
+      "armFar": 40,
+      "armNear": -40,
       "thighFar": 6,
       "shinFar": -6,
       "shoeFar": 0,

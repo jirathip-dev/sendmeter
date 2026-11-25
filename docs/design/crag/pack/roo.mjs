@@ -89,7 +89,7 @@ const RIG = {
     { id: "tail", shape: "tail", at: [-18, -4], behind: true },
     { id: "thighFar", shape: "thigh", at: [-4, -12], far: true, behind: true,
       kids: [{ id: "shinFar", shape: "shin", at: [12, 28], far: true, behind: true, kids: [{ id: "shoeFar", shape: "shoe", at: [0, 20] }] }] },
-    { id: "armFar", shape: "arm", at: [12, -46], far: true, behind: true },
+    { id: "armFar", shape: "arm", at: [9, -39], far: true, behind: true },
     { id: "head", shape: "head", at: [8, -56],
       kids: [
         { id: "earFar", shape: "ear", at: [-12, -54], far: true, behind: true },
@@ -97,7 +97,7 @@ const RIG = {
       ] },
     { id: "thighNear", shape: "thigh", at: [2, -10],
       kids: [{ id: "shinNear", shape: "shin", at: [12, 28], behind: true, kids: [{ id: "shoeNear", shape: "shoe", at: [0, 20] }] }] },
-    { id: "armNear", shape: "arm", at: [18, -44], outer: 1 },
+    { id: "armNear", shape: "arm", at: [13, -37], outer: 1 },
   ],
 };
 
@@ -107,8 +107,8 @@ const FRONT = {
     { id: "tail", shape: "tail", at: [-8, -6], behind: true },
     { id: "thighFar", shape: "thigh", at: [-16, -10], kids: [{ id: "shinFar", shape: "shin", at: [4, 28], behind: true, kids: [{ id: "shoeFar", shape: "shoe", at: [0, 20] }] }] },
     { id: "thighNear", shape: "thigh", at: [16, -10], kids: [{ id: "shinNear", shape: "shin", at: [4, 28], behind: true, kids: [{ id: "shoeNear", shape: "shoe", at: [0, 20] }] }] },
-    { id: "armFar", shape: "arm", at: [-26, -48], outer: -1 },
-    { id: "armNear", shape: "arm", at: [26, -48], outer: 1 },
+    { id: "armFar", shape: "arm", at: [-21, -38], outer: -1 },
+    { id: "armNear", shape: "arm", at: [21, -38], outer: 1 },
     { id: "head", shape: "head", at: [0, -58], kids: [
       { id: "earFar", shape: "ear", at: [-16, -52] },
       { id: "earNear", shape: "ear", at: [16, -52] },
@@ -144,8 +144,8 @@ export const POSES = {
     props: [{ name: "star", on: "body", at: [0, -150] }] },
   shelter: { label: "Shelter", angles: pose({ body: 20, head: 30, earFar: 60, earNear: 70, armFar: -40, armNear: -60, thighFar: -70, shinFar: 100, shoeFar: -24, thighNear: -64, shinNear: 94, shoeNear: -20, tail: -20 }), y: -3 },
   moon: { label: "Moon-watch", angles: pose({ body: -6, head: -30, earFar: -24, earNear: -8, armFar: -30, armNear: -40, thighFar: -70, shinFar: 92, shoeFar: -24, thighNear: -64, shinNear: 84, shoeNear: -20, tail: -14 }), y: 18 },
-  front: { label: "Front", view: "front", angles: pose({ earFar: -10, earNear: 10, armFar: 18, armNear: -18, thighFar: 6, shinFar: -6, shoeFar: 0, thighNear: -6, shinNear: 6, shoeNear: 0, tail: 0 }), y: 19 },
-  back: { label: "Back", view: "back", angles: pose({ earFar: -10, earNear: 10, armFar: 18, armNear: -18, thighFar: 6, shinFar: -6, shoeFar: 0, thighNear: -6, shinNear: 6, shoeNear: 0, tail: -60 }), y: 13 },
+  front: { label: "Front", view: "front", angles: pose({ earFar: -10, earNear: 10, armFar: 40, armNear: -40, thighFar: 6, shinFar: -6, shoeFar: 0, thighNear: -6, shinNear: 6, shoeNear: 0, tail: 0 }), y: 19 },
+  back: { label: "Back", view: "back", angles: pose({ earFar: -10, earNear: 10, armFar: 40, armNear: -40, thighFar: 6, shinFar: -6, shoeFar: 0, thighNear: -6, shinNear: 6, shoeNear: 0, tail: -60 }), y: 13 },
 };
 
 function draw(node, p, pass, view, acc = 0) {
