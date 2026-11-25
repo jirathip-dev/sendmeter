@@ -2,7 +2,7 @@
 
 ## Summary
 
-Decision: one Rust core holds the data and its rules, the SQLite store, the sync rules, the stats, the force-gauge and board protocols, the file readers and every Blocks screen. Swift keeps Apple's parts (Health, the Bluetooth radio, the iCloud link, the live session and force views) and the whole Watch app. The core is plain synchronous Rust on one background queue. Sync is native iCloud only, encrypted as #1045 approved. There is no web app and no import: both users start over, the old app is deleted first, and only a listed set of files is kept. Every live session and force screen fits one screen with no scrolling, on iPhone and Watch. Rust is gated as strictly as cooee from its first crate.
+Decision: one Rust core holds the data and its rules, the SQLite store, the sync rules, the stats, the force-gauge and board protocols, the file readers and every Blocks screen. Swift keeps Apple's parts (Health, the Bluetooth radio, the iCloud link, the live session and force views) and the whole Watch app. The core is plain synchronous Rust on one background queue. Sync is native iCloud only, encrypted as #1045 approved. There is no web app and no import: both users start over, the old app is deleted first, and only a listed set of files is kept. Every live session and force screen fits one screen with no scrolling, on iPhone and Watch. Rust is gated as strictly as cooee from its first crate. A design reaches the phone as screen files, a Blocks colour scheme and style, and art; the phone reads no CSS, so each look rule beyond those is a Blocks issue.
 Slices: 48 issues in 10 groups, after the cleanup (#1066): foundation and gates (2), ported maths (4), store (4), sync (3), new shell (2), screens (7), live views (3), boards (16), the rewritten #1048 and #1056 (2), the Watch and the release (5). The four Blocks issues have landed; one Blocks bug is left to file and nothing waits on it.
 Open questions: (1) The Watch app stays Swift and gets its data through the phone, because stable Rust ships no ready-built library for watches before Series 9. Accept that (recommended), or drop those watches? (2) The line cap must count Rust. With the old app deleted first it can also come down: about 43,000 lines are kept, and the finished app is estimated at 70,000. Approve a cap issue that counts Rust and lowers the cap from 120,000 to 80,000?
 
@@ -15,7 +15,7 @@ Open questions: (1) The Watch app stays Swift and gets its data through the phon
 | `shapes.md` | Events and effects, the Bluetooth contract, every synced record, what crosses the transport |
 | `sync.md` | Who does what, one sync turn, the statechart, how the transport is held honest, what protects the data |
 | `boundaries.md` | The nine crates, the Swift modules, what moves, stays and goes, the dependencies |
-| `blocks.md` | The run on iOS, where Blocks stands, the one bug to file |
+| `blocks.md` | The run on iOS, where Blocks stands, what a design's look can carry to the phone, the one bug to file |
 | `supersedes.md` | #1045, #1046 and #1047 line by line: kept, changed, replaced; what the amendments withdrew from this issue; #1048 and #1056 rewritten |
 | `ports.md` | The files the cleanup (#1066) keeps: what is ported into the core and by which slice, what stays Swift |
 | `migration.md` | The issues to file, in order |
@@ -45,8 +45,8 @@ Open questions: (1) The Watch app stays Swift and gets its data through the phon
 
 ## What was run
 
-Read on staging `d99394f2`. Blocks at staging `976cf0f6` (the probe ran at `73adae31`). Host: macOS 27.2,
-Xcode 27.2, Rust 1.100.0. Detail and findings in `blocks.md`.
+Read on staging `27f9de6c` (the file counts on `d99394f2`). Blocks at staging `d79ce47d` (the probe ran at
+`73adae31`). Host: macOS 27.2, Xcode 27.2, Rust 1.100.0. Detail and findings in `blocks.md`.
 
 | Claim | Command | Exit |
 |---|---|---|
@@ -58,6 +58,7 @@ Xcode 27.2, Rust 1.100.0. Detail and findings in `blocks.md`.
 | The watch cannot use ready-built Rust | `rustup target list`: no `arm64_32-apple-watchos` | 0 |
 | Today's counted lines are under the cap | `./.gatekeeper/run check --gate core/cap` | 0 |
 | The files of `ports.md` exist, and hold about 43,000 of the 100,332 counted lines | `wc -l` over the list (2026-11-24) | 0 |
+| The design recipe's Blocks pin (release 2.0) is older than the four kinds the screens use | `gh api repos/jirathip-dev/blocks/compare/976cf0f6...b1a9c991`: 36 behind (2026-11-25) | 0 |
 
 Not run, and not claimed: CloudKit and `CKSyncEngine`, Advanced Data Protection, HealthKit, CoreBluetooth with
 real hardware, a real iPhone or Watch, WatchConnectivity, the live views at their smallest sizes. Each slice

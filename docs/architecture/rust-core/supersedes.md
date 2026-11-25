@@ -43,10 +43,10 @@ version is built instead. **Withdrawn**: the owner dropped it; nothing is built.
 | # | #1046 says | Now | What is built |
 |---|---|---|---|
 | 1 | Five tabs: Today, Session, Board, Force, Log; Settings behind Today's menu | Kept | The tab list is a value the core gives the host |
-| 2 | Every approved screen and its content (`screens/*.json`, `png/`) | Kept | Each JSON file is its screen's expected value in a Rust test, until #1060's approved screens replace them |
+| 2 | Every approved screen and its content (`screens/*.json`, `png/`) | Kept | Each JSON file is its screen's expected value in a Rust test, until #1060's approved screens (`docs/design/<slug>/screens/`, #1063's recipe) replace them |
 | 3 | Blocks screens are built only from core kinds plus two app kinds, `board` and `mascot` | Kept | `board`'s props are in `shapes.md` (`size` in place of `columns` and `rows`) |
 | 4 | Live screens (session, Force, watch) are SwiftUI on Blocks' look | Changed | Kept, with the new rule: each fits one screen with no scrolling, on iPhone and Watch. Where an approved live mockup scrolls, its slice redraws it |
-| 5 | The chalk-and-slate palette and tiles, handed to Blocks; no swag pack | Kept | Defined once as tokens in `sm-screens`; the watch's Swift palette is checked against them. #1060 may replace the palette; the mechanism stays |
+| 5 | The chalk-and-slate palette and tiles, handed to Blocks; no swag pack | Kept | A Blocks scheme per mode and a style file in `crates/sm-screens/look/`, handed to BlocksUI as tokens; the watch's Swift palette is checked against them. #1060 may replace both files; the mechanism stays, and what its CSS pack says beyond them is a Blocks issue (`adr.md`, decision 4) |
 | 6 | Mascots and the loading screen: the product's own assets and `SplashView`, unchanged | Kept | |
 | 7 | 1440: the tab bar becomes a sidebar; Board list and route side by side | Kept | A mockup for iPad later, as in #1046 |
 | 8 | Settings: iCloud sync a single switch, off, no account, no sign-in | Kept | |

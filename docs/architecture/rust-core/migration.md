@@ -25,7 +25,9 @@ commit deletes the Swift.
 | P1 | `cap:` issue: `ci/cap.toml` counts `crates/*/src/**/*.rs`, drops `mcp/`, and the cap comes down (`adr.md`, open question 2) | the owner, through an orchestrator |
 | P2 | Blocks: file G2 (`blocks.md`). Nothing waits on it | an orchestrator |
 
-Blocks #351 to #354 have merged; N1 pins Blocks at `976cf0f6` or later, so no screen slice waits on Blocks.
+Blocks #351 to #354 have merged; N1 pins Blocks at `976cf0f6` or later, so no screen slice waits on Blocks
+for a kind the approved designs use. A screen whose fixture still holds a stand-in waits for that stand-in's
+Blocks issue (`adr.md`, decision 4).
 
 ## R. Foundation
 
@@ -72,13 +74,14 @@ Every slice that adds a statement adds its file in `queries/` and its test in `t
 
 | # | Issue | Scope | Proof |
 |---|---|---|---|
-| N1 | screens: the runtime | `sm-screens` (the route table from the folder, the look's tokens, the tab layout), `Open`, `Act` and `Close` in `sm-app`, shown screens answered with ops, the test that the Cargo and SwiftPM pins of Blocks agree; first screen: Settings, with its rows only | rust: the screen equals the approved JSON; an action returns ops that `apply` to the next screen |
+| N1 | screens: the runtime | `sm-screens` (the route table from the folder, the tab layout), the look as a scheme per mode and a style file in `look/`, `Open`, `Act` and `Close` in `sm-app`, shown screens answered with ops; one Blocks pin: the crate, the Swift package and `.drover/design.md` moved to one commit, with the test that they agree; first screen: Settings, with its rows only | rust: the screen equals the approved JSON; the look parses as Blocks' types and passes Blocks' `gate`; an action returns ops that `apply` to the next screen |
 | N2 | native: the host | `CoreHost` and its queue, `Shown`, `ScreenHost`, the tab view from the core's layout, the look from tokens, `Features/Kinds` with `MascotKind`, the splash carried over. On first launch it removes what an old install left behind (the account cache, the saved Supabase session, the old queue files) | app; a 390 screenshot of Settings; a test that events sent from many threads are handled in the order sent |
 
 ## U. Screens (after N; each is one Rust file, its actions, and its test against the approved JSON)
 
 Every slice proves by rust, app, and 390 and 1440 screenshots. The expected JSON is the newest approved
-design's (#1046's, or #1060's once approved).
+design's (#1046's, or #1060's once approved). No slice waits for a look: a new look swaps the fixtures and the
+files in `look/`, in its own PR.
 
 | # | Issue | Waits on |
 |---|---|---|

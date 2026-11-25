@@ -2,11 +2,11 @@
 
 ## Summary
 
-Decision: one Rust core holds the data and its rules, the SQLite store, the sync rules, the stats, the force-gauge and board protocols, the file readers and every Blocks screen. Swift keeps Apple's parts (Health, the Bluetooth radio, the iCloud link, the live session and force views) and the whole Watch app. The core is plain synchronous Rust on one background queue. Sync is native iCloud only, encrypted as #1045 approved. There is no web app and no import: both users start over, the old app is deleted first, and only a listed set of files is kept. Every live session and force screen fits one screen with no scrolling, on iPhone and Watch. Rust is gated as strictly as cooee from its first crate.
+Decision: one Rust core holds the data and its rules, the SQLite store, the sync rules, the stats, the force-gauge and board protocols, the file readers and every Blocks screen. Swift keeps Apple's parts (Health, the Bluetooth radio, the iCloud link, the live session and force views) and the whole Watch app. The core is plain synchronous Rust on one background queue. Sync is native iCloud only, encrypted as #1045 approved. There is no web app and no import: both users start over, the old app is deleted first, and only a listed set of files is kept. Every live session and force screen fits one screen with no scrolling, on iPhone and Watch. Rust is gated as strictly as cooee from its first crate. A design reaches the phone as screen files, a Blocks colour scheme and style, and art; the phone reads no CSS, so each look rule beyond those is a Blocks issue.
 Slices: 48 issues in 10 groups, after the cleanup (#1066): foundation and gates (2), ported maths (4), store (4), sync (3), new shell (2), screens (7), live views (3), boards (16), the rewritten #1048 and #1056 (2), the Watch and the release (5). The four Blocks issues have landed; one Blocks bug is left to file and nothing waits on it.
 Open questions: (1) The Watch app stays Swift and gets its data through the phone, because stable Rust ships no ready-built library for watches before Series 9. Accept that (recommended), or drop those watches? (2) The line cap must count Rust. With the old app deleted first it can also come down: about 43,000 lines are kept, and the finished app is estimated at 70,000. Approve a cap issue that counts Rust and lowers the cap from 120,000 to 80,000?
 
-Status: proposed, 2026-11-24. Read on staging `d99394f2`; Blocks at staging `976cf0f6`.
+Status: proposed, 2026-11-25. Read on staging `27f9de6c`; Blocks at staging `d79ce47d`.
 
 ## Question
 
@@ -40,6 +40,8 @@ Fixed by the owner:
 - **Blocks is ready.** The four issues this ADR waited on have merged: client-built screens from an app's own
   Rust (#354), the live line plot (#351), the heat map (#352), the box plot (#353). One Swift bug the probe
   found is still there and is not filed yet (`blocks.md`, G2).
+- **Designs are now CSS packs on Blocks fixtures** (#1063, merged 2026-11-24). BlocksUI takes a look as a
+  colour scheme and a style file only, so a pack's CSS has no route to the phone (decision 4).
 - **The watch cannot link the core.** Rust ships no ready-built standard library for `arm64_32-apple-watchos`,
   the architecture of Apple Watch models before Series 9: `rustup target list` on 1.100.0 offers only the
   64-bit watch targets. Building it needs a nightly toolchain, which the stable and MSRV gates rule out.
@@ -126,11 +128,34 @@ generic: `ScreenHost` wraps `BlocksView`, applies ops and sends actions back. It
 
 - This is Blocks' client-built mode (`docs/client-built.md` in Blocks, from #354), used as documented.
 - Tabs and navigation are SwiftUI; their list comes from the core.
-- A screen's test compares what it builds with the approved design's JSON. Today that is #1046's
-  `design/redesign/screens/*.json`; when #1060's new look is approved, its files replace them. A new look
-  changes screen files and tokens, not this architecture.
-- The colours and tiles are defined once in Rust and handed to BlocksUI as tokens.
 - App kinds, drawn in SwiftUI: `board` and `mascot`. Everything generic is a Blocks kind.
+
+**What a design hands to the phone.** Designs are Blocks fixtures drawn by the HTML renderer under a CSS pack
+(#1063's recipe, `.drover/design.md`). The phone draws with BlocksUI, which reads no CSS. So an approved design
+reaches the app as three things and nothing else:
+
+| From the design | Becomes | Held by |
+|---|---|---|
+| `screens/<screen>.json` | The expected value of that screen's Rust test | `cargo test`: what the screen builds equals the file |
+| The look, as Blocks data: a colour scheme per mode and a style file | `crates/sm-screens/look/`, handed to BlocksUI as tokens | A test parses both with Blocks' own types and runs Blocks' `gate` |
+| Art: the mascot, icons, fonts | App resources | The build |
+
+- Today the fixtures are #1046's `design/redesign/screens/*.json`; when #1060's look is approved, its
+  `docs/design/<slug>/screens/` replace them. A new look changes those files, not this architecture.
+- A rule a pack's CSS makes beyond the scheme and the style file does not reach the phone. #1060's draft has
+  three that are generic: blurred glass cards, a gradient button, two named fonts. Each is a Blocks issue (a
+  style value both renderers draw), filed by the design lane as #1063's recipe says for a missing kind. It is
+  never Swift written in Sendmeter. Until one lands, the phone shows the look without it.
+- The draft's night scene is the app's own art. Inside a screen it is the `mascot` app kind. Behind a whole
+  screen it has no route yet: #1060's README names one (a Blocks issue, or no backdrop) before it is approved.
+- Screens do not wait for a look. Their tests compare JSON, so U1 to U7 can land on #1046's fixtures and take
+  #1060's when it is approved.
+- One Blocks pin: the crate, the Swift package and the design recipe name the same commit, held by N1's test.
+  The recipe pins release 2.0 today, which is older than the four kinds of #351 to #354; N1 moves it.
+- A fixture that still holds a stand-in (#1063's `island`) is not an expected value. Its screen's slice waits
+  for the Blocks issue the stand-in names, then swaps the stand-in for the kind in the same PR.
+- The look is the app's own scheme and style, which Blocks takes as it takes a pack's. Swag is not a
+  dependency of the app. If the owner later wants the look read from swag, that is a new dependency to approve.
 
 ### 5. Live session and force screens fit one screen
 
@@ -249,6 +274,8 @@ amendments withdrew: `supersedes.md`.
   either.
 - No promotion of staging to `main` between #1066 and a new app the owner accepts.
 - File G2 in Blocks (`blocks.md`). Nothing waits on it.
+- Before #1060 is approved: its README lists each look rule the phone cannot draw, with its Blocks issue
+  (decision 4).
 - Apple Developer portal and CloudKit Console, as #1045 lists: the container, iCloud and push on the App IDs,
   the schema deployed to production.
 - Device checks with a throwaway Apple ID, as #1045 and #1047 list: two phones on one Apple ID, quota full,
@@ -274,6 +301,7 @@ amendments withdrew: `supersedes.md`.
 | The store's schema steps | central list | `crates/sm-store/migrations/NNNN_<name>.sql`, collected by the crate's build script |
 | The store's statements and their tests | central list | `crates/sm-store/queries/<name>.sql` and `crates/sm-store/tests/queries/<name>.rs`, collected the same way |
 | Screens and their routes | central list | `crates/sm-screens/src/screens/<name>.rs`, one per screen, each naming its own route; the build script writes the module list and the route table, so there is no `mod` list to edit |
+| The Blocks pin | one value in three places | The crate's pin, the Swift package's pin and `.drover/design.md` name one commit; N1's test fails when they differ, so a bump is one PR that changes all three |
 | Board layouts | central list | `crates/sm-boards/src/layouts/<id>.rs`, collected the same way (#1047's `Boards/` folder) |
 | App kinds | central list | `native/SendmeterNative/Sources/Features/Kinds/<Name>Kind.swift`; a core test fails a kind a screen uses that the folder lacks |
 | Gates | CI per area | one file per gate in `.gatekeeper/gates/` (already collected); no workflow file is added |

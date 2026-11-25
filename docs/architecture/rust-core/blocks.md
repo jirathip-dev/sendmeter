@@ -1,7 +1,7 @@
 # Blocks: what was run, what works, the gaps
 
 The probe ran on 2026-11-22 against Blocks at staging `73adae31`; Blocks was read again on 2026-11-23 at
-staging `976cf0f6`. Host macOS 27.2, Xcode 27.2, Rust 1.100.0. The probe was a scratch workspace outside this
+staging `976cf0f6` and on 2026-11-25 at staging `d79ce47d`. Host macOS 27.2, Xcode 27.2, Rust 1.100.0. The probe was a scratch workspace outside this
 repo; nothing here was changed. Not run and not claimed: CloudKit, HealthKit, Bluetooth, a real iPhone, a real
 Watch. They are device-only.
 
@@ -69,11 +69,33 @@ per route, and answers actions with `diff`'s ops. What stays the app's job, as B
 and the threads behind it, its own kinds, and one pin for the crate and the Swift package. N1 adds the test
 that the two pins agree.
 
+## The look: what BlocksUI takes from a design
+
+Read at staging `d79ce47d` (`docs/theme.md`, `docs/extending.md`, `crates/blocks/src/theme/`, `BlocksUI/Theme.swift`).
+
+- A look is data: a `Scheme` per mode (19 colour tokens, six or eight hex digits, checked by `gate`) and a
+  `Style` (type, space, radius, motion, easing, surface, fills, buttons, marks, sections, labels). An app may
+  hand its own; a named pack is not needed. BlocksUI builds its `Look` from the same tokens.
+- A style's `type` is `default`, `mono` or `serif`. No style value names a font, a gradient or a blur.
+- Blocks' style-hooks work (blocks #392, slices #398 to #401 open) makes every style value land on 14 named
+  finishes in both renderers. That is where a new style value belongs.
+- Sendmeter's design recipe (#1063) draws mockups with a CSS pack over the HTML renderer. #1060's draft pack
+  (`crag.css`, read at `f7e3aa20`) sets the colour tokens and then restyles Blocks' classes: blurred glass
+  cards, a gradient primary button, Zilla Slab and Inter. The tokens carry over as a scheme. The restyling
+  does not: it is CSS, and the phone has no CSS.
+- The recipe pins Blocks at release 2.0 (`b1a9c991`). `gh api repos/jirathip-dev/blocks/compare/976cf0f6...b1a9c991`
+  says that commit is 36 behind `976cf0f6`, so it has none of #351 to #354, and a design drawn on it must use
+  stand-ins for the plot, the heat map and the box plot.
+
+What follows from this is decision 4 of `adr.md`: one pin, a look kept as scheme and style, and a Blocks issue
+for each look rule that is neither. No issue is filed from here: #1060 is not approved, and its look may
+still change.
+
 ## Gaps
 
 ### G2, to file in Blocks: swift: `Block.apply` rewrites an app block's own `rows` field
 
-*Problem.* Still present at staging `976cf0f6` (read, not rerun). `eachList` in
+*Problem.* Still present at staging `d79ce47d` (read, not rerun). `eachList` in
 `swift/Sources/Blocks/Apply.swift` walks every key in `Block.walked` and writes `o[key] = .array(items)` back.
 `JSONValue.items` returns `[]` for a value that is not an array, so a field that merely shares a walked name,
 such as an app block's `"rows": 12`, becomes `[]`. Rust's `apply` leaves an app block's own fields alone, so
@@ -101,4 +123,5 @@ No Blocks screen in the approved designs shows a running clock, so there is noth
   by Sendmeter: no screen is built in Swift.
 - **Every approved #1046 screen uses only core kinds** plus `board` and `mascot`: stat, chips, button, section,
   list, row, form, chart (bars and the stacked pyramid), sheet, and now plot, heat map and box plot. Nothing
-  else was found missing. #1060's new look files its own gaps in Blocks (#1063's recipe).
+  else was found missing. #1060's new look files its own gaps in Blocks (#1063's recipe): its stand-ins as
+  kinds, and its look rules as style values (above).

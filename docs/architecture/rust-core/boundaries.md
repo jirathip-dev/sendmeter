@@ -31,7 +31,7 @@ sm-domain ◀── sm-stats      │
 | `sm-boards` | #1047's `BoardCore`: layouts, routes, the LED map, both lighting encoders, the link machine, the wiring check, the two file readers, the screenshot reader (#1056) | `sm-domain` | SQLite, Blocks, any network |
 | `sm-store` | The SQLite file, the migrations, the queries, write commands, the eight former RPCs, the change log, the export bundle | `sm-domain`, `sm-boards` (types), rusqlite | Blocks, `sm-sync` |
 | `sm-sync` | `CloudRecord`, the conflict rules, `SyncState` and `reduce`, batches | `sm-store`, `sm-domain` | Blocks, any network or CloudKit type |
-| `sm-screens` | One file per screen: input → `Block`, action → intent; the look's tokens; the tab layout | `blocks`, `sm-domain`, `sm-stats`, `sm-boards` | SQLite, `sm-store`, `sm-sync` |
+| `sm-screens` | One file per screen: input → `Block`, action → intent; the look (a scheme per mode and a style file, in `look/`); the tab layout | `blocks`, `sm-domain`, `sm-stats`, `sm-boards` | SQLite, `sm-store`, `sm-sync` |
 | `sm-app` | `open`, `handle`: loads a screen's input, runs intents as store commands, keeps shown screens and answers with ops, runs the live sessions | every crate above | UniFFI, any OS call |
 | `sm-ffi-swift` | The UniFFI surface: `open`, `handle`, the event and effect types | `sm-app`, uniffi | logic |
 
@@ -86,3 +86,6 @@ its commit message carries `Deps: #1059` and the owner's answer q3124, as `core/
 enums written by hand; tests use an in-memory store, so no test helper crate is needed.
 
 Removed by #1066: GRDB, the Supabase Swift package, and `@supabase/supabase-js` with `mcp/`.
+
+Not a dependency: swag. The look is the app's own scheme and style files, which Blocks takes directly. The
+design recipe's swag pin (`.drover/design.md`) is a design lane's tool, not part of the app.
