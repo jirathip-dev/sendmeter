@@ -1,8 +1,24 @@
 ## Summary
 
-Decision: Round 11 changes only the roo's arms, in the roo kit master, so every pose, scene and icon follows: they join the body like a plush toy's. From the front, each arm starts lower on the body side with a sloped, rounded join and no shoulder corner. From the back, only a small rounded nub of each arm shows at the sides. Raised arms (Hang, Flash, PR, Rest hang, Tongue) go straight up from that join, short and with no elbow. Side-view arms (Stand, Send, Crimp, Dyno and the rest) also start lower on the body with the same soft join. Shoes, holds and everything else stay as round 10.
-Screens: every image is re-rendered (63); the model sheet, the roo kit's poses, the icon sheet, Loading and Today show this round's changes.
-Open questions: none.
+Decision: Round 12 polishes the look and keeps the roo, scenes and icons as round 11. Cards and the nav bar are now dark granite slabs, with a faint speckle and a soft top light. All text is moonlight white. Warm sandstone is now the one accent for links, selection, chips, toggles, steps, charts and the force curve, replacing the soft violet. The nav bar is a rounded pill that floats above the scene, and the selected tab is a soft round sandstone pill instead of a square tile. On web it is a short floating pill rail, centred on the left. Every screen got a polish pass.
+Screens: all 63 images are re-rendered. Today, Session, Settings, Force, Log and Route show the changes best.
+Open questions: the primary button stays Moonstone (deep violet with the pearl rim), as decided in round 5. Should it turn sandstone too, or stay violet as the one contrast to the sandstone accent?
+
+## Round 12 changes
+
+- **Granite cards and nav** (`pack/crag.css`): each card, stat tile, step bar and the nav bar is a granite slab. It has a dark stone base (`card` rgba(27,29,44,.86), solid #1B1D2C), dark and pale speckle (the new `granite` token, an SVG noise tile), a soft top-left light (`slab`), a thin edge and a 1 px top highlight. The scene still blurs through. The radius is 24, up from 22.
+- **Sandstone accent.** `l`, `link`, `p` and their `fk-*` pairs are #E6B98E, and `select` is sandstone at 18 %. Links, the selected chip, the toggle, steps, the accent tag, the bar chart, the force curve, the screenshot crop frame, the loading bar and the App icon picker's ring all use it. Plain buttons are sandstone text on a faint sandstone pill. The warning colour (`a`) moves to #F0D872, a clearer yellow, so a Project tag doesn't read as the accent.
+- **Moonlight-white text.** Titles, numbers and body are `fg` #EEF0FA, and secondary text is `mute` #B3B8D4. Nothing else is tinted.
+- **Floating pill nav bar.** On the phone it is a fully rounded granite pill, 66 px tall, 16 px in from each side and 18 px above the bottom, with a soft drop shadow. The selected tab is a round sandstone pill (52 px tall) with a faint sandstone ring, and its icon and label are sandstone. At 1440 the bar is a short vertical pill (84 px wide), centred on the left edge rather than running full height. Each tab is a 66×58 pill.
+- **Polish pass, every screen:**
+  - Card subtitles (Try 3, All 14 ›, 20 mm edge, Tap to fix) sit on the title's line, at the right.
+  - Top-level stats (Session, Route, Force, Log, imports, sync) are separate granite tiles. They shrink to fit with no overflow, and the numbers are 24 px.
+  - List rows are tighter (52 px), so Settings and the logbook show more.
+  - Force's last stat is "Of BW", which fits its tile.
+  - Sign out is red, as a destructive row.
+  - The hold board's surface is dark granite (#141620) instead of navy, so it matches the cards. The hold colours are unchanged.
+  - The moon gauge's halo is soft moonlight, not violet.
+- **Contrast.** `node contrast.mjs`: 0 failing of 68. It adds a check of fg, mute and link text on the granite's pale speckle.
 
 ## Round 11 changes
 
@@ -82,7 +98,7 @@ Round 8 (d265ba2e) changed the boulders to a smooth rounded roof, the floor to s
 
 ## What this round decides (round 4, still standing)
 
-- **Shimmer on the Send-o-meter fill only** (round 5; round 4 also had it on the primary button and the roo's edge). Charts, the force curve, chips, toggles, steps and tags use soft violet `#B9A8FF` (links and selection) or plain moonlight white. HRV and Sleep are plain moonlight moons. The friction number is plain text. The loading bar is violet.
+- **Shimmer on the Send-o-meter fill only** (round 5; round 4 also had it on the primary button and the roo's edge). Charts, the force curve, chips, toggles, steps and tags use the accent (round 12: sandstone `#E6B98E`, replacing round 4's soft violet) or plain moonlight white. HRV and Sleep are plain moonlight moons. The friction number is plain text. The loading bar uses the accent.
 - **Type.** Zilla Slab 600/700 for screen titles, card headers, numbers and grades: a sturdy, guidebook-like slab. Inter 400–600 for body, rows and labels. Barlow is gone.
 - **The roo kit** (`pack/roo.mjs`, `pack/roo-master.svg`, `pack/rig.json`, `pack/poses.json`):
   - The parts: one body, one head (side and front drawings), two ears, two arms, two thighs, two shins, two climbing shoes (side and front drawings) and a tail. Each is drawn once at its own pivot.
@@ -106,7 +122,7 @@ Round 8 (d265ba2e) changed the boulders to a smooth rounded roof, the floor to s
 
 ## Images
 
-`png/<screen>-390.png` is the phone and `png/<screen>-1440.png` is web and iPad. At 1440 the tab bar becomes the left rail, and screens with a big stand-in use two columns. Every image is the clear night unless its name says otherwise. A dashed **stand-in** tag marks each part Blocks can't draw yet.
+`png/<screen>-390.png` is the phone and `png/<screen>-1440.png` is web and iPad. At 1440 the floating pill nav bar becomes a short pill rail on the left, and screens with a big stand-in use two columns. Every image is the clear night unless its name says otherwise. A dashed **stand-in** tag marks each part Blocks can't draw yet.
 
 | Image | Decision it shows |
 |---|---|
@@ -114,11 +130,11 @@ Round 8 (d265ba2e) changed the boulders to a smooth rounded roof, the floor to s
 | `today-dawn-390`, `today-rain-390`, `today-rain-1440`, `today-fog-1440` | The weathers inside the night: the dawn glow (the roo chalks up), rain (the roo shelters, the moon dims) and fog bands (the roo sleeps). |
 | `states-390`, `states-1440` | The four weathers side by side. |
 | `session-rain-390` | A dimmed screen keeps the weather blurred behind its cards. |
-| `conditions` | The chip opens the sheet: friction 78 and its rank, temp, humidity, dew point, wind, the 30-day chart (Blocks `chart`, violet), the best window and the source (Open-Meteo). |
+| `conditions` | The chip opens the sheet: friction 78 and its rank, temp, humidity, dew point, wind, the 30-day chart (Blocks `chart`, sandstone), the best window and the source (Open-Meteo). |
 | `session` | A live session: time, tries, sends, top grade and HR. **On now**, **Sent** (Moonstone) and **Fell**. The last two ticks and **End session**. It fits with no scrolling. |
 | `send` | **Flashed!** with the flash roo. |
 | `board`, `route` | Board home (set chips and routes) and route detail (the hold board stand-in, stats, **Light it up**). The four hold colours stay, because they mean hold roles. |
-| `force` | Max hang, live: the curve in violet against your old best, peak/mean/time/bodyweight, and the **PR!** roo. It fits with no scrolling. |
+| `force` | Max hang, live: the curve in sandstone against your old best, peak/mean/time/of BW, and the **PR!** roo. It fits with no scrolling. |
 | `log`, `logbook` | The month: stats and sends by grade (Blocks `chart`). Then every tick by day. |
 | `settings` | Scene (**Live weather** or pin one of four), Look (App icon: Profile), Data and Account. |
 | `appicon` | Settings › App icon: the nine crops, with Profile selected as the default. |
@@ -145,9 +161,9 @@ Round 8 (d265ba2e) changed the boulders to a smooth rounded roof, the floor to s
 The pack's contents, as they would move to jirathip-dev/swag:
 
 - **Tokens** (`pack/crag.css`, also written to `pack/tokens.json`):
-  - Blocks' scheme colours: `bg` #070A1F, `card` glass rgba(17,21,48,.72) (solid #111530), `edge`, `line`, `scrim`, `fg` #EEF0FA, `mute` #B3B8D4, `l`/`link` #B9A8FF, `g` #8FD9B6, `a` #F2CB8B, `r` #FF9DB0, `p`, `c` and the `fk-*` pairs.
-  - Extras: `select`, `iri` (the shimmer, #C2A8FF → #8FE6E0 → #FFB3DC, for the Send-o-meter fill only), and Moonstone: `moonstone` #46379A, `on-moonstone` #F6F4FF, `pearl` (the rim gradient) and `grain` (an SVG noise tile).
-  - Shape and space: radius 22, buttons as pills, seam 10, controls 44, the primary button 56, glass blur 22, motion 0.
+  - Blocks' scheme colours: `bg` #070A1F, `card` granite rgba(27,29,44,.86) (solid #1B1D2C), `edge`, `line`, `scrim`, `fg` #EEF0FA, `mute` #B3B8D4, `l`/`link` sandstone #E6B98E, `g` #8FD9B6, `a` #F0D872, `r` #FF9DB0, `p`, `c` and the `fk-*` pairs.
+  - Extras: `select`, `granite` (the card speckle tile), `slab` (the card's soft light), `iri` (the shimmer, #C2A8FF → #8FE6E0 → #FFB3DC, for the Send-o-meter fill only), and Moonstone: `moonstone` #46379A, `on-moonstone` #F6F4FF, `pearl` (the rim gradient) and `grain` (an SVG noise tile).
+  - Shape and space: radius 24, the nav bar a floating pill, buttons as pills, seam 10, controls 44, the primary button 56, glass blur 22, motion 0.
   - Type: `display` Zilla Slab and `body` Inter.
 - **Fonts** (`fonts/`): Zilla Slab 600 and 700 (Mozilla, SIL OFL 1.1) and Inter, variable 400–600 (SIL OFL 1.1). The licences are `fonts/*-OFL.txt`.
 - **Roo kit:**
@@ -173,63 +189,75 @@ The pack's contents, as they would move to jirathip-dev/swag:
 
 ## Contrast (WCAG AA)
 
-Each text colour is checked on the glass card over the lightest part of each weather's scene (the blurred moon halo, the dawn glow, the fog band) and over its darkest part. Link and bad text are also checked on their tinted buttons, and titles on the dimmed scene. White text on Moonstone is checked on its lightest stop and on the press glint at each of its three colours. Body text needs 4.5:1 and large text 3:1. All 56 pairs pass. `node contrast.mjs` reads `pack/crag.css` and exits non-zero on a failure.
+Each text colour is checked on the glass card over the lightest part of each weather's scene (the blurred moon halo, the dawn glow, the fog band) and over its darkest part. Link and bad text are also checked on their tinted buttons, and titles on the dimmed scene. White text on Moonstone is checked on its lightest stop and on the press glint at each of its three colours. Text is also checked on the granite's pale speckle. Body text needs 4.5:1 and large text 3:1. All 68 pairs pass. `node contrast.mjs` reads `pack/crag.css` and exits non-zero on a failure.
 
 | Weather | Text | On | Light part | Dark part | Needs | Result |
 |---|---|---|---|---|---|---|
-| clear | `fg` #EEF0FA | `card` | 12.41 | 16.34 | 4.5 | pass |
-| clear | `mute` #B3B8D4 | `card` | 7.20 | 9.48 | 4.5 | pass |
-| clear | `link` #B9A8FF | `card` | 6.79 | 8.94 | 4.5 | pass |
-| clear | `g` #8FD9B6 | `card` | 8.57 | 11.29 | 4.5 | pass |
-| clear | `a` #F2CB8B | `card` | 9.19 | 12.11 | 4.5 | pass |
-| clear | `r` #FF9DB0 | `card` | 7.19 | 9.46 | 4.5 | pass |
-| clear | `link` #B9A8FF | `button` | 5.35 | 7.26 | 4.5 | pass |
-| clear | `r` #FF9DB0 | `bad-button` | 5.89 | 8.05 | 4.5 | pass |
+| clear | `fg` #EEF0FA | `card` | 13.09 | 15.16 | 4.5 | pass |
+| clear | `mute` #B3B8D4 | `card` | 7.60 | 8.80 | 4.5 | pass |
+| clear | `link` #E6B98E | `card` | 8.29 | 9.60 | 4.5 | pass |
+| clear | `g` #8FD9B6 | `card` | 9.05 | 10.48 | 4.5 | pass |
+| clear | `a` #F0D872 | `card` | 10.47 | 12.12 | 4.5 | pass |
+| clear | `r` #FF9DB0 | `card` | 7.58 | 8.78 | 4.5 | pass |
+| clear | `link` #E6B98E | `button` | 6.38 | 7.51 | 4.5 | pass |
+| clear | `r` #FF9DB0 | `bad-button` | 6.21 | 7.30 | 4.5 | pass |
 | clear | `on-moonstone` #F6F4FF | `moonstone-top` | 7.02 | 7.02 | 4.5 | pass |
 | clear | `on-moonstone` #F6F4FF | `moonstone` | 8.49 | 8.49 | 4.5 | pass |
 | clear | `on-moonstone` #F6F4FF | `glint-violet` | 4.90 | 4.90 | 4.5 | pass |
 | clear | `on-moonstone` #F6F4FF | `glint-teal` | 5.13 | 5.13 | 4.5 | pass |
 | clear | `on-moonstone` #F6F4FF | `glint-pink` | 4.59 | 4.59 | 4.5 | pass |
 | clear | `fg` #EEF0FA | `dim` | 10.82 | 18.08 | 3 | pass |
-| dawn | `fg` #EEF0FA | `card` | 12.17 | 16.26 | 4.5 | pass |
-| dawn | `mute` #B3B8D4 | `card` | 7.06 | 9.43 | 4.5 | pass |
-| dawn | `link` #B9A8FF | `card` | 6.66 | 8.89 | 4.5 | pass |
-| dawn | `g` #8FD9B6 | `card` | 8.41 | 11.23 | 4.5 | pass |
-| dawn | `a` #F2CB8B | `card` | 9.02 | 12.04 | 4.5 | pass |
-| dawn | `r` #FF9DB0 | `card` | 7.05 | 9.41 | 4.5 | pass |
-| dawn | `link` #B9A8FF | `button` | 5.25 | 7.22 | 4.5 | pass |
-| dawn | `r` #FF9DB0 | `bad-button` | 5.76 | 7.99 | 4.5 | pass |
+| clear | `fg` #EEF0FA | `fleck` | 8.20 | 9.74 | 4.5 | pass |
+| clear | `mute` #B3B8D4 | `fleck` | 4.76 | 5.65 | 4.5 | pass |
+| clear | `link` #E6B98E | `fleck` | 5.19 | 6.17 | 4.5 | pass |
+| dawn | `fg` #EEF0FA | `card` | 12.94 | 15.13 | 4.5 | pass |
+| dawn | `mute` #B3B8D4 | `card` | 7.51 | 8.78 | 4.5 | pass |
+| dawn | `link` #E6B98E | `card` | 8.19 | 9.57 | 4.5 | pass |
+| dawn | `g` #8FD9B6 | `card` | 8.94 | 10.45 | 4.5 | pass |
+| dawn | `a` #F0D872 | `card` | 10.34 | 12.09 | 4.5 | pass |
+| dawn | `r` #FF9DB0 | `card` | 7.49 | 8.76 | 4.5 | pass |
+| dawn | `link` #E6B98E | `button` | 6.29 | 7.49 | 4.5 | pass |
+| dawn | `r` #FF9DB0 | `bad-button` | 6.12 | 7.29 | 4.5 | pass |
 | dawn | `on-moonstone` #F6F4FF | `moonstone-top` | 7.02 | 7.02 | 4.5 | pass |
 | dawn | `on-moonstone` #F6F4FF | `moonstone` | 8.49 | 8.49 | 4.5 | pass |
 | dawn | `on-moonstone` #F6F4FF | `glint-violet` | 4.90 | 4.90 | 4.5 | pass |
 | dawn | `on-moonstone` #F6F4FF | `glint-teal` | 5.13 | 5.13 | 4.5 | pass |
 | dawn | `on-moonstone` #F6F4FF | `glint-pink` | 4.59 | 4.59 | 4.5 | pass |
 | dawn | `fg` #EEF0FA | `dim` | 10.24 | 17.91 | 3 | pass |
-| rain | `fg` #EEF0FA | `card` | 13.99 | 16.34 | 4.5 | pass |
-| rain | `mute` #B3B8D4 | `card` | 8.12 | 9.48 | 4.5 | pass |
-| rain | `link` #B9A8FF | `card` | 7.65 | 8.94 | 4.5 | pass |
-| rain | `g` #8FD9B6 | `card` | 9.66 | 11.29 | 4.5 | pass |
-| rain | `a` #F2CB8B | `card` | 10.36 | 12.11 | 4.5 | pass |
-| rain | `r` #FF9DB0 | `card` | 8.10 | 9.46 | 4.5 | pass |
-| rain | `link` #B9A8FF | `button` | 6.06 | 7.26 | 4.5 | pass |
-| rain | `r` #FF9DB0 | `bad-button` | 6.65 | 8.05 | 4.5 | pass |
+| dawn | `fg` #EEF0FA | `fleck` | 8.08 | 9.72 | 4.5 | pass |
+| dawn | `mute` #B3B8D4 | `fleck` | 4.69 | 5.64 | 4.5 | pass |
+| dawn | `link` #E6B98E | `fleck` | 5.12 | 6.15 | 4.5 | pass |
+| rain | `fg` #EEF0FA | `card` | 13.96 | 15.16 | 4.5 | pass |
+| rain | `mute` #B3B8D4 | `card` | 8.10 | 8.80 | 4.5 | pass |
+| rain | `link` #E6B98E | `card` | 8.84 | 9.60 | 4.5 | pass |
+| rain | `g` #8FD9B6 | `card` | 9.65 | 10.48 | 4.5 | pass |
+| rain | `a` #F0D872 | `card` | 11.16 | 12.12 | 4.5 | pass |
+| rain | `r` #FF9DB0 | `card` | 8.09 | 8.78 | 4.5 | pass |
+| rain | `link` #E6B98E | `button` | 6.86 | 7.51 | 4.5 | pass |
+| rain | `r` #FF9DB0 | `bad-button` | 6.69 | 7.30 | 4.5 | pass |
 | rain | `on-moonstone` #F6F4FF | `moonstone-top` | 7.02 | 7.02 | 4.5 | pass |
 | rain | `on-moonstone` #F6F4FF | `moonstone` | 8.49 | 8.49 | 4.5 | pass |
 | rain | `on-moonstone` #F6F4FF | `glint-violet` | 4.90 | 4.90 | 4.5 | pass |
 | rain | `on-moonstone` #F6F4FF | `glint-teal` | 5.13 | 5.13 | 4.5 | pass |
 | rain | `on-moonstone` #F6F4FF | `glint-pink` | 4.59 | 4.59 | 4.5 | pass |
 | rain | `fg` #EEF0FA | `dim` | 13.81 | 18.08 | 3 | pass |
-| fog | `fg` #EEF0FA | `card` | 11.64 | 16.19 | 4.5 | pass |
-| fog | `mute` #B3B8D4 | `card` | 6.75 | 9.39 | 4.5 | pass |
-| fog | `link` #B9A8FF | `card` | 6.36 | 8.85 | 4.5 | pass |
-| fog | `g` #8FD9B6 | `card` | 8.04 | 11.19 | 4.5 | pass |
-| fog | `a` #F2CB8B | `card` | 8.62 | 11.99 | 4.5 | pass |
-| fog | `r` #FF9DB0 | `card` | 6.74 | 9.37 | 4.5 | pass |
-| fog | `link` #B9A8FF | `button` | 5.00 | 7.17 | 4.5 | pass |
-| fog | `r` #FF9DB0 | `bad-button` | 5.56 | 7.94 | 4.5 | pass |
+| rain | `fg` #EEF0FA | `fleck` | 8.84 | 9.74 | 4.5 | pass |
+| rain | `mute` #B3B8D4 | `fleck` | 5.13 | 5.65 | 4.5 | pass |
+| rain | `link` #E6B98E | `fleck` | 5.60 | 6.17 | 4.5 | pass |
+| fog | `fg` #EEF0FA | `card` | 12.77 | 15.13 | 4.5 | pass |
+| fog | `mute` #B3B8D4 | `card` | 7.41 | 8.78 | 4.5 | pass |
+| fog | `link` #E6B98E | `card` | 8.08 | 9.57 | 4.5 | pass |
+| fog | `g` #8FD9B6 | `card` | 8.82 | 10.45 | 4.5 | pass |
+| fog | `a` #F0D872 | `card` | 10.21 | 12.09 | 4.5 | pass |
+| fog | `r` #FF9DB0 | `card` | 7.40 | 8.76 | 4.5 | pass |
+| fog | `link` #E6B98E | `button` | 6.26 | 7.49 | 4.5 | pass |
+| fog | `r` #FF9DB0 | `bad-button` | 6.04 | 7.29 | 4.5 | pass |
 | fog | `on-moonstone` #F6F4FF | `moonstone-top` | 7.02 | 7.02 | 4.5 | pass |
 | fog | `on-moonstone` #F6F4FF | `moonstone` | 8.49 | 8.49 | 4.5 | pass |
 | fog | `on-moonstone` #F6F4FF | `glint-violet` | 4.90 | 4.90 | 4.5 | pass |
 | fog | `on-moonstone` #F6F4FF | `glint-teal` | 5.13 | 5.13 | 4.5 | pass |
 | fog | `on-moonstone` #F6F4FF | `glint-pink` | 4.59 | 4.59 | 4.5 | pass |
 | fog | `fg` #EEF0FA | `dim` | 9.44 | 17.76 | 3 | pass |
+| fog | `fg` #EEF0FA | `fleck` | 8.05 | 9.72 | 4.5 | pass |
+| fog | `mute` #B3B8D4 | `fleck` | 4.67 | 5.64 | 4.5 | pass |
+| fog | `link` #E6B98E | `fleck` | 5.09 | 6.15 | 4.5 | pass |

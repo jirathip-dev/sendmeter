@@ -64,7 +64,7 @@ function loading() {
   <svg style="position:fixed;left:0;top:0" width="${W}" height="${H}" aria-hidden="true"><path d="M${W / 2 - 70} ${H * 0.62} Q${W / 2 - 110} ${H * 0.4} ${W / 2 - 20} ${H * (WIDE ? 0.22 : 0.27)}" fill="none" stroke="#C9C6F0" stroke-width="2.5" stroke-dasharray="2 9" stroke-linecap="round" opacity=".7"/></svg>
   <div style="position:fixed;left:0;right:0;bottom:${WIDE ? 90 : 110}px;text-align:center">
     <div style="font:700 ${WIDE ? 64 : 46}px var(--display);color:#fff;letter-spacing:.01em">Sendmeter</div>
-    <div style="width:${WIDE ? 220 : 170}px;height:5px;border-radius:3px;background:rgba(238,240,250,.15);margin:18px auto 0;overflow:hidden"><div style="width:62%;height:100%;background:#B9A8FF;border-radius:3px"></div></div>
+    <div style="width:${WIDE ? 220 : 170}px;height:5px;border-radius:3px;background:rgba(238,240,250,.15);margin:18px auto 0;overflow:hidden"><div style="width:62%;height:100%;background:var(--l);border-radius:3px"></div></div>
   </div>`;
 }
 
@@ -87,7 +87,7 @@ function mascots() {
 function model() {
   const sz = WIDE ? 230 : 170;
   const sw = Object.entries({ fur: COLOURS.fur, "far limb": COLOURS.far, "inner ear": COLOURS.ear, muzzle: COLOURS.muzzle, spots: COLOURS.spot, blush: COLOURS.blush, "knit upper": COLOURS.knit, stitching: COLOURS.stitch, rubber: COLOURS.rubber, "velcro strap": COLOURS.strap, "heel band": COLOURS.panel, outline: COLOURS.line, "bag band": COLOURS.band, "chalk bag": COLOURS.bag, rim: COLOURS.rim });
-  const grid = (svg) => `<div style="position:relative;display:inline-block">${svg}<div style="position:absolute;inset:0;background:repeating-linear-gradient(180deg,transparent 0 ${sz * 64 / 240 - 1}px,rgba(185,168,255,.25) ${sz * 64 / 240 - 1}px ${sz * 64 / 240}px)"></div></div>`;
+  const grid = (svg) => `<div style="position:relative;display:inline-block">${svg}<div style="position:absolute;inset:0;background:repeating-linear-gradient(180deg,transparent 0 ${sz * 64 / 240 - 1}px,rgba(230,185,142,.3) ${sz * 64 / 240 - 1}px ${sz * 64 / 240}px)"></div></div>`;
   const parts = rigJson().side;
   sheet(sheetHead("Roo model sheet", "front, side, back · proportions · colours") +
     `<div style="display:flex;gap:${WIDE ? 30 : 6}px;flex-wrap:${WIDE ? "nowrap" : "wrap"};justify-content:center">
@@ -111,7 +111,7 @@ function buttons() {
     `<div style="display:flex;flex-direction:${WIDE ? "row" : "column"};gap:${WIDE ? 36 : 22}px;max-width:1100px">
       ${col("REST", "primary", "Deep violet, faint granite grain, a thin pearl rim. No shimmer.")}
       ${col("PRESS", "primary pressed", "A soft shimmer glint sweeps across while held.")}
-      ${col("OTHERS", "", "Every other button: violet text on a faint violet pill.")}
+      ${col("OTHERS", "", "Every other button: sandstone text on a faint sandstone pill.")}
     </div>
     <div style="margin-top:${WIDE ? 34 : 24}px;display:flex;gap:16px;align-items:center"><div style="width:${WIDE ? 420 : 340}px;height:${WIDE ? 120 : 96}px;border-radius:999px;border:2px solid transparent;background:var(--grain) padding-box,linear-gradient(180deg,#5242AE,var(--moonstone) 55%,#3B2E86) padding-box,var(--pearl) border-box;box-shadow:0 8px 24px rgba(40,26,110,.45)"></div><div style="font-size:12.5px;color:var(--mute)">${WIDE ? "The surface at 4×: grain and rim." : "Surface at 4×"}</div></div>`);
 }
@@ -125,7 +125,7 @@ function states() {
 
 function watch() {
   const face = (title, body) => `<div style="text-align:center"><div style="width:198px;height:242px;border-radius:52px;background:#000;border:7px solid #23263A;padding:16px 14px;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;overflow:hidden">${body}</div><div style="font:600 13px var(--body);margin-top:8px">${title}</div></div>`;
-  const pill = (t, p) => `<div style="height:40px;border-radius:20px;display:grid;place-items:center;font:700 16px var(--display);${p ? "border:1.5px solid transparent;background:var(--grain) padding-box,linear-gradient(180deg,#5242AE,var(--moonstone) 55%,#3B2E86) padding-box,var(--pearl) border-box;color:var(--on-moonstone)" : "background:rgba(185,168,255,.16);color:var(--l)"}">${t}</div>`;
+  const pill = (t, p) => `<div style="height:40px;border-radius:20px;display:grid;place-items:center;font:700 16px var(--display);${p ? "border:1.5px solid transparent;background:var(--grain) padding-box,linear-gradient(180deg,#5242AE,var(--moonstone) 55%,#3B2E86) padding-box,var(--pearl) border-box;color:var(--on-moonstone)" : "background:var(--select);color:var(--l)"}">${t}</div>`;
   const small = (v, k) => `<div><div style="font:700 22px var(--display)">${v}</div><div style="font-size:11px;color:var(--mute)">${k}</div></div>`;
   sheet(sheetHead("Apple Watch", "every session and force screen fits with no scrolling") +
     `<div style="display:flex;gap:${WIDE ? 26 : 14}px;flex-wrap:wrap;justify-content:center">

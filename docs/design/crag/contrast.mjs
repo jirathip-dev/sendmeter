@@ -16,6 +16,7 @@ const pairs = [
   ["link", "button", "body"], ["r", "bad-button", "body"],
   ["on-moonstone", "moonstone-top", "body"], ["on-moonstone", "moonstone", "body"], ["on-moonstone", "glint-violet", "body"], ["on-moonstone", "glint-teal", "body"], ["on-moonstone", "glint-pink", "body"],
   ["fg", "dim", "large"],
+  ["fg", "fleck", "body"], ["mute", "fleck", "body"], ["link", "fleck", "body"],
 ];
 
 const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
@@ -34,8 +35,9 @@ for (const [w, parts] of Object.entries(SCENE)) {
   const card = parts.map((p) => mix(p, glass, ga));
   const backs = {
     card,
-    button: card.map((c) => mix(c, "#B9A8FF", 0.12)),
+    button: card.map((c) => mix(c, "#E6B98E", 0.12)),
     "bad-button": card.map((c) => mix(c, "#FF9DB0", 0.1)),
+    fleck: card.map((c) => mix(c, "#EDEBE6", 0.16)),
     dim: parts.map((p) => scale(p, 0.55)),
   };
   for (const [fg, bg, size] of pairs) {

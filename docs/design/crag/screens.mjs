@@ -61,7 +61,7 @@ export const SCREENS = {
   force: { tab: "force", title: "Force", blocks: [
     chips("hand", "hand", ["Left", "Right", "Both"], "Right"),
     { type: "crag-curve", id: "c", title: "Max hang · live", sub: "20 mm edge", h: 150 },
-    stat("fs", [["52.4", "Peak", "kg"], ["48.1", "Mean", "kg"], ["7.2", "Time", "s"], ["74%", "Bodyweight"]]),
+    stat("fs", [["52.4", "Peak", "kg"], ["48.1", "Mean", "kg"], ["7.2", "Time", "s"], ["74%", "Of BW"]]),
     { type: "crag-roo", id: "pr", pose: "pr", size: 64, word: "PR!", wordSize: 30, line: "+1.8 kg on your best", row: true },
     btn("again", "Next rep", "primary"),
   ] },

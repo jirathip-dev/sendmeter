@@ -19,7 +19,7 @@ export function moonGauge(v, w) {
   const mark = (f, x, on) => `<g transform="translate(${x} 190)"><circle r="8" fill="#1A1E40" stroke="${on ? "#EEF0FA" : "rgba(238,240,250,.25)"}" stroke-width="${on ? 2 : 1}"/><path d="${moonPath(0, 0, 8, f)}" fill="${on ? "#EEF0FA" : "rgba(238,240,250,.45)"}"/></g>`;
   return `<svg viewBox="0 0 200 226" width="${w}" height="${(w * 226) / 200}" role="img" aria-label="Ready ${v}, ${zone}">
     <defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">${IRI}</linearGradient></defs>
-    <circle cx="${cx}" cy="${cy}" r="${r + 16}" fill="#B9A8FF" opacity=".08"/>
+    <circle cx="${cx}" cy="${cy}" r="${r + 16}" fill="#EEF0FA" opacity=".05"/>
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="#1A1E40" stroke="rgba(238,240,250,.16)"/>
     <path d="${moonPath(cx, cy, r, v / 100)}" fill="url(#${id})"/>
     <circle cx="${cx + 28}" cy="${cy - 30}" r="8" fill="#120F2E" opacity=".08"/><circle cx="${cx + 42}" cy="${cy + 28}" r="6" fill="#120F2E" opacity=".08"/>
@@ -39,10 +39,10 @@ export function holdBoard(o = {}) {
   let g = "";
   for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
     const c = holds[`${x},${y}`], cx = cell * (x + 0.5), cy = cell * (y + 0.5);
-    g += c ? `<circle cx="${cx}" cy="${cy}" r="15" fill="${c}" opacity=".35"/><circle cx="${cx}" cy="${cy}" r="11" fill="none" stroke="${c}" stroke-width="3" ${o.unsure === `${x},${y}` ? 'stroke-dasharray="4 3"' : ""}/><circle cx="${cx}" cy="${cy}" r="4" fill="#3A3F5C"/>`
-      : `<circle cx="${cx}" cy="${cy}" r="4" fill="#2E3250"/>`;
+    g += c ? `<circle cx="${cx}" cy="${cy}" r="15" fill="${c}" opacity=".35"/><circle cx="${cx}" cy="${cy}" r="11" fill="none" stroke="${c}" stroke-width="3" ${o.unsure === `${x},${y}` ? 'stroke-dasharray="4 3"' : ""}/><circle cx="${cx}" cy="${cy}" r="4" fill="#3A3D4E"/>`
+      : `<circle cx="${cx}" cy="${cy}" r="4" fill="#2C2F3E"/>`;
   }
-  return `<svg viewBox="0 0 ${cols * cell} ${rows * cell}" width="100%" style="display:block;border-radius:16px;background:#0E1130">${g}</svg>`;
+  return `<svg viewBox="0 0 ${cols * cell} ${rows * cell}" width="100%" style="display:block;border-radius:16px;background:#141620">${g}</svg>`;
 }
 
 export function forceCurve(w = 340, h = 190) {
@@ -58,8 +58,8 @@ export function forceCurve(w = 340, h = 190) {
     ${[0, 20, 40, 60].map((k) => `<text x="${L - 6}" y="${Y(k) + 4}" text-anchor="end" font-family="Inter" font-size="11" fill="#B3B8D4">${k}</text><path d="M${L} ${Y(k)}H${R}" stroke="rgba(238,240,250,.08)"/>`).join("")}
     ${[0, 5, 10].map((s) => `<text x="${X(s / 10)}" y="${h - 4}" text-anchor="middle" font-family="Inter" font-size="11" fill="#B3B8D4">${s}s</text>`).join("")}
     <path d="M${L} ${Y(50.6)}H${R}" stroke="#EEF0FA" stroke-dasharray="5 4" opacity=".5"/><text x="${R}" y="${Y(50.6) + 15}" text-anchor="end" font-family="Inter" font-size="12" fill="#B3B8D4">best 50.6</text>
-    <path d="${d} L${X(1)} ${B} L${L} ${B}Z" fill="#B9A8FF" opacity=".14"/>
-    <path d="${d}" fill="none" stroke="#B9A8FF" stroke-width="3" stroke-linejoin="round"/>
+    <path d="${d} L${X(1)} ${B} L${L} ${B}Z" fill="#E6B98E" opacity=".14"/>
+    <path d="${d}" fill="none" stroke="#E6B98E" stroke-width="3" stroke-linejoin="round"/>
     <circle cx="${X(pk[0])}" cy="${Y(pk[1])}" r="6" fill="#EEF0FA"/>
   </svg>`;
 }
@@ -74,5 +74,5 @@ export const KINDS = {
   "crag-board": (b) => el("b-app glass", holdBoard(b) + (b.legend ? `<div class="chips" style="margin-top:10px;justify-content:center">${[["#43D17A", "Start"], ["#4DA8FF", "Hand"], ["#FF5FB4", "Finish"], ["#FF9A3D", "Foot"]].map(([c, t]) => `<span style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--mute)"><i style="width:10px;height:10px;border-radius:50%;background:${c}"></i>${t}</span>`).join("")}</div>` : ""), "hold board"),
   "crag-curve": (b) => el("b-app glass", `<div class="ch" style="display:flex"><b class="b-card__title">${b.title}</b><p class="m b-card__subtitle">${b.sub}</p></div>${forceCurve(b.w, b.h)}`, "plot (blocks staging lacks it)"),
   "crag-roo": (b) => el(`b-app ${b.glass === false ? "" : "glass"}`, `<div class="moment${b.row ? " row" : ""}">${roodiv(b.pose, b.size || 170, b.flip)}<div>${b.word ? `<h2 style="font-size:${b.wordSize || 54}px">${b.word}</h2>` : ""}${b.line ? `<p>${b.line}</p>` : ""}</div></div>`, "roo figure"),
-  "crag-photo": (b) => el("b-app glass", `<div style="position:relative">${holdBoard({ ...b, rows: b.rows || 10 })}<div style="position:absolute;inset:0;border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(0,0,0,.25));"></div>${b.boxes ? `<div style="position:absolute;left:8%;top:6%;right:8%;bottom:6%;border:2px dashed #B9A8FF;border-radius:12px"></div>` : ""}</div>`, "photo crop"),
+  "crag-photo": (b) => el("b-app glass", `<div style="position:relative">${holdBoard({ ...b, rows: b.rows || 10 })}<div style="position:absolute;inset:0;border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(0,0,0,.25));"></div>${b.boxes ? `<div style="position:absolute;left:8%;top:6%;right:8%;bottom:6%;border:2px dashed #E6B98E;border-radius:12px"></div>` : ""}</div>`, "photo crop"),
 };
